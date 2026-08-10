@@ -56,8 +56,12 @@ def bench_one(fs_attr, pf_attr, quality):
         sensor.reset()
         sensor.set_pixformat(pf)
         sensor.set_framesize(fs)
+        # single buffer: large modes overflow the default multi-buffering
+        if hasattr(sensor, "set_framebuffers"):
+            sensor.set_framebuffers(1)
         sensor.skip_frames(time=1500)
-    except Exception:
+    except Exception as e:
+        print("SKIP %s %s q%d: %r" % (fs_attr, pf_attr, quality, e))
         return None
 
     for _ in range(WARMUP_FRAMES):
