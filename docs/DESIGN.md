@@ -67,6 +67,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D10 | 2026-08-09 | 12 Mbps S0 gate retired → transport gate = SPI effective ≥ 2× T1 stream bitrate (≥3.5 Mbps) | Original gate was derived from the 8 Mbps T1L budget, a workload the AE3 encoder cannot generate; new gate derives from the committed product mode. Measured 4.89 Mbps passes. |
 | D11 | 2026-08-09 | Edge inference (T2/S8) sequenced strictly after T1 streaming is met (Nick) | One bottleneck at a time; the NPU bench is S8's first bite, not this sprint's. |
 | D12 | 2026-08-09 | S1 driver via out-of-tree module build (vendored mainline sources), not SG's full kernel rebuild (Nick approved) | Same two driver files either way; builds in ~1 min against installed headers, stock rpt kernel untouched, reversible. Trade-off: apt kernel upgrades orphan the modules → re-run `pi/build_adin1110.sh` (script detects and fails loudly). Provenance pinned in `pi/drivers/adin1110/README.md` (rpi-6.18.y @ 222a4b41). |
+| D13 | 2026-08-10 | AOS hats run generic SPI without CRC via bridged SPI_CFG0+SPI_CFG1 solder jumpers (hat #1 arrived pre-bridged; verify per checklist) | Board default is all-straps-low = OPEN Alliance w/ protection (internal pull-downs, ADIN1110 datasheet), which mainline `adin1110.c` cannot speak. Bridging both jumpers (each → 4.7k → 3.3V) matches the SG shield config and D1. Jumpers are reversible for S7's optional OA spike. |
+| D14 | 2026-08-10 | AOS overlay enables Pi internal pull-up on GPIO22 (INT) — the one functional difference from the SG overlay | AOS board has no pull-up on INT_N; datasheet (p.9, pin 25) specifies open-drain, active-low, 1.5 kΩ pull-up to VDDIO required (board's R10 1.5k is on TEST1 — itself required, so not a misplacement; INT pull-up simply absent). Pi internal ~50 kΩ is out of datasheet spec but adequate for a level IRQ at bring-up; fallback = 1.5–4.7 kΩ bodge INT→3.3V if IRQs misbehave. Reported to AOS (draft in `docs/aos_hat_checklist.md`). |
 
 ## Verified-facts ledger
 
@@ -83,7 +85,10 @@ unverified — treat as unknown.
   point. IRQ path is excellent. Details below.
 - S1 Pi 5 driver bring-up: **PASS — demo run by Nick 2026-08-09.** Details
   below.
-- S2 iperf3 over T1L: —
+- S2 iperf3 over T1L: **PASS — TCP 9.32/9.33 Mbps fwd/rev (line rate),
+  UDP 8.0 Mbps @ 0% loss, ping 0% loss RTT avg 0.84 ms.** Run 2026-08-10,
+  nereus000 (hat #2, .7.1) ↔ nereus001 (hat #1, .7.2) over the bench
+  pair, `bench/t1l_link_test.sh` 4/4. Details below.
 - S3 sustained video Mbps / fps: —
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
@@ -273,3 +278,76 @@ As-built facts (verified on hardware, not assumed):
 - Debug note for future PHY trouble: RPi-forum thread on this driver
   reports early ADIN1110 silicon revs fail probe with "PHY ID read: 0"
   (-EIO). Ours reads clean.
+
+### S2 detail (2026-08-10) — AOS BOREALIS hat: facts from design files
+
+Sources, in order of authority: **AOS KiCad layout netlist**
+(`aos-rpi-zero-spe.kicad_pcb`, provided by Nick, parsed pad→net;
+authoritative for the fabbed board), AOS schematic PDF (`aos-rpi-zero-spe`,
+title block: "Based on a MM Ethernet board by N. Seidle", CC BY-SA 4.0, rev
+field unpopulated), **ADIN1110 datasheet p.9 pin table** (netlist pad
+numbers match datasheet pin numbers exactly, validating the Eagle import),
+and photos of hat #1. Meter verification per `docs/aos_hat_checklist.md`
+pending — treat rows below as design-file facts until then.
+
+| Fact | Value | Notes |
+|---|---|---|
+| SPI | SPI0 **CE0** (header 24 → R24 22Ω → CS_N pin 29); MOSI/MISO/SCLK header 19/21/23, 22Ω series each | identical mapping to SG shield |
+| INT | header 15 = **GPIO22** → R8 22Ω → INT_N pin 25 | **no pull-up on board**; open-drain per datasheet → overlay adds Pi pull-up (D14) |
+| RESET | header 11 = **GPIO17** → R29 22Ω → {R28 100k↑3.3V, S1 button↓GND} → R27 10k + C23 0.1µF → RESET_N pin 5 | active-low; manual reset button on board |
+| Straps | SPI_CFG0/CFG1/MS_SEL/SWPD/TX2P4 all default LOW (chip internal pull-downs) = OA w/ protection; NO solder jumpers each → 4.7k (R12–R16) → 3.3V | CFG0+CFG1 bridged = generic SPI no CRC (D13); hat #1 photo shows both bridged |
+| Pair | J1 Molex Micro-Fit 430450201: **ckt 1 = DA−, ckt 2 = DA+** (T1 WE-STST secondary pins 6/7) | ckt 1 = silk triangle; DC-shorted through winding — identify by silk, wire bench pair straight |
+| Power | **3.3V rail only** (header 1/17); 5V net dead-ends at header pads 2/4 | ADIN + DS3231 RTC both on 3.3V |
+| Extras | DS3231 RTC on I2C + SQW→header 12; ADIN LED_0→header 13 (GPIO27), LED_1→header 7 (GPIO4); LED trace-jumpers NC (cut to disable); TEST1 pulled up 1.5k (R10, required per datasheet), TEST2 open | header nets PI_GPIO_25 (pin 22), CE1 (26), TXD (8), RXD (10) are dead ends — no conflicts |
+| Silicon | hat #1 chip date code **#2204** | watch item: early revs reported failing probe with "PHY ID read: 0" (see S1 debug note) |
+
+Overlay: `pi/overlays/aos-adin1110.dts` — SG overlay + GPIO22 internal
+pull-up + MAC `02:ad:11:10:00:02` (second hat overrides to `...:03` at
+runtime until the per-node config bite). 23 MHz kept (known-good, one
+variable at a time).
+
+**Validated on hardware (2026-08-10, hat #1 on nereus000):** Nick skipped
+the meter pass and mounted the hat directly (his call — a successful probe
+is stronger evidence). It probed first try, twice:
+
+- Under the leftover **SG overlay** (software steps not yet run): probe at
+  7.4 s, eth1, verify 5/5 — pinout identity with the SG shield confirmed
+  live. Caveat: INT was floating (no pull anywhere) and happened to rest
+  high; worked by luck, not design.
+- Under the **AOS overlay** (installed + reboot): probe at 7.1 s, eth1 MAC
+  `02:ad:11:10:00:02` (proves overlay active), driver ADIN1110, **PHY ID
+  0x0283bc91** (SPEC match), IRQ 22 level count = 1 and stable (no storm,
+  pull-up active), verify 5/5.
+- Working register I/O also proves the straps conclusively: hat #1 IS in
+  generic SPI no CRC mode (bridged CFG0+CFG1) — stronger than the meter
+  check it replaced. Silicon watch item (#2204 date code) cleared: PHY ID
+  reads clean.
+
+### S2 detail (2026-08-10) — first T1L link: line rate, zero loss
+
+nereus000 (Pi 5, hat #2, 192.168.7.1, MAC ...:02) ↔ nereus001 (Pi 5, hat
+#1, 192.168.7.2, MAC ...:03 NM-cloned) over Nick's crimped pair, straight
+ckt1↔ckt1. `bench/t1l_link_test.sh client` from nereus000:
+
+| Check | Result | Gate |
+|---|---|---|
+| ping ×20 | 0% loss, RTT 0.788/0.843/1.651 ms min/avg/max | 0% loss |
+| iperf3 TCP forward 10 s | **9.32 Mbps** | ≥ 8.0 |
+| iperf3 TCP reverse 10 s | **9.33 Mbps** | ≥ 8.0 |
+| iperf3 UDP 8 Mbps 10 s | 8.0 Mbps, **0% loss** | < 1% |
+
+TCP at 9.3 Mbps = the full 10BASE-T1L usable rate (SPEC: ~9.3) — the link
+adds no penalty on top of wire physics. UDP at the 8 Mbps video budget is
+lossless. NM `t1l` profiles auto-activated on carrier as designed; MAC
+clone on node 2 confirmed (`permaddr` still ...:02). Kernel skew between
+nodes (6.18.34 vs 6.18.39) — no effect on interop, as expected for a
+wire protocol.
+
+**Hat #2 validated the same way (2026-08-10, swapped onto nereus000):**
+probe at 8.6 s, eth1, PHY ID 0x0283bc91, IRQ quiet, verify 5/5 — straps
+proven bridged by working register I/O. Both hats are good hardware.
+
+Still open (flagged, not guessed): unexplained soldered wire/pin at J1
+edge on hat #1; two bare copper rectangles top of back side; hat #2 date
+code not yet recorded. nereus000 now runs an AOS hat; SG shield is on the
+shelf (S1 restore = swap back + flip the two config.txt lines).

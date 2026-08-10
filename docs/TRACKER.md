@@ -104,13 +104,40 @@ line is against the RETIRED gate — table values are what count.
 interface · `ethtool -i <if>` reports driver `adin1110`.
 **Needs:** Pi 5, SG shield on header. eth0 stays free for SSH/debug.
 
-### S2 — AOS hats: node-to-node Linux link  `[ ]`
+### S2 — AOS hats: node-to-node Linux link  `[x]`  *(demo run by Claude 2026-08-10, blessed by Nick — PASS: TCP 9.32/9.33 Mbps, 0% loss)*
 **Goal:** two Pis linked over T1L using the AOS boards; AOS hardware validated.
-- [ ] Buzz out AOS hat: CS/IRQ/RESET GPIOs, strap state, pair-connector
+- [x] Buzz out AOS hat: CS/IRQ/RESET GPIOs, strap state, pair-connector
       polarity (or obtain schematic from AOS) → record in DESIGN.md
-- [ ] Overlay variant for AOS pinout; hats on Pi 5 + Pi 3/4
-- [ ] Wire pair, static IPs (192.168.7.1/2), link up both ends
-- [ ] Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's reference)
+      → DONE via Nick's KiCad layout + schematic + photos + live
+      validation (DESIGN.md §S2 detail): pinout = SG shield (CE0/22/17);
+      straps default OA, hat #1 re-strapped generic-SPI-no-CRC (D13,
+      proven by working register I/O); INT_N pull-up missing on board →
+      overlay workaround (D14). Hat #1 probed on nereus000: PHY ID
+      0x0283bc91, verify 5/5; hat #2 validated identically same day. Remaining: hat #2
+      date code; J1 wire + copper-pad
+      questions (checklist §C).
+- [x] Overlay variant for AOS pinout; hats on Pi 5 + second node
+      → `pi/overlays/aos-adin1110.dts` on BOTH nodes; second node is a
+      second **Pi 5** (nereus001), not the Pi 3/4 — Nick's call 2026-08-10
+      (identical kernel/recipe; SPEC inventory table not yet amended).
+      nereus000 = hat #2, .7.1, MAC ...:02 · nereus001 = hat #1, .7.2,
+      MAC ...:03 (NM clone). Both verify 5/5 from cold boot. Tooling:
+      `pi/setup_t1l_ip.sh`, `bench/t1l_link_test.sh`, build script takes
+      sg|aos arg. nereus001 on tailnet via vendored pi-tailscale-setup
+      skill. Live rehearsal of pi-kernel-upgrade: first-boot unattended
+      upgrade bumped nereus001 to 6.18.39 and orphaned the freshly built
+      modules; rebuild fixed it (nereus000 still on 6.18.34 — will hit
+      the same on next apt upgrade).
+- [x] Wire pair, static IPs (192.168.7.1/2), link up both ends
+      → DONE 2026-08-10: link test 4/4 — TCP 9.32/9.33 Mbps fwd/rev (line
+      rate), UDP 8M 0% loss, ping 0% loss RTT 0.84 ms (DESIGN.md §S2)
+- [ ] ~~Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's
+      reference)~~ — DESCOPED by Nick 2026-08-10: no logic analyzer on the
+      bench. CONSEQUENCE for S4: on a PHY-ID mismatch there is no golden
+      trace to diff against — fallback is register readback + the working
+      Linux node as a live reference. Also leaves the SPEC "true SCLK at
+      20/25 MHz" open question unresolvable for now. Revisit if an LA
+      turns up.
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.
 

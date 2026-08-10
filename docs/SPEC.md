@@ -136,14 +136,22 @@ pair, USB carrying no video.
 
 - SG shield JP1 (5-pin) / JP4 (3-pin): undocumented publicly; hypothesis =
   standalone-MCU breakout. Resolve by continuity or by emailing SG.
-- AOS hat: CS/IRQ/RESET GPIO mapping, strap state, pair-connector polarity —
-  buzz out in S2 (or get schematic from AOS).
+- ~~AOS hat: CS/IRQ/RESET GPIO mapping, strap state, pair-connector
+  polarity~~ — ANSWERED from AOS design files (2026-08-10, S2): CE0 /
+  GPIO22 / GPIO17, same as SG shield; straps default OA (hats re-strapped
+  to generic SPI no CRC via CFG0+CFG1 jumpers); J1 ckt 1 = DA−. One board
+  gap: INT_N pull-up missing → Pi internal pull-up in overlay. Full table
+  in DESIGN.md §S2 detail; hat #1 validated live on nereus000 (PHY ID
+  0x0283bc91, verify 5/5); hat #2 still to verify per
+  `docs/aos_hat_checklist.md`.
 - Sofar's OA-mode Linux/BM driver status — input to S7 decision.
 - ~~AE3 `machine.SPI` real throughput~~ — ANSWERED by S0 (2026-08-09):
   4.89 Mbps max effective, software-limited (polled per-byte port driver).
   Video from the AE3 is budgeted ~4 Mbps until a C driver exists (DESIGN.md D8).
 - True AE3 SCLK at requested 20 vs 25 MHz (timings identical; even-divider
-  rules suggest one repr lies) — check with logic analyzer when S2's is out.
+  rules suggest one repr lies) — was waiting on S2's logic analyzer; Nick
+  has none (descoped 2026-08-10). Parked until an LA turns up; irrelevant
+  to the ceiling, which is software (D8).
 - AE3 NPU inference rate: small detector (YOLO-class) fps vs input size on
   HD frames (tiled/downscaled) — gates T2; bench when T2 work begins
   (sequenced after T1 per Nick).

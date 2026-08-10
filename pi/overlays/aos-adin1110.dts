@@ -1,0 +1,78 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * AOS BOREALIS Pi-Zero SPE hat (aos-rpi-zero-spe, ADIN1110) on
+ * Raspberry Pi SPI0 CE0.
+ *
+ * Facts and sources (S2 buzz-out, 2026-08-10 — DESIGN.md §AOS hat):
+ *  - AOS KiCad layout netlist (aos-rpi-zero-spe.kicad_pcb) + schematic PDF:
+ *    CS = header pin 24 (CE0), INT = pin 15 (GPIO22), RESET_N = pin 11
+ *    (GPIO17, 100k pull-up + RC + manual button on board), SPI0 on
+ *    pins 19/21/23. Same mapping as the SG shield.
+ *  - Straps: all five config pins default LOW via ADIN1110 internal
+ *    pull-downs (= OPEN Alliance mode). Boards re-strapped to generic
+ *    SPI without CRC by bridging the SPI_CFG0 + SPI_CFG1 solder jumpers
+ *    (each -> 4.7k -> 3.3V). Verify per docs/aos_hat_checklist.md before
+ *    first use; `adi,spi-crc` must NOT be set.
+ *  - INT_N (ADIN1110 datasheet p.9, pin 25): open drain, active low,
+ *    requires external pull-up — the AOS board has NONE on this net
+ *    (R10 1.5k is on TEST1, which is correct per datasheet). Therefore
+ *    this overlay enables the Pi's internal pull-up on GPIO22
+ *    (brcm,pull = 2) — the one functional difference from the SG
+ *    overlay. If IRQs misbehave, fit 1.5k-4.7k INT->3.3V on the hat.
+ *  - 23 MHz kept from the known-good SG bring-up (ADIN1110 max 25 MHz).
+ *  - Binding: adi,adin1110.yaml — interrupt level-low (driver hardcodes
+ *    IRQF_TRIGGER_LOW), reset-gpios active-low.
+ *
+ * MAC is locally administered and fixed (node 2 of the project scheme;
+ * SG shield node = ...:01). For the second AOS hat on the other Pi,
+ * override at runtime until the per-node config bite:
+ *   ip link set dev eth1 address 02:ad:11:10:00:03
+ */
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&spi0>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			adin1110: ethernet@0 {
+				compatible = "adi,adin1110";
+				reg = <0>;	/* CE0 */
+				pinctrl-names = "default";
+				pinctrl-0 = <&adin1110_int_pin>;
+				interrupt-parent = <&gpio>;
+				interrupts = <22 8>;		/* IRQ_TYPE_LEVEL_LOW */
+				reset-gpios = <&gpio 17 1>;	/* GPIO_ACTIVE_LOW */
+				spi-max-frequency = <23000000>;
+				local-mac-address = [02 ad 11 10 00 02];
+				status = "okay";
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target = <&gpio>;
+		__overlay__ {
+			adin1110_int_pin: adin1110_int_pin {
+				brcm,pins = <22>;
+				brcm,function = <0>;	/* input */
+				brcm,pull = <2>;	/* pull-up: board lacks
+							   INT_N pull-up (open
+							   drain, needs one) */
+			};
+		};
+	};
+};
