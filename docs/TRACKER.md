@@ -104,11 +104,18 @@ line is against the RETIRED gate — table values are what count.
 interface · `ethtool -i <if>` reports driver `adin1110`.
 **Needs:** Pi 5, SG shield on header. eth0 stays free for SSH/debug.
 
-### S2 — AOS hats: node-to-node Linux link  `[ ]`
+### S2 — AOS hats: node-to-node Linux link  `[~]`
 **Goal:** two Pis linked over T1L using the AOS boards; AOS hardware validated.
-- [ ] Buzz out AOS hat: CS/IRQ/RESET GPIOs, strap state, pair-connector
+- [~] Buzz out AOS hat: CS/IRQ/RESET GPIOs, strap state, pair-connector
       polarity (or obtain schematic from AOS) → record in DESIGN.md
+      → Nick supplied KiCad layout + schematic + photos; facts extracted
+      and recorded (DESIGN.md §S2 detail): pinout = SG shield (CE0/22/17);
+      straps default OA, hats re-strapped generic-SPI-no-CRC (D13); INT_N
+      pull-up missing on board → overlay workaround (D14). Remaining:
+      Nick's meter verification (`docs/aos_hat_checklist.md`), both hats.
 - [ ] Overlay variant for AOS pinout; hats on Pi 5 + Pi 3/4
+      → overlay drafted in bite 1 (`pi/overlays/aos-adin1110.dts`,
+      compile-tested); install + hardware swap is this bite
 - [ ] Wire pair, static IPs (192.168.7.1/2), link up both ends
 - [ ] Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's reference)
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.

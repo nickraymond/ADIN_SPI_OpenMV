@@ -67,6 +67,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D10 | 2026-08-09 | 12 Mbps S0 gate retired → transport gate = SPI effective ≥ 2× T1 stream bitrate (≥3.5 Mbps) | Original gate was derived from the 8 Mbps T1L budget, a workload the AE3 encoder cannot generate; new gate derives from the committed product mode. Measured 4.89 Mbps passes. |
 | D11 | 2026-08-09 | Edge inference (T2/S8) sequenced strictly after T1 streaming is met (Nick) | One bottleneck at a time; the NPU bench is S8's first bite, not this sprint's. |
 | D12 | 2026-08-09 | S1 driver via out-of-tree module build (vendored mainline sources), not SG's full kernel rebuild (Nick approved) | Same two driver files either way; builds in ~1 min against installed headers, stock rpt kernel untouched, reversible. Trade-off: apt kernel upgrades orphan the modules → re-run `pi/build_adin1110.sh` (script detects and fails loudly). Provenance pinned in `pi/drivers/adin1110/README.md` (rpi-6.18.y @ 222a4b41). |
+| D13 | 2026-08-10 | AOS hats run generic SPI without CRC via bridged SPI_CFG0+SPI_CFG1 solder jumpers (hat #1 arrived pre-bridged; verify per checklist) | Board default is all-straps-low = OPEN Alliance w/ protection (internal pull-downs, ADIN1110 datasheet), which mainline `adin1110.c` cannot speak. Bridging both jumpers (each → 4.7k → 3.3V) matches the SG shield config and D1. Jumpers are reversible for S7's optional OA spike. |
+| D14 | 2026-08-10 | AOS overlay enables Pi internal pull-up on GPIO22 (INT) — the one functional difference from the SG overlay | AOS board has no pull-up on INT_N; datasheet (p.9, pin 25) specifies open-drain, active-low, 1.5 kΩ pull-up to VDDIO required (board's R10 1.5k is on TEST1 — itself required, so not a misplacement; INT pull-up simply absent). Pi internal ~50 kΩ is out of datasheet spec but adequate for a level IRQ at bring-up; fallback = 1.5–4.7 kΩ bodge INT→3.3V if IRQs misbehave. Reported to AOS (draft in `docs/aos_hat_checklist.md`). |
 
 ## Verified-facts ledger
 
@@ -273,3 +275,34 @@ As-built facts (verified on hardware, not assumed):
 - Debug note for future PHY trouble: RPi-forum thread on this driver
   reports early ADIN1110 silicon revs fail probe with "PHY ID read: 0"
   (-EIO). Ours reads clean.
+
+### S2 detail (2026-08-10) — AOS BOREALIS hat: facts from design files
+
+Sources, in order of authority: **AOS KiCad layout netlist**
+(`aos-rpi-zero-spe.kicad_pcb`, provided by Nick, parsed pad→net;
+authoritative for the fabbed board), AOS schematic PDF (`aos-rpi-zero-spe`,
+title block: "Based on a MM Ethernet board by N. Seidle", CC BY-SA 4.0, rev
+field unpopulated), **ADIN1110 datasheet p.9 pin table** (netlist pad
+numbers match datasheet pin numbers exactly, validating the Eagle import),
+and photos of hat #1. Meter verification per `docs/aos_hat_checklist.md`
+pending — treat rows below as design-file facts until then.
+
+| Fact | Value | Notes |
+|---|---|---|
+| SPI | SPI0 **CE0** (header 24 → R24 22Ω → CS_N pin 29); MOSI/MISO/SCLK header 19/21/23, 22Ω series each | identical mapping to SG shield |
+| INT | header 15 = **GPIO22** → R8 22Ω → INT_N pin 25 | **no pull-up on board**; open-drain per datasheet → overlay adds Pi pull-up (D14) |
+| RESET | header 11 = **GPIO17** → R29 22Ω → {R28 100k↑3.3V, S1 button↓GND} → R27 10k + C23 0.1µF → RESET_N pin 5 | active-low; manual reset button on board |
+| Straps | SPI_CFG0/CFG1/MS_SEL/SWPD/TX2P4 all default LOW (chip internal pull-downs) = OA w/ protection; NO solder jumpers each → 4.7k (R12–R16) → 3.3V | CFG0+CFG1 bridged = generic SPI no CRC (D13); hat #1 photo shows both bridged |
+| Pair | J1 Molex Micro-Fit 430450201: **ckt 1 = DA−, ckt 2 = DA+** (T1 WE-STST secondary pins 6/7) | ckt 1 = silk triangle; DC-shorted through winding — identify by silk, wire bench pair straight |
+| Power | **3.3V rail only** (header 1/17); 5V net dead-ends at header pads 2/4 | ADIN + DS3231 RTC both on 3.3V |
+| Extras | DS3231 RTC on I2C + SQW→header 12; ADIN LED_0→header 13 (GPIO27), LED_1→header 7 (GPIO4); LED trace-jumpers NC (cut to disable); TEST1 pulled up 1.5k (R10, required per datasheet), TEST2 open | header nets PI_GPIO_25 (pin 22), CE1 (26), TXD (8), RXD (10) are dead ends — no conflicts |
+| Silicon | hat #1 chip date code **#2204** | watch item: early revs reported failing probe with "PHY ID read: 0" (see S1 debug note) |
+
+Overlay: `pi/overlays/aos-adin1110.dts` — SG overlay + GPIO22 internal
+pull-up + MAC `02:ad:11:10:00:02` (second hat overrides to `...:03` at
+runtime until the per-node config bite). 23 MHz kept (known-good, one
+variable at a time).
+
+Open (flagged, not guessed): unexplained soldered wire/pin at J1 edge on
+hat #1; two bare copper rectangles top of back side; hat #2 build state —
+all in checklist §C.
