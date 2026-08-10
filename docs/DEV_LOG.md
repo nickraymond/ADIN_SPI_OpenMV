@@ -17,6 +17,44 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S2 — AOS hat #1 validated: probes on Pi 5, PHY ID match
+
+**Branch:** sprint/2-aos-node-link
+
+**Done:**
+- Nibble 1 plan approved; scope shifted twice as Nick supplied better
+  sources: web (no public docs) → schematic PDF → full KiCad layout.
+  Parsed the layout netlist pad→net (authoritative for the fabbed board);
+  pad numbers match ADIN1110 datasheet p.9 exactly.
+- Facts recorded (DESIGN.md §S2 detail): AOS pinout = SG shield
+  (CE0/GPIO22 INT/GPIO17 RESET); 3.3V-only; J1 ckt1 = DA−; straps default
+  OA → hat #1 pre-bridged CFG0+CFG1 = generic SPI no CRC (D13).
+- **Board bug found via netlist + datasheet:** INT_N (open-drain) has no
+  pull-up on the board; R10 1.5k is on TEST1 (required there, so not a
+  misplacement). Workaround: GPIO22 internal pull-up in overlay (D14).
+  Draft note to AOS in docs/aos_hat_checklist.md §D.
+- `pi/overlays/aos-adin1110.dts` (SG overlay + pull-up + MAC ...:02) +
+  `docs/aos_hat_checklist.md` (meter checklist, now hat-#2/debug only).
+- Nick mounted hat #1 on nereus000 directly (skipping the meter pass, his
+  call). Probed first try under the stale SG overlay (floating INT rested
+  high — luck), then cleanly under the AOS overlay after install+reboot:
+  **eth1 MAC 02:ad:11:10:00:02, PHY ID 0x0283bc91, IRQ quiet, verify
+  5/5.** Straps proven by working register I/O; #2204 silicon concern
+  cleared.
+
+**Broke/surprised us:**
+- Tailscale SSH on nereus000 now demands per-session browser re-auth —
+  ssh commands hang until someone approves the login URL. Fix before the
+  Pi 3/4 bite.
+- The hat worked under the SG overlay before any AOS software existed —
+  identical pinout meant the only real difference is the INT pull-up.
+
+**Next:** hat #2 checklist (or live validation) + Pi 3/4 bring-up: driver
+build for its kernel, overlay install, MAC ...:03, then wire the pair +
+static IPs + iperf3 (S2 demo).
+
+---
+
 ## 2026-08-09 — Sprint S1 — Pi 5 ADIN1110 driver up: eth1 probes, PHY ID confirmed
 
 **Branch:** sprint/1-pi5-adin1110-driver

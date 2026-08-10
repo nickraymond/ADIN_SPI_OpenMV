@@ -303,6 +303,25 @@ pull-up + MAC `02:ad:11:10:00:02` (second hat overrides to `...:03` at
 runtime until the per-node config bite). 23 MHz kept (known-good, one
 variable at a time).
 
-Open (flagged, not guessed): unexplained soldered wire/pin at J1 edge on
-hat #1; two bare copper rectangles top of back side; hat #2 build state —
-all in checklist §C.
+**Validated on hardware (2026-08-10, hat #1 on nereus000):** Nick skipped
+the meter pass and mounted the hat directly (his call — a successful probe
+is stronger evidence). It probed first try, twice:
+
+- Under the leftover **SG overlay** (software steps not yet run): probe at
+  7.4 s, eth1, verify 5/5 — pinout identity with the SG shield confirmed
+  live. Caveat: INT was floating (no pull anywhere) and happened to rest
+  high; worked by luck, not design.
+- Under the **AOS overlay** (installed + reboot): probe at 7.1 s, eth1 MAC
+  `02:ad:11:10:00:02` (proves overlay active), driver ADIN1110, **PHY ID
+  0x0283bc91** (SPEC match), IRQ 22 level count = 1 and stable (no storm,
+  pull-up active), verify 5/5.
+- Working register I/O also proves the straps conclusively: hat #1 IS in
+  generic SPI no CRC mode (bridged CFG0+CFG1) — stronger than the meter
+  check it replaced. Silicon watch item (#2204 date code) cleared: PHY ID
+  reads clean.
+
+Still open (flagged, not guessed): unexplained soldered wire/pin at J1
+edge on hat #1; two bare copper rectangles top of back side; hat #2 build
+state (jumpers + date code — verify per checklist, or live, before it goes
+on the second Pi). nereus000 now runs the AOS hat; SG shield is on the
+shelf (S1 restore = swap back + flip the two config.txt lines).

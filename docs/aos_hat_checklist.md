@@ -1,5 +1,11 @@
 # AOS BOREALIS hat — verification checklist (S2 bite 1)
 
+*STATUS 2026-08-10: hat #1 validated LIVE instead (probed on nereus000,
+PHY ID match, verify 5/5 — see DESIGN.md §S2 detail); working register I/O
+supersedes checks #1–#9 for that hat. This checklist remains the procedure
+for **hat #2** before it goes on the second Pi, and the debugging tree if
+any hat stops probing. §C questions still open.*
+
 *Run once per hat, hat OFF any Pi, unpowered. Multimeter: continuity (beep)
 and resistance modes. Expected values derive from the AOS KiCad layout
 netlist (`aos-rpi-zero-spe.kicad_pcb`) and the ADIN1110 datasheet p.9 —

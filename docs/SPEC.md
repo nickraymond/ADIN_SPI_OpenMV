@@ -141,8 +141,9 @@ pair, USB carrying no video.
   GPIO22 / GPIO17, same as SG shield; straps default OA (hats re-strapped
   to generic SPI no CRC via CFG0+CFG1 jumpers); J1 ckt 1 = DA−. One board
   gap: INT_N pull-up missing → Pi internal pull-up in overlay. Full table
-  in DESIGN.md §S2 detail; meter verification per
-  `docs/aos_hat_checklist.md` still pending.
+  in DESIGN.md §S2 detail; hat #1 validated live on nereus000 (PHY ID
+  0x0283bc91, verify 5/5); hat #2 still to verify per
+  `docs/aos_hat_checklist.md`.
 - Sofar's OA-mode Linux/BM driver status — input to S7 decision.
 - ~~AE3 `machine.SPI` real throughput~~ — ANSWERED by S0 (2026-08-09):
   4.89 Mbps max effective, software-limited (polled per-byte port driver).
