@@ -35,10 +35,11 @@ else
 fi
 
 # 4. a network interface backed by driver 'adin1110' exists
+# (ethtool reports the name uppercase, "ADIN1110" — compare case-insensitively)
 ADIN_IF=""
 for ifc in /sys/class/net/*; do
     name="$(basename "$ifc")"
-    drv="$(ethtool -i "$name" 2>/dev/null | awk '/^driver:/{print $2}')"
+    drv="$(ethtool -i "$name" 2>/dev/null | awk '/^driver:/{print tolower($2)}')"
     if [ "$drv" = "adin1110" ]; then ADIN_IF="$name"; break; fi
 done
 if [ -n "$ADIN_IF" ]; then
