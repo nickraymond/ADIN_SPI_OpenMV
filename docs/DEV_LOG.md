@@ -46,8 +46,20 @@ build required to fix (= option C, priced ~50 LoC FIFO burst in one function).
 Proceeding per B: ~4 Mbps AE3 video budget through S6 (DESIGN.md D8). New open
 question in SPEC.md: true SCLK at 20/25 MHz requests (LA check in S2).
 
-**Next:** Nick's official demo run per TRACKER (verdict prints FAIL — that's
-correct output; S0's job was measurement) + nibble-4 PR. Then S1.
+**Video table (Nick re-prioritized, same session):** ran
+`bench/ae3_video_bench.py` on the AE3. Needed two fixes: fw 1.28 renamed
+`compressed()`→`to_jpeg()`; VGA+ overflowed default framebuffers inside
+`skip_frames` and the script skipped points SILENTLY (now prints skip
+reasons; `set_framebuffers(1)` fixes capture). Sensor 0x7936 letterboxes;
+QQVGA/SVGA/WXGA unsupported. **Headline: encoder is the bottleneck, not
+SPI** — all supported modes produce < ~2 Mbps (bench scene bpp 0.10–0.24;
+even at 0.875 deployment bpp: VGA ~8 fps @ 2.2 Mbps). SPI ceiling has ≥2×
+headroom. Full table in DESIGN.md. Oddity flagged: mono bytes/frame inert
+across quality settings.
+
+**Next:** Nick reviews the encoder-is-bottleneck finding (proposed: retire
+the 12 Mbps gate as mis-sized, confirm B stands) → official S0 demo run per
+TRACKER + nibble-4 PR. Then S1.
 
 **Branch:** n/a (no code yet)
 

@@ -108,6 +108,37 @@ Loopback P0→P1, 512 KB moved per point, verify pass separate from timing:
   soft ISR min 5 / median 6 / p99 15 / max 15 µs; hard ISR min 4 / median 5 /
   p99 9 / max 9 µs. The IRQ path is a non-issue at these numbers.
 
+### S0 video encode table (2026-08-09) — encoder, not SPI, is the bottleneck
+
+`bench/ae3_video_bench.py` on the AE3 (fw 1.28, sensor id 0x7936, indoor
+bench scene). Sensor facts: letterboxes (QVGA→320×200, VGA→640×400,
+HD→1280×800); QQVGA/SVGA/WXGA unsupported ("Sensor control failed");
+needs `set_framebuffers(1)` for VGA+. Supported modes at q50:
+
+| Mode | bytes/fr | bpp | enc ms | enc-limited fps | + SPI tx ms* | est fps | est Mbps |
+|---|---|---|---|---|---|---|---|
+| QVGA color | 1 884 | 0.24 | 17.2 | 58 | 3.1 | ~49 | 0.74 |
+| QVGA mono | 1 106 | 0.14 | 6.0 | 120 (cap) | 1.8 | ~100 | 0.9 |
+| VGA color | 5 611 | 0.18 | 68.5 | 14.6 | 9.2 | ~12.9 | 0.58 |
+| VGA mono | 3 328 | 0.10 | 24.1 | 41.6 | 5.4 | ~34 | 0.9 |
+| HD color | 20 611 | 0.16 | 273.6 | 3.7 | 33.7 | ~3.3 | 0.54 |
+| HD mono | 12 328 | 0.10 | 96.0 | 10.4 | 20.2 | ~8.6 | 0.85 |
+
+*SPI tx at measured 4.89 Mbps (611 KB/s), polled driver = encode and tx
+serialize. Capture time and ADIN protocol overhead not yet included.
+
+**Key finding:** the software JPEG encoder caps every supported mode below
+~2 Mbps of produced video — the ~4.9 Mbps SPI ceiling has ≥ 2× headroom
+even in the worst case. Scaled to the deployment-scene anchor (0.875 bpp,
+~4–5× worse than this bench scene): VGA color ≈ 8 fps @ 2.2 Mbps, HD color
+≈ 2.3 fps @ 1.9 Mbps — still under the SPI ceiling. The 12 Mbps S0 gate was
+sized for a workload the encoder can't generate.
+
+Oddities recorded, not yet explained: mono bytes/frame identical across
+q15–q90 (quality knob appears inert for grayscale); VGA color q75 = q90
+byte-identical. Re-measure bpp with the deployment scene/underwater footage
+before freezing stream settings (S3).
+
 ### S0 decision note (gate hit: < 12 Mbps) — RESOLVED: A then B (Nick, 2026-08-09)
 
 **Spike result (option A, done):** hypothesis confirmed from source.
