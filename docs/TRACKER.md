@@ -174,12 +174,29 @@ video that crossed the pair (page with stats at `/`).
 unchanged.
 
 ### S4 — AE3 first light: PHY ID over SPI  `[ ]`
-**Goal:** AE3 (Diagram 1 rig, generic SPI mode) proves wiring + HAL.
-- [ ] Meter check: SG shield power source (pin 1 vs pin 2 regulator) before power-on
+**Goal:** AE3 (generic SPI mode) proves wiring + HAL.
+**Rig revised 2026-08-10 (Nick, D18): AE3 drives an AOS hat, not the SG
+shield** — known-good silicon + straps (S2-validated on both hats), pair
+connector already crimped, 3.3V-only board. Header pinout = SG shield
+(DESIGN §S2 table), so Diagram 1's harness applies at the same header
+positions; hat #2 comes off nereus000 (pauses the S3 stream fixture —
+restore = remount hat + `systemctl start t1l-sender`), nereus001 + hat #1
+stays intact as the live Linux reference node on the pair.
+- [ ] Harness AE3 → hat header: SPI0 = header 19/21/23 (MOSI/MISO/SCLK),
+      CS = 24, IRQ = 15 (the GPIO22 position), RESET = 11 (the GPIO17
+      position), 3V3 = 1/17, GND. Meter sanity: 3.3 V at the hat before
+      first energize (no SG-style 5V-regulator question — AOS is
+      3.3V-only per netlist + live validation).
+      OPEN (flag, don't guess): can the AE3's 3V3 pin source the hat's
+      draw (ADIN1110 + DS3231), or does the hat need bench 3.3 V?
+- [ ] AE3 P5 (IRQ in) configured with internal pull-up — the AOS board
+      has no INT_N pull-up (D14; Pi overlay solved this Pi-side).
 - [ ] Minimal generic-SPI register read in MicroPython
-- [ ] Read PHY ID; compare LA trace against S2 golden capture on mismatch
+- [ ] Read PHY ID; on mismatch, fallback = register readback + the live
+      Linux node as reference (no LA on bench — S2 descope)
 **Demo (Nick):** REPL prints `PHY ID: 0x0283BC91 — OK`.
-**Needs:** S0 pass, SG shield freed from Pi 5 (S1 knowledge retained), 8-jumper harness.
+**Needs:** S0 pass, hat #2 freed from nereus000, 8-jumper harness. SG
+shield stays shelved as backup (S1 knowledge retained).
 
 ### S5 — AE3 raw-frame TX + loss measurement  `[ ]`
 **Goal:** AE3 transmits real Ethernet frames; link quality quantified.

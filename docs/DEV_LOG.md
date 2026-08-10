@@ -49,9 +49,11 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   enough; separate the kill and start invocations.
 - Nothing else — the pipeline came up on the first end-to-end attempt.
 
-**Next:** Nick's formal demo click (`http://nereus001-1:8080/`) → S3 → [x].
-Then S4: AE3 first light — PHY ID over SPI (SG shield freed from Pi 5,
-meter check first, 8-jumper harness).
+**Next:** S4 — AE3 first light, PHY ID over SPI. Rig revised (Nick, D18):
+AE3 drives **AOS hat #2** (freed from nereus000), not the SG shield —
+proven silicon/straps, crimped pair, 3.3V-only. Open: AE3 3V3 sourcing
+the hat. *(S3 demo passed by Nick same day → S3 [x]; VGA live ceiling
+also measured post-demo: q35 13.5 fps / q50 11.7 over the pair.)*
 
 ---
 
