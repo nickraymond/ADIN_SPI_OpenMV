@@ -1,0 +1,14 @@
+# t1l-stream-server.service — S3 receiver on the far node (nereus001).
+# Install: sudo pi/install_stream_service.sh receiver
+[Unit]
+Description=BM camera T1L stream server (ingest :8081, HTTP :8080)
+After=network.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/stream/stream_server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

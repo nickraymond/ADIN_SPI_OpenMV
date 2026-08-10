@@ -98,9 +98,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dest", default="192.168.7.2", help="stream server host")
     ap.add_argument("--ingest-port", type=int, default=8081)
-    ap.add_argument("--fps", type=float, default=15.0, help="paced rate (D16: 15)")
-    ap.add_argument("--framesize", default="QVGA", help="D16: QVGA")
-    ap.add_argument("--quality", type=int, default=90, help="D16: 90")
+    ap.add_argument("--fps", type=float, default=30.0, help="paced rate (D17: 30)")
+    ap.add_argument("--framesize", default="QVGA", help="D17: QVGA")
+    ap.add_argument("--quality", type=int, default=90, help="D17: 90 (q80 = margin fallback)")
     ap.add_argument("--serial-port", default="auto")
     args = ap.parse_args()
 
