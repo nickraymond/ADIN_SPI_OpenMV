@@ -45,12 +45,14 @@ bench/         benchmark + test scripts (S0 SPI bench, frame counters)
 
 State key: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-### S0 — AE3 SPI ceiling benchmark  `[ ]`
+### S0 — AE3 SPI ceiling benchmark  `[~]`
 **Goal:** measure what `machine.SPI(0)` actually delivers; go/no-go for the
 MicroPython-level driver.
-- [ ] Loopback P0→P1; sustained throughput at 5/10/20/25 MHz, chunk sizes 64 B–4 KB
-- [ ] GPIO edge → handler latency on P5 (IRQ path)
-- [ ] Record results in DESIGN.md; decision note if effective rate < 12 Mbps
+- [x] Loopback P0→P1; sustained throughput at 5/10/20/25 MHz, chunk sizes 64 B–4 KB
+      → **4.89 Mbps max effective, 0 errors — below the 12 Mbps gate**
+- [x] GPIO edge → handler latency on P5 (IRQ path) → soft 6 µs / hard 5 µs median
+- [x] Record results in DESIGN.md; decision note if effective rate < 12 Mbps
+      → recorded; **decision pending Nick** (spike port source / reduced budget / C)
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
 MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
 **Needs:** AE3, one jumper wire. No ADIN hardware.

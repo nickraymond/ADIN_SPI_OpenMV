@@ -72,8 +72,55 @@ unverified — treat as unknown.
 
 *(appended by sprints)*
 
-- S0 SPI benchmark: —
+- S0 SPI benchmark: **FAIL — 4.89 Mbps max effective vs ≥ 12 Mbps gate.**
+  Run 2026-08-09, AE3 fw v1.28.0-49 (2026-07-02), `bench/ae3_spi_bench.py`
+  driven remotely via nereus000, P0→P1 loopback, 0 integrity errors at every
+  point. IRQ path is excellent. Details below.
 - S2 iperf3 over T1L: —
 - S3 sustained video Mbps / fps: —
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
+
+### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
+
+Loopback P0→P1, 512 KB moved per point, verify pass separate from timing:
+
+| SPI clock | 64 B | 256 B | 1 KB | 4 KB | errors |
+|---|---|---|---|---|---|
+| 5 MHz  | 2.47 | 2.51 | 2.51 | 2.51 | 0 |
+| 10 MHz | 3.26 | 3.31 | 3.33 | 3.33 | 0 |
+| 20 MHz | 4.74 | 4.85 | 4.88 | 4.89 | 0 |
+| 25 MHz | 4.74 | 4.85 | 4.88 | **4.89** | 0 |
+
+(effective Mbps, payload bits / wall time)
+
+- **20 vs 25 MHz identical to the microsecond** → the real SCLK is clamped at
+  or below 20 MHz; requesting 25 changes nothing.
+- **Bottleneck is per-byte, not per-call**: 64 B → 4 KB chunks barely helps,
+  and a single 4 KB `spi.write()` call takes 6.6 ms where wire time at
+  20 MHz is 1.6 ms. Follow-up probe: TX-only `write()` 4.97 Mbps, RX-only
+  `readinto()` 4.90 Mbps at 20/25 MHz — direction-independent. Hypothesis
+  (unverified, flag not fact): polled non-DMA FIFO in the port's SPI driver,
+  ~600 ns/byte CPU cost. Confirm by reading the OpenMV/MicroPython Alif port
+  source before acting on it.
+- **IRQ latency (P4→P5 edge → Python handler, 100 edges, 0 missed):**
+  soft ISR min 5 / median 6 / p99 15 / max 15 µs; hard ISR min 4 / median 5 /
+  p99 9 / max 9 µs. The IRQ path is a non-issue at these numbers.
+
+### S0 decision note (gate hit: < 12 Mbps) — decision PENDING Nick
+
+The MicroPython-level driver cannot carry the ≤ 8 Mbps video budget:
+~4.9 Mbps raw SPI ceiling before any protocol overhead (ADIN frame headers,
+control reads, turnaround) — realistic payload well under 4.5 Mbps. Options:
+
+- **A. Timeboxed spike:** read the Alif port SPI driver source; if the slow
+  path is a known/fixable issue (DMA exists but unused, divider bug), a
+  firmware fix or OpenMV upstream issue may recover most of the gap cheaply.
+- **B. Proceed at reduced budget:** S4–S6 work unchanged at ~4 Mbps video
+  (e.g. VGA mono @ ~8 fps fits). Ship the ladder, treat C-level DMA driver
+  as the follow-on. Still ~40× the v1 UART path.
+- **C. Go to C now:** native OpenMV firmware driver with DMA (the iceboxed
+  lwIP/C path pulled forward). Highest cost, removes the ceiling.
+
+Recommendation: A then B — spike is cheap and informs whether B's ceiling is
+temporary; S1–S3 don't touch AE3 SPI and can proceed regardless.

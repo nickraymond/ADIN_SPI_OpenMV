@@ -17,7 +17,30 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
-## 2026-08-09 — Pre-work — Project scoped, hardware verified, docs created
+## 2026-08-09 — Sprint S0 — SPI bench run: 4.89 Mbps ceiling, gate FAILED
+
+**Branch:** sprint/0-SPI-bench-test
+
+**Done:**
+- `bench/ae3_spi_bench.py` (~250 LoC) + 15 host-side unit tests for the pure
+  helpers (all pass, CPython 3.13). Two-phase: loopback throughput sweep,
+  then auto-detected jumper move to P4→P5 for IRQ latency.
+- Ran it on the AE3 (fw v1.28.0-49) remotely: Mac → ssh pi@nereus000 →
+  mpremote → `/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_*-if00`. Nick moved
+  the jumper on cue. mpremote 1.28.0 installed on nereus000.
+- Results recorded in DESIGN.md §Bench results + decision note. Headline:
+  **max 4.89 Mbps effective (25 MHz/4 KB), 0 integrity errors, FAIL vs
+  12 Mbps gate.** IRQ latency superb (soft median 6 µs, hard 5 µs, 0 missed).
+
+**Broke/surprised us:**
+- 20 and 25 MHz timings identical → SCLK clamped ≤ 20 MHz.
+- Bottleneck is per-byte inside the port driver (TX-only = RX-only = duplex
+  ≈ 5 Mbps; chunk size nearly irrelevant). Hypothesis: polled non-DMA FIFO —
+  unverified, needs port-source read.
+- `/dev/ttyACM0` on nereus000 is the N6, not the AE3 — use the by-id path.
+
+**Next:** Nick decides on the decision note (spike port source / proceed at
+reduced budget / go C). Then: Nick's official demo run per TRACKER + PR.
 
 **Branch:** n/a (no code yet)
 
