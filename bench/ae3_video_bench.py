@@ -73,7 +73,11 @@ def bench_one(fs_attr, pf_attr, quality):
         img = sensor.snapshot()
         t1 = time.ticks_us()
         w, h = img.width(), img.height()
-        jpg = img.compressed(quality=quality)
+        # fw >= 1.28 renamed compressed() -> to_jpeg(copy=True)
+        if hasattr(img, "to_jpeg"):
+            jpg = img.to_jpeg(quality=quality, copy=True)
+        else:
+            jpg = img.compressed(quality=quality)
         t2 = time.ticks_us()
 
         total_cap += time.ticks_diff(t1, t0)
