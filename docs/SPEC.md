@@ -149,7 +149,9 @@ pair, USB carrying no video.
   4.89 Mbps max effective, software-limited (polled per-byte port driver).
   Video from the AE3 is budgeted ~4 Mbps until a C driver exists (DESIGN.md D8).
 - True AE3 SCLK at requested 20 vs 25 MHz (timings identical; even-divider
-  rules suggest one repr lies) — check with logic analyzer when S2's is out.
+  rules suggest one repr lies) — was waiting on S2's logic analyzer; Nick
+  has none (descoped 2026-08-10). Parked until an LA turns up; irrelevant
+  to the ceiling, which is software (D8).
 - AE3 NPU inference rate: small detector (YOLO-class) fps vs input size on
   HD frames (tiled/downscaled) — gates T2; bench when T2 work begins
   (sequenced after T1 per Nick).

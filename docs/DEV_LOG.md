@@ -75,8 +75,15 @@ TCP 9.32/9.33 Mbps fwd/rev (full T1L line rate), UDP 8 Mbps 0% loss,
 ping 0% loss RTT avg 0.84 ms.** Numbers in DESIGN.md §S2 detail. NM
 profiles auto-activated on carrier; node-2 MAC clone confirmed.
 
-**Next:** golden logic-analyzer captures (last S2 item), then Nick
-formally re-runs/blesses the demo to close S2.
+**Sprint closed (2026-08-10):** Nick blessed the demo run (delegated to
+Claude, watched live) and DESCOPED the logic-analyzer captures — no LA on
+the bench. S4 consequence noted in TRACKER (no golden trace to diff;
+fallback = register readback + live Linux node as reference). **S2 → [x].**
+
+**Next:** merge PR #3, then S3 — video across T1L, Pi to Pi: AE3 → Pi 5
+over USB (existing setup) constrained per budget, sender service on
+nereus000 → frames over the pair → receiver on nereus001 serves
+multipart-MJPEG HTTP. New branch `sprint/3-<slug>`.
 
 ---
 

@@ -104,7 +104,7 @@ line is against the RETIRED gate — table values are what count.
 interface · `ethtool -i <if>` reports driver `adin1110`.
 **Needs:** Pi 5, SG shield on header. eth0 stays free for SSH/debug.
 
-### S2 — AOS hats: node-to-node Linux link  `[~]`
+### S2 — AOS hats: node-to-node Linux link  `[x]`  *(demo run by Claude 2026-08-10, blessed by Nick — PASS: TCP 9.32/9.33 Mbps, 0% loss)*
 **Goal:** two Pis linked over T1L using the AOS boards; AOS hardware validated.
 - [x] Buzz out AOS hat: CS/IRQ/RESET GPIOs, strap state, pair-connector
       polarity (or obtain schematic from AOS) → record in DESIGN.md
@@ -131,7 +131,13 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
 - [x] Wire pair, static IPs (192.168.7.1/2), link up both ends
       → DONE 2026-08-10: link test 4/4 — TCP 9.32/9.33 Mbps fwd/rev (line
       rate), UDP 8M 0% loss, ping 0% loss RTT 0.84 ms (DESIGN.md §S2)
-- [ ] Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's reference)
+- [ ] ~~Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's
+      reference)~~ — DESCOPED by Nick 2026-08-10: no logic analyzer on the
+      bench. CONSEQUENCE for S4: on a PHY-ID mismatch there is no golden
+      trace to diff against — fallback is register readback + the working
+      Linux node as a live reference. Also leaves the SPEC "true SCLK at
+      20/25 MHz" open question unresolvable for now. Revisit if an LA
+      turns up.
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.
 
