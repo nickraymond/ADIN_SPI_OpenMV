@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# Build + install the ADIN1110 out-of-tree modules and the SG shield
-# overlay on a Raspberry Pi. Idempotent — safe to re-run (required after
-# any apt kernel upgrade). Needs sudo for the install steps.
+# Build + install the ADIN1110 out-of-tree modules and a board overlay
+# on a Raspberry Pi. Idempotent — safe to re-run (required after any apt
+# kernel upgrade). Needs sudo for the install steps.
 #
-# Usage:  ./build_adin1110.sh          (from pi/, on the Pi)
+# Usage:  ./build_adin1110.sh [sg|aos]     (from pi/, on the Pi; default sg)
+#   sg  = SG-Electronics SPE shield  (sg-adin1110.dts)
+#   aos = AOS BOREALIS hat           (aos-adin1110.dts)
 set -euo pipefail
 export PATH="$PATH:/usr/sbin:/sbin"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DRVDIR="$HERE/drivers/adin1110"
-DTS="$HERE/overlays/sg-adin1110.dts"
-OVERLAY_NAME="sg-adin1110"
+BOARD="${1:-sg}"
+case "$BOARD" in
+    sg)  OVERLAY_NAME="sg-adin1110" ;;
+    aos) OVERLAY_NAME="aos-adin1110" ;;
+    *)   echo "FAIL: unknown board '$BOARD' (sg|aos)" >&2; exit 1 ;;
+esac
+DTS="$HERE/overlays/$OVERLAY_NAME.dts"
 BOOTFW="/boot/firmware"
 KREL="$(uname -r)"
 KDIR="/lib/modules/$KREL/build"
@@ -51,8 +58,8 @@ step "Enable overlay in $BOOTFW/config.txt"
 if grep -q "^dtoverlay=$OVERLAY_NAME" "$BOOTFW/config.txt"; then
     echo "already enabled"
 else
-    printf '\n[all]\n# ADIN1110 SPE shield (SG-Electronics) — added by build_adin1110.sh\ndtoverlay=%s\n' \
-        "$OVERLAY_NAME" | sudo tee -a "$BOOTFW/config.txt" >/dev/null
+    printf '\n[all]\n# ADIN1110 SPE board (%s) — added by build_adin1110.sh\ndtoverlay=%s\n' \
+        "$BOARD" "$OVERLAY_NAME" | sudo tee -a "$BOOTFW/config.txt" >/dev/null
     echo "added dtoverlay=$OVERLAY_NAME"
 fi
 

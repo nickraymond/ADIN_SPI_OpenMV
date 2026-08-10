@@ -35,18 +35,25 @@ if ! command -v iperf3 >/dev/null; then
 fi
 command -v iperf3 >/dev/null || die "iperf3 still missing after install"
 
+# Both nodes run the same overlay, which bakes MAC ...:02. Two identical
+# MACs on one link segment breaks L2, so node 2 clones ...:03 via NM.
+CLONED_MAC=""
+[ "$NODE" = "2" ] && CLONED_MAC="02:ad:11:10:00:03"
+
 # Create or update the 't1l' NM profile. never-default + no gateway.
 if nmcli -t -f NAME con show | grep -qx "t1l"; then
     echo "updating existing 't1l' profile"
     nmcli con mod t1l connection.interface-name "$ADIN_IF" \
         ipv4.method manual ipv4.addresses "$IP/24" ipv4.gateway "" \
         ipv4.never-default yes ipv6.method disabled \
+        ethernet.cloned-mac-address "$CLONED_MAC" \
         connection.autoconnect yes
 else
     echo "creating 't1l' profile"
     nmcli con add type ethernet ifname "$ADIN_IF" con-name t1l \
         ipv4.method manual ipv4.addresses "$IP/24" \
         ipv4.never-default yes ipv6.method disabled \
+        ethernet.cloned-mac-address "$CLONED_MAC" \
         connection.autoconnect yes
 fi
 
