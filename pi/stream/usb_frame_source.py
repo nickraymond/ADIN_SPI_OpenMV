@@ -81,8 +81,13 @@ def reboot_board(port, settle_s=6.0, wait_port_s=15.0):
             # No service reply — assume the post-crash safe-mode REPL.
             ser.write(b"\x03\r\nimport machine; machine.reset()\r\n")
             time.sleep(0.3)
+    except serial.SerialException:
+        pass  # device dropped off USB mid-exchange = the reset took effect
     finally:
-        ser.close()
+        try:
+            ser.close()
+        except serial.SerialException:
+            pass
     time.sleep(settle_s)  # device drops off USB, re-enumerates, service starts
     deadline = time.monotonic() + wait_port_s
     while time.monotonic() < deadline:
