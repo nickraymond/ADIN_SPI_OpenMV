@@ -78,9 +78,14 @@ PASSES. S8 stub added (T2, strictly after T1). N6 owns the public-720p cell
 single-buffered / 16.7 ms double. ROI visualization delivered (single 16:10
 crop shared by all modes; density-only difference). Decisions D9–D11.
 
-**Next:** Nick's official S0 demo run (per revised gate: table ≥3.5 Mbps =
-PASS; ignore the script's old printed 12 Mbps verdict) + nibble-4 PR.
-Then S1.
+**Sprint closed:** Nick ran the S0 demo in OpenMV IDE — PASS against the
+revised ≥3.5 Mbps gate. PR #1 open
+(https://github.com/nickraymond/ADIN_SPI_OpenMV/pull/1), Nick approving.
+S0 marked `[x]` in TRACKER.
+
+**Next:** merge PR #1, then S1 — Pi 5 + SG shield: build the adin1110
+kernel module, install SG's overlay (SPI0 CE0, 23 MHz, IRQ GPIO22, no
+adi,spi-crc), verify probe + interface up. New branch `sprint/1-<slug>`.
 
 **Branch:** n/a (no code yet)
 

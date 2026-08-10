@@ -45,7 +45,7 @@ bench/         benchmark + test scripts (S0 SPI bench, frame counters)
 
 State key: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-### S0 — AE3 SPI ceiling benchmark  `[~]`
+### S0 — AE3 SPI ceiling benchmark  `[x]`  *(demo run by Nick 2026-08-09 — PASS)*
 **Goal:** measure what `machine.SPI(0)` actually delivers; go/no-go for the
 MicroPython-level driver.
 - [x] Loopback P0→P1; sustained throughput at 5/10/20/25 MHz, chunk sizes 64 B–4 KB
