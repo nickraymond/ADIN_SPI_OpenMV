@@ -173,8 +173,22 @@ Oddity resolved: dark-room "mono ignores quality" was a scene artifact —
 on reef content mono bytes scale q15→q90 (3 562 → 19 102 B at QVGA). The
 dark room simply had too little detail for the knob to matter.
 
+Follow-up probes (2026-08-09, answering "is something bogging us down?"):
+- **Hardware JPEG: NOT available.** Firmware exposes `sensor.JPEG` but this
+  sensor (0x7936) rejects it at every size ("Sensor control failed") — no
+  free encoder on the AE3; software encode is the only path. (N6/H.264 is
+  the hardware-encode lever, iceboxed.)
+- **Capture cost measured:** VGA RGB565 snapshot = 33.3 ms single-buffered
+  (30 fps sensor cadence), 16.7 ms with `set_framebuffers(2)`; capture DMA
+  overlaps CPU work when double-buffered, so it mostly hides behind encode
+  in a real pipeline. HD fits only 1 buffer → capture serializes there.
+- Encoder timings are trustworthy: tight `ticks_us` around `to_jpeg` only;
+  mount/USB not in the timed path; reef encode ≈ dark-room encode (77 vs
+  69 ms VGA q50) confirms per-pixel cost dominates.
+
 Multi-image trend sweep (other `images/` files) pending — pipeline is
-parameterized by label; not yet run.
+parameterized by label; not yet run. Downsampled P7071008 set committed at
+`bench/assets/ref_scene/` (raws stay untracked per Nick).
 
 ### S0 decision note (gate hit: < 12 Mbps) — RESOLVED: A then B (Nick, 2026-08-09)
 
