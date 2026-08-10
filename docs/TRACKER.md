@@ -88,7 +88,7 @@ Measured 4.89 Mbps → passes; the script's printed "≥12 Mbps FAIL" verdict
 line is against the RETIRED gate — table values are what count.
 **Needs:** AE3, one jumper wire. No ADIN hardware.
 
-### S1 — Pi 5 + SG shield: Linux driver up  `[~]`  *(all boxes verified 2026-08-09; awaiting Nick's demo run)*
+### S1 — Pi 5 + SG shield: Linux driver up  `[x]`  *(demo run by Nick 2026-08-09 — PASS)*
 **Goal:** known-good ADIN node on the Pi 5.
 - [x] Build `adin1110` kernel module → done as **out-of-tree module build**
       (vendored mainline `adin1110.c` + `adin1100.c`, stock kernel untouched —

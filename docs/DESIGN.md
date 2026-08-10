@@ -81,8 +81,8 @@ unverified — treat as unknown.
   Run 2026-08-09, AE3 fw v1.28.0-49 (2026-07-02), `bench/ae3_spi_bench.py`
   driven remotely via nereus000, P0→P1 loopback, 0 integrity errors at every
   point. IRQ path is excellent. Details below.
-- S1 Pi 5 driver bring-up: **PASS (agent-verified 2026-08-09; Nick's demo
-  pending).** Details below.
+- S1 Pi 5 driver bring-up: **PASS — demo run by Nick 2026-08-09.** Details
+  below.
 - S2 iperf3 over T1L: —
 - S3 sustained video Mbps / fps: —
 - S5 loss rate: —
