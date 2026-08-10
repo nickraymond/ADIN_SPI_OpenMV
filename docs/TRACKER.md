@@ -116,11 +116,18 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       0x0283bc91, verify 5/5; hat #2 validated identically same day. Remaining: hat #2
       date code; J1 wire + copper-pad
       questions (checklist §C).
-- [~] Overlay variant for AOS pinout; hats on Pi 5 + Pi 3/4
-      → `pi/overlays/aos-adin1110.dts` written, installed, and verified
-      live on Pi 5 (nereus000, MAC ...:02); SG shield shelved. Remaining:
-      hat #2 on the Pi 3/4 (driver build for its kernel, overlay install,
-      MAC ...:03 override)
+- [x] Overlay variant for AOS pinout; hats on Pi 5 + second node
+      → `pi/overlays/aos-adin1110.dts` on BOTH nodes; second node is a
+      second **Pi 5** (nereus001), not the Pi 3/4 — Nick's call 2026-08-10
+      (identical kernel/recipe; SPEC inventory table not yet amended).
+      nereus000 = hat #2, .7.1, MAC ...:02 · nereus001 = hat #1, .7.2,
+      MAC ...:03 (NM clone). Both verify 5/5 from cold boot. Tooling:
+      `pi/setup_t1l_ip.sh`, `bench/t1l_link_test.sh`, build script takes
+      sg|aos arg. nereus001 on tailnet via vendored pi-tailscale-setup
+      skill. Live rehearsal of pi-kernel-upgrade: first-boot unattended
+      upgrade bumped nereus001 to 6.18.39 and orphaned the freshly built
+      modules; rebuild fixed it (nereus000 still on 6.18.34 — will hit
+      the same on next apt upgrade).
 - [ ] Wire pair, static IPs (192.168.7.1/2), link up both ends
 - [ ] Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's reference)
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.

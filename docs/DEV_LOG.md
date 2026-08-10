@@ -49,9 +49,30 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 - The hat worked under the SG overlay before any AOS software existed —
   identical pinout meant the only real difference is the INT pull-up.
 
-**Next:** hat #2 checklist (or live validation) + Pi 3/4 bring-up: driver
-build for its kernel, overlay install, MAC ...:03, then wire the pair +
-static IPs + iperf3 (S2 demo).
+**Same session, continued (hat #2 + nereus001 + tooling):**
+- Hat #2 validated identically on nereus000 (PHY ID match, verify 5/5) —
+  both hats good; straps proven by working register I/O.
+- T1L tooling written + approved: `pi/setup_t1l_ip.sh <1|2>` (iperf3 + NM
+  profile `t1l`, static 192.168.7.x/24, never-default; node 2 clones MAC
+  ...:03) and `bench/t1l_link_test.sh server|client` (ping 0% / TCP ≥8
+  Mbps both ways / UDP @8M <1% loss, iperf3 JSON parsed). No-carrier
+  failure path verified on hardware. `build_adin1110.sh` now takes sg|aos.
+- **nereus001 brought up** (second Pi 5 — Nick's call, replaces the Pi 3/4
+  plan; SPEC inventory not yet amended): tailnet via pi-tailscale-setup
+  skill (vendored from bm_cam_legacy), repo cloned, driver built, AOS
+  overlay, hat #1 mounted. Node roles: nereus000 = hat #2 = .7.1,
+  nereus001 = hat #1 = .7.2/MAC ...:03.
+- **Kernel-orphan incident, resolved:** first-boot unattended upgrades
+  bumped nereus001 from 6.18.34 → 6.18.39 between driver build and the
+  hat-install power cycle → modules orphaned, probe silently absent
+  (pi-kernel-upgrade skill scenario, seen live). Rebuild against running
+  kernel + modprobe fixed it without reboot; cold-boot verify 5/5.
+  nereus000 still runs 6.18.34 with the same upgrade pending — expect a
+  rebuild there on its next apt upgrade.
+
+**Next:** Nick wires the pair → run S2 demo (`t1l_link_test.sh server` on
+nereus001, `client` on nereus000) → record numbers in DESIGN.md; then
+golden logic-analyzer captures.
 
 ---
 
