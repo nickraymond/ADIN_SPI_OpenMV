@@ -85,7 +85,10 @@ unverified — treat as unknown.
   point. IRQ path is excellent. Details below.
 - S1 Pi 5 driver bring-up: **PASS — demo run by Nick 2026-08-09.** Details
   below.
-- S2 iperf3 over T1L: —
+- S2 iperf3 over T1L: **PASS — TCP 9.32/9.33 Mbps fwd/rev (line rate),
+  UDP 8.0 Mbps @ 0% loss, ping 0% loss RTT avg 0.84 ms.** Run 2026-08-10,
+  nereus000 (hat #2, .7.1) ↔ nereus001 (hat #1, .7.2) over the bench
+  pair, `bench/t1l_link_test.sh` 4/4. Details below.
 - S3 sustained video Mbps / fps: —
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
@@ -319,6 +322,26 @@ is stronger evidence). It probed first try, twice:
   generic SPI no CRC mode (bridged CFG0+CFG1) — stronger than the meter
   check it replaced. Silicon watch item (#2204 date code) cleared: PHY ID
   reads clean.
+
+### S2 detail (2026-08-10) — first T1L link: line rate, zero loss
+
+nereus000 (Pi 5, hat #2, 192.168.7.1, MAC ...:02) ↔ nereus001 (Pi 5, hat
+#1, 192.168.7.2, MAC ...:03 NM-cloned) over Nick's crimped pair, straight
+ckt1↔ckt1. `bench/t1l_link_test.sh client` from nereus000:
+
+| Check | Result | Gate |
+|---|---|---|
+| ping ×20 | 0% loss, RTT 0.788/0.843/1.651 ms min/avg/max | 0% loss |
+| iperf3 TCP forward 10 s | **9.32 Mbps** | ≥ 8.0 |
+| iperf3 TCP reverse 10 s | **9.33 Mbps** | ≥ 8.0 |
+| iperf3 UDP 8 Mbps 10 s | 8.0 Mbps, **0% loss** | < 1% |
+
+TCP at 9.3 Mbps = the full 10BASE-T1L usable rate (SPEC: ~9.3) — the link
+adds no penalty on top of wire physics. UDP at the 8 Mbps video budget is
+lossless. NM `t1l` profiles auto-activated on carrier as designed; MAC
+clone on node 2 confirmed (`permaddr` still ...:02). Kernel skew between
+nodes (6.18.34 vs 6.18.39) — no effect on interop, as expected for a
+wire protocol.
 
 **Hat #2 validated the same way (2026-08-10, swapped onto nereus000):**
 probe at 8.6 s, eth1, PHY ID 0x0283bc91, IRQ quiet, verify 5/5 — straps

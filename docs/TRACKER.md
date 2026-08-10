@@ -128,7 +128,9 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       upgrade bumped nereus001 to 6.18.39 and orphaned the freshly built
       modules; rebuild fixed it (nereus000 still on 6.18.34 — will hit
       the same on next apt upgrade).
-- [ ] Wire pair, static IPs (192.168.7.1/2), link up both ends
+- [x] Wire pair, static IPs (192.168.7.1/2), link up both ends
+      → DONE 2026-08-10: link test 4/4 — TCP 9.32/9.33 Mbps fwd/rev (line
+      rate), UDP 8M 0% loss, ping 0% loss RTT 0.84 ms (DESIGN.md §S2)
 - [ ] Capture golden logic-analyzer traces: init, link-up, TX/RX (S4's reference)
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.

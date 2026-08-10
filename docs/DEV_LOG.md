@@ -70,9 +70,13 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   nereus000 still runs 6.18.34 with the same upgrade pending — expect a
   rebuild there on its next apt upgrade.
 
-**Next:** Nick wires the pair → run S2 demo (`t1l_link_test.sh server` on
-nereus001, `client` on nereus000) → record numbers in DESIGN.md; then
-golden logic-analyzer captures.
+**Pair test (same day, Nick wired the pair):** link test **4/4 PASS —
+TCP 9.32/9.33 Mbps fwd/rev (full T1L line rate), UDP 8 Mbps 0% loss,
+ping 0% loss RTT avg 0.84 ms.** Numbers in DESIGN.md §S2 detail. NM
+profiles auto-activated on carrier; node-2 MAC clone confirmed.
+
+**Next:** golden logic-analyzer captures (last S2 item), then Nick
+formally re-runs/blesses the demo to close S2.
 
 ---
 
