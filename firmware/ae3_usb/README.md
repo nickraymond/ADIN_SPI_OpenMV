@@ -1,18 +1,52 @@
 # firmware/ae3_usb — vendored AE3 USB capture/stream service
 
-Vendored **unmodified** from `nereus-camera-test-rig` @ `f11befe` (checked out on
-nereus000, copied 2026-08-10 for Sprint S3 bite 1). Same pattern as the vendored
-kernel driver in `pi/drivers/adin1110/` (DESIGN.md D12): reuse the proven piece,
-pin its provenance, change nothing without a reason recorded here.
+Vendored from `nereus-camera-test-rig` @ `f11befe` (checked out on nereus000,
+copied 2026-08-10 for Sprint S3 bite 1), with **one local patch** (the `reboot`
+action — see §Known firmware crash). Same pattern as the vendored kernel driver
+in `pi/drivers/adin1110/` (DESIGN.md D12): reuse the proven piece, pin its
+provenance, record every change here.
 
-| File | Origin (repo-relative) | Role |
+| File | Origin (repo-relative) | Local changes |
 |---|---|---|
-| `main.py` | `openmv/ae3/main.py` | boot entry: USB CDC shim + JSON command dispatch loop |
-| `boot.py` | `openmv/ae3/boot.py` | no-op boot hook (USB stays at firmware default) |
-| `board_config.py` | `openmv/ae3/board_config.py` | AE3 facts: framesize/pixformat allowlists, stream defaults |
-| `command_protocol.py` | `openmv/common/command_protocol.py` | wire format (JSON line + framed binary) — also imported by the host side (`pi/stream/usb_frame_source.py`), one source of truth |
-| `capture_service.py` | `openmv/common/capture_service.py` | sensor config, `start_stream` framed-JPEG loop |
-| `device_info.py` | `openmv/common/device_info.py` | `get_device_info` payload builder |
+| `main.py` | `openmv/ae3/main.py` | + `reboot` action handler |
+| `boot.py` | `openmv/ae3/boot.py` | none |
+| `board_config.py` | `openmv/ae3/board_config.py` | none |
+| `command_protocol.py` | `openmv/common/command_protocol.py` | + `"reboot"` in `ALLOWED_ACTIONS` |
+| `capture_service.py` | `openmv/common/capture_service.py` | none |
+| `device_info.py` | `openmv/common/device_info.py` | none |
+
+`command_protocol.py` is also imported by the host side
+(`pi/stream/usb_frame_source.py`) — one source of truth for the wire format.
+
+## Known firmware crash: one stream session per boot
+
+Measured on the AE3 (fw **v1.28.0-49 / 2026-07-02**, sensor PAG7936, bench runs
+2026-08-10): the **second `start_stream` session after a boot hard-crashes the
+board** — no error response, USB CDC goes dead, and depending on the crash
+flavor the board either drops off USB entirely (`error -71`, needs a physical
+power cycle) or keeps enumerating with a dead CDC (recoverable with
+`uhubctl -l 1 -p 2 -a cycle`). After a crash the firmware boots into a
+safe-mode REPL and skips `main.py`.
+
+Established by elimination, one variable at a time:
+
+- First session per boot: works in every mode (QVGA/VGA/HD) — hundreds of
+  frames, zero gaps, valid JPEGs.
+- Command loop without sensor use: stable (repeated `get_device_info` fine,
+  board alive 30+ s after a completed session).
+- Second `start_stream` (any mode, same or different settings): crash, 2/2.
+- MicroPython soft reset (Ctrl-D) does NOT clear the condition; a full
+  `machine.reset()` DOES.
+- S0's `bench/ae3_video_bench.py` did repeated `sensor.reset()` in one script
+  via mpremote raw-REPL without crashing — the trigger involves the service
+  context, not `sensor.reset()` alone. Root cause inside the firmware unknown
+  (flagged in SPEC.md §Open questions; candidate OpenMV upstream report).
+
+**Workaround (the local patch):** hosts send the `reboot` action between
+sessions — the service replies `{"rebooting": true}` and calls
+`machine.reset()` (~6 s round trip). `pi/stream/usb_frame_source.py:reboot_board()`
+wraps this, with a REPL-reset fallback for the post-crash safe-mode state, and
+`bench/usb_stream_bench.py` reboots before every mode.
 
 Why: S3's first TODO is "AE3 → Pi 5 over USB (existing setup)" — this IS the
 existing setup. The `start_stream` action pushes framed JPEGs (one JSON header

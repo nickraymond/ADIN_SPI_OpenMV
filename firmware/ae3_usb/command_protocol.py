@@ -42,7 +42,8 @@ PROTOCOL_VERSION = 1
 #: The complete command allowlist (§8). Anything else is rejected.
 #: ``start_stream`` puts the board into a continuous framed-JPEG focus stream (for
 #: manual M12 lens adjustment) until any byte arrives from the host or a safety timeout.
-ALLOWED_ACTIONS = ("get_device_info", "capture_image", "get_file", "start_stream")
+ALLOWED_ACTIONS = ("get_device_info", "capture_image", "get_file", "start_stream",
+                   "reboot")  # "reboot" is a LOCAL PATCH, not upstream (README.md)
 
 LINE_TERMINATOR = b"\n"
 

@@ -20,6 +20,7 @@ skips the blank line without a response.
 
 import glob
 import importlib.util
+import os
 import time
 from collections import namedtuple
 from pathlib import Path
@@ -52,6 +53,46 @@ def find_openmv_port(pattern=OPENMV_PORT_GLOB):
             "no OpenMV camera found (glob %r) — is the AE3 plugged in?" % pattern
         )
     return ports[0]
+
+
+def reboot_board(port, settle_s=6.0, wait_port_s=15.0):
+    """Reboot the AE3 (machine.reset) so the next stream session is per-boot fresh.
+
+    AE3 fw 1.28.0-49 hard-crashes on the second ``start_stream`` session per boot
+    (firmware/ae3_usb/README.md §Known firmware crash) — so hosts reboot the board
+    between sessions via the local-patch ``reboot`` action. Falls back to a REPL
+    reset line for the safe-mode REPL the firmware drops into after a crash.
+    Blocks until the port re-enumerates; raises TimeoutError if it never does.
+    """
+    import serial
+    ser = serial.Serial(port, 115200, timeout=0.5)
+    try:
+        ser.write(b"\n")
+        time.sleep(0.2)
+        ser.reset_input_buffer()
+        ser.write(cp.encode_message(
+            cp.make_request("reboot", "reboot-%d" % int(time.time()))
+        ))
+        deadline = time.monotonic() + 2.0
+        buf = b""
+        while time.monotonic() < deadline and b"rebooting" not in buf:
+            buf += ser.read(256)
+        if b"rebooting" not in buf:
+            # No service reply — assume the post-crash safe-mode REPL.
+            ser.write(b"\x03\r\nimport machine; machine.reset()\r\n")
+            time.sleep(0.3)
+    finally:
+        ser.close()
+    time.sleep(settle_s)  # device drops off USB, re-enumerates, service starts
+    deadline = time.monotonic() + wait_port_s
+    while time.monotonic() < deadline:
+        if os.path.exists(port):
+            return
+        time.sleep(0.5)
+    raise TimeoutError(
+        "AE3 %s: gone from USB %.0f s after reboot request — physical power "
+        "cycle needed (see README.md §Known firmware crash)" % (port, wait_port_s)
+    )
 
 
 def looks_like_jpeg(data):

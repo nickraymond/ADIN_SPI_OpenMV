@@ -22,7 +22,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "pi", "stream"))
 from usb_frame_source import (UsbFrameSource, find_openmv_port,  # noqa: E402
-                              has_jpeg_eoi, looks_like_jpeg)
+                              has_jpeg_eoi, looks_like_jpeg, reboot_board)
 
 BUDGET_MBPS = 8.0  # SPEC §Link + stream budget: ≤ 8 Mbps sustained on the T1L
 DEFAULT_MODES = "QVGA:50,VGA:50,VGA:70,HD:50"
@@ -104,8 +104,11 @@ def main():
     rows, failures = [], 0
     for framesize, quality in modes:
         label = "%s q%d" % (framesize, quality)
-        print("... %s" % label, flush=True)
+        # One stream session per boot: fw 1.28.0-49 hard-crashes on session #2
+        # (firmware/ae3_usb/README.md §Known firmware crash).
+        print("... %s (rebooting board for a fresh session)" % label, flush=True)
         try:
+            reboot_board(port)
             stats, sample, bad_jpeg = run_mode(port, framesize, quality,
                                                args.seconds, args.out)
         except (TimeoutError, RuntimeError) as exc:

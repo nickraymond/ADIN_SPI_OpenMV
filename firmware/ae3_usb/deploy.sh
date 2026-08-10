@@ -28,6 +28,21 @@ command -v mpremote >/dev/null || {
   exit 1
 }
 
+# Best-effort: break a running capture service to the REPL so mpremote's
+# raw-REPL entry doesn't race the service's stdin reader. Harmless if the
+# board is already at a REPL (or pyserial is missing).
+python3 - "$PORT" <<'PY' 2>/dev/null || true
+import sys, time
+try:
+    import serial
+except ImportError:
+    sys.exit(0)
+s = serial.Serial(sys.argv[1], 115200, timeout=0.5)
+s.write(b"\x03\x03")
+time.sleep(0.5)
+s.close()
+PY
+
 echo "deploying to $PORT"
 mpremote connect "$PORT" \
   cp "$DIR/command_protocol.py" :command_protocol.py + \

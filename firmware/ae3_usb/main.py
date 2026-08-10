@@ -97,6 +97,15 @@ def _handle_line(usb, line):
         elif action == "start_stream":
             # Blocks in a focus-stream loop until the host sends any byte (§ focus stream).
             capture_service.stream_frames(usb, command_id, board_config, settings)
+        elif action == "reboot":
+            # LOCAL PATCH (not in nereus-camera-test-rig): AE3 fw 1.28.0-49
+            # hard-crashes on the SECOND start_stream session per boot (README.md
+            # §Known firmware crash), so hosts request a clean machine.reset
+            # between sessions. Reply first so the host can pace the reconnect.
+            _send(usb, cp.completed_response(command_id, {"rebooting": True}))
+            time.sleep_ms(200)
+            import machine
+            machine.reset()
         else:  # pragma: no cover - validate_request already gates the allowlist
             _send(usb, cp.failed_response(command_id, cp.ERR_UNKNOWN_ACTION, action))
     except cp.ProtocolError as exc:

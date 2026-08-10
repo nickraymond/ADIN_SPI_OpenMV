@@ -78,6 +78,14 @@ class TestStreamParser(unittest.TestCase):
         self.assertEqual(parser.feed(b"\n\n  \n"), [])
 
 
+class TestRebootAction(unittest.TestCase):
+    def test_reboot_is_allowlisted(self):
+        # Guards the local patch: if firmware/ae3_usb is ever re-vendored from
+        # upstream, this fails until the reboot action is re-applied (README.md
+        # §Known firmware crash — hosts depend on it between stream sessions).
+        self.assertIn("reboot", cp.ALLOWED_ACTIONS)
+
+
 class TestJpegChecks(unittest.TestCase):
     def test_good_jpeg(self):
         self.assertTrue(looks_like_jpeg(JPEG))
