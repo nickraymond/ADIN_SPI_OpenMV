@@ -141,7 +141,7 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.
 
-### S3 — Video across T1L, Pi to Pi  `[~]`
+### S3 — Video across T1L, Pi to Pi  `[x]`  *(demo run by Nick 2026-08-10 — PASS: live browser video across the pair, QVGA q90 @ 30 fps, 0 loss)*
 **Goal:** full streaming pipeline working before any AE3 driver exists.
 - [x] AE3 → Pi 5 over USB (existing setup), constrained to ≤ 8 Mbps
       (settings per SPEC budget; record actual choice)
