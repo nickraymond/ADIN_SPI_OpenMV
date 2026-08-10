@@ -154,11 +154,22 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       the board → hosts reboot it between sessions (README §Known firmware
       crash; not fixed by OpenMV dev build; candidate upstream report).
       Hard fact: VGA ≥ 15 fps impossible on AE3 (software encoder).
-- [ ] Sender service on Pi 5 → frames over T1L → receiver on Pi 3/4 serves
+- [x] Sender service on Pi 5 → frames over T1L → receiver on Pi 3/4 serves
       multipart-MJPEG HTTP (no transcode)
-- [ ] Measure sustained Mbps + dropped frames at target settings
-**Demo (Nick):** open `http://<pi3>:8080/stream` in a browser → live video that
-crossed the pair.
+      → DONE 2026-08-10 (receiver = nereus001, the second Pi 5):
+      `pi/stream/t1l_sender.py` (self-healing leg: board reboot → USB
+      session → pace → relay, re-sequenced) + `pi/stream/stream_server.py`
+      (ingest :8081 speaking the project framing — **the frozen S6
+      interface** — HTTP :8080 `/stream` `/frame.jpg` `/stats.json`).
+      Both run as systemd services (`pi/services/`,
+      `pi/install_stream_service.sh`). Standing setting revised to
+      **QVGA q90 @ 30 fps** (D17; q80 = margin fallback).
+- [x] Measure sustained Mbps + dropped frames at target settings
+      → DONE 2026-08-10: 10-min sustained run under systemd at D17
+      settings — **18,032 frames / 615 s = 29.3 fps avg, 4.60 Mbps,
+      0 gaps, 0 resets (zero frame loss)**. DESIGN.md §S3 detail.
+**Demo (Nick):** open `http://nereus001-1:8080/stream` in a browser → live
+video that crossed the pair (page with stats at `/`).
 **Needs:** S2 done. This receive side is FROZEN after S3 — S6 must plug into it
 unchanged.
 

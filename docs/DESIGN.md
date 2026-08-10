@@ -70,7 +70,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D13 | 2026-08-10 | AOS hats run generic SPI without CRC via bridged SPI_CFG0+SPI_CFG1 solder jumpers (hat #1 arrived pre-bridged; verify per checklist) | Board default is all-straps-low = OPEN Alliance w/ protection (internal pull-downs, ADIN1110 datasheet), which mainline `adin1110.c` cannot speak. Bridging both jumpers (each → 4.7k → 3.3V) matches the SG shield config and D1. Jumpers are reversible for S7's optional OA spike. |
 | D14 | 2026-08-10 | AOS overlay enables Pi internal pull-up on GPIO22 (INT) — the one functional difference from the SG overlay | AOS board has no pull-up on INT_N; datasheet (p.9, pin 25) specifies open-drain, active-low, 1.5 kΩ pull-up to VDDIO required (board's R10 1.5k is on TEST1 — itself required, so not a misplacement; INT pull-up simply absent). Pi internal ~50 kΩ is out of datasheet spec but adequate for a level IRQ at bring-up; fallback = 1.5–4.7 kΩ bodge INT→3.3V if IRQs misbehave. Reported to AOS (draft in `docs/aos_hat_checklist.md`). |
 | D15 | 2026-08-10 | S3 USB source = vendored nereus-camera-test-rig capture service (`firmware/ae3_usb/`, @ f11befe) + one local patch: `reboot` action, and hosts reboot the board between stream sessions | Reuse before rewriting — the legacy `start_stream` framed-JPEG path is proven. The patch works around a hard AE3 firmware crash: the SECOND `start_stream` session per boot hard-faults the board (USB dies, physical replug sometimes needed). Reproduced 3×, isolated by elimination; NOT fixed by OpenMV dev build `11852aa3d0` (2026-08-10) despite its "PAG7936 halt for safe shutdown" note; MicroPython soft reset insufficient, `machine.reset()` clears it. Repro + details: `firmware/ae3_usb/README.md` §Known firmware crash. Candidate OpenMV upstream report. |
-| D16 | 2026-08-10 | S3 stream setting (Nick): **QVGA color q90, sender-paced to 15 fps** (~2.5 Mbps free-run ceiling measured) | Nick wanted "as high a quality as we can safely do" at 15 fps. Measured q-sweep (bench scene): q90 free-runs 35.7 fps — 2.4× the target, margin enough even for real scenes encoding 3–5× slower (S0 reef data). VGA rejected: software-encoder-bound at 9.8 fps (q70) / 12.1 (q50); **VGA ≥ 15 fps is unreachable on the AE3 on any transport** (no hardware JPEG on this sensor). For a future 30 fps mode, drop to q80 (real-scene margin at q90 is thin). |
+| D16 | 2026-08-10 | S3 stream setting (Nick): **QVGA color q90, sender-paced to 15 fps** (~2.5 Mbps free-run ceiling measured) | Nick wanted "as high a quality as we can safely do" at 15 fps. Measured q-sweep (bench scene): q90 free-runs 35.7 fps — 2.4× the target, margin enough even for real scenes encoding 3–5× slower (S0 reef data). VGA rejected: software-encoder-bound at 9.8 fps (q70) / 12.1 (q50); **VGA ≥ 15 fps is unreachable on the AE3 on any transport** (no hardware JPEG on this sensor). For a future 30 fps mode, drop to q80 (real-scene margin at q90 is thin). *(Superseded by D17 same day.)* |
+| D17 | 2026-08-10 | D16 revised (Nick, after live end-to-end tests): standing S3 setting = **QVGA q90, 30 fps** — sender/service defaults updated | Measured live over the pair on the real bench scene: q90@30 delivers 30.8 fps rx / 4.6–4.8 Mbps / 0 gaps with ~2 fps encoder surplus (thin, scene-dependent — pacer degrades gracefully by riding the source rate); q80@30 = 30.4 fps / 3.0 Mbps / ~4 fps surplus, the documented fallback if a scene can't hold 30 at q90. S6 caveat recorded: ~4.7 Mbps exceeds the ~4 Mbps AE3 SPI budget (D8), so this exact mode is USB-path only; the SPI-era target remains T1 (QVGA q35–50). |
 
 ## Verified-facts ledger
 
@@ -91,8 +92,10 @@ unverified — treat as unknown.
   UDP 8.0 Mbps @ 0% loss, ping 0% loss RTT avg 0.84 ms.** Run 2026-08-10,
   nereus000 (hat #2, .7.1) ↔ nereus001 (hat #1, .7.2) over the bench
   pair, `bench/t1l_link_test.sh` 4/4. Details below.
-- S3 sustained video Mbps / fps: — *(T1L leg pending; USB source leg measured
-  2026-08-10, detail below)*
+- S3 sustained video Mbps / fps: **PASS — 10-min sustained run 2026-08-10 at
+  the D17 setting (QVGA q90 @ 30 fps) under systemd: 18,032 frames / 615 s =
+  29.3 fps avg (29.6 rolling), 4.60 Mbps avg on the pair, 0 gaps, 0 resets —
+  every sent frame delivered.** Detail below.
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
 
@@ -390,3 +393,26 @@ Hard facts established:
   → `machine.reset()` restores the service. The deeper crash flavor
   (enumeration error -71) needs a physical replug — Pi 5 port power
   switching doesn't truly cut VBUS.
+
+### S3 detail (2026-08-10) — bites 2+3: pipeline across the pair, sustained
+
+`t1l_sender.py` (nereus000) → TCP 192.168.7.2:8081 over the T1L pair →
+`stream_server.py` (nereus001) → browser multipart MJPEG. One wire framing
+project-wide (frame JSON header + JPEG; StreamParser both hops). Sender
+re-sequences forwarded frames so receiver `gaps` = true transit loss.
+Both ends systemd services (`pi/services/`, auto-restart; sender leg
+self-heals: TCP reconnect → board reboot → new USB session, verified live
+when the receiver was restarted under it).
+
+Live end-to-end measurements (real bench scene, ~19–21 KB/frame at q90 —
+2.4× the static-bench frames, as S0's reef data predicted):
+
+| Setting | delivered fps | Mbps on pair | encoder surplus |
+|---|---|---|---|
+| q90 @ 15 fps paced | 14.9 | 2.4 | ~16 fps |
+| **q90 @ 30 fps (D17)** | **30.8 rolling / 29.3 sustained-avg** | **4.6–4.8** | ~2 fps (thin; pacer rides source rate if a scene dips) |
+| q80 @ 30 fps (fallback) | 30.4 | 3.0 | ~4 fps |
+
+Sustained: **10 min 15 s, 18,032 frames, 0 gaps, 0 resets** — zero frame
+loss across the pair at the demo setting. TCP over the T1L link adds no
+measurable penalty at this load (4.8 of 9.3 Mbps line rate).
