@@ -41,6 +41,11 @@ Established by elimination, one variable at a time:
   via mpremote raw-REPL without crashing — the trigger involves the service
   context, not `sensor.reset()` alone. Root cause inside the firmware unknown
   (flagged in SPEC.md §Open questions; candidate OpenMV upstream report).
+- **Not fixed by the OpenMV development build** (`11852aa3d0 on 2026-08-10`,
+  which includes "sensors: Add PAG7936 halt for safe shutdown"): tested
+  2026-08-10, second session still hard-crashes identically. The workaround
+  below is the standing solution on both stable v5.0.0 and dev firmware;
+  measured stream rates are identical on both.
 
 **Workaround (the local patch):** hosts send the `reboot` action between
 sessions — the service replies `{"rebooting": true}` and calls
