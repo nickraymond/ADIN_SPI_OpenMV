@@ -45,14 +45,47 @@ bench/         benchmark + test scripts (S0 SPI bench, frame counters)
 
 State key: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-### S0 — AE3 SPI ceiling benchmark  `[ ]`
+### S0 — AE3 SPI ceiling benchmark  `[x]`  *(demo run by Nick 2026-08-09 — PASS)*
 **Goal:** measure what `machine.SPI(0)` actually delivers; go/no-go for the
 MicroPython-level driver.
-- [ ] Loopback P0→P1; sustained throughput at 5/10/20/25 MHz, chunk sizes 64 B–4 KB
-- [ ] GPIO edge → handler latency on P5 (IRQ path)
-- [ ] Record results in DESIGN.md; decision note if effective rate < 12 Mbps
+- [x] Loopback P0→P1; sustained throughput at 5/10/20/25 MHz, chunk sizes 64 B–4 KB
+      → **4.89 Mbps max effective, 0 errors — below the 12 Mbps gate**
+- [x] GPIO edge → handler latency on P5 (IRQ path) → soft 6 µs / hard 5 µs median
+- [x] Record results in DESIGN.md; decision note if effective rate < 12 Mbps
+      → recorded; decision RESOLVED (Nick): spike confirmed polled per-byte port
+      driver (software ceiling, not silicon) → proceed at **~4 Mbps AE3 video
+      budget** through S6; C-level FIFO/DMA driver priced + deferred (D8)
+- [x] Video encode table (added by Nick 2026-08-09): run `bench/ae3_video_bench.py`
+      on the AE3 → measured bytes/frame · bpp · encode ms · max fps per
+      resolution × quality × color/mono; table recorded in DESIGN.md §Bench
+      results. Verifiable: does the measured table show a usable video mode
+      (target resolution/fps) fitting under the 4.89 Mbps SPI ceiling?
+      → **ANSWER: yes, all of them — the JPEG encoder caps produced video
+      < ~2 Mbps in every supported mode (even scaled to 0.875 deployment bpp),
+      so the SPI ceiling has ≥ 2× headroom and is NOT the binding constraint.**
+      Best modes: VGA color ~13 fps, HD mono ~8.6 fps, HD color ~3.3 fps.
+      Caveat: bench-scene bpp (0.10–0.24) is 4–5× better than the deployment
+      anchor; re-measure on the real scene in S3.
+- [x] Synthetic reef-scene bpp (proposed by Nick 2026-08-09): load a stored
+      "coral reef" reference image on the AE3 (not the camera feed — bench is
+      a dark room, unrepresentatively compressible) and re-run the encode
+      table against it → representative bytes/frame + bpp per mode recorded
+      next to the dark-room table in DESIGN.md.
+      → DONE with P7071008: reef bpp brackets the 0.875 anchor; color modes
+      encoder-bound, mono modes SPI-bound; delivered stream 1.7–2.9 Mbps at
+      q50 → **VGA color ~8 fps / VGA mono ~14 fps / HD mono ~4 fps** on the
+      MicroPython path. Pipeline: `bench/make_ref_scene.py` +
+      `bench/ae3_ref_scene_bench.py`.
+- [ ] Multi-image trend sweep (Nick): run the ref-scene pipeline over the
+      other `images/` files (both Setup scenes + P707xxxx series) → bpp
+      spread per mode recorded in DESIGN.md; flags if any scene busts the
+      working-mode fps estimates. NOTE: images/ not yet committed to git —
+      Nick to decide (LFS / untracked + regenerate).
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
-MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
+MHz / chunk / effective Mbps / IRQ µs. **Pass (revised 2026-08-09, Nick):
+SPI effective ≥ 2× T1 stream bitrate = ≥ 3.5 Mbps (QVGA q35 @ 30 fps).**
+Measured 4.89 Mbps → passes; the script's printed "≥12 Mbps FAIL" verdict
+line is against the RETIRED gate — table values are what count.
 **Needs:** AE3, one jumper wire. No ADIN hardware.
 
 ### S1 — Pi 5 + SG shield: Linux driver up  `[ ]`
@@ -107,11 +140,14 @@ target load for 60 s.
 
 ### S6 — Video from AE3 over T1L into the existing stream  `[ ]`  ← THE POINT
 **Goal:** replace USB with the pair; the S3 web page doesn't know anything changed.
-- [ ] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq
+- [ ] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq —
+      MUST pipeline capture/encode/tx (≥2 framebuffers; SPEC §T1)
 - [ ] Pi shim daemon: raw frames → reassemble → feed the S3 stream server
-- [ ] Sustained run at ≤ 8 Mbps; measure fps/loss/latency
+- [ ] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
+      q35–50 @ 24–30 fps** (raise resolution only if fps holds)
 **Demo (Nick):** same browser URL as S3 shows live video; USB data pipe unused
 (REPL only). Side-by-side: unplug pair → stream stops; replug → resumes.
+**Pass: ≥ 24 fps sustained at QVGA color for 60 s.**
 **Needs:** S3 + S5.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
@@ -123,12 +159,23 @@ target load for 60 s.
 **Demo (Nick):** written recommendation reviewed together; tracker updated with
 the follow-on project's first sprint.
 
+### S8 — Edge CV bring-up (T2)  `[ ]`  *(stub — sequenced after T1 is met)*
+**Goal:** HD capture + on-device detection at 3–5 fps; alerts over T1L.
+- [ ] NPU inference bench (S0-style): detector fps vs input size on AE3
+- [ ] Detect/track/count pipeline vs T2 spec (fish ≥ 24–32 px)
+- [ ] Alert + evidence-JPEG path over the existing link
+**Demo (Nick):** camera watches reef footage → "N unique fish in 30 min"
+summary arrives; evidence stills viewable. *(Flesh out when T1 is done.)*
+**Needs:** S6 (T1 met). Do not start before — Nick's sequencing decision.
+
 ---
 
 ## Icebox (captured, not scheduled)
 
 - lwIP netif integration in OpenMV firmware (C) — MicroPython sockets over T1L
 - N6 evaluation for H.264 path (needs OpenMV answer on VENC MicroPython API)
+  — now formally owns the public-stream cell (720p ≥24 fps) of the SPEC
+  requirement matrix; AE3 confirmed as this project's platform (Nick)
 - SG JP1/JP4 breakout confirmation (would clean up the S4 harness)
 - Power-gating architecture (AE3 supervisor + load switch) from board-selection analysis
 - bm_core port (post-S7 decision)
