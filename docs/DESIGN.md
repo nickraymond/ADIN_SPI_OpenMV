@@ -1,7 +1,7 @@
 # DESIGN.md — Architecture & Decisions (as-built)
 
 *What it did / how it's shaped. Agents append; never silently rewrite history.*
-*Last updated: 2026-08-09*
+*Last updated: 2026-08-10*
 
 ## System topology
 
@@ -69,6 +69,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D12 | 2026-08-09 | S1 driver via out-of-tree module build (vendored mainline sources), not SG's full kernel rebuild (Nick approved) | Same two driver files either way; builds in ~1 min against installed headers, stock rpt kernel untouched, reversible. Trade-off: apt kernel upgrades orphan the modules → re-run `pi/build_adin1110.sh` (script detects and fails loudly). Provenance pinned in `pi/drivers/adin1110/README.md` (rpi-6.18.y @ 222a4b41). |
 | D13 | 2026-08-10 | AOS hats run generic SPI without CRC via bridged SPI_CFG0+SPI_CFG1 solder jumpers (hat #1 arrived pre-bridged; verify per checklist) | Board default is all-straps-low = OPEN Alliance w/ protection (internal pull-downs, ADIN1110 datasheet), which mainline `adin1110.c` cannot speak. Bridging both jumpers (each → 4.7k → 3.3V) matches the SG shield config and D1. Jumpers are reversible for S7's optional OA spike. |
 | D14 | 2026-08-10 | AOS overlay enables Pi internal pull-up on GPIO22 (INT) — the one functional difference from the SG overlay | AOS board has no pull-up on INT_N; datasheet (p.9, pin 25) specifies open-drain, active-low, 1.5 kΩ pull-up to VDDIO required (board's R10 1.5k is on TEST1 — itself required, so not a misplacement; INT pull-up simply absent). Pi internal ~50 kΩ is out of datasheet spec but adequate for a level IRQ at bring-up; fallback = 1.5–4.7 kΩ bodge INT→3.3V if IRQs misbehave. Reported to AOS (draft in `docs/aos_hat_checklist.md`). |
+| D15 | 2026-08-10 | S3 USB source = vendored nereus-camera-test-rig capture service (`firmware/ae3_usb/`, @ f11befe) + one local patch: `reboot` action, and hosts reboot the board between stream sessions | Reuse before rewriting — the legacy `start_stream` framed-JPEG path is proven. The patch works around a hard AE3 firmware crash: the SECOND `start_stream` session per boot hard-faults the board (USB dies, physical replug sometimes needed). Reproduced 3×, isolated by elimination; NOT fixed by OpenMV dev build `11852aa3d0` (2026-08-10) despite its "PAG7936 halt for safe shutdown" note; MicroPython soft reset insufficient, `machine.reset()` clears it. Repro + details: `firmware/ae3_usb/README.md` §Known firmware crash. Candidate OpenMV upstream report. |
+| D16 | 2026-08-10 | S3 stream setting (Nick): **QVGA color q90, sender-paced to 15 fps** (~2.5 Mbps free-run ceiling measured) | Nick wanted "as high a quality as we can safely do" at 15 fps. Measured q-sweep (bench scene): q90 free-runs 35.7 fps — 2.4× the target, margin enough even for real scenes encoding 3–5× slower (S0 reef data). VGA rejected: software-encoder-bound at 9.8 fps (q70) / 12.1 (q50); **VGA ≥ 15 fps is unreachable on the AE3 on any transport** (no hardware JPEG on this sensor). For a future 30 fps mode, drop to q80 (real-scene margin at q90 is thin). |
 
 ## Verified-facts ledger
 
@@ -89,7 +91,8 @@ unverified — treat as unknown.
   UDP 8.0 Mbps @ 0% loss, ping 0% loss RTT avg 0.84 ms.** Run 2026-08-10,
   nereus000 (hat #2, .7.1) ↔ nereus001 (hat #1, .7.2) over the bench
   pair, `bench/t1l_link_test.sh` 4/4. Details below.
-- S3 sustained video Mbps / fps: —
+- S3 sustained video Mbps / fps: — *(T1L leg pending; USB source leg measured
+  2026-08-10, detail below)*
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
 
@@ -351,3 +354,39 @@ Still open (flagged, not guessed): unexplained soldered wire/pin at J1
 edge on hat #1; two bare copper rectangles top of back side; hat #2 date
 code not yet recorded. nereus000 now runs an AOS hat; SG shield is on the
 shelf (S1 restore = swap back + flip the two config.txt lines).
+
+### S3 detail (2026-08-10) — bite 1: AE3→Pi USB frame source, measured
+
+Path: vendored legacy capture service on the AE3 (D15) → framed JPEG over
+USB CDC → `pi/stream/usb_frame_source.py` → `bench/usb_stream_bench.py`.
+Bench scene (indoor, compressible — real scenes 3–5× more bytes per S0 reef
+data), 10 s/mode, board rebooted before each session (D15 workaround).
+Identical numbers on stable v5.0.0 (`v1.28.0-49 / 2026-07-02`) and dev
+`11852aa3d0` (2026-08-10); 677+ frames per full run, 0 seq gaps, 0 bad JPEGs.
+
+| Mode | fps (free-run) | KB/frame | Mbps | notes |
+|---|---|---|---|---|
+| QVGA q50 | 47.0 | 2.6 | 1.00 | |
+| QVGA q70 | 38.2 | 3.8 | 1.20 | |
+| QVGA q80 | 37.5 | 5.1 | 1.57 | 30 fps mode candidate |
+| **QVGA q90** | **35.7** | 8.6 | 2.51 | **chosen (D16), paced to 15 fps** |
+| VGA q50 | 12.1 | 7.1 | 0.70 | encoder-bound |
+| VGA q70 | 9.8 | 11.0 | 0.88 | encoder-bound |
+| HD q50 | 2.9 | 24.0 | 0.56 | encoder-bound |
+
+Hard facts established:
+
+- **VGA ≥ 15 fps is unreachable on the AE3** — software JPEG encode
+  (~70–85 ms/frame at VGA) is the bound, not transport; true on stable and
+  dev firmware. Only levers: smaller frames (QVGA) or the N6's hardware
+  encoder (iceboxed).
+- `sensor.set_framebuffers(2)` in the stream loop makes everything WORSE
+  (VGA q70 9.8→8.6 fps, QVGA q50 47→30) and hard-crashes HD — tested and
+  reverted; the legacy repo's "VGA+ needs set_framebuffers(1)" note holds
+  in-stream too.
+- The one-session-per-boot firmware crash + reboot workaround (D15).
+- USB CDC recovery ladder for a crashed AE3: `uhubctl -l 1 -p 2 -a cycle`
+  on nereus000 → board may come back in safe-mode REPL (main.py skipped)
+  → `machine.reset()` restores the service. The deeper crash flavor
+  (enumeration error -71) needs a physical replug — Pi 5 port power
+  switching doesn't truly cut VBUS.

@@ -1,7 +1,7 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-09 · Owner/gate: **Nick***
+*Last updated: 2026-08-10 · Owner/gate: **Nick***
 
 ---
 
@@ -141,10 +141,19 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.
 
-### S3 — Video across T1L, Pi to Pi  `[ ]`
+### S3 — Video across T1L, Pi to Pi  `[~]`
 **Goal:** full streaming pipeline working before any AE3 driver exists.
-- [ ] AE3 → Pi 5 over USB (existing setup), constrained to ≤ 8 Mbps
+- [x] AE3 → Pi 5 over USB (existing setup), constrained to ≤ 8 Mbps
       (settings per SPEC budget; record actual choice)
+      → DONE 2026-08-10 (manual test passed by Nick): vendored legacy
+      capture service (`firmware/ae3_usb/`, D15) + host frame source
+      (`pi/stream/usb_frame_source.py`) + `bench/usb_stream_bench.py`.
+      **Chosen setting (Nick): QVGA color q90, sender-paced 15 fps** —
+      free-runs 35.7 fps / 2.5 Mbps, all modes 0 loss (D16). Found + worked
+      around an AE3 firmware crash: 2nd stream session per boot hard-faults
+      the board → hosts reboot it between sessions (README §Known firmware
+      crash; not fixed by OpenMV dev build; candidate upstream report).
+      Hard fact: VGA ≥ 15 fps impossible on AE3 (software encoder).
 - [ ] Sender service on Pi 5 → frames over T1L → receiver on Pi 3/4 serves
       multipart-MJPEG HTTP (no transcode)
 - [ ] Measure sustained Mbps + dropped frames at target settings
