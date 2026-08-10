@@ -39,8 +39,15 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   unverified, needs port-source read.
 - `/dev/ttyACM0` on nereus000 is the N6, not the AE3 — use the by-id path.
 
-**Next:** Nick decides on the decision note (spike port source / proceed at
-reduced budget / go C). Then: Nick's official demo run per TRACKER + PR.
+**Decision + spike (same session):** Nick chose A→B. Spike read
+`ports/alif/machine_spi.c` (upstream + OpenMV fork: identical): transfer is
+polled lock-step per-byte, no DMA/FIFO burst → ceiling is software, firmware
+build required to fix (= option C, priced ~50 LoC FIFO burst in one function).
+Proceeding per B: ~4 Mbps AE3 video budget through S6 (DESIGN.md D8). New open
+question in SPEC.md: true SCLK at 20/25 MHz requests (LA check in S2).
+
+**Next:** Nick's official demo run per TRACKER (verdict prints FAIL — that's
+correct output; S0's job was measurement) + nibble-4 PR. Then S1.
 
 **Branch:** n/a (no code yet)
 

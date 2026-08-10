@@ -62,6 +62,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D5 | 2026-08-09 | Pi 5 as first Linux node | Onboard eth0 stays free for SSH/debug while T1L is under test. |
 | D6 | 2026-08-09 | Video budget ≤ 8 Mbps | T1L usable ≈ 9.3 Mbps; measured 0.875 bpp anchor puts 1280×800@10 at 9.0 — over. Headroom for retransmit/overhead. S0/S3 replace estimates with measurements. |
 | D7 | 2026-08-09 | SG shield for first light; AOS hats for the node pair | SG pinout is vendor-documented (lowest-risk S4); AOS pinout unverified until S2 buzz-out. |
+| D8 | 2026-08-09 | S0 gate FAILED (4.89 Mbps < 12). Nick: option A (spike) then B — sprints continue with AE3 video budget ~4 Mbps | Spike confirmed ceiling is software (polled per-byte `machine_spi_transfer`, no DMA/FIFO burst; OpenMV fork = upstream). Fixing it means custom firmware = option C, priced (~50 LoC FIFO burst / DMA) and deferred. S1–S3 unaffected; still ~40× the v1 UART path. |
 
 ## Verified-facts ledger
 
@@ -107,7 +108,31 @@ Loopback P0→P1, 512 KB moved per point, verify pass separate from timing:
   soft ISR min 5 / median 6 / p99 15 / max 15 µs; hard ISR min 4 / median 5 /
   p99 9 / max 9 µs. The IRQ path is a non-issue at these numbers.
 
-### S0 decision note (gate hit: < 12 Mbps) — decision PENDING Nick
+### S0 decision note (gate hit: < 12 Mbps) — RESOLVED: A then B (Nick, 2026-08-09)
+
+**Spike result (option A, done):** hypothesis confirmed from source.
+`ports/alif/machine_spi.c` — `machine_spi_transfer()` is a fully polled,
+lock-step, per-byte loop: per byte it (1) spins on `SPI_SR.TFNF` with a
+`ticks_ms` timeout check + `mp_event_handle_nowait()` per iteration,
+(2) writes one byte to the FIFO, (3) spins on `SPI_SR.RFNE`, (4) reads one
+byte. No DMA, no FIFO bursting — the 16-deep hardware FIFO is used one entry
+at a time. OpenMV's fork (`openmv/micropython` master) is byte-identical to
+upstream here, so a newer firmware won't change the number. Measured
+software cost ≈ 1.2–1.6 µs/byte, which caps ~5 Mbps regardless of SCLK —
+consistent with 20 and 25 MHz benching identically.
+
+Fix pricing (for the future C decision): a FIFO-burst rewrite of
+`machine_spi_transfer` (keep TX FIFO fed while draining RX, no lock-step)
+is ~50 LoC of C in one function and should approach wire rate; DMA is the
+full-fat version. Either requires building custom AE3 firmware — i.e. it IS
+option C territory. Candidate upstream contribution later.
+
+Unresolved (flagged, not guessed): the true SCLK at requested 20 vs 25 MHz.
+Timings are identical but both reprs echo the requested rate; DW-SSI even-
+divider rules suggest one of them is not literal. Needs a logic analyzer
+(S2 has one on the bench) — irrelevant to the ceiling, which is software.
+
+**Original options considered:**
 
 The MicroPython-level driver cannot carry the ≤ 8 Mbps video budget:
 ~4.9 Mbps raw SPI ceiling before any protocol overhead (ADIN frame headers,
@@ -122,5 +147,10 @@ control reads, turnaround) — realistic payload well under 4.5 Mbps. Options:
 - **C. Go to C now:** native OpenMV firmware driver with DMA (the iceboxed
   lwIP/C path pulled forward). Highest cost, removes the ceiling.
 
-Recommendation: A then B — spike is cheap and informs whether B's ceiling is
-temporary; S1–S3 don't touch AE3 SPI and can proceed regardless.
+Decision (Nick): **A then B.** Spike ran same day (result above); project
+proceeds per B — MicroPython driver sprints S4–S6 continue against a
+**~4 Mbps realistic video budget** (raw ceiling 4.89 Mbps minus protocol
+overhead), e.g. VGA mono @ ~8 fps. The 8 Mbps SPEC budget is the T1L-side
+ceiling and stays correct for the Pi↔Pi sprints; the AE3-sourced budget is
+now the binding one. C-level FIFO/DMA driver remains the priced follow-on
+if v2 needs more than ~4 Mbps.

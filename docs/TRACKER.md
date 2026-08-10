@@ -52,7 +52,9 @@ MicroPython-level driver.
       → **4.89 Mbps max effective, 0 errors — below the 12 Mbps gate**
 - [x] GPIO edge → handler latency on P5 (IRQ path) → soft 6 µs / hard 5 µs median
 - [x] Record results in DESIGN.md; decision note if effective rate < 12 Mbps
-      → recorded; **decision pending Nick** (spike port source / reduced budget / C)
+      → recorded; decision RESOLVED (Nick): spike confirmed polled per-byte port
+      driver (software ceiling, not silicon) → proceed at **~4 Mbps AE3 video
+      budget** through S6; C-level FIFO/DMA driver priced + deferred (D8)
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
 MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
 **Needs:** AE3, one jumper wire. No ADIN hardware.
