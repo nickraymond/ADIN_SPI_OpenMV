@@ -67,9 +67,20 @@ at 1.7–2.9 Mbps** — MicroPython path viable for real scenes. Dark-room
 "mono ignores quality" oddity resolved (scene artifact). Multi-image sweep
 captured as new TODO.
 
-**Next:** Nick reviews the refined findings (proposed: retire the 12 Mbps
-gate as mis-sized, confirm B stands) → official S0 demo run per TRACKER +
-nibble-4 PR. Then S1.
+**Requirements set (Nick, closing the loop):** AE3 confirmed as platform.
+2×2 requirement matrix in SPEC.md; dual targets: **T1 streaming = QVGA color
+q35–50 @ 24–30 fps** (feasible per measurements ONLY with capture/encode/tx
+pipelining — S6 constraint), **T2 edge CV = HD @ 3–5 fps on-device**
+(fish ≥24–32 px; sergeant majors ≈32–48 px at HD from P7071008). 12 Mbps
+gate retired → transport gate = 2× T1 bitrate = ≥3.5 Mbps; measured 4.89
+PASSES. S8 stub added (T2, strictly after T1). N6 owns the public-720p cell
+(icebox). Probes: no hardware JPEG on sensor 0x7936; VGA capture 33 ms
+single-buffered / 16.7 ms double. ROI visualization delivered (single 16:10
+crop shared by all modes; density-only difference). Decisions D9–D11.
+
+**Next:** Nick's official S0 demo run (per revised gate: table ≥3.5 Mbps =
+PASS; ignore the script's old printed 12 Mbps verdict) + nibble-4 PR.
+Then S1.
 
 **Branch:** n/a (no code yet)
 

@@ -63,6 +63,9 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D6 | 2026-08-09 | Video budget ≤ 8 Mbps | T1L usable ≈ 9.3 Mbps; measured 0.875 bpp anchor puts 1280×800@10 at 9.0 — over. Headroom for retransmit/overhead. S0/S3 replace estimates with measurements. |
 | D7 | 2026-08-09 | SG shield for first light; AOS hats for the node pair | SG pinout is vendor-documented (lowest-risk S4); AOS pinout unverified until S2 buzz-out. |
 | D8 | 2026-08-09 | S0 gate FAILED (4.89 Mbps < 12). Nick: option A (spike) then B — sprints continue with AE3 video budget ~4 Mbps | Spike confirmed ceiling is software (polled per-byte `machine_spi_transfer`, no DMA/FIFO burst; OpenMV fork = upstream). Fixing it means custom firmware = option C, priced (~50 LoC FIFO burst / DMA) and deferred. S1–S3 unaffected; still ~40× the v1 UART path. |
+| D9 | 2026-08-09 | AE3 is the platform; dual targets set (Nick): T1 live stream = QVGA color q35–50 @ 24–30 fps; T2 edge CV = HD @ 3–5 fps on-device inference | Requirement space is a 2×2 (detail × smoothness, SPEC.md); AE3 covers three cells; public-720p cell needs H.264 → N6 follow-on (iceboxed). QVGA is the only mode whose measured encode+tx reaches 24–30 fps; VGA color caps at ~13. T2 chosen at HD because sergeant majors ≈ 32–48 px there (detector floor ~24–32 px); camera distance is the free variable. C driver stays a hard NO for now. |
+| D10 | 2026-08-09 | 12 Mbps S0 gate retired → transport gate = SPI effective ≥ 2× T1 stream bitrate (≥3.5 Mbps) | Original gate was derived from the 8 Mbps T1L budget, a workload the AE3 encoder cannot generate; new gate derives from the committed product mode. Measured 4.89 Mbps passes. |
+| D11 | 2026-08-09 | Edge inference (T2/S8) sequenced strictly after T1 streaming is met (Nick) | One bottleneck at a time; the NPU bench is S8's first bite, not this sprint's. |
 
 ## Verified-facts ledger
 

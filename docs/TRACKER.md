@@ -82,7 +82,10 @@ MicroPython-level driver.
       working-mode fps estimates. NOTE: images/ not yet committed to git —
       Nick to decide (LFS / untracked + regenerate).
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
-MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
+MHz / chunk / effective Mbps / IRQ µs. **Pass (revised 2026-08-09, Nick):
+SPI effective ≥ 2× T1 stream bitrate = ≥ 3.5 Mbps (QVGA q35 @ 30 fps).**
+Measured 4.89 Mbps → passes; the script's printed "≥12 Mbps FAIL" verdict
+line is against the RETIRED gate — table values are what count.
 **Needs:** AE3, one jumper wire. No ADIN hardware.
 
 ### S1 — Pi 5 + SG shield: Linux driver up  `[ ]`
@@ -137,11 +140,14 @@ target load for 60 s.
 
 ### S6 — Video from AE3 over T1L into the existing stream  `[ ]`  ← THE POINT
 **Goal:** replace USB with the pair; the S3 web page doesn't know anything changed.
-- [ ] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq
+- [ ] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq —
+      MUST pipeline capture/encode/tx (≥2 framebuffers; SPEC §T1)
 - [ ] Pi shim daemon: raw frames → reassemble → feed the S3 stream server
-- [ ] Sustained run at ≤ 8 Mbps; measure fps/loss/latency
+- [ ] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
+      q35–50 @ 24–30 fps** (raise resolution only if fps holds)
 **Demo (Nick):** same browser URL as S3 shows live video; USB data pipe unused
 (REPL only). Side-by-side: unplug pair → stream stops; replug → resumes.
+**Pass: ≥ 24 fps sustained at QVGA color for 60 s.**
 **Needs:** S3 + S5.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
@@ -153,12 +159,23 @@ target load for 60 s.
 **Demo (Nick):** written recommendation reviewed together; tracker updated with
 the follow-on project's first sprint.
 
+### S8 — Edge CV bring-up (T2)  `[ ]`  *(stub — sequenced after T1 is met)*
+**Goal:** HD capture + on-device detection at 3–5 fps; alerts over T1L.
+- [ ] NPU inference bench (S0-style): detector fps vs input size on AE3
+- [ ] Detect/track/count pipeline vs T2 spec (fish ≥ 24–32 px)
+- [ ] Alert + evidence-JPEG path over the existing link
+**Demo (Nick):** camera watches reef footage → "N unique fish in 30 min"
+summary arrives; evidence stills viewable. *(Flesh out when T1 is done.)*
+**Needs:** S6 (T1 met). Do not start before — Nick's sequencing decision.
+
 ---
 
 ## Icebox (captured, not scheduled)
 
 - lwIP netif integration in OpenMV firmware (C) — MicroPython sockets over T1L
 - N6 evaluation for H.264 path (needs OpenMV answer on VENC MicroPython API)
+  — now formally owns the public-stream cell (720p ≥24 fps) of the SPEC
+  requirement matrix; AE3 confirmed as this project's platform (Nick)
 - SG JP1/JP4 breakout confirmation (would clean up the S4 harness)
 - Power-gating architecture (AE3 supervisor + load switch) from board-selection analysis
 - bm_core port (post-S7 decision)

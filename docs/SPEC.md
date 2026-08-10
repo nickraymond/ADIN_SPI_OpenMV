@@ -81,6 +81,33 @@ MicroPython: `machine.SPI(0)`, CS/RST/IRQ as `Pin("P3"/"P4"/"P5")`.
 See `docs/diagrams/wiring_ae3_to_sg_shield.svg` (8-wire harness, Diagram 1) and
 `docs/diagrams/wiring_two_node_bench.svg` (two-node link, Diagram 2).
 
+## Product requirement space (set by Nick, 2026-08-09)
+
+Two axes carry the physics: spatial detail × temporal smoothness. Use cases
+land in quadrants; each cell has a different binding constraint.
+
+| | Low fps (≤5) | High fps (≥15–30) |
+|---|---|---|
+| **High res (HD+)** | Edge CV counting — NPU-bound | Public 720p stream — needs H.264 (N6, non-goal) |
+| **Low res (≤VGA)** | Presence/stills — solved | Ambient live stream — SPI/encoder-bound |
+
+**Platform: AE3** (N6 reserved for the public-720p cell, out of scope).
+Committed targets, both pursued:
+
+- **T1 — Live stream:** QVGA color, q35–50, **24–30 fps** delivered over T1L
+  into the web stream. Resolution rises only if fps holds. Basis: measured
+  encode 17–20 ms + SPI tx 12–15 ms/frame → 29–35 fps ceiling; REQUIRES
+  capture/encode/tx overlap (≥2 framebuffers) — S6 design constraint.
+- **T2 — Edge CV:** HD capture (mono acceptable — target fish are
+  high-contrast), **3–5 fps** capture+inference on-device; only alerts +
+  evidence JPEGs cross the link. Fish must be ≥ ~24–32 px for detection
+  (~100–150 px at P7071008 range → HD suffices; else move camera closer).
+  Sequenced AFTER the SPI driver meets T1 (Nick).
+
+**Transport gate (replaces the retired ≥12 Mbps S0 gate):** SPI effective
+throughput ≥ 2× the T1 stream bitrate = **≥ 3.5 Mbps** (q35) / 4.4 Mbps
+(q50). Measured 4.89 Mbps → passes.
+
 ## Safety rules (non-negotiable)
 
 1. **Never connect any of these ADIN boards to a powered Spotter/Bristlemouth
@@ -101,6 +128,8 @@ pair, USB carrying no video.
 - Bristlemouth protocol compliance / bm_core port (S7 produces a *decision*, not code)
 - Connecting to a live Spotter bus
 - N6/H.264 path, potting, enclosure work
+- Public-tier streaming (720p ≥24 fps needs H.264 → N6 follow-on; MJPEG at
+  that tier exceeds the T1L wire itself, ~16 Mbps)
 - v2 PCBA layout (this project produces the facts it needs)
 
 ## Open questions (flag, don't guess)
@@ -115,3 +144,8 @@ pair, USB carrying no video.
   Video from the AE3 is budgeted ~4 Mbps until a C driver exists (DESIGN.md D8).
 - True AE3 SCLK at requested 20 vs 25 MHz (timings identical; even-divider
   rules suggest one repr lies) — check with logic analyzer when S2's is out.
+- AE3 NPU inference rate: small detector (YOLO-class) fps vs input size on
+  HD frames (tiled/downscaled) — gates T2; bench when T2 work begins
+  (sequenced after T1 per Nick).
+- QVGA delivered fps with full capture/encode/tx pipelining — model says
+  ~29 fps at q50; verify in S6 (T1 pass/fail hangs on it).

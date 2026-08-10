@@ -35,7 +35,10 @@ MAX_POINT_SECONDS = 4.0
 VERIFY_ITERS = 32               # integrity pass iterations per point
 IRQ_SAMPLES = 100
 IRQ_TIMEOUT_US = 100_000
-PASS_MBPS = 12.0
+# Revised gate (Nick, 2026-08-09): SPI effective >= 2x the T1 stream bitrate
+# (QVGA color q35 @ 30 fps). The original 12 Mbps gate is retired -- see
+# DESIGN.md D10.
+PASS_MBPS = 3.5
 
 PIN_SPI_BUS = 0                 # machine.SPI(0): P0=MOSI P1=MISO P2=SCLK
 PIN_DRIVE = "P4"                # phase B edge source (ADIN RESET pin, unused here)
