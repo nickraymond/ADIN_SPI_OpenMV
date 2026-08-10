@@ -1,0 +1,64 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * SG-Electronics SPE V1.0.0 shield (ADIN1110) on Raspberry Pi SPI0 CE0.
+ *
+ * Facts and sources:
+ *  - SG shield pinout (SG documentation): SPI0 CE0, RESET_N = GPIO17,
+ *    INT = GPIO22, 23 MHz; shield strapped SPI_CFG0=SPI_CFG1=1
+ *    (generic SPI, no CRC) => `adi,spi-crc` must NOT be set.
+ *  - Binding: Documentation/devicetree/bindings/net/adi,adin1110.yaml
+ *    (rpi-6.18.y @ 222a4b41): reset-gpios is active-low; interrupt
+ *    level-low (the driver requests IRQF_TRIGGER_LOW regardless).
+ *  - INT pin bias none (input, no pull): per SG's overlay; the ADI eval
+ *    overlay on the RPi forum does the same.
+ *
+ * MAC is locally administered (02:...) and fixed so the interface is
+ * stable across boots. No PHY child node: the MAC driver enumerates the
+ * internal PHY on its own MDIO bus (adin1100.ko binds by PHY ID).
+ */
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&spi0>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			adin1110: ethernet@0 {
+				compatible = "adi,adin1110";
+				reg = <0>;	/* CE0 */
+				pinctrl-names = "default";
+				pinctrl-0 = <&adin1110_int_pin>;
+				interrupt-parent = <&gpio>;
+				interrupts = <22 8>;		/* IRQ_TYPE_LEVEL_LOW */
+				reset-gpios = <&gpio 17 1>;	/* GPIO_ACTIVE_LOW */
+				spi-max-frequency = <23000000>;
+				local-mac-address = [02 ad 11 10 00 01];
+				status = "okay";
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target = <&gpio>;
+		__overlay__ {
+			adin1110_int_pin: adin1110_int_pin {
+				brcm,pins = <22>;
+				brcm,function = <0>;	/* input */
+				brcm,pull = <0>;	/* none */
+			};
+		};
+	};
+};
