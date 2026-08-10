@@ -88,13 +88,18 @@ Measured 4.89 Mbps → passes; the script's printed "≥12 Mbps FAIL" verdict
 line is against the RETIRED gate — table values are what count.
 **Needs:** AE3, one jumper wire. No ADIN hardware.
 
-### S1 — Pi 5 + SG shield: Linux driver up  `[ ]`
+### S1 — Pi 5 + SG shield: Linux driver up  `[x]`  *(demo run by Nick 2026-08-09 — PASS)*
 **Goal:** known-good ADIN node on the Pi 5.
-- [ ] Build `adin1110` kernel module (menuconfig per SG's Linux page: ADIN1110
-      MAC-PHY, industrial T1L PHYs, CRC8)
-- [ ] Install SG's device-tree overlay (SPI0 CE0, 23 MHz, IRQ GPIO22); verify
-      no `adi,spi-crc` (shield is strapped generic/no-CRC)
-- [ ] Driver probes; interface up
+- [x] Build `adin1110` kernel module → done as **out-of-tree module build**
+      (vendored mainline `adin1110.c` + `adin1100.c`, stock kernel untouched —
+      DESIGN.md D12), not SG's full kernel rebuild. `pi/drivers/adin1110/` +
+      `pi/build_adin1110.sh`.
+- [x] Install device-tree overlay → written from SG's published facts + the
+      kernel binding (`pi/overlays/sg-adin1110.dts`): SPI0 CE0, 23 MHz, IRQ
+      GPIO22 level-low, reset GPIO17 active-low, NO `adi,spi-crc`.
+- [x] Driver probes; interface up → **`eth1` on nereus000**, driver `ADIN1110`,
+      internal PHY ID reads **0x0283BC91** (matches SPEC), bound to `ADIN1100`
+      PHY driver. `pi/verify_adin1110.sh` = 5/5 PASS.
 **Demo (Nick):** `dmesg | grep adin` shows probe · `ip link` shows the new
 interface · `ethtool -i <if>` reports driver `adin1110`.
 **Needs:** Pi 5, SG shield on header. eth0 stays free for SSH/debug.

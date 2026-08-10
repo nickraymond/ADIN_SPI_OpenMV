@@ -17,6 +17,38 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-09 — Sprint S1 — Pi 5 ADIN1110 driver up: eth1 probes, PHY ID confirmed
+
+**Branch:** sprint/1-pi5-adin1110-driver
+
+**Done:**
+- Nibble 1 plan approved by Nick: out-of-tree module build instead of SG's
+  full kernel rebuild (D12). Stock trixie kernel has ADIN1110/ADIN1100_PHY
+  unset but NET_SWITCHDEV=y + CRC8=m + headers installed → viable.
+- Vendored unmodified `adin1110.c` + `adin1100.c` (rpi-6.18.y @ 222a4b41)
+  into `pi/drivers/adin1110/` with out-of-tree Makefile + provenance README.
+- `pi/overlays/sg-adin1110.dts` written from SG facts + kernel binding:
+  SPI0 CE0 @ 23 MHz, IRQ GPIO22 level-low, reset GPIO17 active-low, INT
+  bias-none, spidev0 off, no adi,spi-crc. Fixed MAC 02:ad:11:10:00:01.
+- `pi/build_adin1110.sh` (idempotent build+install) + `pi/verify_adin1110.sh`
+  (artifact checks). Repo cloned on nereus000 at `~/ADIN_SPI_OpenMV`.
+- Built, installed, rebooted, verified: **eth1 up on driver ADIN1110,
+  internal PHY reads 0x0283BC91** (SPEC match), bound to ADIN1100 phylib
+  driver. verify = 5/5 PASS. eth0/SSH untouched.
+
+**Broke/surprised us:**
+- `ethtool -i` reports the driver name UPPERCASE ("ADIN1110") — verify
+  script initially failed its driver-name check; now case-insensitive.
+- SG's published DTS uses edge-trigger for INT but binding + driver source
+  say level-low (driver hardcodes IRQF_TRIGGER_LOW) — went with level.
+- Non-login ssh shells on the Pi lack /usr/sbin in PATH (modinfo/ethtool
+  "not found" red herring); scripts export PATH explicitly.
+
+**Next:** Nick runs the S1 demo (commands in PR + TRACKER); on PASS, close
+S1 and open S2 (AOS hats buzz-out, second node).
+
+---
+
 ## 2026-08-09 — Sprint S0 — SPI bench run: 4.89 Mbps ceiling, gate FAILED
 
 **Branch:** sprint/0-SPI-bench-test
