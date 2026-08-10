@@ -1,7 +1,7 @@
 # SPEC.md — Bristlemouth Camera Node: Native ADIN1110 Video Path
 
 *What I want. Stable reference — agents skim this; changes require Nick's approval.*
-*Last updated: 2026-08-09*
+*Last updated: 2026-08-10*
 
 ## Goal
 
@@ -157,3 +157,11 @@ pair, USB carrying no video.
   (sequenced after T1 per Nick).
 - QVGA delivered fps with full capture/encode/tx pipelining — model says
   ~29 fps at q50; verify in S6 (T1 pass/fail hangs on it).
+- AE3 firmware crash (found S3, 2026-08-10): the second `start_stream`
+  session per boot in the USB capture service hard-faults the board (USB
+  dies; sometimes needs physical replug). Present on stable v5.0.0 AND dev
+  `11852aa3d0`; `machine.reset()` between sessions works around it (D15).
+  Root cause in firmware unknown — clean repro exists
+  (`firmware/ae3_usb/README.md` §Known firmware crash); file upstream with
+  OpenMV. Watch item for S6: does the SPI-driver-era capture loop hit the
+  same fault class on sensor re-init?

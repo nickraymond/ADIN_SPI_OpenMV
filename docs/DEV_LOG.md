@@ -17,6 +17,49 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S3 — bite 1: USB frame source measured; AE3 crash found + worked around
+
+**Branch:** sprint/3-t1l-video
+
+**Done:**
+- Nibble 1 plan approved. Vendored the legacy nereus-camera-test-rig USB
+  capture service (@ f11befe) into `firmware/ae3_usb/` with provenance
+  README (D12 pattern); host-side `pi/stream/usb_frame_source.py` (pure
+  incremental StreamParser + UsbFrameSource, 15 unit tests) and
+  `bench/usb_stream_bench.py` (fps/Mbps/gaps/JPEG-integrity table +
+  sample-frame artifacts).
+- **Found an AE3 firmware crash:** second `start_stream` session per boot
+  hard-faults the board (USB dies; deep flavor needs physical replug —
+  Nick did 4 today). Isolated by elimination: first-session-any-mode OK,
+  command loop OK, soft reset insufficient, `machine.reset()` clears it.
+  Same on stable v5.0.0 and dev `11852aa3d0` — the dev build's "PAG7936
+  halt for safe shutdown" does NOT fix it. Workaround shipped (D15):
+  local-patch `reboot` action; hosts reboot the board between sessions.
+  Recovery ladder documented (uhubctl → safe-mode REPL → machine.reset).
+- Firmware version confusion resolved: IDE "5.0.0 [latest]" ≠ stable —
+  dev builds self-report 5.0.0; discriminator is the uname build date.
+  Board now runs dev `11852aa3d0 on 2026-08-10`.
+- Bench matrix + QVGA q-sweep measured (DESIGN §S3 detail). Manual test
+  run by Nick: **PASS** (4/4 modes, 0 gaps, 0 bad JPEGs, samples verified
+  as real images). **Setting chosen (Nick, D16): QVGA q90 paced 15 fps.**
+- Hard fact: VGA ≥ 15 fps unreachable on AE3 (software JPEG encoder,
+  ~70–85 ms/frame); `set_framebuffers(2)` in-stream makes it worse and
+  breaks HD (tested, reverted).
+
+**Broke/surprised us:**
+- The crash pre-dates Nick's firmware update — same build string as S0.
+- Pi 5 USB port power switching (uhubctl) doesn't truly cut VBUS: board
+  shows "connect" while port is "off"; deep-crash flavor unrecoverable
+  remotely.
+- nereus001 re-registered on the tailnet as `nereus001-1` (old entry
+  stale); T1L link itself pings fine from nereus000.
+
+**Next:** bite 2 — sender service on nereus000 (frames over T1L) +
+receiver/stream server on nereus001 (`:8080/stream`, the frozen S6
+interface), QVGA q90 @ 15 fps.
+
+---
+
 ## 2026-08-10 — Sprint S2 — AOS hat #1 validated: probes on Pi 5, PHY ID match
 
 **Branch:** sprint/2-aos-node-link
