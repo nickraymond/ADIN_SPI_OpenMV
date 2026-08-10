@@ -320,8 +320,11 @@ is stronger evidence). It probed first try, twice:
   check it replaced. Silicon watch item (#2204 date code) cleared: PHY ID
   reads clean.
 
+**Hat #2 validated the same way (2026-08-10, swapped onto nereus000):**
+probe at 8.6 s, eth1, PHY ID 0x0283bc91, IRQ quiet, verify 5/5 — straps
+proven bridged by working register I/O. Both hats are good hardware.
+
 Still open (flagged, not guessed): unexplained soldered wire/pin at J1
-edge on hat #1; two bare copper rectangles top of back side; hat #2 build
-state (jumpers + date code — verify per checklist, or live, before it goes
-on the second Pi). nereus000 now runs the AOS hat; SG shield is on the
+edge on hat #1; two bare copper rectangles top of back side; hat #2 date
+code not yet recorded. nereus000 now runs an AOS hat; SG shield is on the
 shelf (S1 restore = swap back + flip the two config.txt lines).

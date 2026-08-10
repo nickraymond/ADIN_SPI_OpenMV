@@ -113,8 +113,8 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       straps default OA, hat #1 re-strapped generic-SPI-no-CRC (D13,
       proven by working register I/O); INT_N pull-up missing on board →
       overlay workaround (D14). Hat #1 probed on nereus000: PHY ID
-      0x0283bc91, verify 5/5. Remaining (folded into next item): hat #2
-      build state per `docs/aos_hat_checklist.md`; J1 wire + copper-pad
+      0x0283bc91, verify 5/5; hat #2 validated identically same day. Remaining: hat #2
+      date code; J1 wire + copper-pad
       questions (checklist §C).
 - [~] Overlay variant for AOS pinout; hats on Pi 5 + Pi 3/4
       → `pi/overlays/aos-adin1110.dts` written, installed, and verified
