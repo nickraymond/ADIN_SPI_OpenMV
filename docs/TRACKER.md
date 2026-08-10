@@ -66,11 +66,21 @@ MicroPython-level driver.
       Best modes: VGA color ~13 fps, HD mono ~8.6 fps, HD color ~3.3 fps.
       Caveat: bench-scene bpp (0.10–0.24) is 4–5× better than the deployment
       anchor; re-measure on the real scene in S3.
-- [ ] Synthetic reef-scene bpp (proposed by Nick 2026-08-09): load a stored
+- [x] Synthetic reef-scene bpp (proposed by Nick 2026-08-09): load a stored
       "coral reef" reference image on the AE3 (not the camera feed — bench is
       a dark room, unrepresentatively compressible) and re-run the encode
       table against it → representative bytes/frame + bpp per mode recorded
       next to the dark-room table in DESIGN.md.
+      → DONE with P7071008: reef bpp brackets the 0.875 anchor; color modes
+      encoder-bound, mono modes SPI-bound; delivered stream 1.7–2.9 Mbps at
+      q50 → **VGA color ~8 fps / VGA mono ~14 fps / HD mono ~4 fps** on the
+      MicroPython path. Pipeline: `bench/make_ref_scene.py` +
+      `bench/ae3_ref_scene_bench.py`.
+- [ ] Multi-image trend sweep (Nick): run the ref-scene pipeline over the
+      other `images/` files (both Setup scenes + P707xxxx series) → bpp
+      spread per mode recorded in DESIGN.md; flags if any scene busts the
+      working-mode fps estimates. NOTE: images/ not yet committed to git —
+      Nick to decide (LFS / untracked + regenerate).
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
 MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
 **Needs:** AE3, one jumper wire. No ADIN hardware.

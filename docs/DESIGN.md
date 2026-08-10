@@ -139,6 +139,43 @@ q15–q90 (quality knob appears inert for grayscale); VGA color q75 = q90
 byte-identical. Re-measure bpp with the deployment scene/underwater footage
 before freezing stream settings (S3).
 
+### S0 reference-scene encode table (2026-08-09) — coral reef P7071008
+
+Dark-room caveat resolved: `bench/make_ref_scene.py` center-crops the
+reference photo to the sensor's 16:10 letterbox (full ROI kept, 4000×3000 →
+4000×2500) and downsamples to the three mode geometries;
+`bench/ae3_ref_scene_bench.py` encodes them on the AE3 via mpremote mount.
+Reef bpp is 3–5× the dark room and brackets the 0.875 SPEC anchor
+(q35 ≈ 0.53–0.77, q50 ≈ 0.59–1.15, q75 ≈ 0.91–2.0 across modes).
+
+Composite at q50 — encode + SPI tx at measured 4.89 Mbps, serialized
+(polled driver), capture excluded:
+
+| Mode | bytes/fr | bpp | enc ms | tx ms | est fps | est Mbps | bound by |
+|---|---|---|---|---|---|---|---|
+| QVGA color | 9 198 | 1.15 | 19.7 | 15.0 | ~29 | 2.1 | encoder |
+| QVGA mono | 7 536 | 0.94 | 8.3 | 12.3 | ~49 | 2.9 | SPI |
+| VGA color | 29 148 | 0.91 | 76.7 | 47.7 | ~8.0 | 1.9 | encoder |
+| VGA mono | 23 831 | 0.75 | 31.1 | 39.0 | ~14.3 | 2.7 | SPI |
+| HD color | 93 253 | 0.73 | 299.2 | 152.6 | ~2.2 | 1.7 | encoder |
+| HD mono | 75 324 | 0.59 | 117.6 | 123.3 | ~4.2 | 2.5 | balanced |
+
+Refined conclusion (supersedes the dark-room "encoder is the bottleneck"
+headline for real scenes): **color modes stay encoder-bound; mono modes are
+SPI-bound or balanced.** Delivered stream lands at 1.7–2.9 Mbps in every
+mode — under the 4.89 Mbps SPI ceiling (which serialization can never
+saturate: delivered = ceiling × tx/(tx+enc)) and far under the 8 Mbps T1L
+budget. Working modes for the product: VGA color ~8 fps, VGA mono ~14 fps,
+HD mono ~4 fps. A C-level driver (DMA + overlap) would roughly buy back the
+tx column: VGA color → ~13 fps, QVGA mono → ~120 fps.
+
+Oddity resolved: dark-room "mono ignores quality" was a scene artifact —
+on reef content mono bytes scale q15→q90 (3 562 → 19 102 B at QVGA). The
+dark room simply had too little detail for the knob to matter.
+
+Multi-image trend sweep (other `images/` files) pending — pipeline is
+parameterized by label; not yet run.
+
 ### S0 decision note (gate hit: < 12 Mbps) — RESOLVED: A then B (Nick, 2026-08-09)
 
 **Spike result (option A, done):** hypothesis confirmed from source.

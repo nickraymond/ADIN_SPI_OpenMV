@@ -57,9 +57,19 @@ even at 0.875 deployment bpp: VGA ~8 fps @ 2.2 Mbps). SPI ceiling has ≥2×
 headroom. Full table in DESIGN.md. Oddity flagged: mono bytes/frame inert
 across quality settings.
 
-**Next:** Nick reviews the encoder-is-bottleneck finding (proposed: retire
-the 12 Mbps gate as mis-sized, confirm B stands) → official S0 demo run per
-TRACKER + nibble-4 PR. Then S1.
+**Reef-scene bench (Nick re-prioritized again, same session):** Nick supplied
+`images/` (UNCOMMITTED in repo root — his call pending on git/LFS). Built
+`make_ref_scene.py` (16:10 ROI-preserving crop + downsample to sensor
+geometries) + `ae3_ref_scene_bench.py` (encode via mpremote mount). P7071008
+baseline: reef bpp brackets the 0.875 anchor; color = encoder-bound, mono =
+SPI-bound; **VGA color ~8 fps / VGA mono ~14 fps / HD mono ~4 fps delivered
+at 1.7–2.9 Mbps** — MicroPython path viable for real scenes. Dark-room
+"mono ignores quality" oddity resolved (scene artifact). Multi-image sweep
+captured as new TODO.
+
+**Next:** Nick reviews the refined findings (proposed: retire the 12 Mbps
+gate as mis-sized, confirm B stands) → official S0 demo run per TRACKER +
+nibble-4 PR. Then S1.
 
 **Branch:** n/a (no code yet)
 
