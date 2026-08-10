@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 800" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <style>
+      .ink { fill:#0b0b0b } .sec { fill:#52514e } .mut { fill:#898781 }
+      .board { fill:#eef3ee; stroke:#0b0b0b; stroke-width:1.5 }
+      .chip { fill:#2b2b2b } .chiplab { fill:#ffffff; font-size:9px }
+      .padlab { font-size:12px; font-weight:600 }
+      .note { font-size:12px; fill:#52514e }
+      .w { fill:none; stroke-width:2.5; stroke-linecap:round }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1080" height="800" fill="#fcfcfb"/>
+
+  <!-- Title -->
+  <text x="40" y="42" class="ink" font-size="21" font-weight="650">Bench wiring — OpenMV AE3 → SG-Electronics SPE V1.0.0 shield (ADIN1110)</text>
+  <text x="40" y="64" class="sec" font-size="13">Diagram 1 of 2 · driver bring-up rig · all logic is 3.3 V · pin positions are schematic — follow the silkscreen labels on both boards</text>
+
+  <!-- ================= AE3 board ================= -->
+  <rect x="60" y="118" width="230" height="246" rx="10" class="board"/>
+  <circle cx="175" cy="205" r="46" fill="#1a1a19"/>
+  <circle cx="175" cy="205" r="30" fill="#3a3a38"/>
+  <circle cx="175" cy="205" r="12" fill="#6a7cc0" opacity="0.7"/>
+  <text x="175" y="290" text-anchor="middle" class="ink" font-size="15" font-weight="650">OpenMV AE3</text>
+  <text x="175" y="308" text-anchor="middle" class="mut" font-size="11">top view · P0–P5 pads (3.3 V bank)</text>
+  <text x="175" y="338" text-anchor="middle" class="mut" font-size="10.5">powered separately via its USB-C</text>
+
+  <!-- AE3 pads -->
+  <g>
+    <g font-size="12" font-weight="600">
+      <circle cx="290" cy="140" r="6" fill="#d03b3b"/><text x="252" y="144" class="ink" text-anchor="end">3V3</text>
+      <circle cx="290" cy="170" r="6" fill="#0b0b0b"/><text x="252" y="174" class="ink" text-anchor="end">GND</text>
+      <circle cx="290" cy="200" r="6" fill="#898781"/><text x="252" y="204" class="ink" text-anchor="end">P4</text>
+      <circle cx="290" cy="230" r="6" fill="#e87ba4"/><text x="252" y="234" class="ink" text-anchor="end">P5</text>
+      <circle cx="290" cy="260" r="6" fill="#008300"/><text x="252" y="264" class="ink" text-anchor="end">P0</text>
+      <circle cx="290" cy="290" r="6" fill="#eb6834"/><text x="252" y="294" class="ink" text-anchor="end">P1</text>
+      <circle cx="290" cy="320" r="6" fill="#2a78d6"/><text x="252" y="324" class="ink" text-anchor="end">P2</text>
+      <circle cx="290" cy="350" r="6" fill="#4a3aa7"/><text x="252" y="354" class="ink" text-anchor="end">P3</text>
+    </g>
+  </g>
+
+  <!-- ================= wires ================= -->
+  <path class="w" stroke="#d03b3b" d="M298,140 C450,140 480,131 620,131"/>
+  <path class="w" stroke="#0b0b0b" d="M298,170 C450,170 480,161 620,161"/>
+  <path class="w" stroke="#898781" d="M298,200 C450,200 480,191 620,191"/>
+  <path class="w" stroke="#e87ba4" d="M298,230 C450,230 480,221 620,221"/>
+  <path class="w" stroke="#008300" d="M298,260 C450,260 480,251 620,251"/>
+  <path class="w" stroke="#eb6834" d="M298,290 C450,290 480,281 620,281"/>
+  <path class="w" stroke="#2a78d6" d="M298,320 C450,320 480,311 620,311"/>
+  <path class="w" stroke="#4a3aa7" d="M298,350 C450,350 480,341 620,341"/>
+
+  <!-- landing chips (shield pin labels) -->
+  <g font-size="11.5" font-weight="600">
+    <rect x="620" y="120" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#d03b3b"/><text x="676" y="135" text-anchor="middle" class="ink">pin 1 · 3V3</text>
+    <rect x="620" y="150" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#0b0b0b"/><text x="676" y="165" text-anchor="middle" class="ink">pin 6 · GND</text>
+    <rect x="620" y="180" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#898781"/><text x="676" y="195" text-anchor="middle" class="ink">pin 11 · GPIO17</text>
+    <rect x="620" y="210" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#e87ba4"/><text x="676" y="225" text-anchor="middle" class="ink">pin 15 · GPIO22</text>
+    <rect x="620" y="240" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#008300"/><text x="676" y="255" text-anchor="middle" class="ink">pin 19 · MOSI</text>
+    <rect x="620" y="270" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#eb6834"/><text x="676" y="285" text-anchor="middle" class="ink">pin 21 · MISO</text>
+    <rect x="620" y="300" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#2a78d6"/><text x="676" y="315" text-anchor="middle" class="ink">pin 23 · SCLK</text>
+    <rect x="620" y="330" width="112" height="22" rx="11" fill="#fcfcfb" stroke="#4a3aa7"/><text x="676" y="345" text-anchor="middle" class="ink">pin 24 · CE0</text>
+  </g>
+
+  <!-- ================= SG shield ================= -->
+  <rect x="760" y="100" width="270" height="290" rx="10" class="board"/>
+  <text x="895" y="90" text-anchor="middle" class="ink" font-size="15" font-weight="650">SG SPE V1.0.0 shield (no Pi attached)</text>
+
+  <!-- 40-pin header: 2 cols x 20 rows, pin1 top-left -->
+  <g>
+    <text x="782" y="118" class="mut" font-size="9.5">1</text>
+    <text x="806" y="118" class="mut" font-size="9.5">2</text>
+    <text x="770" y="411" class="mut" font-size="9.5">39</text>
+    <text x="800" y="411" class="mut" font-size="9.5">40</text>
+  </g>
+  <g stroke="#898781" stroke-width="1" fill="#fcfcfb">
+    <!-- generated grid: odd col x=786, even col x=810, y=127+k*14 -->
+    <circle cx="786" cy="127" r="4.5" fill="#d03b3b" stroke="#d03b3b"/><circle cx="810" cy="127" r="4.5"/>
+    <circle cx="786" cy="141" r="4.5"/><circle cx="810" cy="141" r="4.5"/>
+    <circle cx="786" cy="155" r="4.5"/><circle cx="810" cy="155" r="4.5" fill="#0b0b0b" stroke="#0b0b0b"/>
+    <circle cx="786" cy="169" r="4.5"/><circle cx="810" cy="169" r="4.5"/>
+    <circle cx="786" cy="183" r="4.5"/><circle cx="810" cy="183" r="4.5"/>
+    <circle cx="786" cy="197" r="4.5" fill="#898781" stroke="#0b0b0b"/><circle cx="810" cy="197" r="4.5"/>
+    <circle cx="786" cy="211" r="4.5"/><circle cx="810" cy="211" r="4.5"/>
+    <circle cx="786" cy="225" r="4.5" fill="#e87ba4" stroke="#e87ba4"/><circle cx="810" cy="225" r="4.5"/>
+    <circle cx="786" cy="239" r="4.5"/><circle cx="810" cy="239" r="4.5"/>
+    <circle cx="786" cy="253" r="4.5" fill="#008300" stroke="#008300"/><circle cx="810" cy="253" r="4.5"/>
+    <circle cx="786" cy="267" r="4.5" fill="#eb6834" stroke="#eb6834"/><circle cx="810" cy="267" r="4.5"/>
+    <circle cx="786" cy="281" r="4.5" fill="#2a78d6" stroke="#2a78d6"/><circle cx="810" cy="281" r="4.5" fill="#4a3aa7" stroke="#4a3aa7"/>
+    <circle cx="786" cy="295" r="4.5"/><circle cx="810" cy="295" r="4.5"/>
+    <circle cx="786" cy="309" r="4.5"/><circle cx="810" cy="309" r="4.5"/>
+    <circle cx="786" cy="323" r="4.5"/><circle cx="810" cy="323" r="4.5"/>
+    <circle cx="786" cy="337" r="4.5"/><circle cx="810" cy="337" r="4.5"/>
+    <circle cx="786" cy="351" r="4.5"/><circle cx="810" cy="351" r="4.5"/>
+    <circle cx="786" cy="365" r="4.5"/><circle cx="810" cy="365" r="4.5"/>
+    <circle cx="786" cy="379" r="4.5"/><circle cx="810" cy="379" r="4.5"/>
+    <circle cx="786" cy="393" r="4.5"/><circle cx="810" cy="393" r="4.5"/>
+  </g>
+  <text x="798" y="428" text-anchor="middle" class="mut" font-size="10">40-pin female header — jumpers plug straight in</text>
+
+  <!-- shield internals -->
+  <rect x="880" y="220" width="70" height="70" rx="4" class="chip"/>
+  <text x="915" y="250" text-anchor="middle" class="chiplab" font-size="11">ADIN1110</text>
+  <text x="915" y="264" text-anchor="middle" class="chiplab">10BASE-T1L</text>
+  <rect x="880" y="140" width="52" height="30" rx="4" fill="#5a5a58"/>
+  <text x="906" y="158" text-anchor="middle" class="chiplab">RTC</text>
+  <text x="990" y="200" text-anchor="middle" class="mut" font-size="10">SPI_CFG straps:</text>
+  <text x="990" y="213" text-anchor="middle" class="mut" font-size="10">generic SPI mode</text>
+
+  <!-- screw terminal -->
+  <g>
+    <rect x="962" y="300" width="58" height="72" rx="4" fill="#8fbf8f" stroke="#0b0b0b"/>
+    <circle cx="991" cy="316" r="6" fill="#fcfcfb" stroke="#0b0b0b"/>
+    <circle cx="991" cy="336" r="6" fill="#fcfcfb" stroke="#0b0b0b"/>
+    <circle cx="991" cy="356" r="6" fill="#fcfcfb" stroke="#0b0b0b"/>
+    <text x="954" y="320" text-anchor="end" class="ink" font-size="11" font-weight="600">DA−</text>
+    <text x="954" y="340" text-anchor="end" class="ink" font-size="11" font-weight="600">DA+</text>
+    <text x="954" y="360" text-anchor="end" class="ink" font-size="11" font-weight="600">SHLD</text>
+  </g>
+  <path d="M1020,316 C1042,316 1042,326 1042,340 M1020,336 C1038,336 1038,340 1038,340 M1040,340 C1040,360 1040,372 1040,384" stroke="#52514e" stroke-width="2" fill="none"/>
+  <text x="1044" y="400" text-anchor="end" class="sec" font-size="11">twisted pair → Node 2 (Diagram 2)</text>
+
+  <!-- ================= wiring table ================= -->
+  <g font-size="12.5">
+    <text x="40" y="472" class="ink" font-size="14" font-weight="650">Wire list</text>
+    <line x1="40" y1="482" x2="560" y2="482" stroke="#c3c2b7"/>
+    <g class="sec" font-size="11" font-weight="600">
+      <text x="60" y="500">AE3</text><text x="130" y="500">SIGNAL</text><text x="330" y="500">SHIELD HEADER (PHYS PIN)</text>
+    </g>
+    <g>
+      <circle cx="48" cy="516" r="5" fill="#d03b3b"/><text x="60" y="521" class="ink">3V3</text><text x="130" y="521" class="sec">3.3 V power†</text><text x="330" y="521" class="ink">pin 1 — 3V3</text>
+      <circle cx="48" cy="540" r="5" fill="#0b0b0b"/><text x="60" y="545" class="ink">GND</text><text x="130" y="545" class="sec">ground</text><text x="330" y="545" class="ink">pin 6 — GND (or 9/14/20/25)</text>
+      <circle cx="48" cy="564" r="5" fill="#008300"/><text x="60" y="569" class="ink">P0</text><text x="130" y="569" class="sec">SPI0 MOSI</text><text x="330" y="569" class="ink">pin 19 — GPIO10 (MOSI)</text>
+      <circle cx="48" cy="588" r="5" fill="#eb6834"/><text x="60" y="593" class="ink">P1</text><text x="130" y="593" class="sec">SPI0 MISO</text><text x="330" y="593" class="ink">pin 21 — GPIO9 (MISO)</text>
+      <circle cx="48" cy="612" r="5" fill="#2a78d6"/><text x="60" y="617" class="ink">P2</text><text x="130" y="617" class="sec">SPI0 SCLK</text><text x="330" y="617" class="ink">pin 23 — GPIO11 (SCLK)</text>
+      <circle cx="48" cy="636" r="5" fill="#4a3aa7"/><text x="60" y="641" class="ink">P3</text><text x="130" y="641" class="sec">chip select (manual GPIO)</text><text x="330" y="641" class="ink">pin 24 — GPIO8 (CE0)</text>
+      <circle cx="48" cy="660" r="5" fill="#898781"/><text x="60" y="665" class="ink">P4</text><text x="130" y="665" class="sec">ADIN RESET (out)</text><text x="330" y="665" class="ink">pin 11 — GPIO17</text>
+      <circle cx="48" cy="684" r="5" fill="#e87ba4"/><text x="60" y="689" class="ink">P5</text><text x="130" y="689" class="sec">ADIN IRQ (in)</text><text x="330" y="689" class="ink">pin 15 — GPIO22</text>
+    </g>
+  </g>
+
+  <!-- ================= notes ================= -->
+  <g>
+    <text x="620" y="472" class="ink" font-size="14" font-weight="650">Before power-on</text>
+    <line x1="620" y1="482" x2="1040" y2="482" stroke="#c3c2b7"/>
+    <text x="620" y="502" class="note">† Verify power once with a meter: continuity from header pin 1 to the</text>
+    <text x="632" y="517" class="note">ADIN’s supply caps ⇒ 3V3-fed, wire as drawn. If pin 2/4 (5 V) feeds a</text>
+    <text x="632" y="532" class="note">regulator instead, power the shield from USB 5 V / bench, common GND.</text>
+    <text x="620" y="556" class="note">• AE3 pins are NOT 5 V tolerant — nothing touches pins 2/4 in this rig.</text>
+    <text x="620" y="576" class="note">• CS is manual on the AE3 (SS not peripheral-driven) — toggle P3 in code.</text>
+    <text x="620" y="596" class="note">• Harness under 10 cm. Start at 5 MHz; ADIN1110 SPI max is 25 MHz.</text>
+    <text x="620" y="616" class="note">• SPI_CFG straps must be generic SPI mode (not OPEN Alliance).</text>
+    <text x="620" y="636" class="note">• First milestone: read PHY ID over SPI — expect the ADIN1110 ID.</text>
+    <text x="620" y="656" class="note">• MicroPython: machine.SPI(0); CS=Pin("P3"), RST=Pin("P4"), IRQ=Pin("P5").</text>
+    <text x="620" y="676" class="note">• Shield and AE3 share GND via the harness; AE3 runs from its own USB-C.</text>
+  </g>
+
+  <!-- caution strip -->
+  <rect x="40" y="716" width="1000" height="46" rx="8" fill="#fdf3e2" stroke="#fab219"/>
+  <text x="60" y="735" class="ink" font-size="12.5" font-weight="650">DA+/DA− go to a bench twisted pair ONLY.</text>
+  <text x="60" y="752" class="sec" font-size="12">Never connect this shield to a powered Spotter/Bristlemouth bus — it has no PoDL protection and the bus pair carries DC.</text>
+</svg>

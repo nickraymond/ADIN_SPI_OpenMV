@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 810" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <style>
+      .ink { fill:#0b0b0b } .sec { fill:#52514e } .mut { fill:#898781 }
+      .board { fill:#eef3ee; stroke:#0b0b0b; stroke-width:1.5 }
+      .group { fill:none; stroke:#898781; stroke-width:1.2; stroke-dasharray:5 4 }
+      .chip { fill:#2b2b2b } .chiplab { fill:#ffffff; font-size:9.5px }
+      .note { font-size:12px; fill:#52514e }
+      .stage { fill:#fcfcfb; stroke:#c3c2b7; stroke-width:1.2 }
+      .stagetext { font-size:10.5px; fill:#0b0b0b; font-weight:600 }
+      .stagesub { font-size:9.5px; fill:#898781 }
+    </style>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+    <marker id="arrbig" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1080" height="810" fill="#fcfcfb"/>
+
+  <text x="40" y="42" class="ink" font-size="21" font-weight="650">Bench network — camera node (AE3 + SG shield) → Raspberry Pi consumer (AOS hat)</text>
+  <text x="40" y="64" class="sec" font-size="13">Diagram 2 of 2 · two-node 10BASE-T1L link · Pi receives the video stream · bench pair only — never the powered Spotter bus</text>
+
+  <!-- ============ video flow arrow ============ -->
+  <line x1="440" y1="128" x2="648" y2="128" stroke="#2a78d6" stroke-width="4" marker-end="url(#arrbig)"/>
+  <text x="540" y="115" text-anchor="middle" class="ink" font-size="13" font-weight="650">video stream direction</text>
+  <text x="540" y="148" text-anchor="middle" class="mut" font-size="11">MJPEG in raw Ethernet frames · ~9 Mbps line rate</text>
+
+  <!-- ============ NODE 1 ============ -->
+  <rect x="40" y="96" width="368" height="340" rx="12" class="group"/>
+  <text x="56" y="118" class="ink" font-size="13" font-weight="650">NODE 1 — camera source</text>
+
+  <!-- AE3 -->
+  <rect x="60" y="150" width="112" height="118" rx="8" class="board"/>
+  <circle cx="116" cy="196" r="26" fill="#1a1a19"/>
+  <circle cx="116" cy="196" r="10" fill="#6a7cc0" opacity="0.7"/>
+  <text x="116" y="286" text-anchor="middle" class="ink" font-size="12.5" font-weight="650">OpenMV AE3</text>
+  <text x="116" y="301" text-anchor="middle" class="mut" font-size="10">USB-C powered</text>
+
+  <!-- harness -->
+  <g stroke-width="2">
+    <line x1="172" y1="160" x2="222" y2="160" stroke="#d03b3b"/>
+    <line x1="172" y1="173" x2="222" y2="173" stroke="#0b0b0b"/>
+    <line x1="172" y1="186" x2="222" y2="186" stroke="#008300"/>
+    <line x1="172" y1="199" x2="222" y2="199" stroke="#eb6834"/>
+    <line x1="172" y1="212" x2="222" y2="212" stroke="#2a78d6"/>
+    <line x1="172" y1="225" x2="222" y2="225" stroke="#4a3aa7"/>
+    <line x1="172" y1="238" x2="222" y2="238" stroke="#898781"/>
+    <line x1="172" y1="251" x2="222" y2="251" stroke="#e87ba4"/>
+  </g>
+  <text x="196" y="274" text-anchor="middle" class="mut" font-size="10">8 wires</text>
+  <text x="196" y="287" text-anchor="middle" class="mut" font-size="10">Diag. 1</text>
+
+  <!-- SG shield -->
+  <rect x="222" y="140" width="164" height="280" rx="8" class="board"/>
+  <text x="296" y="405" text-anchor="middle" class="ink" font-size="12.5" font-weight="650">SG SPE V1.0.0</text>
+  <rect x="258" y="210" width="58" height="58" rx="4" class="chip"/>
+  <text x="287" y="235" text-anchor="middle" class="chiplab">ADIN1110</text>
+  <text x="287" y="248" text-anchor="middle" class="chiplab">T1L</text>
+  <!-- X1 terminal on right edge -->
+  <rect x="352" y="248" width="34" height="74" rx="3" fill="#8fbf8f" stroke="#0b0b0b"/>
+  <circle cx="369" cy="264" r="5.5" fill="#fcfcfb" stroke="#0b0b0b"/>
+  <circle cx="369" cy="286" r="5.5" fill="#fcfcfb" stroke="#0b0b0b"/>
+  <circle cx="369" cy="308" r="5.5" fill="#fcfcfb" stroke="#0b0b0b"/>
+  <text x="346" y="268" text-anchor="end" class="ink" font-size="10.5" font-weight="600">DA−</text>
+  <text x="346" y="290" text-anchor="end" class="ink" font-size="10.5" font-weight="600">DA+</text>
+  <text x="346" y="312" text-anchor="end" class="ink" font-size="10.5" font-weight="600">SHLD</text>
+
+  <!-- ============ twisted pair ============ -->
+  <!-- DA+ blue, DA- gray; twist crossings -->
+  <path d="M375,286 C430,286 445,262 500,262 C540,262 545,286 585,286 C625,286 635,262 690,240 C700,236 706,232 712,228"
+        fill="none" stroke="#2a78d6" stroke-width="2.6"/>
+  <path d="M375,264 C430,264 445,288 500,288 C540,288 545,264 585,264 C625,264 635,288 690,262 C700,256 706,248 712,244"
+        fill="none" stroke="#52514e" stroke-width="2.6"/>
+  <text x="540" y="250" text-anchor="middle" class="sec" font-size="11" font-weight="600">single twisted pair (one CAT5 pair is fine)</text>
+  <text x="540" y="332" text-anchor="middle" class="mut" font-size="10.5">DA+ ↔ DA+ (blue) · DA− ↔ DA− (gray) · SHLD n/c on bench</text>
+
+  <!-- ============ NODE 2 ============ -->
+  <rect x="672" y="96" width="368" height="340" rx="12" class="group"/>
+  <text x="688" y="118" class="ink" font-size="13" font-weight="650">NODE 2 — stream consumer</text>
+
+  <!-- Pi -->
+  <rect x="700" y="252" width="320" height="150" rx="8" class="board"/>
+  <text x="860" y="382" text-anchor="middle" class="ink" font-size="12.5" font-weight="650">Raspberry Pi (Zero 2W or any 40-pin)</text>
+  <text x="860" y="396" text-anchor="middle" class="mut" font-size="10">your Tailscale Pi · mainline adin1110 driver · eth1</text>
+
+  <!-- header mating strip -->
+  <rect x="716" y="244" width="256" height="12" rx="2" fill="#1a1a19"/>
+  <text x="984" y="254" class="mut" font-size="9.5">40-pin header</text>
+
+  <!-- AOS hat -->
+  <rect x="712" y="150" width="264" height="96" rx="8" class="board"/>
+  <text x="854" y="176" text-anchor="middle" class="ink" font-size="12.5" font-weight="650">AOS BOREALIS hat</text>
+  <text x="854" y="191" text-anchor="middle" class="mut" font-size="10">mounts directly on the header — no jumpers</text>
+  <rect x="880" y="200" width="52" height="38" rx="3" class="chip"/>
+  <text x="906" y="217" text-anchor="middle" class="chiplab">ADIN1110</text>
+  <text x="906" y="229" text-anchor="middle" class="chiplab">T1L</text>
+  <!-- micro-fit connector on left edge of hat -->
+  <rect x="700" y="216" width="26" height="26" rx="3" fill="#3a3a38"/>
+  <circle cx="713" cy="224" r="4" fill="#fcfcfb"/>
+  <circle cx="713" cy="236" r="4" fill="#fcfcfb"/>
+  <text x="732" y="227" class="ink" font-size="10" font-weight="600">DA+</text>
+  <text x="732" y="240" class="ink" font-size="10" font-weight="600">DA−</text>
+
+  <!-- ============ protocol stack ============ -->
+  <text x="40" y="472" class="ink" font-size="14" font-weight="650">The stream, end to end</text>
+  <line x1="40" y1="482" x2="1040" y2="482" stroke="#c3c2b7"/>
+  <g>
+    <rect x="40"  y="496" width="128" height="44" rx="9" class="stage"/>
+    <text x="104" y="514" text-anchor="middle" class="stagetext">AE3 camera</text>
+    <text x="104" y="528" text-anchor="middle" class="stagesub">MJPEG frames + seq #</text>
+    <line x1="170" y1="518" x2="184" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="186" y="496" width="128" height="44" rx="9" class="stage"/>
+    <text x="250" y="514" text-anchor="middle" class="stagetext">your SPI driver</text>
+    <text x="250" y="528" text-anchor="middle" class="stagesub">P0–P5 · 5→25 MHz</text>
+    <line x1="316" y1="518" x2="330" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="332" y="496" width="120" height="44" rx="9" class="stage"/>
+    <text x="392" y="514" text-anchor="middle" class="stagetext">ADIN1110 (SG)</text>
+    <text x="392" y="528" text-anchor="middle" class="stagesub">MAC + PHY</text>
+    <line x1="454" y1="518" x2="468" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="470" y="496" width="128" height="44" rx="9" class="stage"/>
+    <text x="534" y="514" text-anchor="middle" class="stagetext">10BASE-T1L pair</text>
+    <text x="534" y="528" text-anchor="middle" class="stagesub">10 Mbps full duplex</text>
+    <line x1="600" y1="518" x2="614" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="616" y="496" width="124" height="44" rx="9" class="stage"/>
+    <text x="678" y="514" text-anchor="middle" class="stagetext">ADIN1110 (AOS)</text>
+    <text x="678" y="528" text-anchor="middle" class="stagesub">MAC + PHY</text>
+    <line x1="742" y1="518" x2="756" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="758" y="496" width="130" height="44" rx="9" class="stage"/>
+    <text x="823" y="514" text-anchor="middle" class="stagetext">Linux adin1110</text>
+    <text x="823" y="528" text-anchor="middle" class="stagesub">eth1 · tcpdump visible</text>
+    <line x1="890" y1="518" x2="904" y2="518" stroke="#52514e" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="906" y="496" width="134" height="44" rx="9" class="stage"/>
+    <text x="973" y="514" text-anchor="middle" class="stagetext">consumer app</text>
+    <text x="973" y="528" text-anchor="middle" class="stagesub">raw socket → file / ffplay</text>
+  </g>
+
+  <!-- ============ notes ============ -->
+  <g>
+    <text x="40" y="580" class="ink" font-size="14" font-weight="650">Link bring-up</text>
+    <line x1="40" y1="590" x2="510" y2="590" stroke="#c3c2b7"/>
+    <text x="40" y="608" class="note">• Polarity: match DA+↔DA+, DA−↔DA−. T1L PHYs can auto-correct</text>
+    <text x="52" y="623" class="note">an inversion, but don’t design around it.</text>
+    <text x="40" y="642" class="note">• AOS 2-pin connector: buzz out which pin is DA+ (continuity to the</text>
+    <text x="52" y="657" class="note">ADIN pins) before crimping the pair.</text>
+    <text x="40" y="676" class="note">• Autoneg resolves master/slave. If MS_SEL straps force roles, they</text>
+    <text x="52" y="691" class="note">must force OPPOSITE roles. TX2P4: same default (1.0 Vpp) both ends.</text>
+    <text x="40" y="710" class="note">• Pi check: ip link show · ethtool eth1 · link LED on both boards.</text>
+  </g>
+  <g>
+    <text x="560" y="580" class="ink" font-size="14" font-weight="650">First stream test (no IP stack needed)</text>
+    <line x1="560" y1="590" x2="1040" y2="590" stroke="#c3c2b7"/>
+    <text x="560" y="610" class="note">• Milestone A: AE3 sends raw Ethernet frames with a counter;</text>
+    <text x="572" y="625" class="note">Pi counts them (python raw socket / tcpdump) → loss rate.</text>
+    <text x="560" y="646" class="note">• Milestone B: chunk one JPEG across frames + seq numbers;</text>
+    <text x="572" y="661" class="note">Pi reassembles to a .jpg you can open.</text>
+    <text x="560" y="682" class="note">• Milestone C: continuous MJPEG at target fps — measure</text>
+    <text x="572" y="697" class="note">sustained Mbps vs the ~9 Mbps line-rate ceiling.</text>
+    <text x="560" y="718" class="note">• BM stack (bm_core) comes after C — swap framing, keep wiring.</text>
+  </g>
+
+  <!-- caution strip -->
+  <rect x="40" y="740" width="1000" height="46" rx="8" fill="#fdf3e2" stroke="#fab219"/>
+  <text x="60" y="759" class="ink" font-size="12.5" font-weight="650">Bench pair only — never a powered Spotter/Bristlemouth bus.</text>
+  <text x="60" y="776" class="sec" font-size="12">Neither board has PoDL protection. AE3 on USB-C, Pi on its own supply — grounds meet only through the data pair’s PHYs (isolated); that’s fine.</text>
+</svg>
