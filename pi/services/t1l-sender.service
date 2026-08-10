@@ -1,0 +1,16 @@
+# t1l-sender.service — S3 sender on the camera node (nereus000).
+# Streams the AE3 over the T1L pair at the D17 setting (QVGA q90, 30 fps).
+# The sender self-heals (board reboot, TCP reconnect), so plain always-restart.
+# Install: sudo pi/install_stream_service.sh sender
+[Unit]
+Description=BM camera T1L sender (AE3 USB -> pair)
+After=network.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/stream/t1l_sender.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

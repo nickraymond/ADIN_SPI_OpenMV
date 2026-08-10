@@ -141,7 +141,7 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
 **Demo (Nick):** `ping 192.168.7.2` · `iperf3 -c 192.168.7.2` shows ~9 Mbps.
 **Needs:** both AOS hats, both Pis, crimped pair, logic analyzer.
 
-### S3 — Video across T1L, Pi to Pi  `[~]`
+### S3 — Video across T1L, Pi to Pi  `[x]`  *(demo run by Nick 2026-08-10 — PASS: live browser video across the pair, QVGA q90 @ 30 fps, 0 loss)*
 **Goal:** full streaming pipeline working before any AE3 driver exists.
 - [x] AE3 → Pi 5 over USB (existing setup), constrained to ≤ 8 Mbps
       (settings per SPEC budget; record actual choice)
@@ -154,21 +154,49 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       the board → hosts reboot it between sessions (README §Known firmware
       crash; not fixed by OpenMV dev build; candidate upstream report).
       Hard fact: VGA ≥ 15 fps impossible on AE3 (software encoder).
-- [ ] Sender service on Pi 5 → frames over T1L → receiver on Pi 3/4 serves
+- [x] Sender service on Pi 5 → frames over T1L → receiver on Pi 3/4 serves
       multipart-MJPEG HTTP (no transcode)
-- [ ] Measure sustained Mbps + dropped frames at target settings
-**Demo (Nick):** open `http://<pi3>:8080/stream` in a browser → live video that
-crossed the pair.
+      → DONE 2026-08-10 (receiver = nereus001, the second Pi 5):
+      `pi/stream/t1l_sender.py` (self-healing leg: board reboot → USB
+      session → pace → relay, re-sequenced) + `pi/stream/stream_server.py`
+      (ingest :8081 speaking the project framing — **the frozen S6
+      interface** — HTTP :8080 `/stream` `/frame.jpg` `/stats.json`).
+      Both run as systemd services (`pi/services/`,
+      `pi/install_stream_service.sh`). Standing setting revised to
+      **QVGA q90 @ 30 fps** (D17; q80 = margin fallback).
+- [x] Measure sustained Mbps + dropped frames at target settings
+      → DONE 2026-08-10: 10-min sustained run under systemd at D17
+      settings — **18,032 frames / 615 s = 29.3 fps avg, 4.60 Mbps,
+      0 gaps, 0 resets (zero frame loss)**. DESIGN.md §S3 detail.
+**Demo (Nick):** open `http://nereus001-1:8080/stream` in a browser → live
+video that crossed the pair (page with stats at `/`).
 **Needs:** S2 done. This receive side is FROZEN after S3 — S6 must plug into it
 unchanged.
 
 ### S4 — AE3 first light: PHY ID over SPI  `[ ]`
-**Goal:** AE3 (Diagram 1 rig, generic SPI mode) proves wiring + HAL.
-- [ ] Meter check: SG shield power source (pin 1 vs pin 2 regulator) before power-on
+**Goal:** AE3 (generic SPI mode) proves wiring + HAL.
+**Rig revised 2026-08-10 (Nick, D18): AE3 drives an AOS hat, not the SG
+shield** — known-good silicon + straps (S2-validated on both hats), pair
+connector already crimped, 3.3V-only board. Header pinout = SG shield
+(DESIGN §S2 table), so Diagram 1's harness applies at the same header
+positions; hat #2 comes off nereus000 (pauses the S3 stream fixture —
+restore = remount hat + `systemctl start t1l-sender`), nereus001 + hat #1
+stays intact as the live Linux reference node on the pair.
+- [ ] Harness AE3 → hat header: SPI0 = header 19/21/23 (MOSI/MISO/SCLK),
+      CS = 24, IRQ = 15 (the GPIO22 position), RESET = 11 (the GPIO17
+      position), 3V3 = 1/17, GND. Meter sanity: 3.3 V at the hat before
+      first energize (no SG-style 5V-regulator question — AOS is
+      3.3V-only per netlist + live validation).
+      OPEN (flag, don't guess): can the AE3's 3V3 pin source the hat's
+      draw (ADIN1110 + DS3231), or does the hat need bench 3.3 V?
+- [ ] AE3 P5 (IRQ in) configured with internal pull-up — the AOS board
+      has no INT_N pull-up (D14; Pi overlay solved this Pi-side).
 - [ ] Minimal generic-SPI register read in MicroPython
-- [ ] Read PHY ID; compare LA trace against S2 golden capture on mismatch
+- [ ] Read PHY ID; on mismatch, fallback = register readback + the live
+      Linux node as reference (no LA on bench — S2 descope)
 **Demo (Nick):** REPL prints `PHY ID: 0x0283BC91 — OK`.
-**Needs:** S0 pass, SG shield freed from Pi 5 (S1 knowledge retained), 8-jumper harness.
+**Needs:** S0 pass, hat #2 freed from nereus000, 8-jumper harness. SG
+shield stays shelved as backup (S1 knowledge retained).
 
 ### S5 — AE3 raw-frame TX + loss measurement  `[ ]`
 **Goal:** AE3 transmits real Ethernet frames; link quality quantified.

@@ -17,6 +17,46 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S3 — bites 2+3: video across the pair, 30 fps, zero loss
+
+**Branch:** sprint/3-t1l-video
+
+**Done:**
+- Bite 2 plan approved; built `pi/stream/stream_server.py` (nereus001:
+  TCP ingest :8081 — the FROZEN S6 interface, same frame framing as the
+  USB protocol, StreamParser reused — + HTTP :8080 `/stream` `/frame.jpg`
+  `/stats.json`, stdlib only) and `pi/stream/t1l_sender.py` (nereus000:
+  self-healing leg — board reboot per D15 → USB session → Pacer →
+  re-sequenced relay). 9 new unit tests; 24 total pass.
+- Live end-to-end same day: browser video that crossed the pair.
+  Real-scene q90 frames ≈ 21 KB (2.4× bench scene, as S0 predicted).
+- Nick pushed the target: 15 → 30 fps. Measured live: q90@30 = 30.8 fps /
+  4.8 Mbps / 0 gaps (~2 fps encoder surplus); q80@30 = 30.4 / 3.0 (~4 fps
+  surplus, documented fallback). **D17: standing setting QVGA q90 @ 30 fps**
+  (supersedes D16; S6 caveat: exceeds the ~4 Mbps SPI budget — USB-path
+  only).
+- systemd units + installer (`pi/services/`,
+  `pi/install_stream_service.sh receiver|sender`); both nodes converted.
+- **Sustained measurement (TODO 3): 10 min 15 s, 18,032 frames, 29.3 fps
+  avg, 4.60 Mbps, 0 gaps, 0 resets — zero frame loss.** Sender self-heal
+  verified live (receiver restart mid-stream → reconnect + board reboot +
+  resume).
+- nereus001 ssh via new tailnet name `nereus001-1` (old entry stale).
+
+**Broke/surprised us:**
+- pkill -f patterns that also appear in the launching command line kill
+  the launcher's own ssh session — twice. Bracket trick alone isn't
+  enough; separate the kill and start invocations.
+- Nothing else — the pipeline came up on the first end-to-end attempt.
+
+**Next:** S4 — AE3 first light, PHY ID over SPI. Rig revised (Nick, D18):
+AE3 drives **AOS hat #2** (freed from nereus000), not the SG shield —
+proven silicon/straps, crimped pair, 3.3V-only. Open: AE3 3V3 sourcing
+the hat. *(S3 demo passed by Nick same day → S3 [x]; VGA live ceiling
+also measured post-demo: q35 13.5 fps / q50 11.7 over the pair.)*
+
+---
+
 ## 2026-08-10 — Sprint S3 — bite 1: USB frame source measured; AE3 crash found + worked around
 
 **Branch:** sprint/3-t1l-video
