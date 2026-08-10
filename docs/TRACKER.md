@@ -55,6 +55,13 @@ MicroPython-level driver.
       → recorded; decision RESOLVED (Nick): spike confirmed polled per-byte port
       driver (software ceiling, not silicon) → proceed at **~4 Mbps AE3 video
       budget** through S6; C-level FIFO/DMA driver priced + deferred (D8)
+- [ ] Video encode table (added by Nick 2026-08-09): run `bench/ae3_video_bench.py`
+      on the AE3 → measured bytes/frame · bpp · encode ms · max fps per
+      resolution × quality × color/mono; table recorded in DESIGN.md §Bench
+      results. Verifiable: does the measured table show a usable video mode
+      (target resolution/fps) fitting under the 4.89 Mbps SPI ceiling? Update
+      D8 with the answer. (Caveat: bench scene ≠ deployment scene; bpp is
+      scene-dependent — note the scene used.)
 **Demo (Nick):** run `bench/ae3_spi_bench.py` in OpenMV IDE → printed table of
 MHz / chunk / effective Mbps / IRQ µs. **Pass: ≥ 12 Mbps effective.**
 **Needs:** AE3, one jumper wire. No ADIN hardware.
