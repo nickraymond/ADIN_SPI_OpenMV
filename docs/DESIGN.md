@@ -66,6 +66,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D9 | 2026-08-09 | AE3 is the platform; dual targets set (Nick): T1 live stream = QVGA color q35–50 @ 24–30 fps; T2 edge CV = HD @ 3–5 fps on-device inference | Requirement space is a 2×2 (detail × smoothness, SPEC.md); AE3 covers three cells; public-720p cell needs H.264 → N6 follow-on (iceboxed). QVGA is the only mode whose measured encode+tx reaches 24–30 fps; VGA color caps at ~13. T2 chosen at HD because sergeant majors ≈ 32–48 px there (detector floor ~24–32 px); camera distance is the free variable. C driver stays a hard NO for now. |
 | D10 | 2026-08-09 | 12 Mbps S0 gate retired → transport gate = SPI effective ≥ 2× T1 stream bitrate (≥3.5 Mbps) | Original gate was derived from the 8 Mbps T1L budget, a workload the AE3 encoder cannot generate; new gate derives from the committed product mode. Measured 4.89 Mbps passes. |
 | D11 | 2026-08-09 | Edge inference (T2/S8) sequenced strictly after T1 streaming is met (Nick) | One bottleneck at a time; the NPU bench is S8's first bite, not this sprint's. |
+| D12 | 2026-08-09 | S1 driver via out-of-tree module build (vendored mainline sources), not SG's full kernel rebuild (Nick approved) | Same two driver files either way; builds in ~1 min against installed headers, stock rpt kernel untouched, reversible. Trade-off: apt kernel upgrades orphan the modules → re-run `pi/build_adin1110.sh` (script detects and fails loudly). Provenance pinned in `pi/drivers/adin1110/README.md` (rpi-6.18.y @ 222a4b41). |
 
 ## Verified-facts ledger
 
@@ -80,6 +81,8 @@ unverified — treat as unknown.
   Run 2026-08-09, AE3 fw v1.28.0-49 (2026-07-02), `bench/ae3_spi_bench.py`
   driven remotely via nereus000, P0→P1 loopback, 0 integrity errors at every
   point. IRQ path is excellent. Details below.
+- S1 Pi 5 driver bring-up: **PASS (agent-verified 2026-08-09; Nick's demo
+  pending).** Details below.
 - S2 iperf3 over T1L: —
 - S3 sustained video Mbps / fps: —
 - S5 loss rate: —
@@ -239,3 +242,34 @@ overhead), e.g. VGA mono @ ~8 fps. The 8 Mbps SPEC budget is the T1L-side
 ceiling and stays correct for the Pi↔Pi sprints; the AE3-sourced budget is
 now the binding one. C-level FIFO/DMA driver remains the priced follow-on
 if v2 needs more than ~4 Mbps.
+
+### S1 detail (2026-08-09) — Pi 5 + SG shield bring-up (as-built)
+
+Pi 5 (nereus000), Debian 13 trixie, kernel `6.18.34+rpt-rpi-2712`. Stock
+kernel ships `CONFIG_ADIN1110` unset → out-of-tree build (D12) of the two
+unmodified mainline files against installed headers. Kernel-side deps all
+present in stock config: `NET_SWITCHDEV=y`, `PHYLIB=y`, `CRC8=m`, module
+signing off.
+
+As-built facts (verified on hardware, not assumed):
+
+- Overlay `sg-adin1110.dtbo`: SPI0 CE0 @ 23 MHz, `interrupts = <22 8>`
+  (level-low — the driver hardcodes `IRQF_TRIGGER_LOW`; SG's published DTS
+  says edge but the binding + driver source say level), `reset-gpios =
+  <&gpio 17 GPIO_ACTIVE_LOW>` (driver strobes it in probe), INT pin
+  bias-none per SG + ADI-eval precedent, spidev0 disabled, no
+  `adi,spi-crc`.
+- Probe: `adin1110 spi0.0 eth1: Link is Down` at ~7 s boot; interface
+  **eth1**, fixed locally-administered MAC `02:ad:11:10:00:01` (set in
+  overlay for boot-stable naming/addressing).
+- `ethtool -i eth1` → driver **ADIN1110** (note: uppercase), bus-info
+  `spi0.0`, version = kernel release.
+- Internal PHY: MDIO addr 1 (`spi0.0:01`), **`phy_id 0x0283bc91`** —
+  matches the SPEC-predicted readback — bound to `ADIN1100` phylib driver.
+  (MDIO addr 0 shows `0x0000ffff` unbound; expected — the driver scans
+  the ADIN2111 address range and the second port doesn't exist here.)
+- eth0 untouched (SSH stays on wlan0/tailscale); "loading out-of-tree
+  module taints kernel" in dmesg is expected and benign.
+- Debug note for future PHY trouble: RPi-forum thread on this driver
+  reports early ADIN1110 silicon revs fail probe with "PHY ID read: 0"
+  (-EIO). Ours reads clean.
