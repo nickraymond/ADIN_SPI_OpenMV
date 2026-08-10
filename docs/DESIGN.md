@@ -416,3 +416,17 @@ Live end-to-end measurements (real bench scene, ~19–21 KB/frame at q90 —
 Sustained: **10 min 15 s, 18,032 frames, 0 gaps, 0 resets** — zero frame
 loss across the pair at the demo setting. TCP over the T1L link adds no
 measurable penalty at this load (4.8 of 9.3 Mbps line rate).
+
+VGA demo modes, measured live over the pair (post-demo, same scene —
+first VGA-across-the-pair numbers; requested by Nick for a future demo):
+
+| Setting | delivered fps | Mbps | note |
+|---|---|---|---|
+| VGA q35, unpaced | 13.5 | 1.3 | **the VGA ceiling** — encoder-bound |
+| VGA q50, unpaced | 11.7 | 1.45 | visibly better JPEG, ~2 fps cost |
+
+VGA @ 30 fps stays impossible on the AE3 (software encoder, D16); the
+pair itself is loafing in every VGA mode — VGA's constraint is compute,
+QVGA q90@30 (4.6+ Mbps) remains the highest-load mode for exercising the
+link and stays the standing test/demo setting per Nick (better hardware
+stressor).
