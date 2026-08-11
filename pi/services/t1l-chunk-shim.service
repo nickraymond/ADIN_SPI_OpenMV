@@ -1,0 +1,18 @@
+# t1l-chunk-shim.service — S6 shim on the receiving node (nereus001).
+# Reassembles BMV6 chunks off eth1 and feeds the frozen stream server
+# ingest (localhost:8081). Self-heals (TCP reconnect), so plain restart.
+# CAP_NET_RAW grants the raw AF_PACKET socket without running as root.
+# Install: sudo pi/install_stream_service.sh shim
+[Unit]
+Description=BM camera S6 chunk shim (T1L raw frames -> stream server)
+After=network.target
+
+[Service]
+User=pi
+AmbientCapabilities=CAP_NET_RAW
+ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/stream/chunk_shim.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
