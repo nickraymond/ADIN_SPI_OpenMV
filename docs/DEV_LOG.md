@@ -17,6 +17,44 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S7 (spike bite 1) — headless flash path mapped + tooling, zero board contact
+
+**Branch:** sprint/7-headless-flash
+
+**Done:**
+- Nibble 1 (plan approved with Nick's amendments: dev on the Mac, docker
+  build, VS Code/IDE as manual front-ends): headless flash answer pinned
+  from source, not the bench — OpenMV's DFU bootloader runs on EVERY boot
+  (USB `37C5:96E3`, 1 s + 1.5 s window), `machine.bootloader()` forces it
+  to stay (magic `0xB00710AD` → `0x200FFFFC`), partitions are named DFU
+  alts (`HP`/`HE`; `BOOT` never touched → un-brickable at app level),
+  `os.uname().version` embeds `OpenMV <sha10>` for verification. SWD and
+  SE-UART rejected for the loop (D22). SE-UART = deep recovery only.
+- Load-bearing build fact: OpenMV SDK exists only for linux-x86_64 +
+  darwin-arm64 → docker-on-Pi would be qemu-emulated; build host = Mac
+  under Rosetta (D23, Nick's call).
+- Shipped (hardware-untested by design): `firmware/openmv_build/`
+  (setup_mac.sh, build_ae3.sh → sha256 MANIFEST with openmv_sha) and
+  `pi/ae3_flash/` (flash_ae3.py ladder: preflight refuses active
+  t1l-sender → mpremote bootloader entry → DFU wait → dfu-util HP+HE →
+  CDC wait → uname hash verify; --dry-run/--recover; fetch_firmware.sh;
+  udev rule; 16 host unit tests pass).
+- Session constraints held: no mpremote/USB/flash on nereus000, stream
+  services untouched (S6 fixture live); D20/D21 numbers left to the S6
+  branch, docs appended for clean merge with PR #9.
+
+**Broke/surprised us:**
+- Nothing hardware (none touched). One test bug self-caught: asserting
+  `-R` not-in a line that starts with "DRY-RUN" — the prefix contains it.
+
+**Next:** Nick runs the Mac leg anytime (setup_mac.sh → build_ae3.sh —
+no board involved); the Pi flash leg (apt installs, udev rule, round-trip
+demo per `pi/ae3_flash/README.md`) ONLY after the S6 demo passes and Nick
+gives the go. Then flash-day checks: dfu-util `-R` exit behavior, ROMFS
+version pairing, uhubctl hub topology, --recover window timing.
+
+---
+
 ## 2026-08-10 — Sprint S5 — frame TX + loss demo: 0% loss at 4.21 Mbps
 
 **Branch:** sprint/5-frame-tx

@@ -74,6 +74,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D17 | 2026-08-10 | D16 revised (Nick, after live end-to-end tests): standing S3 setting = **QVGA q90, 30 fps** — sender/service defaults updated | Measured live over the pair on the real bench scene: q90@30 delivers 30.8 fps rx / 4.6–4.8 Mbps / 0 gaps with ~2 fps encoder surplus (thin, scene-dependent — pacer degrades gracefully by riding the source rate); q80@30 = 30.4 fps / 3.0 Mbps / ~4 fps surplus, the documented fallback if a scene can't hold 30 at q90. S6 caveat recorded: ~4.7 Mbps exceeds the ~4 Mbps AE3 SPI budget (D8), so this exact mode is USB-path only; the SPI-era target remains T1 (QVGA q35–50). |
 | D18 | 2026-08-10 | S4 rig uses an **AOS hat** (hat #2, freed from nereus000), not the SG shield — supersedes D7's S4 half (Nick) | Both AOS hats are now S2-proven silicon with proven straps (generic SPI no CRC, verified by working register I/O) and crimped pair connectors, and the board is 3.3V-only — removing the SG shield's 5V-regulator meter question entirely. Header pinout is identical to the SG shield (DESIGN §S2), so the Diagram 1 harness maps pin-for-pin. Consequences: AE3-side must supply the missing INT_N pull-up (P5 internal pull-up, per D14) and the S3 stream fixture pauses while hat #2 is off nereus000. SG shield remains shelved as a known-good backup. Open question flagged in TRACKER: AE3 3V3 pin's ability to source the hat's draw. |
 | D19 | 2026-08-10 | S4 rig power (Nick): hat fed from **nereus000's 3V3 header** (Pi pin 1 → hat 1, GND pin 9 → hat 9); AE3 stays USB-powered from the same Pi; direct AE3→hat ground jumper for signal return; AE3's 3V3 pin unused | No bench supply on hand, and this exact load combination is already proven — during S2/S3 nereus000 simultaneously powered hat #2 on its header and the AE3 over USB. Grounds are common through the Pi; the extra AE3→hat GND wire keeps the SPI return path out of the USB cable. Sidesteps (does not answer) the D18 open question about the AE3 3V3 pin's sourcing ability — re-flag if a standalone rig ever needs it. |
+| D22 | 2026-08-11 | *(D20/D21 are allocated on `sprint/6-ae3-video`, PR #9 — numbering skips here to merge cleanly.)* Headless AE3 flashing goes through **OpenMV's own DFU bootloader over USB** — not SWD (no debugger on the bench), not Alif SE-UART ISP (on the AE3 the SE UART reaches USB only in recovery mode: physical front switch or B2B RECOVERY pin low → hands or a board mod). SE-UART stays the documented deep-recovery path; the B2B recovery wire is NOT being added. | Verified from source (openmv.git): the bootloader runs first on **every** boot as USB DFU `37C5:96E3` with a ~1 s + 1.5 s window before jumping to the app (`boot/src/common/main.c`); `machine.bootloader()` writes magic `0xB00710AD` → `0x200FFFFC` + reset and the bootloader then stays in DFU (`micropython ports/alif/boards/OPENMV_AE3/board.c:107`); partitions are named DFU alts `BOOT HP HE ROMFS1 TOC RWFS ROMFS0 RECOVERY` (`boot_config.h:112`), flashable with stock `dfu-util`. The tooling never writes `BOOT`, so a bad app flash is always recoverable by power cycle (uhubctl) — residual brick risk requires corrupting the bootloader partition itself, which nothing in the loop touches. Firmware self-identifies: `os.uname().version` embeds `OpenMV <sha10>; MicroPython <sha10>` (verified in release binaries) → flash verification = hash match, per the S7 spike's verifiable. Tooling: `pi/ae3_flash/`. |
+| D23 | 2026-08-11 | Firmware **build host = Nick's Mac** (Apple Silicon), docker `linux/amd64` container under Rosetta with the `linux-x86_64` OpenMV SDK; artifacts scp to the Pi and flash via D22's path. Not docker-on-Pi. Mac is also the one-machine home for OpenMV dev now, bm_core dev next (own container later); VS Code for edits; OpenMV IDE (dmg install) kept as the hands-on flashing option. (Nick's call, 2026-08-11.) | The OpenMV SDK toolchain bundle is published **only** for `linux-x86_64` and `darwin-arm64` (`download.openmv.io` probed 2026-08-11; `linux-aarch64` 404s), so docker on the Pi 5 would mean qemu amd64 emulation on the live fixture host — slow and risky for zero benefit; the Mac runs the same container under Rosetta at near-native speed and the flash step still runs entirely from nereus000, so the loop stays fully remote. Reuses openmv.git's own `docker/Makefile` build (reuse before rewriting); wrapper adds rev pinning, platform/SDK plumbing, artifact verification. Tooling: `firmware/openmv_build/`. |
 
 ## Verified-facts ledger
 
@@ -544,3 +546,57 @@ Fixture notes: t1l-sender is an *enabled* boot service on nereus000 — it
 reclaims the AE3 USB port on every reboot; stop it before mpremote work.
 tcpdump is now installed on nereus001. `/tmp/s5_bite1.pcap` on nereus001
 holds the bite-1 capture artifact.
+
+### S7 detail (2026-08-11) — headless AE3 flash path: facts + tooling (pre-hardware)
+
+Research + tooling bite for the S7 first spike, done with **zero board
+contact** (S6 fixture live). Every fact below is from reading source or
+probing URLs, not from touching hardware; items needing a live board are
+listed as flash-day checks in `pi/ae3_flash/README.md`.
+
+**Boot/flash protocol (openmv.git @ master 2026-08-11, micropython.git):**
+
+- Boot order on every power-up: OpenMV bootloader (`boot/`) runs before the
+  app, enumerates as USB DFU **VID:PID 37C5:96E3**, waits ~1 s for USB mount
+  then 1.5 s (`OMV_BOOT_DFU_TIMEOUT`, AE3 `boot_config.h:44`) for a DFU
+  attach, else jumps to the app (`boot/src/common/main.c:55-113`).
+- Software bootloader entry: `machine.bootloader()` → AE3 board hook writes
+  `0xB00710AD` to `0x200FFFFC` and calls `NVIC_SystemReset()`
+  (micropython `ports/alif/boards/OPENMV_AE3/board.c:107-115`); bootloader
+  reads+clears the magic and then ignores the DFU timeout (stays until
+  reset). Backup entry: OpenMV IDE CDC protocol opcode `SYS_BOOT` 0x11
+  (`protocol/omv_protocol.h:150`) — not implemented in our tool (YAGNI).
+- Partitions = named DFU alt settings: `BOOT HP HE ROMFS1 TOC RWFS ROMFS0
+  RECOVERY` (`boards/OPENMV_AE3/boot_config.h:101-112`). App firmware =
+  `HP` (+ `HE` for the second core; staff-confirmed HP-only suffices for
+  single-core use, we flash both to avoid version skew). Plain `dfu-util`
+  (Debian arm64) speaks this. **`BOOT` is never written by our tooling** —
+  un-brickable at the app level; power cycle always re-opens the window.
+- Firmware self-identifies: `os.uname().version` embeds
+  `"OpenMV <sha10>; MicroPython <sha10>"` (verified by `strings` on the
+  release `firmware_M55_HP.bin`; format matches the D15-era dev build hash
+  `11852aa3d0`). Flash verification = compare against the build manifest.
+- Deep recovery (bootloader itself corrupted — outside our loop): Alif
+  SE-UART ISP via `tools/alif` (micropython/alif-security-toolkit,
+  `app-write-mram.py` + ATOC `firmware.toc`); on the AE3 the SE UART
+  reaches USB only in recovery mode = front switch (hands) or B2B RECOVERY
+  pin low (board mod, declined — D22).
+
+**Artifacts:** every openmv release ships `firmware_OPENMV_AE3.zip`
+(`firmware_M55_HP/HE.bin`, `bootloader.bin`, `romfs0/1.img`,
+`firmware.toc`); stable `v5.0.0` = the board's current firmware,
+`development` = rolling. Contents verified by download 2026-08-11.
+
+**Build (D23):** openmv.git `docker/Makefile build-firmware TARGET=
+OPENMV_AE3` in an ubuntu:24.04 container; SDK pinned by `SDK_VERSION`
+(1.6.0), published linux-x86_64 + darwin-arm64 only → Mac builds the amd64
+container under Rosetta. `make deploy` in `ports/alif/port_config.mk` is
+the SE-UART flash path (unused here but exists).
+
+**Tooling shipped this bite:** `firmware/openmv_build/` (Mac: `setup_mac.sh`,
+`build_ae3.sh` → sha256'd artifacts + `MANIFEST.txt` with `openmv_sha`) and
+`pi/ae3_flash/` (`flash_ae3.py` ladder with preflight/t1l-sender refusal/
+PASS-FAIL verdict + `--dry-run` + `--recover`, `fetch_firmware.sh`, udev
+rule, 16 host unit tests). Docker/VS Code/IDE setup facts probed on the
+Mac 2026-08-11: arm64, brew present, VS Code installed (no `code` CLI),
+no docker yet (cask `docker-desktop`), no OpenMV IDE cask (dmg only).

@@ -244,7 +244,7 @@ video budget → the MicroPython driver is not the S6 blocker.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
 **Goal:** a decision, not a build.
-- [ ] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
+- [~] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
       nereus000** — no OpenMV IDE, no hands. Verifiable: build (or reuse) a
       known `firmware.bin`, flash it entirely from the nereus000 CLI, board
       re-enumerates running that exact build (uname git-hash matches).
@@ -253,6 +253,17 @@ video budget → the MicroPython driver is not the S6 blocker.
       rewrite (D8), bm_core port, upstream crash-fix testing. Investigate:
       Alif SE/bootloader protocol over USB CDC vs SWD; OpenMV's IDE-less
       loader tooling.
+      → IN PROGRESS 2026-08-11 (research + tooling done, ZERO board contact;
+      branch `sprint/7-headless-flash`): answer = OpenMV's own DFU bootloader
+      (37C5:96E3, runs every boot, `machine.bootloader()` entry, dfu-util
+      alts HP/HE, BOOT never written → power-cycle recoverable) — not SWD,
+      not SE-UART (recovery-only; needs hands or B2B mod, declined). D22.
+      Build host revised by Nick: **docker on the Mac**, not the Pi — the
+      OpenMV SDK has no linux-aarch64 build (D23). Shipped, untested on
+      hardware: `firmware/openmv_build/` (Mac setup + build → MANIFEST) and
+      `pi/ae3_flash/` (flash ladder + verify + `--recover`; 16 host tests
+      pass). GATED: first live flash only after the S6 demo passes (Nick),
+      then the round-trip demo in `pi/ae3_flash/README.md`.
 - [ ] Assess Sofar's OA-mode Linux/BM driver status (ask them directly)
 - [ ] Estimate: port oa-tc6-lib to AE3 vs stay generic; what re-straps
 - [ ] Optional spike: re-strap one AOS hat to OA, PHY ID read in OA framing
