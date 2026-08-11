@@ -804,3 +804,61 @@ hand_landmarks being 2.7× faster than N6's is that confound in action.
 
 Standing bench rule adopted: on nereus000, always
 `mpremote connect /dev/serial/by-id/...` — never rely on auto-connect.
+
+### S9 detail (2026-08-11) — bite 1: OA first light, spike PASSED
+
+**Result: bm_core's adin2111 OA driver (vendored @ d4ecc38, byte-identical)
+reads our ADIN1110's PHY ID through its own framing.** Final on-target run
+(hat #2 straps opened, `--no-prot` build): verdict 1 `read=SUCCESS
+PHYID=0x0283BC91`; verdict 2 `adin2111_Init = COMM_TIMEOUT` at
+waitDeviceReady's PHYID==0x0283BCA1 poll — the identity gate,
+source-predicted (adi_mac.c:568/1128) and demonstrated compiled in the
+host harness before any hardware.
+
+**The complete 1110-vs-2111 delta list (bite-1 scope):**
+
+1. **OA control protection unavailable on our 1110.** Chip comes up
+   PROTE=0 and the bit rejects writes (plain + with CONFIG0.SYNC; IMASK0
+   and other CONFIG0 bits write fine — measured, reproducible). bm_core
+   ships `CONFIG_SPI_PROT_EN` defined → protected framing → reads decode
+   garbage against this chip (and the driver *swallows*
+   PROTECTION_ERROR on control reads — host test [4] pins that quirk).
+   Fix for 1110 bench work: build with the define REMOVED (driver tests
+   defined-ness, not value — a `=0` build is byte-identical, sha-proven);
+   `build_spike.sh --no-prot`. Production 2111 presumably keeps
+   protection (Sofar's shipped default) — Sofar question queued.
+2. **`RSTVAL_MAC_PHYID` (0x0283BCA1)** — blocks every init path
+   (MAC-layer AND full init; the gate lives in MAC_Init → MAC_Reset →
+   waitDeviceReady, NOT just adin2111-level init).
+
+**Debug ladder that got there (kept for reuse, `~/ae3_flash/` on
+nereus000):** `s9_raw_probe.py` (mirror-vs-echo discriminator: replay the
+driver's exact control frame with distinctive padding; a miswire mirrors
+padding, a real OA chip echoes only the header) → `s9_matrix.py`
+(padding × length behavior matrix; surfaced the chip parsing follow-on
+MOSI words as new control headers — bad-parity words draw the 0x40000000
+HDRB reply) → `s9_regs.py` (CONFIG0/PROTE authoritative readback; also
+IDVER=0x10, CAPABILITY=0x6C3, and a clean 2-word auto-increment read) →
+`s9_wrtest.py` (write-path proof + PROTE dead-bit isolation). Plus one
+mid-hunt hardware fix by Nick: CFG0 strap pad wasn't fully cleared on the
+first rework (chip answered in OA-no-protection framing; razor + meter
+fixed it — though PROTE stayed 0 regardless, see SPEC open question; one
+never-reproduced protected-mode complement sighting recorded as anomaly).
+
+**Build-env facts (D23 leg, first real exercise):** docker-on-Mac works
+end-to-end (image build under Rosetta, SDK 1.6.0 plumbing, MANIFEST).
+Two traps found and fixed in `build_spike.sh`: staged-header changes can
+reuse stale objects (stage/unstage defeats make deps — `--clean` flag,
+sha-compare to verify) and the `modules/` wildcard compiles usermods into
+BOTH cores (HE can't fit the spike → `#if !defined(CORE_M55_HE)` guards,
+vendored files staged as `.inc` behind generated wrappers). Open
+environmental issue: the **M55_HE image does not link in our env at any
+rev** (FLASH_TEXT 154% with our code fully excluded — reproduced on
+master and 7d4dbf7ab2, clean trees). Workaround in use: flash HP only at
+the exact rev of the installed HE image (7d4dbf7ab2) → no core skew.
+Debug deferred; needed before S10 (bm_core runs ON the HE core).
+
+**Fixture note:** the AE3 currently runs the spike HP build
+(`v5.0.0-52.g7d4dbf7ab2`, sha256 921cdd03…). Restore to stock dev =
+reflash `7d4dbf7ab2` HP via the S7 ladder. Hat #2 is strapped OA
+(default) — re-bridge CFG0+CFG1 to return to the S6 generic-SPI baseline.

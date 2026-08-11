@@ -348,18 +348,26 @@ S7 research notes above + DESIGN §S7 detail.*
       (S7 env) → S7 headless flash → REPL/log verdict.
       **Decision point on fail: buy ADIN2111 bench hardware; do NOT
       port the driver to 1110 (throwaway — production goes 2111).**
-      → CODE-COMPLETE + host-verified 2026-08-11 (branch
-      `sprint/9-oa-first-light`, `firmware/bm_spike/`): driver vendored
-      @ d4ecc38 unmodified; usermod via openmv modules/ wildcard (no
-      fork); host harness runs the real driver against a mock ADIN
-      speaking OA-protected framing — 10 checks PASS. Key source find:
-      **the 2111 identity gate fires inside MAC-layer init**
-      (waitDeviceReady, adi_mac.c:568/1128) → spike tolerates
-      COMM_TIMEOUT and reads PHYID through the driver's own framing;
-      expected 1110 result = COMM_TIMEOUT + PHYID 0x0283BC91 = OA
-      PROVEN. SDK 1.6.0 pre-staged (sha256 ok), openmv cloned.
-      REMAINING (Nick): Docker Desktop first launch → build_spike.sh →
-      re-strap hat #2 → flash (S7 ladder) → `s9_oa_spike.py`.
+      → **SPIKE PASSED 2026-08-11 (live, Nick re-strapped + Claude drove
+      the loop): verdict 1 = PHYID 0x0283BC91 read through the driver's
+      OWN OA framing (SUCCESS); verdict 2 = adin2111_Init refused ONLY
+      by the 2111 identity gate (COMM_TIMEOUT at waitDeviceReady,
+      exactly as source-predicted).** Full 1110-vs-2111 delta list =
+      **2 items**: (1) OA control protection — **PROTE (CONFIG0 bit 5)
+      will not set on our 1110** (measured; other bits/regs write fine)
+      so bm_core must build WITHOUT `CONFIG_SPI_PROT_EN` for 1110 bench
+      work (`build_spike.sh --no-prot`; driver's unprotected path is
+      native); flagged in SPEC §Open questions pending datasheet
+      cross-check; (2) `RSTVAL_MAC_PHYID` 0x0283BCA1 vs our 0x0283BC91.
+      **Recommendation for the decision point: NOT a fail — no 2111
+      purchase forced for bite 2/3;** carry the 2-item delta as build
+      config (production 2111 unaffected). Also en route: first real
+      exercise of the D23 Mac docker build (works; HE image doesn't
+      link in our env at any rev — HP-only flash at the installed HE's
+      rev sidesteps it, environmental debug deferred); S8 bench
+      mis-attribution found + corrected (N6 vs AE3, DESIGN §S8
+      correction). Detail: DESIGN §S9, `firmware/bm_spike/README.md`.
+      Demo satisfied: REPL prints the OA-mode PHY-ID verdict.
 - [ ] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
       exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
       headers in openmv tree — wire up if bite budget allows, else S10)
