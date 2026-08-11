@@ -68,12 +68,20 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   later the "reset sent (dfu-util ...)" log line collided with the test's
   dfu-util line filter.
 
-**Next:** S7 remaining TODOs — ask Sofar about their OA-mode driver;
-oa-tc6-lib port estimate; optional OA re-strap spike; decision entry.
-Mac build leg (setup_mac.sh → build_ae3.sh) still for Nick to exercise —
-scripts are on the branch, not yet run end-to-end (needs Docker Desktop
-first-launch password). Untested: `--recover`/uhubctl (hub topology
-unverified). ROMFS pairing on big version jumps = watch item.
+**Next:** BM-native arc planned same session (research from bm_core +
+bm_sbc source; ladder S9–S13 in TRACKER, Nick approved; S8 resequenced
+after the arc). Key finds: bm_sbc branch
+`feature/adin_linux_implementation` = raw_eth AF_PACKET transport (the
+full-rate Linux attachment, WIP — Nick pinging Sofar CTO); bm_core's OA
+driver is ADIN2111-only → S9 bite 1 tests it unmodified on our 1110,
+fallback = buy 2111 hw, never port; bm_core needs FreeRTOS/POSIX → HE
+core + OpenAMP is the AE3 plan (spike gates it, ≥5 Mbps pipe). Sofar
+forum questions drafted for Nick. Immediate next bite: S7 decision
+entry after Sofar responds, or S9 bite 1 if Nick wants hardware first.
+Mac build leg (setup_mac.sh → build_ae3.sh) still for Nick to exercise
+(needs Docker Desktop first-launch password) — it becomes load-bearing
+in S9. Untested: `--recover`/uhubctl. ROMFS pairing on big version
+jumps = watch item.
 
 ---
 
