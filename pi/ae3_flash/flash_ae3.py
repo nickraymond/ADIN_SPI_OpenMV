@@ -45,9 +45,13 @@
 #     no-op on a device already sitting in DFU. A non-zero dfu-util exit as
 #     the device drops off the bus is tolerated (-R on downloads exited 251
 #     live); CDC + sys.version are the success signals.
-#   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>"; sha10 on dev
-#     builds, version tag on tagged releases -- verified live + in binaries
-#     2026-08-11. (os.uname().version carries only the MicroPython id.)
+#   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>"; the id's
+#     format depends on the build checkout: bare sha10 (tagless CI), version
+#     tag (exact-tag), or describe form v<tag>-<n>.g<sha10> (a tagged clone,
+#     e.g. our Mac build env) -- verified live + in binaries 2026-08-11.
+#     label_matches() accepts a sha10 inside a describe id; MANIFESTs from
+#     build_ae3.sh carry the exact embedded string as openmv_label.
+#     (os.uname().version carries only the MicroPython id.)
 #
 # Never run while the t1l-sender service owns the AE3 USB port (preflight
 # refuses). See README.md for setup (dfu-util, udev rule) and demo commands.
@@ -97,6 +101,25 @@ def read_manifest_sha(manifest_text):
         if line.startswith("openmv_sha:"):
             return line.split(":", 1)[1].strip()
     return None
+
+
+def read_manifest_label(manifest_text):
+    """Pull openmv_label (the id string actually embedded in the binary)
+    out of MANIFEST.txt; older manifests don't carry it."""
+    for line in manifest_text.splitlines():
+        if line.startswith("openmv_label:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def label_matches(expect, running_id):
+    """True if the running sys.version id is consistent with the expected
+    label. Exact match, or a sha10 `expect` appearing inside a git-describe
+    id (a tagged clone embeds v<tag>-<n>.g<sha10>, a tagless checkout the
+    bare sha10 -- same rev, different formats)."""
+    if not expect or not running_id:
+        return False
+    return expect == running_id or expect in running_id
 
 
 SHA256_LINE_RE = re.compile(r"^([0-9a-f]{64})\s+\*?(\S+)$")
@@ -235,7 +258,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Headless AE3 flash over the OpenMV DFU bootloader")
     ap.add_argument("--hp", type=Path, required=True, help="firmware_M55_HP.bin")
     ap.add_argument("--he", type=Path, default=None, help="firmware_M55_HE.bin (recommended: avoids core version skew)")
-    ap.add_argument("--expect", default=None, help="expected OpenMV id (sha10 or tag) in sys.version (default: read MANIFEST.txt next to --hp)")
+    ap.add_argument("--expect", default=None, help="expected OpenMV id (sha10, tag, or describe form) in sys.version (default: MANIFEST.txt openmv_label, then openmv_sha)")
     ap.add_argument("--device", default=None, help="CDC device (default: by-id glob, never ACM numbers)")
     ap.add_argument("--recover", action="store_true", help="power-cycle via uhubctl and catch the 1.5 s boot DFU window instead of mpremote entry")
     ap.add_argument("--hub-location", default="1-1", help="uhubctl -l value (verify with uhubctl on the Pi)")
@@ -255,9 +278,12 @@ def main(argv=None):
     parts = [("HP", args.hp)] + ([("HE", args.he)] if args.he else [])
 
     # Resolve the label cross-check target before touching the board.
+    # Prefer openmv_label (the exact string embedded in the binary) over
+    # openmv_sha; label_matches() accepts the sha10 inside a describe id.
     manifest = args.hp.parent / "MANIFEST.txt"
     manifest_text = manifest.read_text() if manifest.is_file() else ""
-    expect = args.expect or (read_manifest_sha(manifest_text) or None)
+    expect = args.expect or read_manifest_label(manifest_text) \
+        or read_manifest_sha(manifest_text) or None
     if expect:
         log(f"will cross-check sys.version against OpenMV id: {expect}")
     else:
@@ -350,7 +376,7 @@ def main(argv=None):
     if hashes is None:
         die("could not parse OpenMV/MicroPython ids from sys.version",
             "board may be running but odd -- check manually with mpremote")
-    if expect and hashes[0] != expect:
+    if expect and not label_matches(expect, hashes[0]):
         die(f"label mismatch: running OpenMV {hashes[0]}, expected {expect}",
             "flash bytes verified by readback -- so the MANIFEST/--expect "
             "label is stale or describes a different build dir")

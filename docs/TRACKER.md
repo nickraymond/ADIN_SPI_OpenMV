@@ -1,9 +1,10 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S8 bite 1 [NPU bench] done via early-ride
-exception; S7 flash-verify hardening live-passed, PR #12; S7 decision
-entry + BM arc next) · Owner/gate: **Nick***
+*Last updated: 2026-08-11 (S9 bite 1 OA spike passed, PR #13; HE build
+blocker root-caused + fixed on `sprint/9-build-fix` — build_ae3.sh must
+use docker build-firmware-dev, D24; S9 bites 2–3 next) ·
+Owner/gate: **Nick***
 
 ---
 
@@ -377,7 +378,12 @@ S7 research notes above + DESIGN §S7 detail.*
       config (production 2111 unaffected). Also en route: first real
       exercise of the D23 Mac docker build (works; HE image doesn't
       link in our env at any rev — HP-only flash at the installed HE's
-      rev sidesteps it, environmental debug deferred); S8 bench
+      rev sidesteps it, environmental debug deferred → RESOLVED
+      2026-08-11 same day, D24 / `sprint/9-build-fix`: stock docker
+      target's `BUILD=` command-line override flattened the per-core
+      build dirs so HE linked HP objects; `build_ae3.sh` moved to
+      `build-firmware-dev` + `--incremental`, HE links at ~1.19 MB,
+      HP-only workaround retired — S10's HE dependency unblocked); S8 bench
       mis-attribution found + corrected (N6 vs AE3, DESIGN §S8
       correction). Detail: DESIGN §S9, `firmware/bm_spike/README.md`.
       Demo satisfied: REPL prints the OA-mode PHY-ID verdict.
