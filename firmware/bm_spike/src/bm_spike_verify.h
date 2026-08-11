@@ -32,6 +32,32 @@ int bm_spike_read_phyid(uint32_t *phyid, int *init_result);
 // ADI_ETH_COMM_TIMEOUT from waitDeviceReady's PHYID equality poll.
 int bm_spike_full_init(void);
 
+// S9 bite 2 -- HAL benchmark support. bm_spike_bench_open() brings up a
+// dedicated MAC handle once (init verdict via *init_result, same
+// COMM-TIMEOUT-is-expected semantics as bm_spike_read_phyid; idempotent).
+// bm_spike_bench_reads() then runs n MAC_ReadRegister(PHYID) round trips
+// through whatever HAL is linked -- the caller times it. *fails counts
+// reads that either errored or returned a PHYID different from the first
+// good one; *phyid holds the last readback. Returns 0 once a handle
+// exists, nonzero otherwise.
+int bm_spike_bench_open(int *init_result);
+int bm_spike_bench_reads(uint32_t n, uint32_t *phyid, uint32_t *fails);
+
+// Drop the persistent bench handle so the next bm_spike_bench_open()
+// re-initializes from scratch. REQUIRED at the start of every runner:
+// C statics survive MicroPython SOFT resets (only a hard boot zeroes
+// them), and a handle carried across sessions can be wedged mid-state --
+// measured 2026-08-11 as an all-fails bench at every SPI speed.
+void bm_spike_bench_reset(void);
+
+// S9 bite 2 -- raw register passthrough over the bench handle (opens it on
+// first use), for bench-side pokes the verdicts don't cover: clearing W1C
+// status bits for the IRQ proof, bite-3 exploration. Driver-native path
+// (MAC_ReadRegister/MAC_WriteRegister), so framing stays the driver's own.
+// Return the adi_eth_Result_e as int.
+int bm_spike_reg_read(uint16_t addr, uint32_t *val);
+int bm_spike_reg_write(uint16_t addr, uint32_t val);
+
 // Short name for an adi_eth_Result_e value ("SUCCESS", "COMM_TIMEOUT", ...).
 const char *bm_spike_result_str(int result);
 

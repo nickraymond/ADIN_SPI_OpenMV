@@ -868,3 +868,80 @@ HP-only workaround retired; both-core flashing restored.
 (`v5.0.0-52.g7d4dbf7ab2`, sha256 921cdd03…). Restore to stock dev =
 reflash `7d4dbf7ab2` HP via the S7 ladder. Hat #2 is strapped OA
 (default) — re-bridge CFG0+CFG1 to return to the S6 generic-SPI baseline.
+
+### S9 detail (2026-08-11) — bite 2: Alif-native ADI-HAL (as-built + measured)
+
+**Result: adi_hal.h implemented against the Alif silicon directly —
+`firmware/bm_spike/src/bm_spike_hal_alif.c` — and the full bite-2 demo
+(`s9_hal_native.py`) PASSES repeatably: PHYID over the driver's OA framing
+with zero MicroPython objects in the transfer path, INT_N → NVIC → driver
+callback proven live, 2× the mp-HAL control-read rate at 5 MHz and
+scaling with clock.** DMA deferred to S10 (Nick's call at plan approval;
+`useDma` accepted and ignored; SPI_DMACR hooks documented in spi.h).
+
+**Bench (2000 PHYID round trips through the unmodified driver, init
+excluded, run-to-run repeatable):**
+
+| HAL | SPI clock | reads/s | µs total | fails |
+|---|---|---|---|---|
+| mp (bite 1) | 5 MHz | 22,886 | 87,389 | 0 |
+| alif | 5 MHz | 45,895 | 43,577 | 0 |
+| alif | 10 MHz | 83,794 | 23,868 | 0 |
+| alif | 20 MHz | (127,852) | 15,643 | **2000 — garbage** |
+
+The mp HAL is call-overhead-bound (2× clock ≈ no gain); the native
+FIFO-burst engine scales with clock. Engine: full-duplex, ≤16 frames in
+flight (both machine_spi.c AND Alif's own `spi_transfer_blocking` are
+per-word lock-step — the D8 ceiling lives at both layers; ours is the
+only FIFO-depth user). Init recipe mirrors machine_spi 1:1 incl.
+`spi_control_ss` (SER — DW won't clock without it) and SSTE off. Facts:
+P0/P1/P2 = P5_1/P5_0/P5_3 = SPI0 MOSI(AF4)/MISO(AF4)/**SCLK(AF3)**;
+CS = P5_2 GPIO (D2); INT = P0_4 → GPIO0_IRQ4_IRQn(183); bases per
+global_map.h; SPI0 clock = GetSystemAHBClock(), always on.
+
+**20 MHz OA finding:** reads decode garbage (phyid=0) at 20 MHz while
+the same electrical path ran generic-SPI at 20 MHz in S5 → OA-mode
+MISO timing, not wiring; RX_SAMPLE_DELAY (currently 0, as machine_spi)
+is the first knob — bite-3/S10 tuning item. WORSE: misclocked MOSI can
+decode as VALID control writes — one 20 MHz rung flipped CONFIG0.PROTE
+to 1 (chip then drops unprotected writes + latches CDPE while reads
+stay clean; recovered via protected-framed soft reset). SPEC §Open
+questions amended; the runner now sanitizes (both-framing soft reset +
+CONFIG0==0x06 verify) before gating checks and re-sanitizes at exit,
+and the 20 MHz rung runs LAST, gating nothing.
+
+**INT_N semantics (measured, was flagged-unverified in the plan):**
+asserted from power-up (RESETC pending; post-reset IMASK0 = 0x1FBF =
+RESETC unmasked); stays asserted until STATUS0 is W1C'd; STATUS0.LOFE
+relatches continuously on this bench (live far side on the pair) and
+must be masked for INT_N to rise; the deterministic falling edge =
+W1C + chip soft reset (RESETC relatches). IRQ delivery rides
+machine_pin.c's GPIO0_IRQ4Handler dispatch (vector table is const in
+MRAM; the handler symbol is machine_pin's) into a hard-mode C trampoline
+→ `HAL_RegisterCallback` target. Two scaffolding realities, documented
+in the runner: the driver's FAILED-init exits (expected — identity gate)
+leave the NVIC line disabled via HAL_DisableIrq (re-arm after driver
+calls; real inits re-enable it themselves, adi_mac.c:986/1076), and
+machine_pin exposes edge triggers only (falling-edge suffices for the
+proof; native level-low conversion is a bite-3 option).
+
+**Two rig/firmware lessons (both bit us live):**
+1. **P4 reset line is a no-op** — register scratch survives a 50 ms
+   pulse. Never previously verified; SPEC §Open questions + bench check
+   for Nick. Chip soft reset (reg 0x003) is the only working reset, and
+   chip state persists across every board flash/reboot (always-on 3V3).
+2. **C statics survive MicroPython soft resets** — a bench MAC handle
+   carried across `mpremote` sessions benched all-fails at every speed;
+   `bm_spike.fresh()` (drops + zeroes the handle) now leads every
+   runner.
+
+**Build/regression:** `build_spike.sh --hal mp|alif` stages exactly one
+HAL (same symbols); mp remains default and the bite-1 runner passes
+unchanged on a final-source mp build. Host tests 10 → 16 (bench
+plumbing). Both HP images build post-D24; flashing stays HP-only at the
+pinned rev (installed HE untouched, no skew).
+
+**Fixture note:** AE3 runs the bite-2 alif HP build (MANIFEST sha
+recorded in `~/fw/spike-alif-7d4dbf7ab2/` on nereus000); hat #2 still
+strapped OA; chip exit-sanitized (CONFIG0=0x06). Restore ladder
+unchanged from bite 1.
