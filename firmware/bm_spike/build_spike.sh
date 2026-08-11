@@ -75,8 +75,11 @@ for f in vendor/adin2111/*.h; do
                 # the vendored file itself stays byte-identical in the repo.
                 dst="${MOD_DIR}/adi_config.h"
                 [ -e "$dst" ] && { echo "FAIL: ${dst} exists" >&2; exit 1; }
-                sed 's/#define CONFIG_SPI_PROT_EN  1/#define CONFIG_SPI_PROT_EN  0/' "$f" > "$dst"
-                grep -q "CONFIG_SPI_PROT_EN  0" "$dst" || { echo "FAIL: --no-prot sed missed" >&2; exit 1; }
+                # The driver tests #if defined(CONFIG_SPI_PROT_EN) -- the
+                # define must be REMOVED, not zeroed (a =0 build was
+                # byte-identical; that sha comparison is the regression test).
+                sed 's|#define CONFIG_SPI_PROT_EN  1|/* CONFIG_SPI_PROT_EN removed: PROTE unavailable on our ADIN1110 (S9 measurement) */|' "$f" > "$dst"
+                if grep -q "define CONFIG_SPI_PROT_EN" "$dst"; then echo "FAIL: --no-prot sed missed" >&2; exit 1; fi
                 COPIED+=("$dst")
                 echo "NOTE: staged adi_config.h with CONFIG_SPI_PROT_EN=0 (--no-prot)"
                 continue
