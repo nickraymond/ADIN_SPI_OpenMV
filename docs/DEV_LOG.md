@@ -17,6 +17,46 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S6 — video over the pair, live in the browser; gate run pending light
+
+**Branch:** sprint/6-ae3-video
+
+**Done:**
+- Bite 1 (plan approved): BMV6 chunk protocol + bounded Reassembler
+  (`s6_video.py`), TX loop with cap/enc/tx telemetry (`s6_video_tx.py`),
+  Pi reassembly verifier (`bench/s6_video_counter.py`), shared bring-up
+  extracted (`adin_bringup.py`). Verified live (Claude ran the ladder,
+  Nick's ask): 60 s @ 20 MHz → 2422/2423 complete, 0 lost, 0 bad JPEGs,
+  40.4 fps; artifact JPEGs pulled and eyeballed.
+- Bite 2 (plan approved): `chunk_shim.py` + `t1l-chunk-shim.service`
+  (CAP_NET_RAW as pi) feeding the FROZEN ingest; browser stream live at
+  `http://nereus001-1:8080/stream` (tailnet-wide URL). 2622/2622 frames
+  sender→server exact, 0 gaps. Quality made a runtime knob (Nick);
+  q90@30 over SPI ruled out by arithmetic + measurement (D20).
+- Bite 3 (plan approved, partial): TX loop rides out link outages;
+  remote eth1-bounce test → stream freezes + auto-resumes. t1l-sender
+  boot service disabled on nereus000 (S6 replaces it). Docs: D20, D21,
+  TRACKER states, DESIGN §S6 detail.
+- Dark-scene q ladder (NOT gate numbers): q35 45 fps → q90 31 fps, all
+  0 loss; tx cost ~2.0 ms/KB at every q.
+
+**Broke/surprised us:**
+- SPEC §T1's pipelining requirement is moot on this path (D21): capture
+  already DMA-hidden (3.1 ms, not 33), and encode/tx can't overlap
+  (polled SPI, one core). Only lever = bytes/frame.
+- ADIN1110 MAC drains TX into a dead wire without filling the FIFO —
+  sender never stalls on link loss; loss is invisible until the
+  receiver counts it. Trust the receiver's ledger, not the sender's.
+- `pkill -f chunk_shim.py` over ssh killed its own ssh session (pattern
+  matched the remote command line). Use `pkill -f '[c]hunk_shim'`.
+- New firmware deprecation warning: `sensor` module → `csi` (watch item).
+
+**Next:** lit-scene gate run (q50 + q70, 60 s sustained, ≥24 fps = T1
+pass) → Nick's live demo (browser + unplug/replug) → PR. Commands cued
+in the session notes; board reset between runs stays ritual.
+
+---
+
 ## 2026-08-10 — Sprint S5 — frame TX + loss demo: 0% loss at 4.21 Mbps
 
 **Branch:** sprint/5-frame-tx

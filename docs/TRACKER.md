@@ -1,7 +1,7 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-10 (S5 done) · Owner/gate: **Nick***
+*Last updated: 2026-08-10 (S6 bites 1–2 done, gate run pending light) · Owner/gate: **Nick***
 
 ---
 
@@ -230,13 +230,28 @@ video budget → the MicroPython driver is not the S6 blocker.
 **Needs:** S4. Pi end = S1 node or S2 node. → used nereus001 + hat #1
 (live reference node), untouched.
 
-### S6 — Video from AE3 over T1L into the existing stream  `[ ]`  ← THE POINT
+### S6 — Video from AE3 over T1L into the existing stream  `[~]`  ← THE POINT
 **Goal:** replace USB with the pair; the S3 web page doesn't know anything changed.
-- [ ] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq —
-      MUST pipeline capture/encode/tx (≥2 framebuffers; SPEC §T1)
-- [ ] Pi shim daemon: raw frames → reassemble → feed the S3 stream server
-- [ ] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
+- [x] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq —
+      ~~MUST pipeline capture/encode/tx (≥2 framebuffers; SPEC §T1)~~
+      → DONE 2026-08-10: BMV6 chunk protocol (`firmware/adin_drv/s6_video.py`)
+      + TX loop (`s6_video_tx.py`, duration/quality runtime knobs).
+      Pipelining requirement found MOOT by measurement (D21): capture is
+      already DMA-hidden (3.1 ms), and encode/tx cannot overlap in
+      MicroPython (polled SPI = CPU-bound, one core, D8). Lever = bytes/frame.
+      Bite-1 proof: 60 s @ 20 MHz → 2422/2423 frames reassembled on
+      nereus001, 0 lost, 0 bad JPEGs (counter `bench/s6_video_counter.py`).
+- [x] Pi shim daemon: raw frames → reassemble → feed the S3 stream server
+      → DONE 2026-08-10: `pi/stream/chunk_shim.py` + `t1l-chunk-shim.service`
+      (CAP_NET_RAW, no root) on nereus001; frozen ingest untouched. Live:
+      2622/2622 frames sender→server exact match, 0 gaps; browser stream up.
+      Dark-scene q ladder run (all rungs ≥31 fps, 0 loss — NOT gate numbers).
+- [~] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
       q35–50 @ 24–30 fps** (raise resolution only if fps holds)
+      → remaining: lit/realistic-scene gate run (dark bench under-loads
+      encoder+SPI 3–5×); rig + commands cued, waiting on bench light (Nick).
+      Link-outage behavior verified via remote eth1 bounce: stream freezes
+      + auto-resumes; AE3 TX drains stall-free into a dead wire (D21 note).
 **Demo (Nick):** same browser URL as S3 shows live video; USB data pipe unused
 (REPL only). Side-by-side: unplug pair → stream stops; replug → resumes.
 **Pass: ≥ 24 fps sustained at QVGA color for 60 s.**
