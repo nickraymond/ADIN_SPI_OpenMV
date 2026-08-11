@@ -1,7 +1,9 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S6 done — THE POINT reached; S7 next) · Owner/gate: **Nick***
+*Last updated: 2026-08-11 (S8 bite 1 [NPU bench] done via early-ride
+exception; S7 flash-verify hardening live-passed, PR #12; S7 decision
+entry + BM arc next) · Owner/gate: **Nick***
 
 ---
 
@@ -426,7 +428,17 @@ work would be redone. Exception: the NPU inference bench (first bite)
 doubles as board-selection input — may ride early during the arc as one
 cheap bite if a board decision needs it.)*
 **Goal:** HD capture + on-device detection at 3–5 fps; alerts over BM.
-- [ ] NPU inference bench (S0-style): detector fps vs input size on AE3
+- [x] NPU inference bench (S0-style): detector fps vs input size on AE3
+      → DONE 2026-08-11 (early ride per the exception above; branch
+      `sprint/8-npu-bench`, run by Claude, blessed by Nick). Per-tile
+      inference fast (yolov8n_192 = 21 ms ≈ 47 fps) but HD tiled
+      coverage at 192-px input = 40 tiles → **1.2 fps, BELOW the T2
+      ≥3 fps gate**; only yolo_lc_192 meets it tiled (6.3 fps).
+      Single-pass downscale drops fish below the 24 px floor. All ROM
+      detectors person-class-only → **T2 requires a custom Vela-compiled
+      fish detector either way (Nick); larger input size is the lever.**
+      Tables in DESIGN.md §S8 detail. `bench/ae3_npu_bench.py` +
+      18 host tests; no sensor, no flash, fixture untouched.
 - [ ] Detect/track/count pipeline vs T2 spec (fish ≥ 24–32 px)
 - [ ] Alert + evidence-JPEG path over the existing link
 **Demo (Nick):** camera watches reef footage → "N unique fish in 30 min"

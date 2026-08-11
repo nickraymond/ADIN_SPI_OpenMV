@@ -46,8 +46,10 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   fixture firmware restored to `7d4dbf7ab2` and re-confirmed via REPL.
 
 **Broke/surprised us:**
-- The S8 DEV_LOG entry the kickoff referenced isn't on main — likely
-  sitting on an unmerged S8 branch.
+- The S8 DEV_LOG entry the kickoff referenced wasn't on main during the
+  session — it landed mid-flight with PR #11 (`sprint/8-npu-bench`, entry
+  below) and produced the doc merge conflict resolved in this branch's
+  merge commit.
 - Today's rolling `development` release still embeds "OpenMV 7d4dbf7ab2"
   (upstream master hasn't moved) — confirming the board's "v5.0.0" report
   came from the static-defines channel, not sys.version.
@@ -60,7 +62,40 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   partition-end short frame; the sha256 compare caps at len(bin) instead.
 
 **Next:** nibble 4 — push `sprint/7-flash-verify` (push was
-permission-blocked from the agent session) and open the PR.
+permission-blocked from the agent session) and open the PR. → done: PR #12.
+
+---
+
+## 2026-08-11 — Sprint S8 (bite 1, early ride) — NPU bench: per-tile fast, HD tiling misses the T2 gate
+
+**Branch:** sprint/8-npu-bench
+
+**Done:**
+- Nibble 1 (plan approved, scope kept tight for the BM arc): S8 rides
+  its TRACKER exception — NPU bench only, rest of S8 stays behind S13.
+- `bench/ae3_npu_bench.py` (+18 host tests): no-sensor, reef-ref-scene,
+  models discovered live from `/rom`; ml API pinned from docs.openmv.io
+  v5.0.0 before coding. Ran it remotely (Nick's ask): 9 models timed,
+  1 correctly SKIPped. yolov8n_192 = 21 ms/tile (~47 fps); HD tiled
+  (40 tiles @ 32 px overlap) = **1.2 fps < T2 ≥3 fps gate**; only
+  yolo_lc_192 meets it (6.3 fps). Single-pass downscale → fish 15–23 px,
+  below the 24 px floor. Tables in DESIGN §S8 detail; TRACKER ticked.
+- Artifact checks: "0 det" explained by label files (yolov8n/yolo_lc =
+  person-only) → **T2 needs a custom Vela-compiled fish detector either
+  way (Nick concurs); input size is the tiling lever.**
+
+**Broke/surprised us:**
+- Board self-reports `OpenMV v5.0.0` while DEV_LOG says dev
+  `7d4dbf7ab2` — Nick: stale version label on the in-development build,
+  not a reflash. (Weakens sys.version as a flash-verify signal for dev
+  builds carrying release-ish labels — watch item for `pi/ae3_flash`.)
+- Tailscale SSH wanted a fresh browser re-auth before the session could
+  reach nereus000 (Nick approved mid-session).
+
+**Next:** S7 decision entry (waiting on Sofar), then the BM arc (S9
+bite 1). S8 resumes after S13; its next bite when reached = custom
+detector (train + Vela compile, larger input) — the bench says the NPU
+has the headroom if tiles shrink.
 
 ---
 
