@@ -17,8 +17,10 @@
 #   * DFU alt partitions by name: BOOT HP HE ROMFS1 TOC RWFS ROMFS0 RECOVERY
 #     (boot_config.h:112). This tool NEVER writes BOOT -- the DFU window
 #     survives any bad app flash, so a power cycle always recovers.
-#   * os.uname().version embeds "OpenMV <sha10>; MicroPython <sha10>"
-#     (verified in release firmware_M55_HP.bin strings).
+#   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>" where <id>
+#     is a sha10 on dev builds (e.g. 7d4dbf7ab2) but a version tag on
+#     tagged releases (e.g. v5.0.0) -- verified live + in binaries
+#     2026-08-11. (os.uname().version carries only the MicroPython id.)
 #
 # Never run while the t1l-sender service owns the AE3 USB port (preflight
 # refuses). See README.md for setup (dfu-util, udev rule) and demo commands.
@@ -36,7 +38,7 @@ DFU_VID = "37c5"
 DFU_PID = "96e3"
 CDC_GLOB = "/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_*"
 SYSFS_USB = "/sys/bus/usb/devices"
-UNAME_RE = re.compile(r"OpenMV ([0-9a-f]{8,12}); MicroPython ([0-9a-f]{8,12})")
+UNAME_RE = re.compile(r"OpenMV ([^\s;]+); MicroPython ([^\s;]+)")
 MIN_FW_SIZE = 256 * 1024   # smaller than this is not a plausible HP app
 
 def log(msg):
@@ -53,7 +55,9 @@ def die(msg, hint=None, code=1):
 # ---------------------------------------------------------------- pure helpers
 
 def parse_uname_hashes(text):
-    """Extract (openmv_sha, micropython_sha) from uname output, or None."""
+    """Extract (openmv_id, micropython_id) from uname output, or None.
+
+    ids are sha10s on dev builds, version tags on tagged releases."""
     m = UNAME_RE.search(text)
     return (m.group(1), m.group(2)) if m else None
 
@@ -129,12 +133,14 @@ def preflight(args, mpremote):
 
 
 def enter_bootloader(mpremote, dev, dry_run):
-    # mpremote exits non-zero when the board drops the USB connection on
-    # reset -- that is the expected success signature here.
+    # mpremote exits non-zero with an I/O-error traceback when the board
+    # drops the USB connection on reset -- that is the expected success
+    # signature here (observed live 2026-08-11), so output is captured
+    # and discarded rather than splattering the console.
     cmd = [mpremote, "connect", dev, "exec",
            "import machine; machine.bootloader()"]
     try:
-        run(cmd, dry_run=dry_run, check=False, timeout=20)
+        run(cmd, dry_run=dry_run, check=False, capture=True, timeout=20)
     except subprocess.TimeoutExpired:
         log("mpremote hung entering bootloader (tolerated; checking DFU)")
 
@@ -152,7 +158,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Headless AE3 flash over the OpenMV DFU bootloader")
     ap.add_argument("--hp", type=Path, required=True, help="firmware_M55_HP.bin")
     ap.add_argument("--he", type=Path, default=None, help="firmware_M55_HE.bin (recommended: avoids core version skew)")
-    ap.add_argument("--expect", default=None, help="expected OpenMV sha10 in uname (default: read MANIFEST.txt next to --hp)")
+    ap.add_argument("--expect", default=None, help="expected OpenMV id (sha10 or tag) in sys.version (default: read MANIFEST.txt next to --hp)")
     ap.add_argument("--device", default=None, help="CDC device (default: by-id glob, never ACM numbers)")
     ap.add_argument("--recover", action="store_true", help="power-cycle via uhubctl and catch the 1.5 s boot DFU window instead of mpremote entry")
     ap.add_argument("--hub-location", default="1-1", help="uhubctl -l value (verify with uhubctl on the Pi)")
@@ -175,9 +181,9 @@ def main(argv=None):
         if manifest.is_file():
             expect = read_manifest_sha(manifest.read_text())
     if expect:
-        log(f"will verify uname against OpenMV sha: {expect}")
+        log(f"will verify sys.version against OpenMV id: {expect}")
     else:
-        log("no --expect and no MANIFEST.txt -- will print uname, not verify")
+        log("no --expect and no MANIFEST.txt -- will print sys.version, not verify")
 
     # Rung 1: get the board into the bootloader.
     if args.recover:
@@ -197,11 +203,17 @@ def main(argv=None):
         log("DFU device present")
 
     # Rung 3: download partitions. HP last-with-reset when no HE given.
+    # The -R invocation exits non-zero even on success (the device drops
+    # off the bus during the USB reset -- observed live 2026-08-11, exit
+    # 251 after a clean dfuMANIFEST->dfuIDLE download), so the reset call
+    # is check=False and rungs 4+5 are the real success signals.
     parts = [("HP", args.hp)] + ([("HE", args.he)] if args.he else [])
     for i, (alt, path) in enumerate(parts):
         last = i == len(parts) - 1
-        run(dfu_cmd(alt, path, reset=last), dry_run=args.dry_run, check=True,
-            timeout=300)
+        run(dfu_cmd(alt, path, reset=last), dry_run=args.dry_run,
+            check=not last, timeout=300)
+        if last:
+            log("reset sent (dfu-util non-zero exit here is expected)")
 
     # Rung 4: board comes back as CDC.
     if not args.dry_run:
@@ -214,16 +226,16 @@ def main(argv=None):
     # Rung 5: verify the running build. Trust the artifact (uname text).
     cdc = args.device or (find_cdc() or ["<cdc>"])[0]
     r = run([mpremote or "mpremote", "connect", cdc, "exec",
-             "import os; print(os.uname().version)"],
+             "import sys; print(sys.version)"],
             dry_run=args.dry_run, check=False, capture=True, timeout=30)
     if args.dry_run:
         log("DRY-RUN complete")
         return 0
     uname = (r.stdout or "").strip()
-    log(f"uname.version: {uname or '<empty>'}")
+    log(f"sys.version: {uname or '<empty>'}")
     hashes = parse_uname_hashes(uname)
     if hashes is None:
-        die("could not parse OpenMV/MicroPython hashes from uname",
+        die("could not parse OpenMV/MicroPython ids from sys.version",
             "board may be running but odd -- check manually with mpremote")
     if expect:
         if hashes[0] != expect:

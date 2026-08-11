@@ -59,12 +59,17 @@ python3 flash_ae3.py --hp ~/fw/v5.0.0/firmware_M55_HP.bin --he ~/fw/v5.0.0/firmw
 Each run must end `PASS: board is running OpenMV <sha> (matches expected)`,
 with two different hashes.
 
-## Flash-day checks (unverified until first live run)
+## Flash-day results (first live run 2026-08-11 — round trip PASSED)
 
-- dfu-util `-R` reset behavior against this bootloader (forced-DFU exit path);
-  fallback: power cycle after download.
-- Whether ROMFS partitions need reflashing when jumping firmware versions
-  (release zips carry `romfs0.img`; stock scripts may live there).
-- uhubctl port power control on the Pi 5's specific hub topology.
-- `--recover` timing: poll-detect → dfu-util attach must land inside the
-  1.5 s boot window; may need a tight retry loop around the whole rung.
+- ANSWERED: dfu-util `-R` resets the board fine but exits non-zero (251)
+  because the device drops off the bus mid-reset — script tolerates it;
+  CDC re-enumeration + sys.version match are the success signals.
+- ANSWERED: verification reads **`sys.version`** (`os.uname().version`
+  carries only the MicroPython id); release builds embed version tags,
+  dev builds embed sha10s.
+- ANSWERED: ROMFS reflash was NOT needed between `7d4dbf7ab2` and
+  `v5.0.0` — still re-check on bigger version jumps.
+- STILL OPEN: uhubctl port power on the Pi 5's hub topology, and
+  `--recover` window timing (poll-detect → dfu-util attach inside the
+  1.5 s boot window; may need a tight retry loop). Untested — the happy
+  path never needed it.

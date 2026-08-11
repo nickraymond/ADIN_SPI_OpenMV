@@ -572,10 +572,12 @@ listed as flash-day checks in `pi/ae3_flash/README.md`.
   single-core use, we flash both to avoid version skew). Plain `dfu-util`
   (Debian arm64) speaks this. **`BOOT` is never written by our tooling** —
   un-brickable at the app level; power cycle always re-opens the window.
-- Firmware self-identifies: `os.uname().version` embeds
-  `"OpenMV <sha10>; MicroPython <sha10>"` (verified by `strings` on the
-  release `firmware_M55_HP.bin`; format matches the D15-era dev build hash
-  `11852aa3d0`). Flash verification = compare against the build manifest.
+- Firmware self-identifies: **`sys.version`** reads
+  `"3.4.0; OpenMV <id>; MicroPython <id>"` — corrected on flash day from
+  the pre-hardware guess of `os.uname().version`, which carries only the
+  MicroPython id. `<id>` is a sha10 on dev builds (`7d4dbf7ab2`) but a
+  version tag on tagged releases (`v5.0.0`) — both verified live.
+  Flash verification = compare against the build manifest.
 - Deep recovery (bootloader itself corrupted — outside our loop): Alif
   SE-UART ISP via `tools/alif` (micropython/alif-security-toolkit,
   `app-write-mram.py` + ATOC `firmware.toc`); on the AE3 the SE UART
@@ -600,3 +602,31 @@ PASS-FAIL verdict + `--dry-run` + `--recover`, `fetch_firmware.sh`, udev
 rule, 16 host unit tests). Docker/VS Code/IDE setup facts probed on the
 Mac 2026-08-11: arm64, brew present, VS Code installed (no `code` CLI),
 no docker yet (cask `docker-desktop`), no OpenMV IDE cask (dmg only).
+
+**Flash-day results (2026-08-11, after S6 demo pass — Nick's go):** the
+round-trip demo PASSED entirely from the nereus000 CLI. Board went dev
+`7d4dbf7ab2` → `v5.0.0` → back to `7d4dbf7ab2`, sys.version verified after
+each leg; leg 2 ran the shipped ladder end-to-end green including its own
+PASS verdict. HP download 2,200,784 B / HE 1,185,744 B, clean
+`dfuMANIFEST → dfuIDLE` both legs. Live findings folded into the tooling:
+
+- dfu-util `-R` exits non-zero (251) even on success — the device drops
+  off the bus during the USB reset. The reset invocation is now
+  `check=False`; CDC re-enumeration + sys.version match are the success
+  signals. (dfu-util's "Invalid DFU suffix" warning is expected — OpenMV
+  bins carry no DFU suffix.)
+- mpremote exits with an I/O-error traceback when `machine.bootloader()`
+  drops the connection — expected success signature, output now captured.
+- Tagged releases ship ONE combined `firmware_<tag>.zip` (all boards);
+  per-board `firmware_OPENMV_AE3.zip` exists only on the `development`
+  tag. `fetch_firmware.sh` handles both.
+- The board had been running dev `7d4dbf7ab2`/`11852aa3d0` since the D15
+  crash-hunt — S6 passed on the dev build, and the round trip restored
+  exactly that state.
+- ROMFS partitions were NOT reflashed; both builds booted fine on the
+  installed images. Re-check on bigger version jumps (release zips carry
+  `romfs0/1.img` if needed).
+- Not exercised: `--recover` (uhubctl) — installed, untested, hub
+  location/port for the AE3 still unverified on the Pi 5.
+- udev rule `99-openmv-dfu.rules` (VID 37c5 → plugdev) makes the whole
+  ladder sudo-free; dfu-util 0.11 from Debian arm64 works as-is.

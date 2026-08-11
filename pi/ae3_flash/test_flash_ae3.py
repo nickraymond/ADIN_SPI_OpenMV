@@ -27,11 +27,15 @@ class TestParseUname(unittest.TestCase):
         self.assertEqual(parse_uname_hashes(REAL_UNAME),
                          ("7d4dbf7ab2", "11852aa3d0"))
 
+    def test_release_format_uses_tags_not_hashes(self):
+        # Tagged releases embed version tags (observed in v5.0.0 binary
+        # strings on flash day, 2026-08-11).
+        self.assertEqual(
+            parse_uname_hashes("3.4.0; OpenMV v5.0.0; MicroPython v1.28.0-49"),
+            ("v5.0.0", "v1.28.0-49"))
+
     def test_no_match(self):
         self.assertIsNone(parse_uname_hashes("MicroPython v1.28.0 on 2026-07-02"))
-
-    def test_hash_too_short_rejected(self):
-        self.assertIsNone(parse_uname_hashes("OpenMV 7d4dbf; MicroPython 11852a"))
 
 
 class TestManifest(unittest.TestCase):
@@ -100,7 +104,7 @@ class TestDryRunLadder(unittest.TestCase):
     def test_completes_and_orders_partitions(self):
         rc, out = self.ladder("--he", "he.bin")
         self.assertEqual(rc, 0)
-        dfu_lines = [l for l in out.splitlines() if "dfu-util" in l]
+        dfu_lines = [l for l in out.splitlines() if "DRY-RUN: dfu-util" in l]
         self.assertEqual(len(dfu_lines), 2)
         self.assertIn("-a HP", dfu_lines[0])
         self.assertIn("-a HE", dfu_lines[1])
@@ -111,7 +115,7 @@ class TestDryRunLadder(unittest.TestCase):
 
     def test_hp_only_gets_reset(self):
         rc, out = self.ladder()
-        dfu_lines = [l for l in out.splitlines() if "dfu-util" in l]
+        dfu_lines = [l for l in out.splitlines() if "DRY-RUN: dfu-util" in l]
         self.assertEqual(len(dfu_lines), 1)
         self.assertTrue(dfu_lines[0].endswith("-R"))
 

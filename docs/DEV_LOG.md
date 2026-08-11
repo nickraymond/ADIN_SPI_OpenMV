@@ -17,7 +17,7 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
-## 2026-08-11 — Sprint S7 (spike bite 1) — headless flash path mapped + tooling, zero board contact
+## 2026-08-11 — Sprint S7 (spike bite 1) — headless flash SPIKE PASSED: round-trip flash from the nereus000 CLI
 
 **Branch:** sprint/7-headless-flash
 
@@ -43,15 +43,37 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   services untouched (S6 fixture live); D20/D21 numbers left to the S6
   branch, docs appended for clean merge with PR #9.
 
-**Broke/surprised us:**
-- Nothing hardware (none touched). One test bug self-caught: asserting
-  `-R` not-in a line that starts with "DRY-RUN" — the prefix contains it.
+- **FLASH LEG PASSED same session (Nick's go after the S6 demo):**
+  round-trip `7d4dbf7ab2` → `v5.0.0` → `7d4dbf7ab2` from the nereus000
+  CLI, sys.version verified each leg, leg 2 = the shipped ladder
+  end-to-end green with its own PASS verdict; fixture firmware restored
+  to exactly what S6 ran on. Setup done on the Pi (dfu-util, uhubctl,
+  udev rule → sudo-free ladder; passwordless sudo made it hands-off).
+  Tooling deployed to `~/ae3_flash` (repo checkout on the Pi stays on
+  the S6 branch, untouched).
 
-**Next:** Nick runs the Mac leg anytime (setup_mac.sh → build_ae3.sh —
-no board involved); the Pi flash leg (apt installs, udev rule, round-trip
-demo per `pi/ae3_flash/README.md`) ONLY after the S6 demo passes and Nick
-gives the go. Then flash-day checks: dfu-util `-R` exit behavior, ROMFS
-version pairing, uhubctl hub topology, --recover window timing.
+**Broke/surprised us:**
+- Verification hook was wrong pre-hardware: the `OpenMV <id>; MicroPython
+  <id>` string is **`sys.version`**, not `os.uname().version` (uname has
+  only the MicroPython id). And release builds embed version TAGS
+  (`v5.0.0`), not sha10s — dev builds embed hashes. Regex relaxed.
+- dfu-util `-R` exits 251 on SUCCESS (device drops off the bus during
+  the USB reset) — "trust artifacts, not exit codes," literally; script
+  now treats CDC re-enumeration + sys.version match as the signals.
+- v5.0.0 ships one combined all-boards zip; per-board zips exist only on
+  `development`. fetch_firmware.sh handles both now.
+- The board had been on the D15-era dev build all along — S6 passed on
+  `7d4dbf7ab2`/`11852aa3d0`, not stable v5.0.0.
+- Two test bugs self-caught: "-R" substring hides inside "DRY-RUN";
+  later the "reset sent (dfu-util ...)" log line collided with the test's
+  dfu-util line filter.
+
+**Next:** S7 remaining TODOs — ask Sofar about their OA-mode driver;
+oa-tc6-lib port estimate; optional OA re-strap spike; decision entry.
+Mac build leg (setup_mac.sh → build_ae3.sh) still for Nick to exercise —
+scripts are on the branch, not yet run end-to-end (needs Docker Desktop
+first-launch password). Untested: `--recover`/uhubctl (hub topology
+unverified). ROMFS pairing on big version jumps = watch item.
 
 ---
 

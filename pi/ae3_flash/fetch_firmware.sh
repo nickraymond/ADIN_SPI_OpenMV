@@ -11,15 +11,25 @@ DEST="${HOME}/fw/${TAG}"
 URL="https://github.com/openmv/openmv/releases/download/${TAG}/firmware_OPENMV_AE3.zip"
 
 mkdir -p "${DEST}"
-curl -fL -o "${DEST}/firmware.zip" "${URL}"
-unzip -t "${DEST}/firmware.zip" >/dev/null   # integrity before extract
-unzip -o -j -q "${DEST}/firmware.zip" -d "${DEST}"
+if curl -fL -o "${DEST}/firmware.zip" "${URL}" 2>/dev/null; then
+    unzip -t "${DEST}/firmware.zip" >/dev/null   # integrity before extract
+    unzip -o -j -q "${DEST}/firmware.zip" -d "${DEST}"
+else
+    # Tagged releases (e.g. v5.0.0) ship ONE combined all-boards zip
+    # instead of per-board assets; extract just the AE3 subdir.
+    URL="https://github.com/openmv/openmv/releases/download/${TAG}/firmware_${TAG}.zip"
+    echo "per-board zip not found; trying combined ${URL}"
+    curl -fL -o "${DEST}/firmware.zip" "${URL}"
+    unzip -t "${DEST}/firmware.zip" >/dev/null
+    unzip -o -j -q "${DEST}/firmware.zip" "OPENMV_AE3/*" -d "${DEST}"
+fi
 
 [ -s "${DEST}/firmware_M55_HP.bin" ] || { echo "FAIL: no firmware_M55_HP.bin in zip" >&2; exit 1; }
 
-# The binary embeds "OpenMV <sha10>; MicroPython <sha10>" -- record it so
-# flash_ae3.py can verify without a --expect flag.
-SHA10=$(strings "${DEST}/firmware_M55_HP.bin" | grep -oE "OpenMV [0-9a-f]{8,12}" | head -1 | awk '{print $2}')
+# The binary embeds "OpenMV <id>; MicroPython <id>" (id = sha10 on dev
+# builds, version tag on releases) -- record it so flash_ae3.py can verify
+# without a --expect flag.
+SHA10=$(strings "${DEST}/firmware_M55_HP.bin" | grep -oE "OpenMV [^ ;]+; MicroPython" | head -1 | awk '{print $2}')
 {
     echo "built:      (release ${TAG}, fetched $(date -u +%Y-%m-%dT%H:%M:%SZ))"
     echo "rev:        ${TAG}"

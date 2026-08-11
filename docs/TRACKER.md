@@ -244,7 +244,7 @@ video budget → the MicroPython driver is not the S6 blocker.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
 **Goal:** a decision, not a build.
-- [~] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
+- [x] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
       nereus000** — no OpenMV IDE, no hands. Verifiable: build (or reuse) a
       known `firmware.bin`, flash it entirely from the nereus000 CLI, board
       re-enumerates running that exact build (uname git-hash matches).
@@ -264,6 +264,19 @@ video budget → the MicroPython driver is not the S6 blocker.
       `pi/ae3_flash/` (flash ladder + verify + `--recover`; 16 host tests
       pass). GATED: first live flash only after the S6 demo passes (Nick),
       then the round-trip demo in `pi/ae3_flash/README.md`.
+      → **DONE 2026-08-11 (Nick's go after S6 demo pass): round-trip flash
+      demo PASSED from the nereus000 CLI, no hands, no IDE** — board went
+      dev `7d4dbf7ab2` → `v5.0.0` (verified) → back to `7d4dbf7ab2`
+      (verified), sys.version id match both legs, full ladder green incl.
+      the script's own PASS verdict; fixture firmware restored to exactly
+      what S6 ran on. Flash-day facts folded into the tooling: verify via
+      `sys.version` not `os.uname()` (uname carries only the MicroPython
+      id); release builds embed tags not sha10s; v5.0.0 ships a combined
+      all-boards zip; dfu-util `-R` exits non-zero on success (device
+      drops off the bus mid-reset) — script tolerates it, rungs 4+5 are
+      the success signals. ROMFS was NOT reflashed (both builds ran fine
+      on the installed images) — check on bigger version jumps. uhubctl
+      `--recover` path installed but untested (not needed).
 - [ ] Assess Sofar's OA-mode Linux/BM driver status (ask them directly)
 - [ ] Estimate: port oa-tc6-lib to AE3 vs stay generic; what re-straps
 - [ ] Optional spike: re-strap one AOS hat to OA, PHY ID read in OA framing
