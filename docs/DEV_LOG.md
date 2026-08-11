@@ -61,6 +61,7 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 **Next:** Nick runs the manual test (fresh `build_ae3.sh` from clean →
 MANIFEST + HE bin ~1.19 MB), then PR. S9 bites 2–3 (ADI-HAL, OA data
 path) can now target both cores; S10's HE dependency is unblocked.
+→ manual test PASSED (Nick), PR #14 opened.
 
 ---
 
