@@ -173,7 +173,7 @@ video that crossed the pair (page with stats at `/`).
 **Needs:** S2 done. This receive side is FROZEN after S3 — S6 must plug into it
 unchanged.
 
-### S4 — AE3 first light: PHY ID over SPI  `[ ]`
+### S4 — AE3 first light: PHY ID over SPI  `[x]`  *(demo run by Nick 2026-08-10 — PASS: `PHY ID: 0x0283BC91 — OK` at 5 MHz)*
 **Goal:** AE3 (generic SPI mode) proves wiring + HAL.
 **Rig revised 2026-08-10 (Nick, D18): AE3 drives an AOS hat, not the SG
 shield** — known-good silicon + straps (S2-validated on both hats), pair
@@ -182,18 +182,26 @@ connector already crimped, 3.3V-only board. Header pinout = SG shield
 positions; hat #2 comes off nereus000 (pauses the S3 stream fixture —
 restore = remount hat + `systemctl start t1l-sender`), nereus001 + hat #1
 stays intact as the live Linux reference node on the pair.
-- [ ] Harness AE3 → hat header: SPI0 = header 19/21/23 (MOSI/MISO/SCLK),
-      CS = 24, IRQ = 15 (the GPIO22 position), RESET = 11 (the GPIO17
-      position), 3V3 = 1/17, GND. Meter sanity: 3.3 V at the hat before
-      first energize (no SG-style 5V-regulator question — AOS is
-      3.3V-only per netlist + live validation).
-      OPEN (flag, don't guess): can the AE3's 3V3 pin source the hat's
-      draw (ADIN1110 + DS3231), or does the hat need bench 3.3 V?
-- [ ] AE3 P5 (IRQ in) configured with internal pull-up — the AOS board
-      has no INT_N pull-up (D14; Pi overlay solved this Pi-side).
-- [ ] Minimal generic-SPI register read in MicroPython
-- [ ] Read PHY ID; on mismatch, fallback = register readback + the live
-      Linux node as reference (no LA on bench — S2 descope)
+- [x] Harness AE3 → hat header → DONE 2026-08-10, revised power scheme
+      (D19, Nick): hat powered from nereus000's 3V3 header (Pi pin 1 →
+      hat 1, Pi pin 9 → hat 9) — combination already proven in S2/S3;
+      AE3 stays USB-powered from the same Pi; 7 data wires AE3→hat
+      (P0→19 P1→21 P2→23 P3→24 P4→11 P5→15 GND→6), AE3 3V3 unused.
+      The "can AE3 3V3 source the hat" open question is SIDESTEPPED
+      (still unmeasured — re-flag if a standalone rig ever needs it).
+      Hard-won lesson: off-Pi header counting got mirrored twice;
+      validator that ended it = meter hat pin 17 ↔ pin 6 with only the
+      power jumpers on (~3.3 V only if orientation is right).
+- [x] AE3 P5 (IRQ in) configured with internal pull-up — in
+      `firmware/adin_drv/adin_hal_ae3.py` (D14/D18)
+- [x] Minimal generic-SPI register read in MicroPython →
+      `firmware/adin_drv/` two-layer driver start (portable core + AE3
+      HAL), framing from vendored adin1110.c; 16 host unit tests
+- [x] Read PHY ID → **0x0283BC91 — OK at 5 MHz**, repeatable, first
+      attempt on a correctly wired harness. Fallback ladder shipped as
+      code and battle-tested during the miswire hunt:
+      `s4_bus_probe.py` (DC rail/CS/MISO checks, no SPI) and
+      `s4_bitbang_probe.py` (GPIO-only PHY ID read) — keep for S5+.
 **Demo (Nick):** REPL prints `PHY ID: 0x0283BC91 — OK`.
 **Needs:** S0 pass, hat #2 freed from nereus000, 8-jumper harness. SG
 shield stays shelved as backup (S1 knowledge retained).

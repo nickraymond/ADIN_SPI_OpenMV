@@ -36,13 +36,12 @@ class Ae3Hal:
     def _init_spi(self, baudrate):
         """(Re)init SPI, then claim CS back as GPIO.
 
-        ORDER MATTERS: machine.SPI() must run BEFORE the CS Pin is
-        configured -- SPI init may claim the P3 pad for peripheral SS,
-        which would silently disconnect a previously configured GPIO
-        (found the hard way in S4 bring-up: manual CS writes went
-        nowhere and the ADIN saw no usable chip select -> all-0xFF
-        reads while a no-SPI GPIO probe of the same harness worked).
-        Re-claiming P3 as a GPIO afterwards routes the pad back to us.
+        Defensive ordering: machine.SPI() runs BEFORE the CS Pin is
+        configured, so that if SPI init ever claims the P3 pad for
+        peripheral SS, the later Pin() call routes the pad back to a
+        GPIO we control. (Suspected during S4 bring-up; the failures
+        turned out to be miswiring, so this order is precaution, not a
+        proven requirement -- first light passed with it in place.)
         CS idles high (deasserted); RESET_N idles high (not in reset).
         """
         self.baudrate = baudrate
