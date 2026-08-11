@@ -121,15 +121,24 @@ unverified — treat as unknown.
   video over the pair, unplug→freeze / replug→resume, USB REPL-only.
   S6 complete = the project's end-state demo (SPEC §Goal) achieved on
   the MicroPython driver.** Detail below.
-- S8 NPU inference bench (bite 1, early-ride exception): **run 2026-08-11
-  (Claude, remote, no sensor / no flash). Per-tile inference is fast
-  (yolov8n_192: 21 ms ≈ 47 fps), but HD (1280×800) tiled coverage at
-  192-px input = 40 tiles → ~1.2 fps, BELOW the T2 ≥3 fps gate; only
-  yolo_lc_192 (4 ms/tile) meets it tiled (6.3 fps). Single-pass HD
-  downscale puts 100–150 px fish at 15–23 px — below the 24 px floor.
-  All ROM detectors are person-class-only → T2 needs a custom
-  Vela-compiled fish detector regardless (Nick concurs); larger input
-  size is the lever that fixes the tiling arithmetic.** Detail below.
+- S8 NPU inference bench (bite 1, early-ride exception): **CORRECTED
+  2026-08-11 (same day): the first run was unknowingly measured on the
+  OpenMV N6 — mpremote auto-connect grabbed /dev/ttyACM0, which is the
+  N6, not the AE3 (both boards live on nereus000's USB; the "OpenMV
+  v5.0.0" version string and 25.6 MB heap were the tells). Re-run on
+  the real AE3 (ttyACM1, explicit connect): conclusions UNCHANGED,
+  numbers re-attributed — yolov8n_192 = 26.3 ms/tile (~38 fps); HD
+  (1280×800) tiled coverage at 192-px input = 40 tiles → 0.95 fps,
+  BELOW the T2 ≥3 fps gate; only yolo_lc_192 (4.9 ms/tile) meets it
+  tiled (5.1 fps). Single-pass HD downscale puts 100–150 px fish at
+  15–23 px — below the 24 px floor. All ROM detectors person-class-only
+  → T2 needs a custom Vela-compiled fish detector regardless; larger
+  input size is the lever. Bonus: the mistaken run is a free N6
+  comparison point (caveat: ROMFS model binaries differ per board —
+  not an apples-to-apples silicon comparison).** Both tables in the
+  detail below. Standing rule from the incident: **never bare
+  `mpremote` on nereus000 — always `connect` with an explicit
+  /dev/serial/by-id path** (two OpenMV boards on this host).
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
 
@@ -762,3 +771,36 @@ below the 24–32 px detection floor for every ≤192-px-input model.
 - NPU-vs-CPU dispatch is not queryable from MicroPython — these are
   wall-clock numbers; attribution unverified (flagged in the script
   header).
+
+### S8 detail CORRECTION (2026-08-11, same day) — first table was the N6
+
+The table above was measured on the **OpenMV N6** (`/dev/ttyACM0` on
+nereus000), not the AE3: bare `mpremote` auto-connects to the first CDC
+device, and nereus000 carries BOTH boards. Diagnosed during S9 bring-up
+(device-identity check before flashing); the "OpenMV v5.0.0" string and
+25.6 MB heap were the missed tells. Re-run on the AE3
+(`/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00`,
+fw 7d4dbf7ab2, free heap 3.9 MB), same script, same ref scene:
+
+| model (input) | AE3 ms @320×200 | AE3 tiled@HD fps | (N6 ms / tiled fps) |
+|---|---|---|---|
+| blazeface_front_128 (128²) | 17.0 | 0.6 | (11.1 / 0.9) |
+| face_landmarks_192 (192²) | 29.3 | 0.9 | (14.1 / 1.8) |
+| fomo_face_detection (96²) | 1.7 | 2.4 | (2.7 / 1.5) |
+| hand_landmarks_full_224 (224²) | 21.5 | 1.7 | (57.6 / 0.6) |
+| movenet_singlepose_192 (192²) | 28.1 | 0.9 | (21.5 / 1.2) |
+| palm_detection_full_192 (192²) | 43.7 | 0.6 | (30.0 / 0.8) |
+| person_detect (96²) | 4.9 | 0.9 | (2.8 / 1.5) |
+| yolo_lc_192 (192²) | 4.9 | **5.1 MEETS** | (4.0 / 6.3) |
+| yolov8n_192 (192², YoloV8 pp) | 26.3 | 0.95 BELOW | (21.1 / 1.2) |
+
+All T2 conclusions survive re-attribution: the gate is met only by the
+lc-class detector; yolov8n-class needs a larger input to cut tiles.
+Caveats: the two boards' ROMFS carry **different model binaries** (e.g.
+yolov8n_192: 1,994,976 B on AE3 vs 3,233,408 B on N6; AE3 additionally
+ships audio models) — cross-board numbers are model-variant-confounded,
+useful as platform points, not a silicon shoot-out. AE3's
+hand_landmarks being 2.7× faster than N6's is that confound in action.
+
+Standing bench rule adopted: on nereus000, always
+`mpremote connect /dev/serial/by-id/...` — never rely on auto-connect.
