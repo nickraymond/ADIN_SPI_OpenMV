@@ -3,20 +3,17 @@
 # unpipelined: this run MEASURES the capture/encode/tx split so the
 # bite-3 pipelining change is data-driven (one variable at a time).
 #
-# Pair with bench/s6_video_counter.py on nereus001 (start the counter
-# FIRST), then from nereus000:
-#   mpremote connect <dev> mount firmware/adin_drv exec "import s6_video_tx"
-
-try:
-    import machine  # noqa: F401 -- presence check only
-    ON_TARGET = True
-except ImportError:
-    ON_TARGET = False   # host CPython: constants importable for unit tests
+# Duration and quality are per-run choices (Nick, bite 2) -- invoke main()
+# explicitly. Pair with the bench counter or the S6 shim on nereus001, then
+# from nereus000:
+#   mpremote connect <dev> mount firmware/adin_drv \
+#       exec "import s6_video_tx; s6_video_tx.main()"
+#   ... s6_video_tx.main(duration_s=300, quality=70)   # long run / q ladder
 
 import s6_video
 
-DURATION_S = 65            # covers the counter's 60 s window with margin
-QUALITY = 50               # T1 range is q35-50; q50 = heavier stressor (Nick)
+DURATION_S = 65            # default: covers the counter's 60 s window
+QUALITY = 50               # default per T1 (q35-50); ladder overrides at run
 LOAD_BAUD = 20_000_000     # S5-demo-proven: 0% loss at 4.21 Mbps payload
 WARMUP_MS = 2000           # auto-exposure settle (board_config default)
 STATS_EVERY_MS = 5_000
@@ -34,24 +31,24 @@ def sensor_init():
     return sensor
 
 
-def encode_jpeg(img):
+def encode_jpeg(img, quality):
     """In-place JPEG encode; returns the byte buffer. fw >= 1.28 renamed
     compress() -> to_jpeg() (same dance as bench/ae3_video_bench.py)."""
     if hasattr(img, "to_jpeg"):
-        img = img.to_jpeg(quality=QUALITY, copy=False)
+        img = img.to_jpeg(quality=quality, copy=False)
     else:
-        img.compress(quality=QUALITY)
+        img.compress(quality=quality)
     return img.bytearray()
 
 
-def main():
+def main(duration_s=DURATION_S, quality=QUALITY):
     import time
     from adin_hal_ae3 import Ae3Hal
     from adin_spi import AdinSpi
     from adin_bringup import bring_up
 
     print("S6 video TX -- QVGA q%d, %d s, chunk payload %d B"
-          % (QUALITY, DURATION_S, s6_video.PAYLOAD_MAX))
+          % (quality, duration_s, s6_video.PAYLOAD_MAX))
     hal = Ae3Hal(baudrate=LOAD_BAUD)
     hal.reset_pulse()
     adin = AdinSpi(hal)
@@ -68,13 +65,13 @@ def main():
     last_stat_t, last_stat_seq = t0, 0
     while True:
         now = time.ticks_ms()
-        if time.ticks_diff(now, t0) >= DURATION_S * 1000:
+        if time.ticks_diff(now, t0) >= duration_s * 1000:
             break
 
         ta = time.ticks_us()
         img = sensor.snapshot()
         tb = time.ticks_us()
-        data = encode_jpeg(img)
+        data = encode_jpeg(img, quality)
         tc = time.ticks_us()
         mv = memoryview(data)
         count = s6_video.n_chunks(len(data))
@@ -118,7 +115,3 @@ def main():
           % (s0, s1, "YES -- results suspect" if spi_err else "no"))
     print("verdict lives on the Pi: s6_video_counter.py must show complete, "
           "openable JPEGs (last frame_seq sent: %d)" % (frame_seq - 1))
-
-
-if ON_TARGET:
-    main()

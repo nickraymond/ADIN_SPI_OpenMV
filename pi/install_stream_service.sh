@@ -3,6 +3,7 @@
 #
 #   sudo pi/install_stream_service.sh receiver   # on nereus001: stream_server
 #   sudo pi/install_stream_service.sh sender     # on nereus000: t1l_sender
+#   sudo pi/install_stream_service.sh shim       # on nereus001: chunk_shim (S6)
 #
 # Idempotent: re-running reinstalls the unit and restarts the service.
 set -euo pipefail
@@ -11,7 +12,8 @@ ROLE="${1:-}"
 case "$ROLE" in
   receiver) UNIT=t1l-stream-server.service ;;
   sender)   UNIT=t1l-sender.service ;;
-  *) echo "usage: $0 receiver|sender" >&2; exit 1 ;;
+  shim)     UNIT=t1l-chunk-shim.service ;;
+  *) echo "usage: $0 receiver|sender|shim" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
