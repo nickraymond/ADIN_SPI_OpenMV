@@ -73,6 +73,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D16 | 2026-08-10 | S3 stream setting (Nick): **QVGA color q90, sender-paced to 15 fps** (~2.5 Mbps free-run ceiling measured) | Nick wanted "as high a quality as we can safely do" at 15 fps. Measured q-sweep (bench scene): q90 free-runs 35.7 fps — 2.4× the target, margin enough even for real scenes encoding 3–5× slower (S0 reef data). VGA rejected: software-encoder-bound at 9.8 fps (q70) / 12.1 (q50); **VGA ≥ 15 fps is unreachable on the AE3 on any transport** (no hardware JPEG on this sensor). For a future 30 fps mode, drop to q80 (real-scene margin at q90 is thin). *(Superseded by D17 same day.)* |
 | D17 | 2026-08-10 | D16 revised (Nick, after live end-to-end tests): standing S3 setting = **QVGA q90, 30 fps** — sender/service defaults updated | Measured live over the pair on the real bench scene: q90@30 delivers 30.8 fps rx / 4.6–4.8 Mbps / 0 gaps with ~2 fps encoder surplus (thin, scene-dependent — pacer degrades gracefully by riding the source rate); q80@30 = 30.4 fps / 3.0 Mbps / ~4 fps surplus, the documented fallback if a scene can't hold 30 at q90. S6 caveat recorded: ~4.7 Mbps exceeds the ~4 Mbps AE3 SPI budget (D8), so this exact mode is USB-path only; the SPI-era target remains T1 (QVGA q35–50). |
 | D18 | 2026-08-10 | S4 rig uses an **AOS hat** (hat #2, freed from nereus000), not the SG shield — supersedes D7's S4 half (Nick) | Both AOS hats are now S2-proven silicon with proven straps (generic SPI no CRC, verified by working register I/O) and crimped pair connectors, and the board is 3.3V-only — removing the SG shield's 5V-regulator meter question entirely. Header pinout is identical to the SG shield (DESIGN §S2), so the Diagram 1 harness maps pin-for-pin. Consequences: AE3-side must supply the missing INT_N pull-up (P5 internal pull-up, per D14) and the S3 stream fixture pauses while hat #2 is off nereus000. SG shield remains shelved as a known-good backup. Open question flagged in TRACKER: AE3 3V3 pin's ability to source the hat's draw. |
+| D19 | 2026-08-10 | S4 rig power (Nick): hat fed from **nereus000's 3V3 header** (Pi pin 1 → hat 1, GND pin 9 → hat 9); AE3 stays USB-powered from the same Pi; direct AE3→hat ground jumper for signal return; AE3's 3V3 pin unused | No bench supply on hand, and this exact load combination is already proven — during S2/S3 nereus000 simultaneously powered hat #2 on its header and the AE3 over USB. Grounds are common through the Pi; the extra AE3→hat GND wire keeps the SPI return path out of the USB cable. Sidesteps (does not answer) the D18 open question about the AE3 3V3 pin's sourcing ability — re-flag if a standalone rig ever needs it. |
 
 ## Verified-facts ledger
 
@@ -97,6 +98,10 @@ unverified — treat as unknown.
   the D17 setting (QVGA q90 @ 30 fps) under systemd: 18,032 frames / 615 s =
   29.3 fps avg (29.6 rolling), 4.60 Mbps avg on the pair, 0 gaps, 0 resets —
   every sent frame delivered.** Detail below.
+- S4 PHY ID first light: **PASS — demo run by Nick 2026-08-10.**
+  `PHY ID: 0x0283BC91` (SPEC match) over generic SPI no CRC at 5 MHz,
+  AE3 → hat #2, first attempt on a correctly wired harness; repeatable.
+  Detail below.
 - S5 loss rate: —
 - S6 end-to-end fps / latency: —
 
@@ -358,6 +363,54 @@ Still open (flagged, not guessed): unexplained soldered wire/pin at J1
 edge on hat #1; two bare copper rectangles top of back side; hat #2 date
 code not yet recorded. nereus000 now runs an AOS hat; SG shield is on the
 shelf (S1 restore = swap back + flip the two config.txt lines).
+
+### S4 detail (2026-08-10) — AE3 first light: PHY ID over SPI (as-built)
+
+Rig per D18 + D19: AE3 → hat #2, 7 data wires + AE3→hat ground; hat powered
+from nereus000's 3V3 header; AE3 on nereus000 USB (dev loop runs fully
+remote via `mpremote mount` from the Pi — same pattern as S0).
+
+Driver start, `firmware/adin_drv/`, per the two-layer portability contract:
+
+- `adin_spi.py` — portable protocol core (no `machine` imports): generic
+  SPI no-CRC framing taken from vendored `adin1110.c:195-264` (read =
+  7-byte full-duplex xfer, 3-byte header + turnaround, value BE32; write =
+  2-byte header + BE32). `adin_regs.py` — constants with line citations.
+- `adin_hal_ae3.py` — AE3 HAL: `machine.SPI(0)` @ 5 MHz mode 0, CS = P3
+  manual GPIO (D2), RESET strobe per driver timing (10 ms low, 90 ms
+  settle, bus quiet — adin1110.c:1101-1108), P5 input with internal
+  pull-up (the D14 INT_N fix, AE3-side per D18). SPI is constructed
+  before the CS Pin as a defensive pad-claim order (suspected SS-steal
+  during debug; turned out to be miswiring — order kept as precaution).
+- `s4_first_light.py` — demo + built-in no-LA fallback ladder (raw RX
+  dump, failure-signature wiring hints, 5x stability check, STATUS0/
+  CONFIG1 raw dumps for diffing against the live Linux node, clock retry
+  sweep). 16 host unit tests (`test_adin_spi.py`).
+
+**Result: `PHY ID: 0x0283BC91 — OK` at 5 MHz, first attempt once the
+harness was actually wired right, repeatable.** The chip + straps +
+protocol layer worked immediately; every failure on the way was wiring.
+
+Bring-up war story, kept for the next rig: the hat header was counted
+mirrored twice (off-Pi female header, easy to flip). Signatures seen:
+all-0xFF with stray low bits = floating MISO reading crosstalk (the
+stray bits vary with grounding — a solidly driven line doesn't);
+MISO "echoing" fragments of TX = same. Debug tools built and kept:
+
+- `s4_bus_probe.py` — no-SPI DC checks: hat rail detect via the board's
+  own R28 100k RESET_N pull-up (drive P4 low, release to input, watch
+  bounce-back), MISO pull-up-vs-pull-down float/drive test.
+- `s4_bitbang_probe.py` — full PHY ID read in pure-GPIO mode-0 SPI;
+  separates harness/chip faults from `machine.SPI` faults.
+- Orientation validator that ended the mirror cycle: power jumpers only,
+  meter hat pin 17 ↔ pin 6 — ~3.3 V only if the count is right (17 is
+  the second 3V3 pin, same net as 1; a mirrored count lands on dead nets).
+
+Caution recorded during debug (unproven on correct wiring, kept as a
+watch item): probe interpretations on a miswired harness can look
+plausible — the DC probe "passed" convincingly on two different wrong
+harnesses because floating/coincidental nets mimicked the expected
+responses. Trust a probe only after the wiring it assumes is verified.
 
 ### S3 detail (2026-08-10) — bite 1: AE3→Pi USB frame source, measured
 

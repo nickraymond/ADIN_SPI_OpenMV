@@ -17,6 +17,49 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S4 — AE3 first light: PHY ID 0x0283BC91 over SPI
+
+**Branch:** sprint/4-ae3-first-light
+
+**Done:**
+- Nibble 1 plan approved (protocol facts sourced from vendored
+  adin1110.c, not the datasheet — proven code beats transcription).
+  Power rig revised by Nick before wiring: hat fed from nereus000's 3V3
+  header, AE3 USB-powered from the same Pi (D19 — the S2/S3 setup
+  already proved this exact load combo); AE3 3V3 question sidestepped.
+- Built `firmware/adin_drv/`: portable protocol core + AE3 HAL (two-layer
+  contract), first-light demo with built-in no-LA fallback diagnostics,
+  16 host unit tests. ~380 LoC, one bite.
+- **Demo PASS (Nick, same day): `PHY ID: 0x0283BC91 — OK` at 5 MHz,**
+  first attempt on a correctly wired harness, repeatable. S4 → [x].
+- Debug tools kept for S5+: `s4_bus_probe.py` (DC checks, incl. rail
+  detect via the hat's own RESET_N pull-up), `s4_bitbang_probe.py`
+  (pure-GPIO PHY ID read, splits harness faults from machine.SPI faults).
+- Remote dev loop notes: ssh as **pi@nereus000**, mpremote at
+  `~/.local/bin/mpremote`, AE3 = `/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_*`
+  (ttyACM0 is the N6 — never hardcode ACM numbers). Claude can run the
+  AE3 via mpremote directly; sudo over ssh needs Nick.
+
+**Broke/surprised us:**
+- The hat header got counted mirrored TWICE while off the Pi — cost most
+  of the session. All-0xFF + stray-bit and TX-echo signatures were
+  floating-MISO crosstalk. Ender: meter hat 17 ↔ 6 with power jumpers
+  only (~3.3 V iff orientation right) BEFORE landing data wires.
+- Debug probes "passed" convincingly on miswired harnesses (coincidental
+  nets mimic expected responses) → led to two wrong theories
+  (machine.SPI SS-steal, strap mode corruption) before Nick spotted the
+  flip. Lesson recorded in DESIGN §S4: verify wiring before trusting
+  probe interpretations.
+- t1l-sender was still active at session start — it owns the AE3 USB
+  port; stop it before any mpremote work (fixture restore: remount hat
+  #2 + `systemctl start t1l-sender`).
+
+**Next:** S5 — frame TX path (generic SPI FIFO), seq-numbered payloads;
+RX side minimum = link status + counters; Pi raw-socket counter script.
+Pi end can be nereus001 as-is (live reference node stays intact).
+
+---
+
 ## 2026-08-10 — Sprint S3 — bites 2+3: video across the pair, 30 fps, zero loss
 
 **Branch:** sprint/3-t1l-video
