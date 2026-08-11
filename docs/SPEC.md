@@ -134,6 +134,19 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
+  2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
+  mode with PROTE=0 and the bit does NOT accept a write (tried plain and
+  with CONFIG0.SYNC; other registers/bits write fine). Contradicts this
+  file's Table-22 note that all-straps-low = "OA WITH protection", and
+  breaks bm_core's driver as-shipped (compiled CONFIG_SPI_PROT_EN=1).
+  Needs datasheet cross-check (PDF fetch timed out): is PROTE
+  unimplemented on the 1110 (2111-only?), silicon-rev-dependent, or
+  gated some other way — and what do the strap combos actually select
+  on the 1110? Also unexplained: ONE early probe run returned a correct
+  protected-mode complement (fd7c436e) — never reproduced across many
+  later runs; treat as anomaly until the datasheet answers.
+
 - SG shield JP1 (5-pin) / JP4 (3-pin): undocumented publicly; hypothesis =
   standalone-MCU breakout. Resolve by continuity or by emailing SG.
 - ~~AOS hat: CS/IRQ/RESET GPIO mapping, strap state, pair-connector

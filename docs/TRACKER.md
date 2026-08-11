@@ -354,13 +354,33 @@ S7 research notes above + DESIGN §S7 detail.*
 
 ### S9 — OA first light in C (custom firmware + driver spike)  `[ ]`
 **Goal:** prove the C dev loop end-to-end and OA mode on our silicon.
-- [ ] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
+- [~] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
       (default straps; D13 jumpers reversible), minimal C module in a
       custom OpenMV firmware calling bm_core's adin2111 driver
       **unmodified** for an OA register/PHY-ID read. Mac docker build
       (S7 env) → S7 headless flash → REPL/log verdict.
       **Decision point on fail: buy ADIN2111 bench hardware; do NOT
       port the driver to 1110 (throwaway — production goes 2111).**
+      → **SPIKE PASSED 2026-08-11 (live, Nick re-strapped + Claude drove
+      the loop): verdict 1 = PHYID 0x0283BC91 read through the driver's
+      OWN OA framing (SUCCESS); verdict 2 = adin2111_Init refused ONLY
+      by the 2111 identity gate (COMM_TIMEOUT at waitDeviceReady,
+      exactly as source-predicted).** Full 1110-vs-2111 delta list =
+      **2 items**: (1) OA control protection — **PROTE (CONFIG0 bit 5)
+      will not set on our 1110** (measured; other bits/regs write fine)
+      so bm_core must build WITHOUT `CONFIG_SPI_PROT_EN` for 1110 bench
+      work (`build_spike.sh --no-prot`; driver's unprotected path is
+      native); flagged in SPEC §Open questions pending datasheet
+      cross-check; (2) `RSTVAL_MAC_PHYID` 0x0283BCA1 vs our 0x0283BC91.
+      **Recommendation for the decision point: NOT a fail — no 2111
+      purchase forced for bite 2/3;** carry the 2-item delta as build
+      config (production 2111 unaffected). Also en route: first real
+      exercise of the D23 Mac docker build (works; HE image doesn't
+      link in our env at any rev — HP-only flash at the installed HE's
+      rev sidesteps it, environmental debug deferred); S8 bench
+      mis-attribution found + corrected (N6 vs AE3, DESIGN §S8
+      correction). Detail: DESIGN §S9, `firmware/bm_spike/README.md`.
+      Demo satisfied: REPL prints the OA-mode PHY-ID verdict.
 - [ ] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
       exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
       headers in openmv tree — wire up if bite budget allows, else S10)

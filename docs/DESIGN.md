@@ -121,15 +121,24 @@ unverified — treat as unknown.
   video over the pair, unplug→freeze / replug→resume, USB REPL-only.
   S6 complete = the project's end-state demo (SPEC §Goal) achieved on
   the MicroPython driver.** Detail below.
-- S8 NPU inference bench (bite 1, early-ride exception): **run 2026-08-11
-  (Claude, remote, no sensor / no flash). Per-tile inference is fast
-  (yolov8n_192: 21 ms ≈ 47 fps), but HD (1280×800) tiled coverage at
-  192-px input = 40 tiles → ~1.2 fps, BELOW the T2 ≥3 fps gate; only
-  yolo_lc_192 (4 ms/tile) meets it tiled (6.3 fps). Single-pass HD
-  downscale puts 100–150 px fish at 15–23 px — below the 24 px floor.
-  All ROM detectors are person-class-only → T2 needs a custom
-  Vela-compiled fish detector regardless (Nick concurs); larger input
-  size is the lever that fixes the tiling arithmetic.** Detail below.
+- S8 NPU inference bench (bite 1, early-ride exception): **CORRECTED
+  2026-08-11 (same day): the first run was unknowingly measured on the
+  OpenMV N6 — mpremote auto-connect grabbed /dev/ttyACM0, which is the
+  N6, not the AE3 (both boards live on nereus000's USB; the "OpenMV
+  v5.0.0" version string and 25.6 MB heap were the tells). Re-run on
+  the real AE3 (ttyACM1, explicit connect): conclusions UNCHANGED,
+  numbers re-attributed — yolov8n_192 = 26.3 ms/tile (~38 fps); HD
+  (1280×800) tiled coverage at 192-px input = 40 tiles → 0.95 fps,
+  BELOW the T2 ≥3 fps gate; only yolo_lc_192 (4.9 ms/tile) meets it
+  tiled (5.1 fps). Single-pass HD downscale puts 100–150 px fish at
+  15–23 px — below the 24 px floor. All ROM detectors person-class-only
+  → T2 needs a custom Vela-compiled fish detector regardless; larger
+  input size is the lever. Bonus: the mistaken run is a free N6
+  comparison point (caveat: ROMFS model binaries differ per board —
+  not an apples-to-apples silicon comparison).** Both tables in the
+  detail below. Standing rule from the incident: **never bare
+  `mpremote` on nereus000 — always `connect` with an explicit
+  /dev/serial/by-id path** (two OpenMV boards on this host).
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
 
@@ -762,3 +771,94 @@ below the 24–32 px detection floor for every ≤192-px-input model.
 - NPU-vs-CPU dispatch is not queryable from MicroPython — these are
   wall-clock numbers; attribution unverified (flagged in the script
   header).
+
+### S8 detail CORRECTION (2026-08-11, same day) — first table was the N6
+
+The table above was measured on the **OpenMV N6** (`/dev/ttyACM0` on
+nereus000), not the AE3: bare `mpremote` auto-connects to the first CDC
+device, and nereus000 carries BOTH boards. Diagnosed during S9 bring-up
+(device-identity check before flashing); the "OpenMV v5.0.0" string and
+25.6 MB heap were the missed tells. Re-run on the AE3
+(`/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00`,
+fw 7d4dbf7ab2, free heap 3.9 MB), same script, same ref scene:
+
+| model (input) | AE3 ms @320×200 | AE3 tiled@HD fps | (N6 ms / tiled fps) |
+|---|---|---|---|
+| blazeface_front_128 (128²) | 17.0 | 0.6 | (11.1 / 0.9) |
+| face_landmarks_192 (192²) | 29.3 | 0.9 | (14.1 / 1.8) |
+| fomo_face_detection (96²) | 1.7 | 2.4 | (2.7 / 1.5) |
+| hand_landmarks_full_224 (224²) | 21.5 | 1.7 | (57.6 / 0.6) |
+| movenet_singlepose_192 (192²) | 28.1 | 0.9 | (21.5 / 1.2) |
+| palm_detection_full_192 (192²) | 43.7 | 0.6 | (30.0 / 0.8) |
+| person_detect (96²) | 4.9 | 0.9 | (2.8 / 1.5) |
+| yolo_lc_192 (192²) | 4.9 | **5.1 MEETS** | (4.0 / 6.3) |
+| yolov8n_192 (192², YoloV8 pp) | 26.3 | 0.95 BELOW | (21.1 / 1.2) |
+
+All T2 conclusions survive re-attribution: the gate is met only by the
+lc-class detector; yolov8n-class needs a larger input to cut tiles.
+Caveats: the two boards' ROMFS carry **different model binaries** (e.g.
+yolov8n_192: 1,994,976 B on AE3 vs 3,233,408 B on N6; AE3 additionally
+ships audio models) — cross-board numbers are model-variant-confounded,
+useful as platform points, not a silicon shoot-out. AE3's
+hand_landmarks being 2.7× faster than N6's is that confound in action.
+
+Standing bench rule adopted: on nereus000, always
+`mpremote connect /dev/serial/by-id/...` — never rely on auto-connect.
+
+### S9 detail (2026-08-11) — bite 1: OA first light, spike PASSED
+
+**Result: bm_core's adin2111 OA driver (vendored @ d4ecc38, byte-identical)
+reads our ADIN1110's PHY ID through its own framing.** Final on-target run
+(hat #2 straps opened, `--no-prot` build): verdict 1 `read=SUCCESS
+PHYID=0x0283BC91`; verdict 2 `adin2111_Init = COMM_TIMEOUT` at
+waitDeviceReady's PHYID==0x0283BCA1 poll — the identity gate,
+source-predicted (adi_mac.c:568/1128) and demonstrated compiled in the
+host harness before any hardware.
+
+**The complete 1110-vs-2111 delta list (bite-1 scope):**
+
+1. **OA control protection unavailable on our 1110.** Chip comes up
+   PROTE=0 and the bit rejects writes (plain + with CONFIG0.SYNC; IMASK0
+   and other CONFIG0 bits write fine — measured, reproducible). bm_core
+   ships `CONFIG_SPI_PROT_EN` defined → protected framing → reads decode
+   garbage against this chip (and the driver *swallows*
+   PROTECTION_ERROR on control reads — host test [4] pins that quirk).
+   Fix for 1110 bench work: build with the define REMOVED (driver tests
+   defined-ness, not value — a `=0` build is byte-identical, sha-proven);
+   `build_spike.sh --no-prot`. Production 2111 presumably keeps
+   protection (Sofar's shipped default) — Sofar question queued.
+2. **`RSTVAL_MAC_PHYID` (0x0283BCA1)** — blocks every init path
+   (MAC-layer AND full init; the gate lives in MAC_Init → MAC_Reset →
+   waitDeviceReady, NOT just adin2111-level init).
+
+**Debug ladder that got there (kept for reuse, `~/ae3_flash/` on
+nereus000):** `s9_raw_probe.py` (mirror-vs-echo discriminator: replay the
+driver's exact control frame with distinctive padding; a miswire mirrors
+padding, a real OA chip echoes only the header) → `s9_matrix.py`
+(padding × length behavior matrix; surfaced the chip parsing follow-on
+MOSI words as new control headers — bad-parity words draw the 0x40000000
+HDRB reply) → `s9_regs.py` (CONFIG0/PROTE authoritative readback; also
+IDVER=0x10, CAPABILITY=0x6C3, and a clean 2-word auto-increment read) →
+`s9_wrtest.py` (write-path proof + PROTE dead-bit isolation). Plus one
+mid-hunt hardware fix by Nick: CFG0 strap pad wasn't fully cleared on the
+first rework (chip answered in OA-no-protection framing; razor + meter
+fixed it — though PROTE stayed 0 regardless, see SPEC open question; one
+never-reproduced protected-mode complement sighting recorded as anomaly).
+
+**Build-env facts (D23 leg, first real exercise):** docker-on-Mac works
+end-to-end (image build under Rosetta, SDK 1.6.0 plumbing, MANIFEST).
+Two traps found and fixed in `build_spike.sh`: staged-header changes can
+reuse stale objects (stage/unstage defeats make deps — `--clean` flag,
+sha-compare to verify) and the `modules/` wildcard compiles usermods into
+BOTH cores (HE can't fit the spike → `#if !defined(CORE_M55_HE)` guards,
+vendored files staged as `.inc` behind generated wrappers). Open
+environmental issue: the **M55_HE image does not link in our env at any
+rev** (FLASH_TEXT 154% with our code fully excluded — reproduced on
+master and 7d4dbf7ab2, clean trees). Workaround in use: flash HP only at
+the exact rev of the installed HE image (7d4dbf7ab2) → no core skew.
+Debug deferred; needed before S10 (bm_core runs ON the HE core).
+
+**Fixture note:** the AE3 currently runs the spike HP build
+(`v5.0.0-52.g7d4dbf7ab2`, sha256 921cdd03…). Restore to stock dev =
+reflash `7d4dbf7ab2` HP via the S7 ladder. Hat #2 is strapped OA
+(default) — re-bridge CFG0+CFG1 to return to the S6 generic-SPI baseline.

@@ -17,6 +17,70 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (bite 1) — bm_spike code-complete: unmodified bm_core driver runs on host; hardware gates = docker + re-strap
+
+**Branch:** sprint/9-oa-first-light
+
+**Done:**
+- Nibble 1 (plan approved): spike designed for two verdicts, not one —
+  OA transport proof AND the unmodified-init result. Nick's ask: get as
+  far as possible with zero hardware contact.
+- `firmware/bm_spike/`: vendored bm_core drivers/adin2111 @ d4ecc38
+  byte-for-byte (bm_adin2111.c reference-only — needs bm_os, defines its
+  own HAL fn); blocking adi_hal.h shim over MicroPython SPI/Pin
+  (S4-proven path); `bm_spike` usermod; `build_spike.sh` stages sources
+  into openmv's modules/ wildcard (NO fork/patch — staging + trap
+  cleanup exercised); `s9_oa_spike.py` runner; README with verdict
+  matrix + run ladder.
+- Host harness: clang builds the UNMODIFIED driver against a mock ADIN
+  speaking OA-protected control framing (format from adi_spi_oa.c) —
+  10 checks PASS, including the identity gate demonstrated compiled
+  (25,000 PHYID polls → COMM_TIMEOUT with a 1110 identity; prompt exit
+  with 2111's).
+- Pre-staged for Nick: openmv.git cloned to ~/openmv-dev/openmv; SDK
+  1.6.0 linux-x86_64 downloaded + sha256-verified (setup_mac.sh will
+  skip it). Docker still absent (password needed) — the build stops
+  there by design.
+
+**Broke/surprised us:**
+- **The 2111 identity gate fires inside MAC-layer init, not just full
+  init**: MAC_Init → MAC_Reset(MAC_PHY) → waitDeviceReady polls
+  PHYID==0x0283BCA1 (adi_mac.c:568/1128). On a 1110, even MAC-only init
+  returns COMM_TIMEOUT on perfect hardware. Spike redesigned mid-nibble
+  to tolerate it and read PHYID afterwards (handle valid pre-reset;
+  MAC_ReadRegister needs state != UNINITIALIZED only).
+- ADI's *_DEVICE_SIZE constants are ILP32 hand-counts → adin2111_Init is
+  not LP64-host-portable (INVALID_PARAM before SPI). Verdict 2 is
+  target-only; documented.
+- Vendored-driver quirk pinned by test: control-read path swallows
+  PROTECTION_ERROR (spiErr only carries the header-echo check) —
+  corruption = SUCCESS + unwritten data. Spike judges the PHYID value.
+- MAC_Init is static; the exported route is the macDriverEntry table
+  (same as adin2111.c uses).
+
+**SPIKE PASSED (same session, hardware leg):** Nick installed Docker +
+re-strapped; Claude drove build→flash→verdicts. Final:
+`PHYID=0x0283BC91` through the driver's own OA framing; init refused
+only by the 2111 identity gate. En route (all recorded in DESIGN §S9 /
+§S8 correction / SPEC open questions): **S8 bench had run on the N6**
+(mpremote auto-connect; AE3 re-run same conclusions; by-id-only rule
+adopted) · **PROTE dead on our 1110** (measured; `--no-prot` delta
+build; driver tests defined-ness — sha-identical `=0` build caught it) ·
+CFG0 pad needed a second rework pass (razor; chip had been answering
+OA-unprotected) · D23 build leg works but **M55_HE won't link in our
+env at any rev** (HP-only flash at installed-HE's rev = workaround;
+must fix before S10) · flash-verify tool false-mismatch on
+`git describe` version strings (feeds the running hardening task).
+
+**Next:** S9 bite 2 — Alif-native ADI-HAL (SPI + IRQ on P0–P5, DMA
+hooks if budget allows). Prereq: fix the HE link (or a decided
+HP-only stance) before S10. PR for bite 1 open. NOTE (merge-time): the
+flash-verify hardening landed as PR #12 (entry below) — byte-level DFU
+readback replaces the label matching whose false-mismatch we hit; our
+session's flashes used the pre-hardening ladder deployed on the Pi.
+
+---
+
 ## 2026-08-11 — Sprint S7 (flash-verify hardening) — byte-level readback verify replaces label matching
 
 **Branch:** sprint/7-flash-verify
