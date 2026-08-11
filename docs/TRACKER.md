@@ -221,6 +221,15 @@ target load for 60 s.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
 **Goal:** a decision, not a build.
+- [ ] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
+      nereus000** — no OpenMV IDE, no hands. Verifiable: build (or reuse) a
+      known `firmware.bin`, flash it entirely from the nereus000 CLI, board
+      re-enumerates running that exact build (uname git-hash matches).
+      Unblocks a fully remote firmware dev loop (edit → docker build on Pi →
+      flash → test → uhubctl recover) for ALL option-C work: SPI FIFO/DMA
+      rewrite (D8), bm_core port, upstream crash-fix testing. Investigate:
+      Alif SE/bootloader protocol over USB CDC vs SWD; OpenMV's IDE-less
+      loader tooling.
 - [ ] Assess Sofar's OA-mode Linux/BM driver status (ask them directly)
 - [ ] Estimate: port oa-tc6-lib to AE3 vs stay generic; what re-straps
 - [ ] Optional spike: re-strap one AOS hat to OA, PHY ID read in OA framing
