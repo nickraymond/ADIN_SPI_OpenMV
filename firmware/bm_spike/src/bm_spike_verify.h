@@ -43,6 +43,13 @@ int bm_spike_full_init(void);
 int bm_spike_bench_open(int *init_result);
 int bm_spike_bench_reads(uint32_t n, uint32_t *phyid, uint32_t *fails);
 
+// Drop the persistent bench handle so the next bm_spike_bench_open()
+// re-initializes from scratch. REQUIRED at the start of every runner:
+// C statics survive MicroPython SOFT resets (only a hard boot zeroes
+// them), and a handle carried across sessions can be wedged mid-state --
+// measured 2026-08-11 as an all-fails bench at every SPI speed.
+void bm_spike_bench_reset(void);
+
 // S9 bite 2 -- raw register passthrough over the bench handle (opens it on
 // first use), for bench-side pokes the verdicts don't cover: clearing W1C
 // status bits for the IRQ proof, bite-3 exploration. Driver-native path

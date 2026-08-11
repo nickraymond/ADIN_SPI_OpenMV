@@ -79,6 +79,15 @@ static mp_obj_t bm_spike_run_verdicts(void)
     return mp_obj_new_tuple(3, items);
 }
 
+// Fresh-session guard: drop the persistent bench handle (C statics survive
+// soft resets; a stale handle benches all-fails). Runners call this first.
+static mp_obj_t bm_spike_fresh_fn(void)
+{
+    bm_spike_bench_reset();
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_fresh_obj, bm_spike_fresh_fn);
+
 // Raw register passthrough (both HALs; mp build needs a prior bind via
 // verify/bench). Raises on driver error so a bad read can't masquerade as
 // data.
@@ -148,6 +157,7 @@ static MP_DEFINE_CONST_FUN_OBJ_3(bm_spike_bench_obj, bm_spike_bench_fn);
 static const mp_rom_map_elem_t bm_spike_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_bm_spike) },
     { MP_ROM_QSTR(MP_QSTR_HAL), MP_ROM_QSTR(MP_QSTR_mp) },
+    { MP_ROM_QSTR(MP_QSTR_fresh), MP_ROM_PTR(&bm_spike_fresh_obj) },
     { MP_ROM_QSTR(MP_QSTR_verify), MP_ROM_PTR(&bm_spike_verify_obj) },
     { MP_ROM_QSTR(MP_QSTR_bench), MP_ROM_PTR(&bm_spike_bench_obj) },
     { MP_ROM_QSTR(MP_QSTR_read_reg), MP_ROM_PTR(&bm_spike_read_reg_obj) },
@@ -231,6 +241,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_actual_hz_obj, bm_spike_actual_hz_fn);
 static const mp_rom_map_elem_t bm_spike_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_bm_spike) },
     { MP_ROM_QSTR(MP_QSTR_HAL), MP_ROM_QSTR(MP_QSTR_alif) },
+    { MP_ROM_QSTR(MP_QSTR_fresh), MP_ROM_PTR(&bm_spike_fresh_obj) },
     { MP_ROM_QSTR(MP_QSTR_setup), MP_ROM_PTR(&bm_spike_setup_obj) },
     { MP_ROM_QSTR(MP_QSTR_verify), MP_ROM_PTR(&bm_spike_verify_obj) },
     { MP_ROM_QSTR(MP_QSTR_bench), MP_ROM_PTR(&bm_spike_bench_obj) },

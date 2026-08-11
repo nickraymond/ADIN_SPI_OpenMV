@@ -5,23 +5,25 @@
 #
 # Run from nereus000 (ALWAYS the by-id path -- two OpenMV boards live here):
 #   mpremote connect /dev/serial/by-id/usb-OpenMV_OpenMV_Camera_* \
-#            run firmware/bm_spike/s9_hal_native.py
+#            run ~/ae3_flash/s9_hal_native.py
 #
-# What it proves, in order:
-#   1. verify(): PHYID=0x0283BC91 through the driver's OA framing with the
-#      native SPI0 engine -- zero MicroPython objects in the transfer path
-#      (P4 reset and P5 IRQ registration stay machine.Pin scaffolding).
-#   2. bench(): PHYID round-trip rate at 5/10/20 MHz, comparable with the
-#      --hal mp build's bench (same driver, same chip, only the HAL swaps).
-#   3. IRQ: falling edge on P5 (INT_N) reaches the driver's registered
-#      callback via bm_spike.irq_trampoline. Armed BEFORE the reset pulse;
-#      whether the un-inited chip asserts INT_N after reset is a bench
-#      MEASUREMENT (flagged in the plan) -- the P5 level is printed either
-#      way so a quiet line is debuggable, and a manual pull test is
-#      suggested on failure.
+# Order matters (hard-won 2026-08-11, all measured on this rig):
+#   0. Sanitize: the chip's state persists across EVERYTHING (the P4 reset
+#      line is ineffective, the hat is powered from the Pi's always-on
+#      3V3), and garbage traffic can flip CONFIG0.PROTE -- observed after
+#      a 20 MHz bench rung: misclocked MOSI decoded as a valid CONFIG0
+#      write. With PROTE=1 the chip silently drops our unprotected writes
+#      (reads still work -- first data word aligns in both framings) and
+#      latches CDPE. So: soft-reset in BOTH framings (one always lands),
+#      then verify CONFIG0 == reset default.
+#   1. Verify + IRQ proof at 5 MHz, the proven speed, BEFORE any
+#      garbage-risk traffic.
+#   2. Bench ladder last; the 20 MHz rung reads garbage on this rig
+#      (finding: RX sample delay) and may leave chip state unspecified --
+#      nothing gates on it and a final sanitize follows it.
 
 import time
-from machine import Pin
+from machine import Pin, SPI
 
 import sys
 
@@ -42,23 +44,60 @@ print("S9 bite 2: Alif-native ADI-HAL (SPI0 FIFO-burst + INT_N IRQ)")
 print(sys.version)
 print("=" * 64)
 
-# P4/P5 scaffolding pins (SPI pins + CS are owned by the native HAL --
-# do NOT construct machine.SPI(0) in this build).
+# C statics survive soft resets -- drop any bench handle a previous
+# session left behind (a stale one benches all-fails; measured).
+bm_spike.fresh()
+
+# Scaffolding pins. P4 reset is kept for convention but measured
+# ineffective on this rig (register scratch survives the pulse) --
+# flagged fixture question; resets below are the chip's soft reset.
 rst = Pin("P4", Pin.OUT, value=1)
 irqpin = Pin("P5", Pin.IN, Pin.PULL_UP)   # D14: board lacks INT_N pull-up
 
-# Arm the IRQ path before anything touches the chip.
+ST0, ST1, IMASK0, RESET_REG, CONFIG0 = 0x008, 0x009, 0x00C, 0x003, 0x004
+LOFE_M = 0x10
+CONFIG0_RESET_DEFAULT = 0x06   # measured on this chip, PROTE (bit 5) = 0
+
+# --- 0. sanitize (raw SPI, released before the native HAL starts) ------
+_cs = Pin("P3", Pin.OUT, value=1)
+_spi = SPI(0, baudrate=5_000_000, polarity=0, phase=0)
+
+def _xfer(tx):
+    rx = bytearray(len(tx))
+    _cs.value(0)
+    _spi.write_readinto(bytes(tx), rx)
+    _cs.value(1)
+    return rx
+
+def _hdr(addr, wnr):
+    v = (wnr << 29) | (addr << 8)
+    return v | (0 if bin(v).count("1") & 1 else 1)
+
+def _rd(addr):
+    rx = _xfer(_hdr(addr, 0).to_bytes(4, "big") + bytes(12))
+    return int.from_bytes(rx[8:12], "big")
+
+sanitized = False
+for attempt in range(2):
+    # unprotected then protected soft reset -- one lands in either mode
+    _xfer(_hdr(RESET_REG, 1).to_bytes(4, "big") + (1).to_bytes(4, "big") + bytes(8))
+    _xfer(_hdr(RESET_REG, 1).to_bytes(4, "big") + (1).to_bytes(4, "big")
+          + (0xFFFFFFFE).to_bytes(4, "big") + bytes(4))
+    time.sleep_ms(30)
+    cfg0 = _rd(CONFIG0)
+    if cfg0 == CONFIG0_RESET_DEFAULT:
+        sanitized = True
+        break
+print("sanitize: CONFIG0=0x%08X (%s)" %
+      (cfg0, "OK, PROTE=0" if sanitized else "UNEXPECTED -- continuing, "
+       "but chip state is suspect"))
+_spi.deinit()
+
+# Arm the IRQ path (re-armed again later: the driver's failed-init exits
+# go through HAL_DisableIrq).
 irqpin.irq(handler=bm_spike.irq_trampoline, trigger=Pin.IRQ_FALLING, hard=True)
 
-# Hardware reset pulse (bite-1 convention). NOTE measured 2026-08-11:
-# this line does NOT reset the chip on the current rig (register scratch
-# survives the pulse) -- kept for convention, flagged as a fixture
-# question; the IRQ proof below uses the chip's soft reset instead.
-rst.value(0)
-time.sleep_ms(10)
-rst.value(1)
-time.sleep_ms(100)
-
+# --- 1a. verify through the native HAL ---------------------------------
 actual = bm_spike.setup(5_000_000)
 print("native SPI0 up: requested 5 MHz, controller reports %d Hz" % actual)
 print("-" * 64)
@@ -74,50 +113,11 @@ else:
     print("  -> same checklist as bite 1: straps, harness, 3V3; then compare")
     print("     against a --hal mp build to split HAL-vs-fixture")
 
-# --- bench ladder ------------------------------------------------------
-# Only the 5 MHz rung gates the bite (the OA-proven bring-up speed).
-# 10/20 MHz are the FIRST OA-mode runs at speed on this rig -- reported
-# as data; failures there are findings for DESIGN, not bite failures.
-N = 2000
-print("-" * 64)
-print("bench: %d PHYID round trips per rung (init excluded)" % N)
-for hz in (5_000_000, 10_000_000, 20_000_000):
-    actual = bm_spike.setup(hz)
-    us, fails, ph = bm_spike.bench(N)
-    rate = N * 1_000_000 // us if us else 0
-    print("  %2d MHz (actual %8d): %7d us  %5d reads/s  fails=%d  phyid=0x%08X"
-          % (hz // 1_000_000, actual, us, rate, fails, ph))
-    if fails or ph != 0x0283BC91:
-        if hz == 5_000_000:
-            ok = False
-            print("  ^ FAIL (gating rung)")
-        else:
-            print("  ^ finding: OA at %d MHz not clean on this rig -- record"
-                  " in DESIGN (RX sample delay is the first suspect)"
-                  % (hz // 1_000_000))
-xf, by, stalls, _ = bm_spike.stats()
-print("hal stats: %d transfers, %d bytes, %d stalls" % (xf, by, stalls))
-if stalls:
-    ok = False
-    print("FAIL: SPI stalls counted -- wiring/clocking suspect")
-
-# --- IRQ proof ---------------------------------------------------------
-# Back at the proven speed first: one variable at a time.
-#
-# MEASURED 2026-08-11 on this rig (raw OA probes, then encoded here):
-#   - INT_N is asserted from power-up (RESETC pending, unmasked by
-#     default -- post-reset IMASK0 = 0x1FBF) and W1C of STATUS0 is the
-#     only way to raise it.
-#   - STATUS0.LOFE (bit 4) relatches continuously on this bench -- it
-#     must be MASKED or INT_N never rises.
-#   - The P4 hardware reset line is INEFFECTIVE on this rig (register
-#     scratch survives a 50 ms pulse -- flagged fixture question), so the
-#     edge source is the driver's own soft reset (ADDR_MAC_RESET=0x003,
-#     SWRESET=1, exactly what MAC_Reset writes) -> RESETC relatches ->
-#     INT_N falls -> hard IRQ -> trampoline -> driver callback.
-ST0, IMASK0, RESET_REG = 0x008, 0x00C, 0x003
-LOFE_M = 0x10
-bm_spike.setup(5_000_000)
+# --- 1b. IRQ proof (measured semantics, see file header) ---------------
+# INT_N asserts from reset (RESETC pending, unmasked -- IMASK0 default
+# 0x1FBF) and only W1C raises it; LOFE relatches continuously on this
+# bench and must be masked; the falling edge comes from the chip's own
+# soft reset relatching RESETC.
 print("-" * 64)
 bm_spike.write_reg(RESET_REG, 1)           # known state
 time.sleep_ms(20)
@@ -130,6 +130,11 @@ lvl_cleared = irqpin.value()
 print("IRQ proof: IMASK0 0x%08X -> LOFE masked; STATUS0 was 0x%08X;"
       % (im, st0))
 print("           after W1C -> P5 level %d (want 1)" % lvl_cleared)
+# Re-arm AFTER all driver-touching calls: the driver's FAILED init paths
+# (expected on a 1110 -- the identity gate) exit via HAL_DisableIrq and
+# never re-enable. On a real successful init the driver re-enables IRQ
+# itself (adi_mac.c:986/1076) -- bench scaffolding, not a driver bug.
+irqpin.irq(handler=bm_spike.irq_trampoline, trigger=Pin.IRQ_FALLING, hard=True)
 bm_spike.stats_clear()
 bm_spike.write_reg(RESET_REG, 1)           # soft reset -> RESETC -> edge
 time.sleep_ms(50)
@@ -151,6 +156,43 @@ else:
     print("VERDICT B: FAIL -- edge existed (P5 rose, soft reset re-asserted)")
     print("  but no callback fired: dispatch is broken (this IS a bite bug)")
     ok = False
+
+# --- 2. bench ladder (LAST -- the 20 MHz rung is garbage-risk) ---------
+# Only the 5 MHz rung gates the bite. 10/20 MHz are data: first OA-mode
+# runs at speed on this rig; 20 MHz reads garbage (RX sample delay is the
+# first suspect) and its misclocked frames can WRITE the chip (PROTE flip
+# observed) -- hence this ladder runs after all gating checks.
+N = 2000
+print("-" * 64)
+print("bench: %d PHYID round trips per rung (init excluded)" % N)
+for hz in (5_000_000, 10_000_000, 20_000_000):
+    actual = bm_spike.setup(hz)
+    us, fails, ph = bm_spike.bench(N)
+    rate = N * 1_000_000 // us if us else 0
+    print("  %2d MHz (actual %8d): %7d us  %5d reads/s  fails=%d  phyid=0x%08X"
+          % (hz // 1_000_000, actual, us, rate, fails, ph))
+    if fails or ph != 0x0283BC91:
+        if hz == 5_000_000:
+            ok = False
+            print("  ^ FAIL (gating rung)")
+        else:
+            print("  ^ finding: OA at %d MHz not clean on this rig"
+                  % (hz // 1_000_000))
+xf, by, stalls, _ = bm_spike.stats()
+print("hal stats: %d transfers, %d bytes, %d stalls" % (xf, by, stalls))
+if stalls:
+    ok = False
+    print("FAIL: SPI stalls counted -- wiring/clocking suspect")
+
+# Leave the chip sane for the next session (best effort, native framing).
+bm_spike.setup(5_000_000)
+try:
+    bm_spike.write_reg(RESET_REG, 1)
+    time.sleep_ms(20)
+    print("exit sanitize: soft reset sent, CONFIG0=0x%08X"
+          % bm_spike.read_reg(CONFIG0))
+except Exception as e:
+    print("exit sanitize FAILED (%s) -- next run's pre-flight will recover" % e)
 
 print("=" * 64)
 print("BITE 2 RESULT: %s" % ("PASS (see 20 MHz finding)" if ok else "FAIL"))

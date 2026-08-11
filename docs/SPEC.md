@@ -143,9 +143,34 @@ pair, USB carrying no video.
   Needs datasheet cross-check (PDF fetch timed out): is PROTE
   unimplemented on the 1110 (2111-only?), silicon-rev-dependent, or
   gated some other way — and what do the strap combos actually select
-  on the 1110? Also unexplained: ONE early probe run returned a correct
-  protected-mode complement (fd7c436e) — never reproduced across many
-  later runs; treat as anomaly until the datasheet answers.
+  on the 1110?
+  **AMENDED 2026-08-11 (S9 bite 2, measured): PROTE=1 is REACHABLE on
+  this chip** — after a 20 MHz OA bench rung (2000 misclocked garbage
+  frames) CONFIG0 read 0x26 with PROTE set; in that state the chip
+  silently DROPS unprotected control writes (latching STATUS0.CDPE)
+  while unprotected reads still return correct data (first-data-word
+  alignment), and a PROTECTED-framed write (data + ones-complement)
+  works — that's how the chip was recovered (protected soft reset →
+  CONFIG0 back to 0x06, PROTE=0). Working theory: garbage traffic can
+  decode as a valid CONFIG0 write; this also plausibly explains bite 1's
+  one-shot protected-mode complement sighting (fd7c436e — the ANOMALY
+  note above). Bite-1's "PROTE rejects writes" claim should be re-tested
+  deliberately (protected/unprotected, with/without SYNC) before S13's
+  2111 notes; if PROTE is settable on purpose, bm_core's SHIPPED
+  protected default may work on the 1110 unmodified. Runner mitigation
+  in place: both-framing soft-reset sanitize + CONFIG0 verify before and
+  after risky rungs (`s9_hal_native.py`).
+
+- AE3 P4 → hat RESET line is INEFFECTIVE (measured 2026-08-11, S9
+  bite 2): an IMASK0 register scratch value survives a 50 ms P4 low
+  pulse, and STATUS0.RESETC does not re-latch — the ADIN never sees the
+  reset. Every earlier "reset pulse" in S4–S9 was followed by an init
+  that worked regardless, so nothing had actually verified this line.
+  Bench check needed (Nick): P4 jumper seated at hat pin 11? hat's
+  RESET_N header routing to the chip? Until resolved, the chip's
+  software reset (RESET reg 0x003 = 1) is the only working reset, and
+  chip state persists across ALL board flashes/reboots (hat is powered
+  from the Pi's always-on 3V3 header — D19).
 
 - SG shield JP1 (5-pin) / JP4 (3-pin): undocumented publicly; hypothesis =
   standalone-MCU breakout. Resolve by continuity or by emailing SG.

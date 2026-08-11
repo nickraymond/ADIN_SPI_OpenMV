@@ -70,6 +70,12 @@ enum { BENCH_MEM_SIZE = (ADI_MAC_DEVICE_SIZE > sizeof(adi_mac_Device_t))
 static uint8_t bench_mem[BENCH_MEM_SIZE];
 static adi_mac_Device_t *bench_mac = NULL;
 
+void bm_spike_bench_reset(void)
+{
+    bench_mac = NULL;
+    memset(bench_mem, 0, sizeof(bench_mem));
+}
+
 int bm_spike_bench_open(int *init_result)
 {
     if (bench_mac != NULL) {

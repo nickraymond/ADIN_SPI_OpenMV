@@ -402,6 +402,17 @@ S7 research notes above + DESIGN §S7 detail.*
       tests 10 → 16 (bench plumbing). Pin facts verified @ 7d4dbf7ab2:
       P0/P1/P2 = P5_1/P5_0/P5_3 = SPI0 MOSI(AF4)/MISO(AF4)/SCLK(AF3),
       P3 = P5_2 GPIO CS (D2), P5 = P0_4 → GPIO0_IRQ4_IRQn.
+      → CODE + REHEARSAL DONE same day (Claude ran the demo twice,
+      identical PASS): PHYID over OA via native HAL; INT_N → hard IRQ →
+      driver callback proven; bench 45.9k reads/s @5 MHz (2.0× the mp
+      HAL's 22.9k), 83.8k @10 MHz, 0 stalls; bite-1 regression green.
+      En route findings (DESIGN §S9 bite-2 detail, SPEC §Open questions
+      amended): 20 MHz OA rung reads garbage AND can flip CONFIG0.PROTE
+      via misclocked frames (runner sanitizes + runs it last);
+      **P4 reset line measured ineffective on the rig** (bench check
+      flagged for Nick); INT_N/W1C/LOFE semantics measured; C statics
+      survive soft resets (`fresh()` guard). Remaining: Nick runs the
+      demo (`s9_hal_native.py`, README ladder) → nibble-4 PR.
 - [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;

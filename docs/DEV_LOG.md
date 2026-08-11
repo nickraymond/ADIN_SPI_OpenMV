@@ -17,6 +17,54 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found
+
+**Branch:** sprint/9-adi-hal
+
+**Done:**
+- Nibble 1 (plan approved by Nick, DMA deferred to S10): facts gathered
+  from openmv.git @ 7d4dbf7ab2 — P0–P3 = SPI0 on Alif port 5 (SCLK is
+  AF3, siblings AF4), P5 = P0_4 → GPIO0_IRQ4_IRQn; the D8 per-word
+  ceiling exists in BOTH machine_spi.c and Alif's own
+  spi_transfer_blocking; GPIO0_IRQ4Handler symbol owned by
+  machine_pin.c + const MRAM vector table → ride its dispatch.
+- Nibble 2: `bm_spike_hal_alif.c` (FIFO-burst SPI0 engine ≤16 in
+  flight, NVIC-gated INT_N, real critical sections, stats),
+  `--hal mp|alif` staging switch (mp = default/baseline), per-HAL
+  Python API + bench + raw reg passthrough + `fresh()`, host tests
+  10 → 16. Both HP images build post-D24; HAL exclusivity verified in
+  the objects.
+- Nibble 3 rehearsal (Claude ran the demo per Nick's ask, both
+  runs PASS identically): **VERDICT A** PHYID=0x0283BC91 via native
+  HAL; **VERDICT B** INT_N → hard IRQ → driver callback (1 callback per
+  soft reset); bench 45.9k reads/s @5 MHz (mp HAL: 22.9k = 2.0×),
+  83.8k @10 MHz, 0 stalls; bite-1 runner still passes on a final-source
+  mp build.
+
+**Broke/surprised us:**
+- **20 MHz OA rung reads garbage AND is dangerous**: misclocked MOSI
+  decoded as a valid CONFIG0 write and flipped PROTE=1 mid-rehearsal —
+  chip then dropped every unprotected write (CDPE latching, reads still
+  clean) until recovered by a protected-framed soft reset. Explains
+  bite-1's one-off complement anomaly. SPEC §Open questions amended;
+  runner now sanitizes before/after and runs 20 MHz last, gating
+  nothing. RX_SAMPLE_DELAY sweep = bite-3 item.
+- **P4 reset line is a no-op on the rig** (register scratch survives a
+  50 ms pulse) — never actually verified in S4–S9; soft reset via reg
+  0x003 is the only reset. Bench continuity check flagged for Nick.
+- INT_N is asserted from power-up and W1C of STATUS0 is the only way
+  up; LOFE relatches continuously (live far side) and must be masked
+  for the IRQ proof; driver's failed-init exits leave NVIC disabled
+  (correct driver behavior — runner re-arms).
+- C statics survive MicroPython soft resets: a stale bench MAC handle
+  benched all-fails until `fresh()` was added.
+
+**Next:** Nick runs the bite-2 demo (`s9_hal_native.py`, commands in
+README) → nibble 4 PR. Then bite 3: OA data-path smoke (frame TX →
+tcpdump on nereus001) — the open half of the S9 demo.
+
+---
+
 ## 2026-08-11 — Sprint S9 (build fix) — HE link failure root-caused: stock docker target flattens per-core build dirs
 
 **Branch:** sprint/9-build-fix
