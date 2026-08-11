@@ -246,12 +246,17 @@ video budget → the MicroPython driver is not the S6 blocker.
       (CAP_NET_RAW, no root) on nereus001; frozen ingest untouched. Live:
       2622/2622 frames sender→server exact match, 0 gaps; browser stream up.
       Dark-scene q ladder run (all rungs ≥31 fps, 0 loss — NOT gate numbers).
-- [~] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
+- [x] Sustained run; measure fps/loss/latency vs **T1 target: QVGA color
       q35–50 @ 24–30 fps** (raise resolution only if fps holds)
-      → remaining: lit/realistic-scene gate run (dark bench under-loads
-      encoder+SPI 3–5×); rig + commands cued, waiting on bench light (Nick).
-      Link-outage behavior verified via remote eth1 bounce: stream freezes
-      + auto-resumes; AE3 TX drains stall-free into a dead wire (D21 note).
+      → GATE PASSED 2026-08-11, lit scene, 60 s counter windows, all
+      0 lost / 0 bad JPEGs: **q50 = 32.2 fps** (4.5–5.0 KB/f, 8 fps
+      margin) · q60 = 25.9 · q70 = 24.2 (zero margin). Standing setting
+      = **q50** (D20 finalized). Latency: glass-to-glass unmeasured
+      (flagged); sender-side pipeline is ~31 ms/frame at q50. Link-outage
+      behavior verified via remote eth1 bounce: stream freezes +
+      auto-resumes; AE3 TX drains stall-free into a dead wire (D21 note).
+      Also: one REPL-wedge after a hard reset (D15 crash class), cleared
+      by the documented uhubctl recovery ladder — no physical replug.
 **Demo (Nick):** same browser URL as S3 shows live video; USB data pipe unused
 (REPL only). Side-by-side: unplug pair → stream stops; replug → resumes.
 **Pass: ≥ 24 fps sustained at QVGA color for 60 s.**

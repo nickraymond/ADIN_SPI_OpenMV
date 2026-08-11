@@ -51,9 +51,11 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   matched the remote command line). Use `pkill -f '[c]hunk_shim'`.
 - New firmware deprecation warning: `sensor` module → `csi` (watch item).
 
-**Next:** lit-scene gate run (q50 + q70, 60 s sustained, ≥24 fps = T1
-pass) → Nick's live demo (browser + unplug/replug) → PR. Commands cued
-in the session notes; board reset between runs stays ritual.
+**Next:** ~~lit-scene gate run~~ → DONE 2026-08-11: **T1 GATE PASSED —
+q50 = 32.2 fps / q60 = 25.9 / q70 = 24.2, all 0 loss; standing setting
+q50 (D20 final)**. One REPL-wedge between rungs, cleared remotely by
+the uhubctl ladder. Remaining: Nick's live demo (browser +
+unplug/replug) → PR #9 out of draft → merge → S6 `[x]`.
 
 ---
 

@@ -74,7 +74,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D17 | 2026-08-10 | D16 revised (Nick, after live end-to-end tests): standing S3 setting = **QVGA q90, 30 fps** — sender/service defaults updated | Measured live over the pair on the real bench scene: q90@30 delivers 30.8 fps rx / 4.6–4.8 Mbps / 0 gaps with ~2 fps encoder surplus (thin, scene-dependent — pacer degrades gracefully by riding the source rate); q80@30 = 30.4 fps / 3.0 Mbps / ~4 fps surplus, the documented fallback if a scene can't hold 30 at q90. S6 caveat recorded: ~4.7 Mbps exceeds the ~4 Mbps AE3 SPI budget (D8), so this exact mode is USB-path only; the SPI-era target remains T1 (QVGA q35–50). |
 | D18 | 2026-08-10 | S4 rig uses an **AOS hat** (hat #2, freed from nereus000), not the SG shield — supersedes D7's S4 half (Nick) | Both AOS hats are now S2-proven silicon with proven straps (generic SPI no CRC, verified by working register I/O) and crimped pair connectors, and the board is 3.3V-only — removing the SG shield's 5V-regulator meter question entirely. Header pinout is identical to the SG shield (DESIGN §S2), so the Diagram 1 harness maps pin-for-pin. Consequences: AE3-side must supply the missing INT_N pull-up (P5 internal pull-up, per D14) and the S3 stream fixture pauses while hat #2 is off nereus000. SG shield remains shelved as a known-good backup. Open question flagged in TRACKER: AE3 3V3 pin's ability to source the hat's draw. |
 | D19 | 2026-08-10 | S4 rig power (Nick): hat fed from **nereus000's 3V3 header** (Pi pin 1 → hat 1, GND pin 9 → hat 9); AE3 stays USB-powered from the same Pi; direct AE3→hat ground jumper for signal return; AE3's 3V3 pin unused | No bench supply on hand, and this exact load combination is already proven — during S2/S3 nereus000 simultaneously powered hat #2 on its header and the AE3 over USB. Grounds are common through the Pi; the extra AE3→hat GND wire keeps the SPI return path out of the USB cable. Sidesteps (does not answer) the D18 open question about the AE3 3V3 pin's sourcing ability — re-flag if a standalone rig ever needs it. |
-| D20 | 2026-08-10 | S6 stream quality is a **runtime knob** (`s6_video_tx.main(quality=…)`), default q50; T1 target stays q35–50 (Nick, after seeing the numbers). q90 @ 30 fps confirmed impossible on the SPI path; final standing quality picked from a lit-scene ladder | Nick initially asked for q90@30 (the D17 USB-path setting). Arithmetic + measurement: real-scene q90 ≈ 19–21 KB/frame → 4.6–4.8 Mbps at 30 fps > the 4.21 Mbps S5-measured SPI payload ceiling; tx alone ≈ 41 ms/frame (measured ~2.0 ms/KB). Dark-scene ladder (q35→q90, 30 s rungs, all 0 loss) confirms the cost curve. D17's "USB-path only" caveat stands. |
+| D20 | 2026-08-10 | S6 stream quality is a **runtime knob** (`s6_video_tx.main(quality=…)`), default q50; T1 target stays q35–50 (Nick, after seeing the numbers). q90 @ 30 fps confirmed impossible on the SPI path; final standing quality picked from a lit-scene ladder | Nick initially asked for q90@30 (the D17 USB-path setting). Arithmetic + measurement: real-scene q90 ≈ 19–21 KB/frame → 4.6–4.8 Mbps at 30 fps > the 4.21 Mbps S5-measured SPI payload ceiling; tx alone ≈ 41 ms/frame (measured ~2.0 ms/KB). Dark-scene ladder (q35→q90, 30 s rungs, all 0 loss) confirms the cost curve. D17's "USB-path only" caveat stands. **FINALIZED 2026-08-11 (lit-scene gate ladder): standing S6 setting = q50 — 32.2 fps with ~8 fps margin; q60 = 25.9, q70 = 24.2 (gate-edge, zero margin). Caveat recorded: on a busier-than-bench scene (reef anchor ≈ 9.2 KB @ q50) even q50 projects to ~24 fps — scene-dependent, q35 is the fallback.** |
 | D21 | 2026-08-10 | SPEC §T1's "MUST pipeline capture/encode/tx (≥2 framebuffers)" is **moot on the MicroPython path** — measured, not assumed. Only throughput lever on this path is bytes/frame (quality) | Bite-1 timing split: capture = 3.1 ms (sensor DMA already overlaps at QVGA default buffering — not the feared 33 ms), encode 17.4 ms, tx 4.2 ms @ ~2.1 KB dark-scene frames. Encode and tx CANNOT overlap: the SPI driver is per-byte polled (D8), so both are CPU-bound on the single MicroPython core. Related hardware finding from the S6 link-bounce test: with the far end down, the ADIN1110 MAC drains TX frames into the dead wire without filling the FIFO — the sender never stalls, loss is silent at the sender, and loss accounting therefore lives at the receiver (which is the project's counting philosophy anyway). The C/DMA driver (option C, D8) would reopen the pipelining lever. |
 
 ## Verified-facts ledger
@@ -109,11 +109,14 @@ unverified — treat as unknown.
   out-of-order), 526 fps / 4.21 Mbps payload; sender 0 FIFO stalls,
   SPI_ERR clear. 4.21 Mbps ≥ the ~4 Mbps D8 AE3 video budget.** Detail
   below.
-- S6 end-to-end fps / latency: **bites 1–2 measured 2026-08-10 (dark-scene
-  numbers, gate run pending a lit scene):** full path AE3→SPI→T1L→shim→
-  frozen server live in a browser; 2622/2622 frames sender→server exact,
-  0 gaps, 0 bad JPEGs at q50 / 40.4 fps; q ladder + timing split below.
-  Sprint demo + T1 gate verdict: pending. Detail below.
+- S6 end-to-end fps / loss: **T1 GATE PASSED — lit-scene ladder run
+  2026-08-11 (Claude, remote), 60 s counter windows, 20 MHz SPI, zero
+  loss and zero bad JPEGs at every rung: q50 = 32.2 fps (standing
+  setting, D20) · q60 = 25.9 · q70 = 24.2.** Longest sustained run:
+  15 min @ q50 dark scene, 36,299 frames, 0 stalls, SPI_ERR clear.
+  Glass-to-glass latency unmeasured (flagged; sender-side ~31 ms/frame
+  at q50). Sprint demo (Nick, browser + unplug/replug): pending.
+  Detail below.
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
 
@@ -589,8 +592,24 @@ subnet; server binds 0.0.0.0, verified from off-subnet).
   shim saw 0 partials, server gaps stayed 0 (re-sequenced), receiver
   counters are the loss ledger. `AdinError` catch + `link_up()` wait
   kept in the TX loop as belt-and-suspenders for a true FIFO-fill.
-- **D15 watch item:** no recurrence — our own capture loop re-inits the
-  sensor cleanly once per boot; board reset between runs kept as ritual.
+- **Lit-scene gate ladder (2026-08-11)** — the T1 verdict runs, 60 s
+  counter windows, all PASS (0 lost, 0 bad JPEGs):
+
+  | q | fps | KB/frame | enc ms | tx ms | verdict vs ≥24 fps |
+  |---|-----|----------|--------|-------|--------------------|
+  | 50 | 32.2 | 4.5–5.0 | 18.3 | 9.4 | PASS, ~8 fps margin → **standing (D20)** |
+  | 60 | 25.9 | 6.0–6.4 | 23.3 | 12.1 | pass, thin margin |
+  | 70 | 24.2 | 7.1–7.6 | 23.6 | 14.4 | gate-edge, zero margin |
+
+  Scene caveat: this bench scene ≈ half the reef-anchor bytes (9.2 KB
+  @ q50), so q50 on a deployment scene projects to ~24 fps — the gate
+  holds, without margin. q35 is the fallback lever.
+- **D15 watch item:** one REPL-wedge occurred after a hard reset between
+  ladder rungs (board enumerated, raw REPL dead — the S3-documented
+  crash class). The documented recovery worked without hands:
+  `sudo uhubctl -l 1 -p 2 -a cycle` on nereus000 → REPL back → resume.
+  Otherwise no recurrence across ~15 sensor sessions; board reset
+  between runs kept as ritual.
 - Board firmware deprecation warning appeared: `sensor` module →
   `csi` module "in a future release". Watch item for the next firmware
   bump; all project scripts use `sensor`.
