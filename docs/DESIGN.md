@@ -115,8 +115,10 @@ unverified — treat as unknown.
   setting, D20) · q60 = 25.9 · q70 = 24.2.** Longest sustained run:
   15 min @ q50 dark scene, 36,299 frames, 0 stalls, SPI_ERR clear.
   Glass-to-glass latency unmeasured (flagged; sender-side ~31 ms/frame
-  at q50). Sprint demo (Nick, browser + unplug/replug): pending.
-  Detail below.
+  at q50). **Sprint demo PASS — run by Nick 2026-08-11: live browser
+  video over the pair, unplug→freeze / replug→resume, USB REPL-only.
+  S6 complete = the project's end-state demo (SPEC §Goal) achieved on
+  the MicroPython driver.** Detail below.
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
 

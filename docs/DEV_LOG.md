@@ -54,8 +54,12 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 **Next:** ~~lit-scene gate run~~ → DONE 2026-08-11: **T1 GATE PASSED —
 q50 = 32.2 fps / q60 = 25.9 / q70 = 24.2, all 0 loss; standing setting
 q50 (D20 final)**. One REPL-wedge between rungs, cleared remotely by
-the uhubctl ladder. Remaining: Nick's live demo (browser +
-unplug/replug) → PR #9 out of draft → merge → S6 `[x]`.
+the uhubctl ladder. ~~Remaining: Nick's live demo~~ → **DEMO PASS
+(Nick, 2026-08-11): live browser video over the pair, unplug→freeze /
+replug→resume, USB REPL-only. S6 `[x]` — THE POINT reached.** PR #9
+un-drafted; next sprint = S7 (headless-flash spike already prepping in
+a parallel session; flashing unblocked now that the demo is done —
+coordinate board access with that session).
 
 ---
 

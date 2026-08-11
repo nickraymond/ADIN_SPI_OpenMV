@@ -1,7 +1,7 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-10 (S6 bites 1–2 done, gate run pending light) · Owner/gate: **Nick***
+*Last updated: 2026-08-11 (S6 done — THE POINT reached; S7 next) · Owner/gate: **Nick***
 
 ---
 
@@ -230,7 +230,7 @@ video budget → the MicroPython driver is not the S6 blocker.
 **Needs:** S4. Pi end = S1 node or S2 node. → used nereus001 + hat #1
 (live reference node), untouched.
 
-### S6 — Video from AE3 over T1L into the existing stream  `[~]`  ← THE POINT
+### S6 — Video from AE3 over T1L into the existing stream  `[x]`  *(demo run by Nick 2026-08-11 — PASS: live browser video over the pair at q50/32 fps, unplug→freeze, replug→resume; USB carried REPL only)*
 **Goal:** replace USB with the pair; the S3 web page doesn't know anything changed.
 - [x] AE3: capture → MJPEG → chunk into frames w/ tiny header + seq —
       ~~MUST pipeline capture/encode/tx (≥2 framebuffers; SPEC §T1)~~
