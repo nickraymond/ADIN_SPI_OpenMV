@@ -17,6 +17,56 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (bite 1) — bm_spike code-complete: unmodified bm_core driver runs on host; hardware gates = docker + re-strap
+
+**Branch:** sprint/9-oa-first-light
+
+**Done:**
+- Nibble 1 (plan approved): spike designed for two verdicts, not one —
+  OA transport proof AND the unmodified-init result. Nick's ask: get as
+  far as possible with zero hardware contact.
+- `firmware/bm_spike/`: vendored bm_core drivers/adin2111 @ d4ecc38
+  byte-for-byte (bm_adin2111.c reference-only — needs bm_os, defines its
+  own HAL fn); blocking adi_hal.h shim over MicroPython SPI/Pin
+  (S4-proven path); `bm_spike` usermod; `build_spike.sh` stages sources
+  into openmv's modules/ wildcard (NO fork/patch — staging + trap
+  cleanup exercised); `s9_oa_spike.py` runner; README with verdict
+  matrix + run ladder.
+- Host harness: clang builds the UNMODIFIED driver against a mock ADIN
+  speaking OA-protected control framing (format from adi_spi_oa.c) —
+  10 checks PASS, including the identity gate demonstrated compiled
+  (25,000 PHYID polls → COMM_TIMEOUT with a 1110 identity; prompt exit
+  with 2111's).
+- Pre-staged for Nick: openmv.git cloned to ~/openmv-dev/openmv; SDK
+  1.6.0 linux-x86_64 downloaded + sha256-verified (setup_mac.sh will
+  skip it). Docker still absent (password needed) — the build stops
+  there by design.
+
+**Broke/surprised us:**
+- **The 2111 identity gate fires inside MAC-layer init, not just full
+  init**: MAC_Init → MAC_Reset(MAC_PHY) → waitDeviceReady polls
+  PHYID==0x0283BCA1 (adi_mac.c:568/1128). On a 1110, even MAC-only init
+  returns COMM_TIMEOUT on perfect hardware. Spike redesigned mid-nibble
+  to tolerate it and read PHYID afterwards (handle valid pre-reset;
+  MAC_ReadRegister needs state != UNINITIALIZED only).
+- ADI's *_DEVICE_SIZE constants are ILP32 hand-counts → adin2111_Init is
+  not LP64-host-portable (INVALID_PARAM before SPI). Verdict 2 is
+  target-only; documented.
+- Vendored-driver quirk pinned by test: control-read path swallows
+  PROTECTION_ERROR (spiErr only carries the header-echo check) —
+  corruption = SUCCESS + unwritten data. Spike judges the PHYID value.
+- MAC_Init is static; the exported route is the macDriverEntry table
+  (same as adin2111.c uses).
+
+**Next:** Nick's ladder — Docker Desktop first launch → build_spike.sh →
+re-strap hat #2 (remove CFG0/CFG1 bridges, D13) → flash via S7 ladder →
+`mpremote run firmware/bm_spike/s9_oa_spike.py`. Expected on-target
+result: init COMM_TIMEOUT + PHYID 0x0283BC91 = OA proven on 1110. Then
+S9 bite 2 (Alif-native ADI-HAL). PR opens after the manual run (nibble
+3→4). Parallel session: ae3_flash verify-hardening task still running.
+
+---
+
 ## 2026-08-11 — Sprint S8 (bite 1, early ride) — NPU bench: per-tile fast, HD tiling misses the T2 gate
 
 **Branch:** sprint/8-npu-bench

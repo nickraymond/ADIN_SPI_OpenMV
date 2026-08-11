@@ -341,13 +341,25 @@ S7 research notes above + DESIGN §S7 detail.*
 
 ### S9 — OA first light in C (custom firmware + driver spike)  `[ ]`
 **Goal:** prove the C dev loop end-to-end and OA mode on our silicon.
-- [ ] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
+- [~] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
       (default straps; D13 jumpers reversible), minimal C module in a
       custom OpenMV firmware calling bm_core's adin2111 driver
       **unmodified** for an OA register/PHY-ID read. Mac docker build
       (S7 env) → S7 headless flash → REPL/log verdict.
       **Decision point on fail: buy ADIN2111 bench hardware; do NOT
       port the driver to 1110 (throwaway — production goes 2111).**
+      → CODE-COMPLETE + host-verified 2026-08-11 (branch
+      `sprint/9-oa-first-light`, `firmware/bm_spike/`): driver vendored
+      @ d4ecc38 unmodified; usermod via openmv modules/ wildcard (no
+      fork); host harness runs the real driver against a mock ADIN
+      speaking OA-protected framing — 10 checks PASS. Key source find:
+      **the 2111 identity gate fires inside MAC-layer init**
+      (waitDeviceReady, adi_mac.c:568/1128) → spike tolerates
+      COMM_TIMEOUT and reads PHYID through the driver's own framing;
+      expected 1110 result = COMM_TIMEOUT + PHYID 0x0283BC91 = OA
+      PROVEN. SDK 1.6.0 pre-staged (sha256 ok), openmv cloned.
+      REMAINING (Nick): Docker Desktop first launch → build_spike.sh →
+      re-strap hat #2 → flash (S7 ladder) → `s9_oa_spike.py`.
 - [ ] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
       exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
       headers in openmv tree — wire up if bite budget allows, else S10)
