@@ -29,21 +29,31 @@ RESET_SETTLE_MS = 90
 
 class Ae3Hal:
     def __init__(self, baudrate=DEFAULT_BAUD):
-        self.baudrate = baudrate
-        # CS idles high (deasserted) and RESET_N idles high (not in reset)
-        # from the moment the pins are configured.
-        self.cs = machine.Pin(PIN_CS, machine.Pin.OUT, value=1)
         self.rst = machine.Pin(PIN_RESET, machine.Pin.OUT, value=1)
         self.irq = machine.Pin(PIN_IRQ, machine.Pin.IN, machine.Pin.PULL_UP)
+        self._init_spi(baudrate)
+
+    def _init_spi(self, baudrate):
+        """(Re)init SPI, then claim CS back as GPIO.
+
+        ORDER MATTERS: machine.SPI() must run BEFORE the CS Pin is
+        configured -- SPI init may claim the P3 pad for peripheral SS,
+        which would silently disconnect a previously configured GPIO
+        (found the hard way in S4 bring-up: manual CS writes went
+        nowhere and the ADIN saw no usable chip select -> all-0xFF
+        reads while a no-SPI GPIO probe of the same harness worked).
+        Re-claiming P3 as a GPIO afterwards routes the pad back to us.
+        CS idles high (deasserted); RESET_N idles high (not in reset).
+        """
+        self.baudrate = baudrate
         self.spi = machine.SPI(SPI_BUS, baudrate=baudrate,
                                polarity=0, phase=0)
+        self.cs = machine.Pin(PIN_CS, machine.Pin.OUT, value=1)
 
     def set_baudrate(self, baudrate):
         """Re-init SPI at a new clock (used by the bring-up clock sweep)."""
         self.spi.deinit()
-        self.baudrate = baudrate
-        self.spi = machine.SPI(SPI_BUS, baudrate=baudrate,
-                               polarity=0, phase=0)
+        self._init_spi(baudrate)
 
     def xfer(self, tx):
         """Full-duplex transfer with CS held for the whole transaction."""
