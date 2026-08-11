@@ -44,7 +44,7 @@ def encode_jpeg(img, quality):
 def main(duration_s=DURATION_S, quality=QUALITY):
     import time
     from adin_hal_ae3 import Ae3Hal
-    from adin_spi import AdinSpi
+    from adin_spi import AdinSpi, AdinError
     from adin_bringup import bring_up
 
     print("S6 video TX -- QVGA q%d, %d s, chunk payload %d B"
@@ -58,6 +58,7 @@ def main(duration_s=DURATION_S, quality=QUALITY):
     chunk_buf = bytearray(s6_video.PAYLOAD_OFF + s6_video.PAYLOAD_MAX)
     frame_seq = 0
     stalls = 0
+    link_drops = 0
     jpeg_bytes = 0
     jpeg_min = jpeg_max = None
     cap_us = enc_us = tx_us = 0
@@ -75,11 +76,28 @@ def main(duration_s=DURATION_S, quality=QUALITY):
         tc = time.ticks_us()
         mv = memoryview(data)
         count = s6_video.n_chunks(len(data))
-        for idx in range(count):
-            payload = mv[idx * s6_video.PAYLOAD_MAX:
-                         (idx + 1) * s6_video.PAYLOAD_MAX]
-            n = s6_video.fill_chunk(chunk_buf, frame_seq, idx, count, payload)
-            stalls += adin.send_frame(memoryview(chunk_buf)[:n])
+        try:
+            for idx in range(count):
+                payload = mv[idx * s6_video.PAYLOAD_MAX:
+                             (idx + 1) * s6_video.PAYLOAD_MAX]
+                n = s6_video.fill_chunk(chunk_buf, frame_seq, idx, count,
+                                        payload)
+                stalls += adin.send_frame(memoryview(chunk_buf)[:n])
+        except AdinError as exc:
+            # Demo resilience (TRACKER S6): a pulled pair fills the TX FIFO.
+            # Drop this frame, ride out the outage, resume with seq intact.
+            # If SPI itself is dead, link_up()'s MDIO poll raises and we die
+            # loudly instead of spinning -- that fault class should be fatal.
+            link_drops += 1
+            print("!! TX failed at frame %d (%s) -- waiting for link"
+                  % (frame_seq, exc))
+            t_down = time.ticks_ms()
+            while not adin.link_up():
+                time.sleep_ms(200)
+            print("link back after %d ms -- resuming"
+                  % time.ticks_diff(time.ticks_ms(), t_down))
+            frame_seq += 1
+            continue
         td = time.ticks_us()
 
         cap_us += time.ticks_diff(tb, ta)
@@ -105,9 +123,10 @@ def main(duration_s=DURATION_S, quality=QUALITY):
     s0, s1, spi_err = adin.status_summary()
     print("sent %d video frames (%d chunks, %d B JPEG) in %.1f s"
           % (frame_seq, adin.tx_frames, jpeg_bytes, dt_ms / 1000.0))
-    print("  %.1f fps, %.2f Mbps JPEG payload, %d FIFO stalls"
+    print("  %.1f fps, %.2f Mbps JPEG payload, %d FIFO stalls, "
+          "%d frames dropped to link outages"
           % (frame_seq * 1000.0 / dt_ms, jpeg_bytes * 8.0 / dt_ms / 1000,
-             stalls))
+             stalls, link_drops))
     print("  per frame: cap %.1f / enc %.1f / tx %.1f ms, JPEG %d-%d B"
           % (cap_us / frame_seq / 1000.0, enc_us / frame_seq / 1000.0,
              tx_us / frame_seq / 1000.0, jpeg_min, jpeg_max))
