@@ -1,7 +1,7 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-10 · Owner/gate: **Nick***
+*Last updated: 2026-08-10 (S5 done) · Owner/gate: **Nick***
 
 ---
 
@@ -206,14 +206,29 @@ stays intact as the live Linux reference node on the pair.
 **Needs:** S0 pass, hat #2 freed from nereus000, 8-jumper harness. SG
 shield stays shelved as backup (S1 knowledge retained).
 
-### S5 — AE3 raw-frame TX + loss measurement  `[ ]`
+### S5 — AE3 raw-frame TX + loss measurement  `[x]`  *(demo run by Nick 2026-08-10 — PASS: 31,592/31,592 frames, 0% loss, 526 fps / 4.21 Mbps @ 20 MHz)*
 **Goal:** AE3 transmits real Ethernet frames; link quality quantified.
-- [ ] Frame TX path in the driver (generic SPI FIFO), seq-numbered payloads
-- [ ] RX path (at minimum: link status + counters)
-- [ ] Pi counter script (raw socket) → received/lost/fps
+- [x] Frame TX path in the driver (generic SPI FIFO), seq-numbered payloads
+      → `adin_spi.py` grows TX burst + clause-22 MDIO/MMD-indirect + PHY
+      power-up + link mgmt, all framing cited from the vendored
+      adin1110.c/adin1100.c. Bite-1 proof: 200/200 500 B frames into a
+      tcpdump pcap on nereus001, in order, zero loss, at 5 MHz.
+- [x] RX path (at minimum: link status + counters) → `link_up()`/
+      `wait_link()` (PMA STAT1, latched-low), software TX counters
+      (mainline driver's own pattern — it reads no hw count regs),
+      `status_summary()` incl. SPI_ERR flag. AE3 frame *reception*
+      deliberately deferred: the video path is one-way; revisit only if
+      the S6 shim needs it.
+- [x] Pi counter script (raw socket) → `bench/frame_counter.py`:
+      received/lost/fps/Mbps, window-relative loss accounting, explicit
+      PASS/FAIL verdict + exit code.
 **Demo (Nick):** `python3 bench/frame_counter.py` on Pi shows rate + 0% loss at
-target load for 60 s.
-**Needs:** S4. Pi end = S1 node or S2 node.
+target load for 60 s. → **PASS 2026-08-10: 31,592/31,592 frames, 0% loss,
+0 dupes, 0 out-of-order, 526 fps / 4.21 Mbps sustained; sender side 0 FIFO
+stalls, SPI_ERR clear, 20 MHz SPI.** Delivered payload ≥ the ~4 Mbps D8
+video budget → the MicroPython driver is not the S6 blocker.
+**Needs:** S4. Pi end = S1 node or S2 node. → used nereus001 + hat #1
+(live reference node), untouched.
 
 ### S6 — Video from AE3 over T1L into the existing stream  `[ ]`  ← THE POINT
 **Goal:** replace USB with the pair; the S3 web page doesn't know anything changed.

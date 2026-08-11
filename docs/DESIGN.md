@@ -102,7 +102,11 @@ unverified — treat as unknown.
   `PHY ID: 0x0283BC91` (SPEC match) over generic SPI no CRC at 5 MHz,
   AE3 → hat #2, first attempt on a correctly wired harness; repeatable.
   Detail below.
-- S5 loss rate: —
+- S5 loss rate: **PASS — demo run by Nick 2026-08-10. 60 s sustained at
+  20 MHz SPI: 31,592/31,592 frames received (0% loss, 0 dupes, 0
+  out-of-order), 526 fps / 4.21 Mbps payload; sender 0 FIFO stalls,
+  SPI_ERR clear. 4.21 Mbps ≥ the ~4 Mbps D8 AE3 video budget.** Detail
+  below.
 - S6 end-to-end fps / latency: —
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
@@ -484,3 +488,59 @@ pair itself is loafing in every VGA mode — VGA's constraint is compute,
 QVGA q90@30 (4.6+ Mbps) remains the highest-load mode for exercising the
 link and stays the standing test/demo setting per Nick (better hardware
 stressor).
+
+### S5 detail (2026-08-10) — AE3 raw-frame TX + loss measurement (as-built)
+
+Rig: S4 harness unchanged + the crimped pair hat #2 ↔ hat #1 (nereus001 =
+untouched live reference node). All new register/sequence facts cited from
+the vendored drivers, none from datasheet transcription:
+
+- **TX path** (`adin_spi.py`): TX_FSIZE + burst-to-TX-reg with 2-byte
+  port header, pad-to-64-with-FCS, 4-byte rounding (adin1110.c:369-424,
+  281-292); space accounting = TX_SPACE×2 bytes, need = len+4
+  (adin1110.c:915, :995). Polled, no IRQs (bite-sized; IRQ TX is an S6
+  option, not a need at these rates).
+- **MDIO**: clause-22 via MDIOACC + TRDONE poll (adin1110.c:440-502);
+  clause-45 MMD regs reached by C22 MMD-indirect (regs 13/14) — the same
+  mechanism phylib uses over this C22-only bus, so hardware-proven.
+- **PHY bring-up**: unconditional software-power-down exit + CRSM_STAT
+  poll (adin1100.c:195-206), then PMA_STAT1 link poll (latched-low, read
+  twice). Measured on silicon: autoneg is enabled by hardware default
+  (7.512=0x1000) with a correct T1L advertisement (7.514/5/6 =
+  0x0001/0x4000/0x3000) — no AN configuration needed at all.
+- **Test frame format** (`s5_frames.py`, mirrored by
+  `bench/frame_counter.py`): unicast to nereus001's eth1 MAC (passes its
+  hardware MAC filter), EtherType 0x88B5 (IEEE local experimental),
+  magic `BMS5` + BE32 seq at offset 18.
+- **Clocking**: bring-up stays at 5 MHz; the load path runs 20 MHz
+  (S0-proven, 0 errors) after a PHY-ID gate with loud 5 MHz fallback.
+
+Results: bite 1 — 200/200 × 500 B frames in a tcpdump pcap on nereus001,
+in order, correct headers, zero loss (5 MHz, 380 fps, 1.5 Mbps). Bite 2 /
+sprint demo — 60 s @ 20 MHz: **31,592/31,592, 0% loss, 0 dupes/ooo,
+526 fps, 4.21 Mbps payload**, 0 FIFO stalls, SPI_ERR clear. 4.21 Mbps
+delivered ≥ the ~4 Mbps D8 budget with the T1 stream target (~2 Mbps)
+under 2× headroom — the MicroPython driver is not the S6 blocker.
+
+Bring-up war story (half the session): first link attempts failed with
+both PHYs register-perfect and both sides stone deaf — root cause was a
+**bad pair connector** (found by Nick at the bench). Lessons recorded:
+
+- Two healthy, advertising, AN-enabled PHYs that never see each other's
+  energy = analog path fault; no amount of register work fixes it. The
+  registers that cleared software suspects: 7.512 (AN on), 7.514-6
+  (advertisement), 7.0x8000 (forced-mode OFF), 1.0/1.2294 (no low-power),
+  bilateral watch (nereus001 carrier + dmesg silent during 3-min AN run).
+- **Continuity checks on powered boards read OL / garbage** — the
+  aos_hat_checklist "unpowered" precondition is load-bearing. First OL
+  readings on both hats' J1 were artifacts of measuring live boards.
+- Meter checks that split power vs pair: 3V3 at hat pins 17↔6 *during*
+  an AN transmit session (read 3.276 V = rail fine under line-driver
+  load), then cable-only continuity with the pair unplugged at both ends.
+- Blue LEDs on the hats = link/activity: dark during the hunt, back on
+  at first link. Red = power.
+
+Fixture notes: t1l-sender is an *enabled* boot service on nereus000 — it
+reclaims the AE3 USB port on every reboot; stop it before mpremote work.
+tcpdump is now installed on nereus001. `/tmp/s5_bite1.pcap` on nereus001
+holds the bite-1 capture artifact.

@@ -17,6 +17,44 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-10 — Sprint S5 — frame TX + loss demo: 0% loss at 4.21 Mbps
+
+**Branch:** sprint/5-frame-tx
+
+**Done:**
+- Bite 1 (plan approved): TX FIFO burst + clause-22 MDIO / MMD-indirect +
+  PHY power-up + link mgmt in the portable core; `s5_frame_tx.py` demo;
+  21 new host tests. Facts cited from vendored adin1110.c/adin1100.c.
+  Verified live: 200/200 × 500 B seq frames in a tcpdump pcap on
+  nereus001, in order, zero loss (5 MHz).
+- Bite 2 (plan approved): `bench/frame_counter.py` (raw-socket loss
+  counter, window-relative accounting, PASS/FAIL verdict),
+  `s5_tx_load.py` (65 s @ 20 MHz, 1000 B frames, template+patch_seq),
+  core telemetry (sw tx counters, wait_link, status_summary), shared
+  `s5_frames.py`. 56 host tests total.
+- **Demo PASS (Nick, same day): 31,592/31,592 frames, 0% loss, 526 fps /
+  4.21 Mbps sustained 60 s @ 20 MHz — S5 → [x].** 4.21 ≥ the ~4 Mbps D8
+  budget; MicroPython driver is not the S6 blocker.
+- Claude ran the full manual-test ladder remotely (Nick's ask), incl.
+  installing tcpdump on nereus001 and pcap verification by parsing.
+
+**Broke/surprised us:**
+- Half the session lost to a **bad pair connector**: both PHYs
+  register-perfect (AN on, advertisement correct, forced-mode off) and
+  both sides deaf. Register work can only *rule out* software — the
+  split came from bench checks: 3V3 under AN load (3.276 V, fine), then
+  the connector. Full ladder + lessons in DESIGN §S5 detail.
+- Continuity across J1 on POWERED hats reads OL — first readings were
+  artifacts; the checklist's "unpowered" rule is load-bearing.
+- t1l-sender auto-starts on nereus000 boot and owns the AE3 USB port —
+  bit us again after the power cycle; stop it before mpremote work.
+
+**Next:** S6 bite 1 — AE3 capture → MJPEG → chunked seq frames over the
+TX path; Pi shim reassembles and feeds the FROZEN S3 stream server
+(ingest :8081). Demo = live browser video, USB data pipe unused.
+
+---
+
 ## 2026-08-10 — Sprint S4 — AE3 first light: PHY ID 0x0283BC91 over SPI
 
 **Branch:** sprint/4-ae3-first-light
