@@ -387,9 +387,21 @@ S7 research notes above + DESIGN §S7 detail.*
       mis-attribution found + corrected (N6 vs AE3, DESIGN §S8
       correction). Detail: DESIGN §S9, `firmware/bm_spike/README.md`.
       Demo satisfied: REPL prints the OA-mode PHY-ID verdict.
-- [ ] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
+- [~] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
       exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
       headers in openmv tree — wire up if bite budget allows, else S10)
+      → IN PROGRESS 2026-08-11 (branch `sprint/9-adi-hal`, nibble-1 plan
+      approved by Nick; **DMA explicitly deferred to S10, Nick's call**).
+      `bm_spike_hal_alif.c`: bare-metal SPI0 FIFO-burst engine (≤16
+      frames in flight vs the per-word lock-step D8 ceiling — present in
+      BOTH machine_spi.c and Alif's own spi_transfer_blocking), real
+      INT_N IRQ via machine_pin.c's GPIO0_IRQ4 dispatch (vector table
+      is const in MRAM; riding the dispatch avoids a fork), real
+      critical sections. `build_spike.sh --hal mp|alif` stages exactly
+      one HAL; bite-1 mp build stays the regression baseline. Host
+      tests 10 → 16 (bench plumbing). Pin facts verified @ 7d4dbf7ab2:
+      P0/P1/P2 = P5_1/P5_0/P5_3 = SPI0 MOSI(AF4)/MISO(AF4)/SCLK(AF3),
+      P3 = P5_2 GPIO CS (D2), P5 = P0_4 → GPIO0_IRQ4_IRQn.
 - [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;

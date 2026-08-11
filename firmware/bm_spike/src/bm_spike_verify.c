@@ -62,6 +62,72 @@ int bm_spike_full_init(void)
     return (int)adin2111_Init(&dev, &cfg);
 }
 
+// Bench handle kept separate from bm_spike_read_phyid's so verify and
+// bench never share driver state. Same LP64-safe sizing.
+enum { BENCH_MEM_SIZE = (ADI_MAC_DEVICE_SIZE > sizeof(adi_mac_Device_t))
+                            ? ADI_MAC_DEVICE_SIZE
+                            : sizeof(adi_mac_Device_t) };
+static uint8_t bench_mem[BENCH_MEM_SIZE];
+static adi_mac_Device_t *bench_mac = NULL;
+
+int bm_spike_bench_open(int *init_result)
+{
+    if (bench_mac != NULL) {
+        *init_result = 0;
+        return 0;
+    }
+    adi_mac_DriverConfig_t cfg = {
+        .pDevMem = bench_mem,
+        .devMemSize = sizeof(bench_mem),
+        .fcsCheckEn = false,
+    };
+    *init_result = (int)macDriverEntry.Init(&bench_mac, &cfg, NULL);
+    return (bench_mac == NULL) ? *init_result : 0;
+}
+
+int bm_spike_bench_reads(uint32_t n, uint32_t *phyid, uint32_t *fails)
+{
+    *phyid = 0;
+    *fails = 0;
+    if (bench_mac == NULL) {
+        return -1;
+    }
+    uint32_t expect = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t v = 0;
+        int r = (int)MAC_ReadRegister(bench_mac, ADDR_MAC_PHYID, &v);
+        if (r != 0) {
+            (*fails)++;
+            continue;
+        }
+        if (expect == 0) {
+            expect = v;
+        } else if (v != expect) {
+            (*fails)++;
+        }
+        *phyid = v;
+    }
+    return 0;
+}
+
+int bm_spike_reg_read(uint16_t addr, uint32_t *val)
+{
+    int init_r;
+    if (bm_spike_bench_open(&init_r) != 0) {
+        return init_r;
+    }
+    return (int)MAC_ReadRegister(bench_mac, addr, val);
+}
+
+int bm_spike_reg_write(uint16_t addr, uint32_t val)
+{
+    int init_r;
+    if (bm_spike_bench_open(&init_r) != 0) {
+        return init_r;
+    }
+    return (int)MAC_WriteRegister(bench_mac, addr, val);
+}
+
 const char *bm_spike_result_str(int result)
 {
     switch ((adi_eth_Result_e)result) {

@@ -89,6 +89,27 @@ int main(void)
     CHECK(phyid != BM_SPIKE_PHYID_ADIN1110,
           "corrupted read can never fake a valid PHYID");
 
+    printf("[5] bench plumbing (S9 bite 2): open once, count clean reads\n");
+    hal_mock_reset_counts();
+    hal_mock_set_phyid(BM_SPIKE_PHYID_ADIN1110);
+    r = bm_spike_bench_open(&init_r);
+    CHECK(r == 0, "bench_open yields a handle despite the identity gate");
+    CHECK(init_r == 4 /* ADI_ETH_COMM_TIMEOUT */,
+          "bench_open reports the expected 1110 init verdict");
+    uint32_t fails = 99;
+    hal_mock_reset_counts();
+    r = bm_spike_bench_reads(1000, &phyid, &fails);
+    printf("  (reads=%d, phyid=0x%08X, fails=%u, polls=%d)\n",
+           r, phyid, (unsigned)fails, hal_mock_phyid_reads());
+    CHECK(r == 0 && fails == 0, "1000 bench reads, zero failures");
+    CHECK(phyid == BM_SPIKE_PHYID_ADIN1110, "bench reads the 1110 PHYID");
+    CHECK(hal_mock_phyid_reads() == 1000,
+          "exactly n PHYID transactions -- init cost excluded from the "
+          "timed window");
+    int init_r2 = -1;
+    r = bm_spike_bench_open(&init_r2);
+    CHECK(r == 0 && init_r2 == 0, "second bench_open is an idempotent no-op");
+
     printf(failures ? "\nRESULT: FAIL (%d)\n" : "\nRESULT: PASS\n", failures);
     return failures ? 1 : 0;
 }
