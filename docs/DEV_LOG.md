@@ -39,16 +39,28 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   MANIFEST sha256 preflight cross-check of the local bins. `sys.version`
   demoted to boots+label evidence. Host tests 16 → 25, all green.
 
+- Nibble 3 (Nick delegated the run): LIVE round trip PASSED on nereus000 —
+  negative test (corrupted MANIFEST sha256) refused before board contact;
+  v5.0.0 flashed + readback-verified both partitions; dev flashed back with
+  the full corrected ladder, `PASS: flash verified byte-for-byte`, exit 0;
+  fixture firmware restored to `7d4dbf7ab2` and re-confirmed via REPL.
+
 **Broke/surprised us:**
 - The S8 DEV_LOG entry the kickoff referenced isn't on main — likely
   sitting on an unmerged S8 branch.
 - Today's rolling `development` release still embeds "OpenMV 7d4dbf7ab2"
   (upstream master hasn't moved) — confirming the board's "v5.0.0" report
   came from the static-defines channel, not sys.version.
+- **`dfu-util -e` does NOT boot the board** — it only detaches runtime-mode
+  devices; silent no-op on a device already in DFU (board parked safely, as
+  designed). Boot rung reworked live: 8 KB TOC-partition read carrying `-R`
+  (USB reset → `while (tud_mounted())` exits → jump), reset still lands
+  only after verification.
+- `dfu-util -Z` doesn't bound uploads (0.11) — readback runs to the
+  partition-end short frame; the sha256 compare caps at len(bin) instead.
 
-**Next:** nibble 3 — Nick runs the manual flash round-trip on nereus000
-(commands in `pi/ae3_flash/README.md`); live-confirm `dfu-util -e` detach
-behavior + upload-after-download in one DFU session; then PR.
+**Next:** nibble 4 — push `sprint/7-flash-verify` (push was
+permission-blocked from the agent session) and open the PR.
 
 ---
 

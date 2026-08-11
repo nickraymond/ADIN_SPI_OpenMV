@@ -5,9 +5,10 @@
 #   preflight (incl. MANIFEST sha256 check of the local bins) ->
 #   enter bootloader (mpremote: machine.bootloader()) -> wait for DFU device
 #   37c5:96e3 -> dfu-util download HP [+ HE] -> read each partition back
-#   (dfu-util -U) + sha256 compare vs the flashed file -> detach (bootloader
-#   jumps to the app) -> wait for CDC re-enumeration -> sys.version parses,
-#   label cross-checked -> PASS/FAIL.
+#   (dfu-util -U) + sha256 compare vs the flashed file -> boot (TOC read
+#   with -R: post-verify USB reset -> bootloader jumps to the app) ->
+#   wait for CDC re-enumeration -> sys.version parses, label cross-checked
+#   -> PASS/FAIL.
 #
 # Protocol facts (sources -- openmv.git @ master 2026-08-11, micropython.git):
 #   * bootloader runs FIRST on every boot as USB DFU 37C5:96E3, jumps to the
@@ -31,13 +32,19 @@
 #   * the bootloader implements DFU_UPLOAD (boot/src/common/dfu.c:92, and
 #     CAN_UPLOAD in desc.c:42); AXI/MRAM partition reads are a plain memcpy
 #     (boot/src/ports/alif/alif_flash.c:42). Writes round the image tail up
-#     to the 16 B MRAM sector with buffer residue, so compares must cover
-#     exactly len(bin) bytes (dfu-util -Z).
-#   * DFU_DETACH makes the bootloader jump to the app (dfu.c:40 ->
-#     DFU_STATE_RESET -> main.c loop breaks -> jump), so dfu-util -e is the
-#     "boot now" rung -- sent only AFTER verify passes. Like the old -R
-#     (exit 251 observed live 2026-08-11), a non-zero exit as the device
-#     drops off the bus is tolerated; CDC + sys.version are the signals.
+#     to the 16 B MRAM sector with buffer residue. Live 2026-08-11 (dfu-util
+#     0.11): -Z does NOT bound the transfer -- uploads run to the
+#     partition-end short frame regardless -- so the sha256 compare caps at
+#     len(bin) itself. Upload-after-download in one DFU session works.
+#   * boot-after-verify rung: ride -R on a tiny read of the 8 KB TOC
+#     partition. The USB reset unmounts the device, the bootloader's
+#     while(tud_mounted()) loop exits, and it jumps to the app
+#     (boot/src/common/main.c) -- same mechanism as the old -R-on-download,
+#     issued only AFTER verify passes. NOT dfu-util -e: live-tested
+#     2026-08-11, -e only detaches runtime-mode devices and is a silent
+#     no-op on a device already sitting in DFU. A non-zero dfu-util exit as
+#     the device drops off the bus is tolerated (-R on downloads exited 251
+#     live); CDC + sys.version are the success signals.
 #   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>"; sha10 on dev
 #     builds, version tag on tagged releases -- verified live + in binaries
 #     2026-08-11. (os.uname().version carries only the MicroPython id.)
@@ -133,15 +140,19 @@ def dfu_cmd(alt, path):
     return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt, "-D", str(path)]
 
 
-def dfu_upload_cmd(alt, path, size):
-    """dfu-util argv: read size bytes of a partition back out (DFU_UPLOAD)."""
-    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt,
-            "-U", str(path), "-Z", str(size)]
+def dfu_upload_cmd(alt, path):
+    """dfu-util argv: read a partition back out (DFU_UPLOAD). Reads to the
+    partition-end short frame (-Z does not bound the transfer -- live
+    dfu-util 0.11 fact); the sha256 compare caps at len(bin) instead."""
+    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt, "-U", str(path)]
 
 
-def dfu_detach_cmd():
-    """dfu-util argv: DFU_DETACH -- the bootloader jumps to the app."""
-    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", "HP", "-e"]
+def dfu_boot_cmd(scratch):
+    """dfu-util argv: boot the verified app -- tiny TOC-partition read with
+    -R so the USB reset (-> bootloader jump) lands only after verification.
+    (dfu-util -e is a silent no-op on DFU-mode devices; live 2026-08-11.)"""
+    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", "TOC",
+            "-U", str(scratch), "-R"]
 
 
 def sysfs_has_device(vid, pid, root=SYSFS_USB):
@@ -297,23 +308,25 @@ def main(argv=None):
     # unverified image; bootloader is untouched, power cycle recovers.
     with tempfile.TemporaryDirectory(prefix="ae3_readback_") as tmpdir:
         for alt, path in parts:
-            size = path.stat().st_size if path.is_file() else 0
             rb = Path(tmpdir) / f"readback_{alt}.bin"
-            run(dfu_upload_cmd(alt, rb, size), dry_run=args.dry_run,
+            run(dfu_upload_cmd(alt, rb), dry_run=args.dry_run,
                 check=True, timeout=300)
             if args.dry_run:
                 continue
+            size = path.stat().st_size
             if not readback_matches(path, rb, size):
                 die(f"readback mismatch on {alt}: flash contents != {path.name}",
                     "board left in DFU (NOT booted); power-cycle recovers; "
                     "re-run the flash -- if it repeats, suspect the USB path")
             log(f"readback verify OK: {alt} == sha256({path.name})")
 
-    # Rung 4: boot the verified app (DFU_DETACH -> bootloader jump). A
-    # non-zero dfu-util exit as the device drops off the bus is tolerated
-    # (same class as the old -R exit-251); CDC + sys.version are the signals.
-    run(dfu_detach_cmd(), dry_run=args.dry_run, check=False, timeout=30)
-    log("detach sent (dfu-util non-zero exit here is tolerated)")
+        # Rung 4: boot the verified app -- TOC read with -R (see header:
+        # USB reset -> bootloader loop exits -> jump; -e does NOT work on a
+        # DFU-mode device). Non-zero dfu-util exit tolerated; CDC +
+        # sys.version are the signals.
+        run(dfu_boot_cmd(Path(tmpdir) / "toc_scratch.bin"),
+            dry_run=args.dry_run, check=False, timeout=60)
+        log("boot reset sent (dfu-util non-zero exit here is tolerated)")
     if not args.dry_run:
         if not wait_for("CDC", lambda: len(find_cdc()) > 0, args.timeout, 0.5):
             die("board did not re-enumerate as CDC after flash",

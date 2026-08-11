@@ -327,10 +327,13 @@ video budget → the MicroPython driver is not the S6 blocker.
       build-time git-describe (degrades to sha10 / repeats across
       rebuilds), omv.version_string() = static defines still "5.0.0" on
       dev builds → label match can false-pass. Fix: byte-level DFU
-      readback verify (dfu-util -U + sha256, detach-gated boot,
-      MANIFEST sha256 preflight) in `pi/ae3_flash/`. Host tests 16→25.
-      Branch `sprint/7-flash-verify`; live confirm of dfu-util -e +
-      upload-after-download rides the next real flash.
+      readback verify (dfu-util -U + sha256, boot gated behind verify,
+      MANIFEST sha256 preflight) in `pi/ae3_flash/`. Host tests 16→24.
+      LIVE round trip PASSED on nereus000 2026-08-11 (v5.0.0 ↔ dev,
+      readback verify OK ×4, fixture firmware restored); caught live:
+      dfu-util -e is a no-op on DFU-mode devices → boot rung = 8 KB TOC
+      read + -R; -Z doesn't bound uploads (0.11). Branch
+      `sprint/7-flash-verify`; remaining: PR (nibble 4).
 - [ ] Write DESIGN.md decision entry with recommendation — after Sofar
       responds on raw_eth/1110; ladder below is the working plan (Nick
       approved shape 2026-08-11)

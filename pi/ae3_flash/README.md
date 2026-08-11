@@ -43,8 +43,9 @@ python3 flash_ae3.py --hp ~/fw/development/firmware_M55_HP.bin \
 Ladder: preflight (incl. MANIFEST sha256 check of the bins) →
 `machine.bootloader()` via mpremote → wait for DFU `37c5:96e3` → `dfu-util`
 download HP then HE → **read each partition back (`dfu-util -U`) and
-sha256-compare against the flashed file** → detach (bootloader jumps to the
-app) → wait for CDC → `sys.version` parses, label cross-checked → PASS/FAIL.
+sha256-compare against the flashed file** → boot (8 KB TOC read carrying
+`-R`: post-verify USB reset → bootloader jumps to the app) → wait for CDC →
+`sys.version` parses, label cross-checked → PASS/FAIL.
 
 The readback compare is the verify — the version strings are labels, not
 build fingerprints (see below), so PASS means "the bytes on flash are the
@@ -105,9 +106,21 @@ So label matching can false-pass across two different dev builds. Fix:
 implements `DFU_UPLOAD` (`boot/src/common/dfu.c:92`) and MRAM reads are
 a plain memcpy (`boot/src/ports/alif/alif_flash.c:42`); compares cover
 exactly `len(bin)` bytes because MRAM writes round the tail up to the
-16 B sector with buffer residue. Boot is gated behind the verify via
-`DFU_DETACH` (`dfu-util -e` → bootloader jumps to the app).
+16 B sector with buffer residue. Boot is gated behind the verify.
 
-- TO CONFIRM on next flash day: live behavior of `dfu-util -e` on this
-  bootloader (source says detach → jump; a non-zero exit like `-R`'s
-  251 is tolerated) and upload-after-download in one DFU session.
+Live-confirmed on the round-trip run (2026-08-11, this ladder):
+
+- Upload-after-download in one DFU session works; readback of HP (3 MB)
+  and HE (1.4 MB) partitions is a few seconds each.
+- `dfu-util -Z` does NOT bound the transfer (0.11): uploads run to the
+  partition-end short frame and `-Z` just triggers an "Unexpected number
+  of bytes uploaded" warning — so the script omits it and the sha256
+  compare caps at `len(bin)` instead.
+- **`dfu-util -e` does NOT boot the board**: `-e` only detaches
+  runtime-mode devices and is a silent no-op on a device already in DFU
+  (board stayed parked in DFU — by design, recoverable). The working
+  boot rung is a tiny read of the 8 KB `TOC` partition carrying `-R`:
+  the USB reset unmounts the device, the bootloader's
+  `while (tud_mounted())` loop exits, and it jumps to the app — the
+  same mechanism the old `-R`-on-download used, now issued only after
+  verification passes.

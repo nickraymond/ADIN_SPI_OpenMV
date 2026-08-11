@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flash_ae3 import (parse_uname_hashes, read_manifest_sha,
                        read_manifest_sha256s, sha256_file, readback_matches,
-                       dfu_cmd, dfu_upload_cmd, dfu_detach_cmd,
+                       dfu_cmd, dfu_upload_cmd, dfu_boot_cmd,
                        sysfs_has_device, wait_for, main)
 
 # Real uname.version text observed in release firmware_M55_HP.bin (strings,
@@ -111,13 +111,20 @@ class TestDfuCmd(unittest.TestCase):
                          ["dfu-util", "-d", "37c5:96e3", "-a", "HP",
                           "-D", "fw.bin"])
 
-    def test_upload_bounds_size(self):
-        self.assertEqual(dfu_upload_cmd("HE", "rb.bin", 1193536),
+    def test_upload_cmd(self):
+        # No -Z: dfu-util 0.11 reads to the partition-end short frame
+        # regardless (live 2026-08-11); the compare caps at len(bin).
+        self.assertEqual(dfu_upload_cmd("HE", "rb.bin"),
                          ["dfu-util", "-d", "37c5:96e3", "-a", "HE",
-                          "-U", "rb.bin", "-Z", "1193536"])
+                          "-U", "rb.bin"])
 
-    def test_detach_cmd(self):
-        self.assertEqual(dfu_detach_cmd()[-1], "-e")
+    def test_boot_cmd_is_toc_read_with_reset(self):
+        # -e is a no-op on DFU-mode devices (live 2026-08-11); boot = tiny
+        # TOC read carrying -R so the reset lands after verification.
+        cmd = dfu_boot_cmd("scratch.bin")
+        self.assertIn("TOC", cmd)
+        self.assertEqual(cmd[-1], "-R")
+        self.assertNotIn("-e", cmd)
 
 
 class TestSysfsScan(unittest.TestCase):
@@ -164,37 +171,31 @@ class TestDryRunLadder(unittest.TestCase):
         rc, out = self.ladder("--he", "he.bin")
         self.assertEqual(rc, 0)
         dfu_lines = [l for l in out.splitlines() if "DRY-RUN: dfu-util" in l]
-        # Downloads, then readback uploads, then the detach that boots.
+        # Downloads, then readback uploads, then the TOC-read+reset boot.
         self.assertEqual(len(dfu_lines), 5)
         self.assertIn("-D hp.bin", dfu_lines[0])
         self.assertIn("-D he.bin", dfu_lines[1])
         self.assertIn("-a HP -U", dfu_lines[2])
         self.assertIn("-a HE -U", dfu_lines[3])
-        self.assertTrue(dfu_lines[4].endswith("-e"))
+        self.assertIn("-a TOC", dfu_lines[4])
+        self.assertTrue(dfu_lines[4].endswith("-R"))
 
-    def test_no_reset_flag_anywhere(self):
-        # Boot goes through detach AFTER verify; -R must be gone entirely.
+    def test_reset_only_after_verify_rungs(self):
+        # -R must ride the boot rung ONLY -- never a download or readback,
+        # so a verify failure can withhold the boot.
         for extra in ([], ["--he", "he.bin"]):
             _, out = self.ladder(*extra)
-            for l in out.splitlines():
-                if "DRY-RUN: dfu-util" in l:
-                    self.assertNotIn(" -R", l)
+            dfu_lines = [l for l in out.splitlines() if "DRY-RUN: dfu-util" in l]
+            with_reset = [l for l in dfu_lines if l.endswith("-R")]
+            self.assertEqual(with_reset, dfu_lines[-1:])
 
     def test_hp_only_ladder(self):
         rc, out = self.ladder()
         dfu_lines = [l for l in out.splitlines() if "DRY-RUN: dfu-util" in l]
-        self.assertEqual(len(dfu_lines), 3)   # download, readback, detach
+        self.assertEqual(len(dfu_lines), 3)   # download, readback, boot
         self.assertIn("-D hp.bin", dfu_lines[0])
-        self.assertIn("-U", dfu_lines[1])
-        self.assertTrue(dfu_lines[2].endswith("-e"))
-
-    def test_uploads_are_size_bounded(self):
-        _, out = self.ladder("--he", "he.bin")
-        up_lines = [l for l in out.splitlines()
-                    if "DRY-RUN: dfu-util" in l and "-U" in l]
-        self.assertEqual(len(up_lines), 2)
-        for l in up_lines:
-            self.assertIn("-Z", l)
+        self.assertIn("-a HP -U", dfu_lines[1])
+        self.assertTrue(dfu_lines[2].endswith("-R"))
 
     def test_expect_flag_reported(self):
         rc, out = self.ladder("--expect", "7d4dbf7ab2")
