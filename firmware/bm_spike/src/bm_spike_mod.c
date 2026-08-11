@@ -7,6 +7,7 @@
 // Auto-registered by openmv's modules/micropython.mk wildcard when these
 // sources are copied into the openmv tree's modules/ dir (build_spike.sh).
 
+#if !defined(CORE_M55_HE)   // HE image cannot fit the spike; HP-only
 #include "py/runtime.h"
 #include "py/obj.h"
 
@@ -68,3 +69,5 @@ const mp_obj_module_t bm_spike_module = {
 };
 
 MP_REGISTER_MODULE(MP_QSTR_bm_spike, bm_spike_module);
+
+#endif // !CORE_M55_HE

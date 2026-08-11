@@ -1,6 +1,11 @@
 // bm_spike_verify.c -- see bm_spike_verify.h. Driver files are vendored
 // UNMODIFIED; everything chip-specific lives there, everything spike-
 // specific lives here.
+//
+// Excluded from the M55_HE core build (alif.mk defines CORE_M55_HE): the
+// HE image cannot fit the spike (first build attempt: FLASH_TEXT 154%),
+// and the spike belongs on HP with the REPL anyway.
+#if !defined(CORE_M55_HE)
 
 #include <string.h>
 
@@ -73,3 +78,5 @@ const char *bm_spike_result_str(int result)
     default:                         return "OTHER";
     }
 }
+
+#endif // !CORE_M55_HE

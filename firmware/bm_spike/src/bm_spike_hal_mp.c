@@ -12,6 +12,7 @@
 //
 // NOT compiled on the host -- host tests link hal_mock.c instead.
 
+#if !defined(CORE_M55_HE)   // HE image cannot fit the spike; HP-only
 #include "py/runtime.h"
 #include "py/obj.h"
 #include "py/objarray.h"
@@ -82,3 +83,5 @@ uint32_t HAL_SetPendingIrq(void)        { return 0; }
 uint32_t HAL_GetPendingIrq(void)        { return 0; }
 uint32_t HAL_Init_Hook(void)            { return 0; }
 uint32_t HAL_UnInit_Hook(void)          { return 0; }
+
+#endif // !CORE_M55_HE
