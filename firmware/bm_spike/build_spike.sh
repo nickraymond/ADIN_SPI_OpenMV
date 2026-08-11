@@ -17,16 +17,29 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 OPENMV_DIR="${HOME}/openmv-dev/openmv"
+NO_PROT=0
+CLEAN=0
 PASSTHRU=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --openmv-dir) OPENMV_DIR="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
+        --no-prot)    NO_PROT=1; shift ;;
+        --clean)      CLEAN=1; shift ;;
         *)            PASSTHRU+=("$1"); shift ;;
     esac
 done
 
 MOD_DIR="${OPENMV_DIR}/modules"
 [ -d "${MOD_DIR}" ] || { echo "FAIL: ${MOD_DIR} not found -- clone via build_ae3.sh first" >&2; exit 1; }
+
+# The stage/unstage dance defeats make's header dependency tracking (a
+# staged header is deleted after every build), so config changes CAN reuse
+# stale objects -- proven by a byte-identical bin after an adi_config.h
+# edit. Use --clean when anything about the staged set changed.
+if [ "$CLEAN" = "1" ]; then
+    echo "cleaning ${OPENMV_DIR}/build"
+    rm -rf "${OPENMV_DIR}/build"
+fi
 
 COPIED=()
 cleanup() {
@@ -52,7 +65,24 @@ done
 # HE-exclusion wrapper, so the vendored content is never edited.
 # bm_adin2111.{c,h} excluded entirely (needs bm_os; defines its own HAL fn).
 for f in vendor/adin2111/*.h; do
-    case "$(basename "$f")" in bm_adin2111.h) continue ;; esac
+    case "$(basename "$f")" in
+        bm_adin2111.h) continue ;;
+        adi_config.h)
+            if [ "$NO_PROT" = "1" ]; then
+                # DELTA-QUANTIFICATION build (S9 bench finding: PROTE is not
+                # settable on our ADIN1110, so the shipped protected config
+                # can never work). One-define change, applied at stage time;
+                # the vendored file itself stays byte-identical in the repo.
+                dst="${MOD_DIR}/adi_config.h"
+                [ -e "$dst" ] && { echo "FAIL: ${dst} exists" >&2; exit 1; }
+                sed 's/#define CONFIG_SPI_PROT_EN  1/#define CONFIG_SPI_PROT_EN  0/' "$f" > "$dst"
+                grep -q "CONFIG_SPI_PROT_EN  0" "$dst" || { echo "FAIL: --no-prot sed missed" >&2; exit 1; }
+                COPIED+=("$dst")
+                echo "NOTE: staged adi_config.h with CONFIG_SPI_PROT_EN=0 (--no-prot)"
+                continue
+            fi
+            ;;
+    esac
     stage "$f" "$(basename "$f")"
 done
 for f in vendor/adin2111/*.c; do
