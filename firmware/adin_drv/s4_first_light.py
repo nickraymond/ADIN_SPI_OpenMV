@@ -40,8 +40,10 @@ def classify_rx(rx):
                 "jumpers from the Pi), MISO wire (P1 -> hat 21), or the "
                 "chip held in reset (P4 -> hat 11)")
     if all(b == 0xFF for b in body):
-        return ("all-0xFF: MISO floating/stuck high -- check CS wire "
-                "(P3 -> hat 24) and MOSI wire (P0 -> hat 19)")
+        return ("all-0xFF: nothing driving MISO -- hat 3.3V rail "
+                "unpowered (check power jumpers land on hat 1/9, not the "
+                "dead-end 5V pads), CS wire (P3 -> hat 24), or MISO wire "
+                "(P1 -> hat 21); run s4_bus_probe to separate these")
     return ("garbled (mixed bytes): activity on MISO but wrong data -- "
             "check SCLK wire (P2 -> hat 23), wire lengths/ground return, "
             "or retry at a lower clock (done below)")

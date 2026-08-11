@@ -81,8 +81,10 @@ class TestDiagnosticsHelpers(unittest.TestCase):
     def test_all_zero_blames_miso_or_power(self):
         self.assertIn("MISO stuck low", classify_rx(bytes(7)))
 
-    def test_all_ff_blames_cs_or_mosi(self):
-        self.assertIn("floating", classify_rx(b"\x00\x00\x00\xFF\xFF\xFF\xFF"))
+    def test_all_ff_blames_power_cs_or_miso(self):
+        msg = classify_rx(b"\x00\x00\x00\xFF\xFF\xFF\xFF")
+        self.assertIn("nothing driving MISO", msg)
+        self.assertIn("unpowered", msg)
 
     def test_header_bytes_do_not_affect_classification(self):
         # Only the 4 value bytes count; junk in the 3 header positions is
