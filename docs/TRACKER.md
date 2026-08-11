@@ -387,7 +387,7 @@ S7 research notes above + DESIGN §S7 detail.*
       mis-attribution found + corrected (N6 vs AE3, DESIGN §S8
       correction). Detail: DESIGN §S9, `firmware/bm_spike/README.md`.
       Demo satisfied: REPL prints the OA-mode PHY-ID verdict.
-- [~] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
+- [x] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
       exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
       headers in openmv tree — wire up if bite budget allows, else S10)
       → IN PROGRESS 2026-08-11 (branch `sprint/9-adi-hal`, nibble-1 plan
@@ -411,8 +411,11 @@ S7 research notes above + DESIGN §S7 detail.*
       via misclocked frames (runner sanitizes + runs it last);
       **P4 reset line measured ineffective on the rig** (bench check
       flagged for Nick); INT_N/W1C/LOFE semantics measured; C statics
-      survive soft resets (`fresh()` guard). Remaining: Nick runs the
-      demo (`s9_hal_native.py`, README ladder) → nibble-4 PR.
+      survive soft resets (`fresh()` guard).
+      → **DONE 2026-08-11: demo run by Nick — PASS.** DMA formally
+      deferred to S10. PR #15. Bite-3 starters banked: read_reg/
+      write_reg passthrough, RX_SAMPLE_DELAY knob for the 20 MHz
+      finding, level-trigger conversion option.
 - [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;

@@ -62,6 +62,7 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 **Next:** Nick runs the bite-2 demo (`s9_hal_native.py`, commands in
 README) → nibble 4 PR. Then bite 3: OA data-path smoke (frame TX →
 tcpdump on nereus001) — the open half of the S9 demo.
+→ demo PASSED (Nick, same day); PR #15 opened. Bite 3 is next.
 
 ---
 
