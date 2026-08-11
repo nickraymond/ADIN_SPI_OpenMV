@@ -58,12 +58,24 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 - MAC_Init is static; the exported route is the macDriverEntry table
   (same as adin2111.c uses).
 
-**Next:** Nick's ladder — Docker Desktop first launch → build_spike.sh →
-re-strap hat #2 (remove CFG0/CFG1 bridges, D13) → flash via S7 ladder →
-`mpremote run firmware/bm_spike/s9_oa_spike.py`. Expected on-target
-result: init COMM_TIMEOUT + PHYID 0x0283BC91 = OA proven on 1110. Then
-S9 bite 2 (Alif-native ADI-HAL). PR opens after the manual run (nibble
-3→4). Parallel session: ae3_flash verify-hardening task still running.
+**SPIKE PASSED (same session, hardware leg):** Nick installed Docker +
+re-strapped; Claude drove build→flash→verdicts. Final:
+`PHYID=0x0283BC91` through the driver's own OA framing; init refused
+only by the 2111 identity gate. En route (all recorded in DESIGN §S9 /
+§S8 correction / SPEC open questions): **S8 bench had run on the N6**
+(mpremote auto-connect; AE3 re-run same conclusions; by-id-only rule
+adopted) · **PROTE dead on our 1110** (measured; `--no-prot` delta
+build; driver tests defined-ness — sha-identical `=0` build caught it) ·
+CFG0 pad needed a second rework pass (razor; chip had been answering
+OA-unprotected) · D23 build leg works but **M55_HE won't link in our
+env at any rev** (HP-only flash at installed-HE's rev = workaround;
+must fix before S10) · flash-verify tool false-mismatch on
+`git describe` version strings (feeds the running hardening task).
+
+**Next:** S9 bite 2 — Alif-native ADI-HAL (SPI + IRQ on P0–P5, DMA
+hooks if budget allows). Prereq: fix the HE link (or a decided
+HP-only stance) before S10. PR for bite 1 open. Parallel session:
+ae3_flash verify-hardening task still running.
 
 ---
 

@@ -50,18 +50,29 @@ custom OpenMV AE3 firmware. Goal: a decision input, not a driver.
   `firmware/openmv_build/build_ae3.sh`, un-stages on exit
 - `s9_oa_spike.py` — REPL runner (reset pulse + SPI setup + verdict print)
 
-## Run ladder
+## Run ladder — AS RUN, SPIKE PASSED 2026-08-11
 
 1. Host tests (no hardware): `host_test/run_host_tests.sh` → `RESULT: PASS`
 2. Mac (once): Docker Desktop first launch, then
    `firmware/openmv_build/setup_mac.sh` (SDK may already be pre-staged)
-3. Mac build: `firmware/bm_spike/build_spike.sh` → MANIFEST + artifacts
-4. **Hardware gate (Nick): re-strap hat #2 to OA — remove both CFG0/CFG1
-   solder bridges (D13, reversible). Bench power off during rework.**
-5. scp artifacts to nereus000 → flash via `pi/ae3_flash/flash_ae3.py`
-6. `mpremote run firmware/bm_spike/s9_oa_spike.py` → verdicts
-7. Restore path: reflash S6 firmware (S7 round-trip proven); re-bridge
-   straps whenever the generic-SPI baseline is needed again.
+3. Mac build: `build_spike.sh --clean --no-prot --rev 7d4dbf7ab2`
+   (**--no-prot is REQUIRED on our 1110** — PROTE won't set, see DESIGN
+   §S9; --clean whenever the staged set changes: stale-object trap)
+4. Hardware gate (Nick): re-strap hat #2 to OA — remove both CFG0/CFG1
+   solder bridges (D13, reversible), bench power off. Verify the pads
+   are FULLY cleared (first attempt left CFG0 partially bridged →
+   OA-without-protection symptoms).
+5. scp the HP bin → flash **HP only** via `pi/ae3_flash/flash_ae3.py
+   --hp ... --device /dev/serial/by-id/usb-OpenMV_OpenMV_Camera_...`
+   (HE image doesn't link in our env — HP-only at the installed HE's rev
+   avoids skew; NEVER bare mpremote on nereus000, two OpenMV boards)
+6. `mpremote connect <by-id> run firmware/bm_spike/s9_oa_spike.py` →
+   **observed: verdict 1 SUCCESS PHYID=0x0283BC91 (OA proven), verdict 2
+   COMM_TIMEOUT (2111 identity gate — expected)**
+7. Restore path: reflash stock `7d4dbf7ab2` HP (S7 ladder); re-bridge
+   straps whenever the generic-SPI/S6 baseline is needed again.
+   Bench debug helpers live in `~/ae3_flash/` on nereus000:
+   `s9_raw_probe.py`, `s9_matrix.py`, `s9_regs.py`, `s9_wrtest.py`.
 
 ## Known limits (deliberate)
 
