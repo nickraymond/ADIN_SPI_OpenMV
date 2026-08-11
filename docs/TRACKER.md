@@ -2,7 +2,8 @@
 
 *The agent entry point. Newest state lives here.*
 *Last updated: 2026-08-11 (S8 bite 1 [NPU bench] done via early-ride
-exception; S7 decision entry + BM arc next) · Owner/gate: **Nick***
+exception; S7 flash-verify hardening live-passed, PR #12; S7 decision
+entry + BM arc next) · Owner/gate: **Nick***
 
 ---
 
@@ -323,6 +324,18 @@ video budget → the MicroPython driver is not the S6 blocker.
 - [ ] ~~Optional spike: re-strap one AOS hat to OA, PHY ID read in OA
       framing~~ — folded into S9 bite 1 (same spike, done in C via
       bm_core's driver, which is what actually needs proving)
+- [~] Flash-verify hardening (S8 fallout, plan approved by Nick
+      2026-08-11): version labels are not build-unique — sys.version =
+      build-time git-describe (degrades to sha10 / repeats across
+      rebuilds), omv.version_string() = static defines still "5.0.0" on
+      dev builds → label match can false-pass. Fix: byte-level DFU
+      readback verify (dfu-util -U + sha256, boot gated behind verify,
+      MANIFEST sha256 preflight) in `pi/ae3_flash/`. Host tests 16→24.
+      LIVE round trip PASSED on nereus000 2026-08-11 (v5.0.0 ↔ dev,
+      readback verify OK ×4, fixture firmware restored); caught live:
+      dfu-util -e is a no-op on DFU-mode devices → boot rung = 8 KB TOC
+      read + -R; -Z doesn't bound uploads (0.11). Branch
+      `sprint/7-flash-verify`; remaining: PR (nibble 4).
 - [ ] Write DESIGN.md decision entry with recommendation — after Sofar
       responds on raw_eth/1110; ladder below is the working plan (Nick
       approved shape 2026-08-11)

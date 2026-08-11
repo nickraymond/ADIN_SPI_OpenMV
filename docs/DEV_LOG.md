@@ -74,8 +74,59 @@ must fix before S10) · flash-verify tool false-mismatch on
 
 **Next:** S9 bite 2 — Alif-native ADI-HAL (SPI + IRQ on P0–P5, DMA
 hooks if budget allows). Prereq: fix the HE link (or a decided
-HP-only stance) before S10. PR for bite 1 open. Parallel session:
-ae3_flash verify-hardening task still running.
+HP-only stance) before S10. PR for bite 1 open. NOTE (merge-time): the
+flash-verify hardening landed as PR #12 (entry below) — byte-level DFU
+readback replaces the label matching whose false-mismatch we hit; our
+session's flashes used the pre-hardening ladder deployed on the Pi.
+
+---
+
+## 2026-08-11 — Sprint S7 (flash-verify hardening) — byte-level readback verify replaces label matching
+
+**Branch:** sprint/7-flash-verify
+
+**Done:**
+- Investigated the S8 stale-label find from source (openmv.git @ master
+  `7d4dbf7`, the rev the board runs): `sys.version`'s "OpenMV \<id\>" is
+  git-describe output baked in at build time (openmv/micropython
+  `py/makeversionhdr.py`) — degrades to a bare sha10 in tagless checkouts
+  and repeats across rebuilds at the same rev. The "v5.0.0" the board
+  self-reported is the OTHER channel: `omv.version_string()`, reading the
+  static `OMV_FIRMWARE_VERSION` defines (`protocol/omv_protocol.h`), still
+  "5.0.0" on post-release dev builds. Labels ≠ fingerprints → label-match
+  flash verification can false-pass.
+- Fix (nibble-1 plan approved by Nick): `flash_ae3.py` verifies
+  byte-for-byte — DFU readback (`dfu-util -U -Z len(bin)`; bootloader
+  implements `DFU_UPLOAD`, MRAM reads are memcpy, tail compare capped for
+  the 16 B sector round-up) + sha256 vs the exact flashed file; boot gated
+  behind the verify via `DFU_DETACH` (`dfu-util -e` → jump, replaces `-R`);
+  MANIFEST sha256 preflight cross-check of the local bins. `sys.version`
+  demoted to boots+label evidence. Host tests 16 → 25, all green.
+
+- Nibble 3 (Nick delegated the run): LIVE round trip PASSED on nereus000 —
+  negative test (corrupted MANIFEST sha256) refused before board contact;
+  v5.0.0 flashed + readback-verified both partitions; dev flashed back with
+  the full corrected ladder, `PASS: flash verified byte-for-byte`, exit 0;
+  fixture firmware restored to `7d4dbf7ab2` and re-confirmed via REPL.
+
+**Broke/surprised us:**
+- The S8 DEV_LOG entry the kickoff referenced wasn't on main during the
+  session — it landed mid-flight with PR #11 (`sprint/8-npu-bench`, entry
+  below) and produced the doc merge conflict resolved in this branch's
+  merge commit.
+- Today's rolling `development` release still embeds "OpenMV 7d4dbf7ab2"
+  (upstream master hasn't moved) — confirming the board's "v5.0.0" report
+  came from the static-defines channel, not sys.version.
+- **`dfu-util -e` does NOT boot the board** — it only detaches runtime-mode
+  devices; silent no-op on a device already in DFU (board parked safely, as
+  designed). Boot rung reworked live: 8 KB TOC-partition read carrying `-R`
+  (USB reset → `while (tud_mounted())` exits → jump), reset still lands
+  only after verification.
+- `dfu-util -Z` doesn't bound uploads (0.11) — readback runs to the
+  partition-end short frame; the sha256 compare caps at len(bin) instead.
+
+**Next:** nibble 4 — push `sprint/7-flash-verify` (push was
+permission-blocked from the agent session) and open the PR. → done: PR #12.
 
 ---
 
