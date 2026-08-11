@@ -79,3 +79,7 @@ class Ae3Hal:
     def irq_level(self):
         """Current INT_N level (1 = idle/pulled up, 0 = asserted)."""
         return self.irq.value()
+
+    def delay_ms(self, ms):
+        """Blocking delay for the core's poll loops (MDIO, TX_SPACE)."""
+        time.sleep_ms(ms)
