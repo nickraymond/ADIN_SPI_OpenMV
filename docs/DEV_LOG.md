@@ -17,6 +17,74 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S7 (spike bite 1) — headless flash SPIKE PASSED: round-trip flash from the nereus000 CLI
+
+**Branch:** sprint/7-headless-flash
+
+**Done:**
+- Nibble 1 (plan approved with Nick's amendments: dev on the Mac, docker
+  build, VS Code/IDE as manual front-ends): headless flash answer pinned
+  from source, not the bench — OpenMV's DFU bootloader runs on EVERY boot
+  (USB `37C5:96E3`, 1 s + 1.5 s window), `machine.bootloader()` forces it
+  to stay (magic `0xB00710AD` → `0x200FFFFC`), partitions are named DFU
+  alts (`HP`/`HE`; `BOOT` never touched → un-brickable at app level),
+  `os.uname().version` embeds `OpenMV <sha10>` for verification. SWD and
+  SE-UART rejected for the loop (D22). SE-UART = deep recovery only.
+- Load-bearing build fact: OpenMV SDK exists only for linux-x86_64 +
+  darwin-arm64 → docker-on-Pi would be qemu-emulated; build host = Mac
+  under Rosetta (D23, Nick's call).
+- Shipped (hardware-untested by design): `firmware/openmv_build/`
+  (setup_mac.sh, build_ae3.sh → sha256 MANIFEST with openmv_sha) and
+  `pi/ae3_flash/` (flash_ae3.py ladder: preflight refuses active
+  t1l-sender → mpremote bootloader entry → DFU wait → dfu-util HP+HE →
+  CDC wait → uname hash verify; --dry-run/--recover; fetch_firmware.sh;
+  udev rule; 16 host unit tests pass).
+- Session constraints held: no mpremote/USB/flash on nereus000, stream
+  services untouched (S6 fixture live); D20/D21 numbers left to the S6
+  branch, docs appended for clean merge with PR #9.
+
+- **FLASH LEG PASSED same session (Nick's go after the S6 demo):**
+  round-trip `7d4dbf7ab2` → `v5.0.0` → `7d4dbf7ab2` from the nereus000
+  CLI, sys.version verified each leg, leg 2 = the shipped ladder
+  end-to-end green with its own PASS verdict; fixture firmware restored
+  to exactly what S6 ran on. Setup done on the Pi (dfu-util, uhubctl,
+  udev rule → sudo-free ladder; passwordless sudo made it hands-off).
+  Tooling deployed to `~/ae3_flash` (repo checkout on the Pi stays on
+  the S6 branch, untouched).
+
+**Broke/surprised us:**
+- Verification hook was wrong pre-hardware: the `OpenMV <id>; MicroPython
+  <id>` string is **`sys.version`**, not `os.uname().version` (uname has
+  only the MicroPython id). And release builds embed version TAGS
+  (`v5.0.0`), not sha10s — dev builds embed hashes. Regex relaxed.
+- dfu-util `-R` exits 251 on SUCCESS (device drops off the bus during
+  the USB reset) — "trust artifacts, not exit codes," literally; script
+  now treats CDC re-enumeration + sys.version match as the signals.
+- v5.0.0 ships one combined all-boards zip; per-board zips exist only on
+  `development`. fetch_firmware.sh handles both now.
+- The board had been on the D15-era dev build all along — S6 passed on
+  `7d4dbf7ab2`/`11852aa3d0`, not stable v5.0.0.
+- Two test bugs self-caught: "-R" substring hides inside "DRY-RUN";
+  later the "reset sent (dfu-util ...)" log line collided with the test's
+  dfu-util line filter.
+
+**Next:** BM-native arc planned same session (research from bm_core +
+bm_sbc source; ladder S9–S13 in TRACKER, Nick approved; S8 resequenced
+after the arc). Key finds: bm_sbc branch
+`feature/adin_linux_implementation` = raw_eth AF_PACKET transport (the
+full-rate Linux attachment, WIP — Nick pinging Sofar CTO); bm_core's OA
+driver is ADIN2111-only → S9 bite 1 tests it unmodified on our 1110,
+fallback = buy 2111 hw, never port; bm_core needs FreeRTOS/POSIX → HE
+core + OpenAMP is the AE3 plan (spike gates it, ≥5 Mbps pipe). Sofar
+forum questions drafted for Nick. Immediate next bite: S7 decision
+entry after Sofar responds, or S9 bite 1 if Nick wants hardware first.
+Mac build leg (setup_mac.sh → build_ae3.sh) still for Nick to exercise
+(needs Docker Desktop first-launch password) — it becomes load-bearing
+in S9. Untested: `--recover`/uhubctl. ROMFS pairing on big version
+jumps = watch item.
+
+---
+
 ## 2026-08-10 — Sprint S6 — video over the pair, live in the browser; gate run pending light
 
 **Branch:** sprint/6-ae3-video

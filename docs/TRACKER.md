@@ -264,7 +264,7 @@ video budget → the MicroPython driver is not the S6 blocker.
 
 ### S7 — Decision gate: OPEN Alliance / bm_core alignment  `[ ]`
 **Goal:** a decision, not a build.
-- [ ] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
+- [x] **First spike (Nick 2026-08-10): headless AE3 firmware flashing from
       nereus000** — no OpenMV IDE, no hands. Verifiable: build (or reuse) a
       known `firmware.bin`, flash it entirely from the nereus000 CLI, board
       re-enumerates running that exact build (uname git-hash matches).
@@ -273,21 +273,153 @@ video budget → the MicroPython driver is not the S6 blocker.
       rewrite (D8), bm_core port, upstream crash-fix testing. Investigate:
       Alif SE/bootloader protocol over USB CDC vs SWD; OpenMV's IDE-less
       loader tooling.
-- [ ] Assess Sofar's OA-mode Linux/BM driver status (ask them directly)
-- [ ] Estimate: port oa-tc6-lib to AE3 vs stay generic; what re-straps
-- [ ] Optional spike: re-strap one AOS hat to OA, PHY ID read in OA framing
-- [ ] Write DESIGN.md decision entry with recommendation
+      → IN PROGRESS 2026-08-11 (research + tooling done, ZERO board contact;
+      branch `sprint/7-headless-flash`): answer = OpenMV's own DFU bootloader
+      (37C5:96E3, runs every boot, `machine.bootloader()` entry, dfu-util
+      alts HP/HE, BOOT never written → power-cycle recoverable) — not SWD,
+      not SE-UART (recovery-only; needs hands or B2B mod, declined). D22.
+      Build host revised by Nick: **docker on the Mac**, not the Pi — the
+      OpenMV SDK has no linux-aarch64 build (D23). Shipped, untested on
+      hardware: `firmware/openmv_build/` (Mac setup + build → MANIFEST) and
+      `pi/ae3_flash/` (flash ladder + verify + `--recover`; 16 host tests
+      pass). GATED: first live flash only after the S6 demo passes (Nick),
+      then the round-trip demo in `pi/ae3_flash/README.md`.
+      → **DONE 2026-08-11 (Nick's go after S6 demo pass): round-trip flash
+      demo PASSED from the nereus000 CLI, no hands, no IDE** — board went
+      dev `7d4dbf7ab2` → `v5.0.0` (verified) → back to `7d4dbf7ab2`
+      (verified), sys.version id match both legs, full ladder green incl.
+      the script's own PASS verdict; fixture firmware restored to exactly
+      what S6 ran on. Flash-day facts folded into the tooling: verify via
+      `sys.version` not `os.uname()` (uname carries only the MicroPython
+      id); release builds embed tags not sha10s; v5.0.0 ships a combined
+      all-boards zip; dfu-util `-R` exits non-zero on success (device
+      drops off the bus mid-reset) — script tolerates it, rungs 4+5 are
+      the success signals. ROMFS was NOT reflashed (both builds ran fine
+      on the installed images) — check on bigger version jumps. uhubctl
+      `--recover` path installed but untested (not needed).
+- [~] Assess Sofar's OA-mode Linux/BM driver status (ask them directly)
+      → RESEARCHED from source 2026-08-11 (bm_core + bm_sbc cloned & read):
+      **bm_core** = portable C17 BM stack (BCMP, pub/sub middleware, raw-UDP
+      bm_ip API, MTU 1500, FreeRTOS + POSIX bm_os backends, lwIP + Linux IP
+      backends, NetworkDevice trait) with an **ADIN2111-only OA driver**
+      (adi_spi_oa.c, ~8.9k LoC, no 1110 conditionals). **bm_sbc** = BM on
+      Linux (POSIX), stock transport = UART gateway to a mote, **max 230400
+      baud ≈ 0.18 Mbps — control-plane only, ~25× short of our video**. BUT
+      branch `feature/adin_linux_implementation` (WIP commits, active) adds
+      a **raw_eth AF_PACKET transport bound to a named interface** — i.e.
+      full-rate Linux BM attachment over any netdev, incl. our proven eth1
+      kernel driver, no Pi re-strap. Nick contacting Sofar CTO for
+      status/early access; forum questions drafted.
+- [x] Estimate: port oa-tc6-lib to AE3 vs stay generic; what re-straps
+      → ANSWERED by the research: route is **bm_core's own OA driver**
+      (native NetworkDevice integration), NOT oa-tc6-lib; test-first on our
+      ADIN1110 (OA-TC6 is an OPEN Alliance standard; chip-specifics are
+      mostly switch/port regs) with a hard fallback = buy ADIN2111 bench
+      hw rather than port (Nick moves to 2111 for production anyway — a
+      1110 port would be throwaway). Re-strap: **AE3-side hat only**; Pi
+      hat stays generic SPI (strap mode is board-local, D1; bm_sbc raw_eth
+      rides the mainline kernel driver).
+- [ ] ~~Optional spike: re-strap one AOS hat to OA, PHY ID read in OA
+      framing~~ — folded into S9 bite 1 (same spike, done in C via
+      bm_core's driver, which is what actually needs proving)
+- [ ] Write DESIGN.md decision entry with recommendation — after Sofar
+      responds on raw_eth/1110; ladder below is the working plan (Nick
+      approved shape 2026-08-11)
 **Demo (Nick):** written recommendation reviewed together; tracker updated with
 the follow-on project's first sprint.
 
-### S8 — Edge CV bring-up (T2)  `[ ]`  *(stub — sequenced after T1 is met)*
-**Goal:** HD capture + on-device detection at 3–5 fps; alerts over T1L.
+---
+
+## BM-native arc (added 2026-08-11, Nick-approved shape) — S9–S13
+
+*Goal of the arc: the S6 demo, but natively Bristlemouth — AE3 speaks OA
+SPI to the ADIN in C, runs bm_core, talks to a Pi running bm_sbc; video
+rides BM's IPv6/UDP. Power (PoDL) explicitly deferred (Nick). The S6
+MicroPython path stays intact as the regression baseline. Facts base:
+S7 research notes above + DESIGN §S7 detail.*
+
+### S9 — OA first light in C (custom firmware + driver spike)  `[ ]`
+**Goal:** prove the C dev loop end-to-end and OA mode on our silicon.
+- [ ] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
+      (default straps; D13 jumpers reversible), minimal C module in a
+      custom OpenMV firmware calling bm_core's adin2111 driver
+      **unmodified** for an OA register/PHY-ID read. Mac docker build
+      (S7 env) → S7 headless flash → REPL/log verdict.
+      **Decision point on fail: buy ADIN2111 bench hardware; do NOT
+      port the driver to 1110 (throwaway — production goes 2111).**
+- [ ] ADI-HAL implementation for Alif (SPI + IRQ on P0–P5; DMA hooks
+      exist in silicon — SPI_DMACR + DMA0/DMALOCAL engines, vendor
+      headers in openmv tree — wire up if bite budget allows, else S10)
+- [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
+      nereus001 (Pi side untouched, generic SPI + kernel driver)
+**Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;
+a seq-numbered frame lands in tcpdump across the pair.
+**Needs:** S7 flash loop, Mac build env, hat #2 re-strap.
+
+### S10 — bm_core boots on the AE3 (HE core)  `[ ]`
+**Goal:** BM stack alive on the camera board; camera side untouched.
+- [ ] Spike first, one bite: FreeRTOS on M55_HE + OpenAMP HP↔HE pipe —
+      measure pipe throughput (**gate: ≥5 Mbps**) and confirm HE can own
+      SPI0 + its IRQ (pinmux/EWIC). Fallback if HE loses: bm_core on HP
+      alongside MicroPython (invasive — price it before choosing).
+- [ ] bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE; BCMP up
+      (heartbeat, neighbors, ping)
+- [ ] Validate against reference hardware: dev-kit mote (on hand) sees
+      the AE3 as a BM neighbor
+**Demo (Nick):** BCMP ping to the AE3 answered (from mote or Pi);
+heartbeats visible in tcpdump.
+**Needs:** S9.
+
+### S11 — Pi becomes a BM node (bm_sbc)  `[ ]`
+**Goal:** nereus001 running bm_sbc, attached at full rate.
+- [ ] bm_sbc mainline on the Pi + stock UART-gateway cross-check vs the
+      dev-kit mote (reference bite — needs only the dev kit, not S10)
+- [ ] raw_eth transport on eth1 (Sofar's
+      `feature/adin_linux_implementation` branch / CTO early access;
+      finish it ourselves only if theirs stalls) — kernel driver and
+      straps unchanged
+- [ ] Two-node BM network: AE3 ↔ Pi neighbors + ping + topology
+**Demo (Nick):** bm_sbc lists the AE3 node id as a neighbor; BCMP ping
+both ways over the pair.
+**Needs:** S10 (final bite); dev kit only (first bite).
+
+### S12 — video over Bristlemouth  `[ ]`  ← THE ARC'S POINT
+**Goal:** S6's demo verbatim, but the transport is native BM.
+- [ ] AE3: HP capture/encode (MicroPython, as in S6) → OpenAMP → HE
+      bm_udp chunked TX (≤ ~1400 B chunks, seq header — S6 framing
+      adapted to UDP)
+- [ ] Pi shim v2: consume via bm_sbc IPC (python client) → **frozen S3
+      stream server** (ingest :8081 unchanged)
+- [ ] Sustained run: gate ≥15 fps first, then push toward T1
+      (QVGA 24–30 fps)
+**Demo (Nick):** same browser URL as S3/S6, live video, USB data pipe
+unused; unplug pair → stops; replug → resumes.
+**Needs:** S10 + S11.
+
+### S13 — soak, numbers, production notes  `[ ]`
+**Goal:** the decision package for the production camera node.
+- [ ] 10-min+ soak at T1 settings: fps/loss/latency, CPU headroom on
+      both cores, SPI utilization (did DMA land? measured effect)
+- [ ] ADIN2111 switchover notes: every 1110/2111 delta hit during the
+      arc; what the production PCBA needs (feeds Nick's 2111 move)
+- [ ] PoDL/power-path scoping (deferred work, scoped not started)
+- [ ] DESIGN decision entry: production architecture recommendation
+**Demo (Nick):** soak stats live + written report reviewed together.
+**Needs:** S12.
+
+### S8 — Edge CV bring-up (T2)  `[ ]`  *(stub — resequenced 2026-08-11,
+Nick: runs AFTER the BM-native arc S9–S13. Board risk gates CV
+investment: if the AE3 can't go BM-native, the board changes and CV
+work would be redone. Exception: the NPU inference bench (first bite)
+doubles as board-selection input — may ride early during the arc as one
+cheap bite if a board decision needs it.)*
+**Goal:** HD capture + on-device detection at 3–5 fps; alerts over BM.
 - [ ] NPU inference bench (S0-style): detector fps vs input size on AE3
 - [ ] Detect/track/count pipeline vs T2 spec (fish ≥ 24–32 px)
 - [ ] Alert + evidence-JPEG path over the existing link
 **Demo (Nick):** camera watches reef footage → "N unique fish in 30 min"
-summary arrives; evidence stills viewable. *(Flesh out when T1 is done.)*
-**Needs:** S6 (T1 met). Do not start before — Nick's sequencing decision.
+summary arrives; evidence stills viewable. *(Flesh out when reached.)*
+**Needs:** S13 (was: S6). Do not start before — Nick's sequencing decision.
 
 ---
 
@@ -299,4 +431,4 @@ summary arrives; evidence stills viewable. *(Flesh out when T1 is done.)*
   requirement matrix; AE3 confirmed as this project's platform (Nick)
 - SG JP1/JP4 breakout confirmation (would clean up the S4 harness)
 - Power-gating architecture (AE3 supervisor + load switch) from board-selection analysis
-- bm_core port (post-S7 decision)
+- ~~bm_core port (post-S7 decision)~~ → scheduled 2026-08-11 as sprint S10

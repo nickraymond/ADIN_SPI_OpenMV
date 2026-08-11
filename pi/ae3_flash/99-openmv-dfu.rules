@@ -1,0 +1,5 @@
+# Non-root USB access for the OpenMV AE3 bootloader (DFU) and app (CDC),
+# so flash_ae3.py can run without sudo (Claude has no sudo on the Pis).
+# Install: sudo cp 99-openmv-dfu.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# VID 37C5 = OpenMV; PID 96E3 = AE3 bootloader DFU (openmv.git boot_config.h:42).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="37c5", MODE="0664", GROUP="plugdev"
