@@ -17,6 +17,41 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S7 (flash-verify hardening) — byte-level readback verify replaces label matching
+
+**Branch:** sprint/7-flash-verify
+
+**Done:**
+- Investigated the S8 stale-label find from source (openmv.git @ master
+  `7d4dbf7`, the rev the board runs): `sys.version`'s "OpenMV \<id\>" is
+  git-describe output baked in at build time (openmv/micropython
+  `py/makeversionhdr.py`) — degrades to a bare sha10 in tagless checkouts
+  and repeats across rebuilds at the same rev. The "v5.0.0" the board
+  self-reported is the OTHER channel: `omv.version_string()`, reading the
+  static `OMV_FIRMWARE_VERSION` defines (`protocol/omv_protocol.h`), still
+  "5.0.0" on post-release dev builds. Labels ≠ fingerprints → label-match
+  flash verification can false-pass.
+- Fix (nibble-1 plan approved by Nick): `flash_ae3.py` verifies
+  byte-for-byte — DFU readback (`dfu-util -U -Z len(bin)`; bootloader
+  implements `DFU_UPLOAD`, MRAM reads are memcpy, tail compare capped for
+  the 16 B sector round-up) + sha256 vs the exact flashed file; boot gated
+  behind the verify via `DFU_DETACH` (`dfu-util -e` → jump, replaces `-R`);
+  MANIFEST sha256 preflight cross-check of the local bins. `sys.version`
+  demoted to boots+label evidence. Host tests 16 → 25, all green.
+
+**Broke/surprised us:**
+- The S8 DEV_LOG entry the kickoff referenced isn't on main — likely
+  sitting on an unmerged S8 branch.
+- Today's rolling `development` release still embeds "OpenMV 7d4dbf7ab2"
+  (upstream master hasn't moved) — confirming the board's "v5.0.0" report
+  came from the static-defines channel, not sys.version.
+
+**Next:** nibble 3 — Nick runs the manual flash round-trip on nereus000
+(commands in `pi/ae3_flash/README.md`); live-confirm `dfu-util -e` detach
+behavior + upload-after-download in one DFU session; then PR.
+
+---
+
 ## 2026-08-11 — Sprint S7 (spike bite 1) — headless flash SPIKE PASSED: round-trip flash from the nereus000 CLI
 
 **Branch:** sprint/7-headless-flash

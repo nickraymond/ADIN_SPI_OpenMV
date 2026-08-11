@@ -29,8 +29,9 @@ Either fetch a release:
 ```
 
 or build on the Mac (`firmware/openmv_build/build_ae3.sh`) and scp the
-printed artifact set — both produce a `MANIFEST.txt` with `openmv_sha:` that
-`flash_ae3.py` verifies against automatically.
+printed artifact set — both produce a `MANIFEST.txt` whose sha256 lines are
+checked against the local bins before flashing, and whose `openmv_sha:` is
+cross-checked against `sys.version` after boot.
 
 ## Flash
 
@@ -39,9 +40,16 @@ python3 flash_ae3.py --hp ~/fw/development/firmware_M55_HP.bin \
                      --he ~/fw/development/firmware_M55_HE.bin
 ```
 
-Ladder: preflight → `machine.bootloader()` via mpremote → wait for DFU
-`37c5:96e3` → `dfu-util` HP then HE (reset on last) → wait for CDC → verify
-`os.uname().version` contains the manifest's OpenMV sha10 → PASS/FAIL.
+Ladder: preflight (incl. MANIFEST sha256 check of the bins) →
+`machine.bootloader()` via mpremote → wait for DFU `37c5:96e3` → `dfu-util`
+download HP then HE → **read each partition back (`dfu-util -U`) and
+sha256-compare against the flashed file** → detach (bootloader jumps to the
+app) → wait for CDC → `sys.version` parses, label cross-checked → PASS/FAIL.
+
+The readback compare is the verify — the version strings are labels, not
+build fingerprints (see below), so PASS means "the bytes on flash are the
+bytes in the file, and the board boots". On a readback mismatch the board is
+deliberately left in DFU, un-booted; a power cycle recovers it.
 
 `--dry-run` prints every command without touching anything. `--recover`
 power-cycles via uhubctl and catches the 1.5 s boot-time DFU window instead
@@ -56,8 +64,9 @@ python3 flash_ae3.py --hp ~/fw/development/firmware_M55_HP.bin --he ~/fw/develop
 python3 flash_ae3.py --hp ~/fw/v5.0.0/firmware_M55_HP.bin --he ~/fw/v5.0.0/firmware_M55_HE.bin
 ```
 
-Each run must end `PASS: board is running OpenMV <sha> (matches expected)`,
-with two different hashes.
+Each run must end `PASS: flash verified byte-for-byte; board runs OpenMV
+<id> ...`, with two different ids and a `readback verify OK` line per
+partition.
 
 ## Flash-day results (first live run 2026-08-11 — round trip PASSED)
 
@@ -73,3 +82,32 @@ with two different hashes.
   `--recover` window timing (poll-detect → dfu-util attach inside the
   1.5 s boot window; may need a tight retry loop). Untested — the happy
   path never needed it.
+
+## Stale-label find (S8 NPU bench, 2026-08-11) → byte-level verify
+
+The S6 fixture board (running dev `7d4dbf7ab2`) self-reported
+"OpenMV v5.0.0" during the S8 bench. Root cause, verified in openmv.git
+@ master `7d4dbf7`: there are two version channels and **neither is a
+build fingerprint**.
+
+- `sys.version`'s "OpenMV \<id\>" is `git describe --tags --dirty
+  --always --abbrev=10` output baked in at build time
+  (openmv/micropython `py/makeversionhdr.py`). A tagless CI checkout
+  degrades it to a bare sha10; rebuilds at the same rev (different
+  submodules/SDK/ROMFS) repeat it exactly.
+- `omv.version_string()` (and the IDE's firmware-version field) is the
+  static `OMV_FIRMWARE_VERSION` defines in `protocol/omv_protocol.h` —
+  stuck at "5.0.0" on every post-release dev build. That's the "v5.0.0"
+  the board reported.
+
+So label matching can false-pass across two different dev builds. Fix:
+`flash_ae3.py` now verifies by **DFU readback** — the bootloader
+implements `DFU_UPLOAD` (`boot/src/common/dfu.c:92`) and MRAM reads are
+a plain memcpy (`boot/src/ports/alif/alif_flash.c:42`); compares cover
+exactly `len(bin)` bytes because MRAM writes round the tail up to the
+16 B sector with buffer residue. Boot is gated behind the verify via
+`DFU_DETACH` (`dfu-util -e` → bootloader jumps to the app).
+
+- TO CONFIRM on next flash day: live behavior of `dfu-util -e` on this
+  bootloader (source says detach → jump; a non-zero exit like `-R`'s
+  251 is tolerated) and upload-after-download in one DFU session.

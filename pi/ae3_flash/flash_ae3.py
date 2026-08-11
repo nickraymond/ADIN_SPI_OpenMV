@@ -2,10 +2,12 @@
 # flash_ae3.py -- headless OpenMV AE3 firmware flash from a Pi (S7 spike).
 #
 # Ladder (each rung fails loudly with a recovery hint):
-#   preflight -> enter bootloader (mpremote: machine.bootloader()) ->
-#   wait for DFU device 37c5:96e3 -> dfu-util alt HP [+ HE] -> reset ->
-#   wait for CDC re-enumeration -> verify os.uname() embeds the expected
-#   OpenMV git hash -> PASS/FAIL.
+#   preflight (incl. MANIFEST sha256 check of the local bins) ->
+#   enter bootloader (mpremote: machine.bootloader()) -> wait for DFU device
+#   37c5:96e3 -> dfu-util download HP [+ HE] -> read each partition back
+#   (dfu-util -U) + sha256 compare vs the flashed file -> detach (bootloader
+#   jumps to the app) -> wait for CDC re-enumeration -> sys.version parses,
+#   label cross-checked -> PASS/FAIL.
 #
 # Protocol facts (sources -- openmv.git @ master 2026-08-11, micropython.git):
 #   * bootloader runs FIRST on every boot as USB DFU 37C5:96E3, jumps to the
@@ -17,9 +19,27 @@
 #   * DFU alt partitions by name: BOOT HP HE ROMFS1 TOC RWFS ROMFS0 RECOVERY
 #     (boot_config.h:112). This tool NEVER writes BOOT -- the DFU window
 #     survives any bad app flash, so a power cycle always recovers.
-#   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>" where <id>
-#     is a sha10 on dev builds (e.g. 7d4dbf7ab2) but a version tag on
-#     tagged releases (e.g. v5.0.0) -- verified live + in binaries
+#   * VERIFY IS BYTE-LEVEL (S8 stale-label find, 2026-08-11): the version
+#     strings are labels, not build fingerprints. sys.version's "OpenMV <id>"
+#     is git-describe output baked in at build time (openmv/micropython
+#     py/makeversionhdr.py: describe --tags --dirty --always --abbrev=10 on
+#     the openmv tree) -- a tagless CI checkout degrades it to a bare sha10,
+#     and rebuilds at the same rev repeat it. omv.version_string() is the
+#     static OMV_FIRMWARE_VERSION defines (protocol/omv_protocol.h), stuck
+#     at the last release ("5.0.0") on dev builds. Label match can
+#     false-pass -> the PASS verdict rides the readback hash instead.
+#   * the bootloader implements DFU_UPLOAD (boot/src/common/dfu.c:92, and
+#     CAN_UPLOAD in desc.c:42); AXI/MRAM partition reads are a plain memcpy
+#     (boot/src/ports/alif/alif_flash.c:42). Writes round the image tail up
+#     to the 16 B MRAM sector with buffer residue, so compares must cover
+#     exactly len(bin) bytes (dfu-util -Z).
+#   * DFU_DETACH makes the bootloader jump to the app (dfu.c:40 ->
+#     DFU_STATE_RESET -> main.c loop breaks -> jump), so dfu-util -e is the
+#     "boot now" rung -- sent only AFTER verify passes. Like the old -R
+#     (exit 251 observed live 2026-08-11), a non-zero exit as the device
+#     drops off the bus is tolerated; CDC + sys.version are the signals.
+#   * sys.version reads "3.4.0; OpenMV <id>; MicroPython <id>"; sha10 on dev
+#     builds, version tag on tagged releases -- verified live + in binaries
 #     2026-08-11. (os.uname().version carries only the MicroPython id.)
 #
 # Never run while the t1l-sender service owns the AE3 USB port (preflight
@@ -27,10 +47,12 @@
 
 import argparse
 import glob
+import hashlib
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -70,12 +92,56 @@ def read_manifest_sha(manifest_text):
     return None
 
 
-def dfu_cmd(alt, path, reset=False):
-    """Build the dfu-util argv for one partition download."""
-    cmd = ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt, "-D", str(path)]
-    if reset:
-        cmd.append("-R")
-    return cmd
+SHA256_LINE_RE = re.compile(r"^([0-9a-f]{64})\s+\*?(\S+)$")
+
+
+def read_manifest_sha256s(manifest_text):
+    """{basename: sha256hex} from the sha256sum/shasum lines in MANIFEST.txt
+    (both build_ae3.sh and fetch_firmware.sh write them)."""
+    sums = {}
+    for line in manifest_text.splitlines():
+        m = SHA256_LINE_RE.match(line.strip())
+        if m:
+            sums[Path(m.group(2)).name] = m.group(1)
+    return sums
+
+
+def sha256_file(path, limit=None):
+    """Stream-hash a file; limit caps the byte count (readbacks may carry
+    MRAM sector-padding residue past the image tail -- see header facts)."""
+    h = hashlib.sha256()
+    remaining = limit
+    with open(path, "rb") as f:
+        while remaining is None or remaining > 0:
+            chunk = f.read(65536 if remaining is None else min(65536, remaining))
+            if not chunk:
+                break
+            h.update(chunk)
+            if remaining is not None:
+                remaining -= len(chunk)
+    return h.hexdigest()
+
+
+def readback_matches(fw_path, rb_path, size):
+    """True if the first size bytes of the readback equal the firmware file."""
+    return sha256_file(fw_path) == sha256_file(rb_path, limit=size)
+
+
+def dfu_cmd(alt, path):
+    """dfu-util argv: download one partition. No -R here -- booting the app
+    is a separate detach rung so verification can gate it."""
+    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt, "-D", str(path)]
+
+
+def dfu_upload_cmd(alt, path, size):
+    """dfu-util argv: read size bytes of a partition back out (DFU_UPLOAD)."""
+    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", alt,
+            "-U", str(path), "-Z", str(size)]
+
+
+def dfu_detach_cmd():
+    """dfu-util argv: DFU_DETACH -- the bootloader jumps to the app."""
+    return ["dfu-util", "-d", f"{DFU_VID}:{DFU_PID}", "-a", "HP", "-e"]
 
 
 def sysfs_has_device(vid, pid, root=SYSFS_USB):
@@ -174,16 +240,34 @@ def main(argv=None):
     if not args.dry_run:
         preflight(args, mpremote)
 
-    # Resolve the verification target before touching the board.
-    expect = args.expect
-    if expect is None:
-        manifest = args.hp.parent / "MANIFEST.txt"
-        if manifest.is_file():
-            expect = read_manifest_sha(manifest.read_text())
+    # Partition worklist, shared by download / readback / preflight rungs.
+    parts = [("HP", args.hp)] + ([("HE", args.he)] if args.he else [])
+
+    # Resolve the label cross-check target before touching the board.
+    manifest = args.hp.parent / "MANIFEST.txt"
+    manifest_text = manifest.read_text() if manifest.is_file() else ""
+    expect = args.expect or (read_manifest_sha(manifest_text) or None)
     if expect:
-        log(f"will verify sys.version against OpenMV id: {expect}")
+        log(f"will cross-check sys.version against OpenMV id: {expect}")
     else:
-        log("no --expect and no MANIFEST.txt -- will print sys.version, not verify")
+        log("no --expect and no MANIFEST.txt openmv_sha -- label not cross-checked "
+            "(readback hash is the verify either way)")
+
+    # Guard the artifacts before flashing: MANIFEST sha256 lines catch a
+    # corrupted or mixed-up copy of the bins onto the Pi.
+    if not args.dry_run and manifest_text:
+        sums = read_manifest_sha256s(manifest_text)
+        for _, path in parts:
+            want = sums.get(path.name)
+            if want is None:
+                continue
+            got = sha256_file(path)
+            if got != want:
+                die(f"{path.name} sha256 {got[:12]}... does not match MANIFEST "
+                    f"{want[:12]}...",
+                    "the local file is not the build the MANIFEST describes -- "
+                    "re-copy from the Mac or re-run fetch_firmware.sh")
+            log(f"MANIFEST sha256 OK: {path.name}")
 
     # Rung 1: get the board into the bootloader.
     if args.recover:
@@ -192,7 +276,7 @@ def main(argv=None):
         cdc = args.device or (find_cdc() or [None])[0]
         if cdc is None and not args.dry_run:
             die("no AE3 CDC device found", f"glob: {CDC_GLOB}; is the board on USB? try --recover")
-        enter_bootloader(mpremote, cdc or "<cdc>", args.dry_run)
+        enter_bootloader(mpremote or "mpremote", cdc or "<cdc>", args.dry_run)
 
     # Rung 2: DFU device appears.
     if not args.dry_run:
@@ -202,20 +286,34 @@ def main(argv=None):
                 "power-cycle and retry with --recover (bootloader window is 1.5 s)")
         log("DFU device present")
 
-    # Rung 3: download partitions. HP last-with-reset when no HE given.
-    # The -R invocation exits non-zero even on success (the device drops
-    # off the bus during the USB reset -- observed live 2026-08-11, exit
-    # 251 after a clean dfuMANIFEST->dfuIDLE download), so the reset call
-    # is check=False and rungs 4+5 are the real success signals.
-    parts = [("HP", args.hp)] + ([("HE", args.he)] if args.he else [])
-    for i, (alt, path) in enumerate(parts):
-        last = i == len(parts) - 1
-        run(dfu_cmd(alt, path, reset=last), dry_run=args.dry_run,
-            check=not last, timeout=300)
-        if last:
-            log("reset sent (dfu-util non-zero exit here is expected)")
+    # Rung 3: download partitions. No reset here -- the board boots only
+    # after rung 3.5 has verified what landed on flash.
+    for alt, path in parts:
+        run(dfu_cmd(alt, path), dry_run=args.dry_run, check=True, timeout=300)
 
-    # Rung 4: board comes back as CDC.
+    # Rung 3.5: byte-level verify. Read each partition back over DFU_UPLOAD
+    # and sha256-compare against the exact file just flashed. On mismatch
+    # the board is deliberately left sitting in DFU -- never boot an
+    # unverified image; bootloader is untouched, power cycle recovers.
+    with tempfile.TemporaryDirectory(prefix="ae3_readback_") as tmpdir:
+        for alt, path in parts:
+            size = path.stat().st_size if path.is_file() else 0
+            rb = Path(tmpdir) / f"readback_{alt}.bin"
+            run(dfu_upload_cmd(alt, rb, size), dry_run=args.dry_run,
+                check=True, timeout=300)
+            if args.dry_run:
+                continue
+            if not readback_matches(path, rb, size):
+                die(f"readback mismatch on {alt}: flash contents != {path.name}",
+                    "board left in DFU (NOT booted); power-cycle recovers; "
+                    "re-run the flash -- if it repeats, suspect the USB path")
+            log(f"readback verify OK: {alt} == sha256({path.name})")
+
+    # Rung 4: boot the verified app (DFU_DETACH -> bootloader jump). A
+    # non-zero dfu-util exit as the device drops off the bus is tolerated
+    # (same class as the old -R exit-251); CDC + sys.version are the signals.
+    run(dfu_detach_cmd(), dry_run=args.dry_run, check=False, timeout=30)
+    log("detach sent (dfu-util non-zero exit here is tolerated)")
     if not args.dry_run:
         if not wait_for("CDC", lambda: len(find_cdc()) > 0, args.timeout, 0.5):
             die("board did not re-enumerate as CDC after flash",
@@ -223,7 +321,9 @@ def main(argv=None):
                 "board is recoverable")
         time.sleep(2)   # let the port settle before opening it
 
-    # Rung 5: verify the running build. Trust the artifact (uname text).
+    # Rung 5: prove the verified image actually boots and runs. sys.version
+    # is evidence of "alive + label consistent", not the verify itself --
+    # labels are not build-unique (see header facts).
     cdc = args.device or (find_cdc() or ["<cdc>"])[0]
     r = run([mpremote or "mpremote", "connect", cdc, "exec",
              "import sys; print(sys.version)"],
@@ -237,12 +337,14 @@ def main(argv=None):
     if hashes is None:
         die("could not parse OpenMV/MicroPython ids from sys.version",
             "board may be running but odd -- check manually with mpremote")
-    if expect:
-        if hashes[0] != expect:
-            die(f"hash mismatch: running OpenMV {hashes[0]}, expected {expect}")
-        log(f"PASS: board is running OpenMV {hashes[0]} (matches expected)")
-    else:
-        log(f"DONE (unverified): board runs OpenMV {hashes[0]}, MicroPython {hashes[1]}")
+    if expect and hashes[0] != expect:
+        die(f"label mismatch: running OpenMV {hashes[0]}, expected {expect}",
+            "flash bytes verified by readback -- so the MANIFEST/--expect "
+            "label is stale or describes a different build dir")
+    label = ("label matches" if expect else
+             "label not cross-checked; labels are not build-unique anyway")
+    log(f"PASS: flash verified byte-for-byte; board runs OpenMV {hashes[0]}, "
+        f"MicroPython {hashes[1]} ({label})")
     return 0
 
 
