@@ -22,37 +22,14 @@ try:
 except ImportError:
     ON_TARGET = False   # host CPython: pure helpers importable for unit tests
 
-import struct
-
 import adin_regs as regs
 from adin_spi import AdinSpi, AdinError
-
-# Destination = nereus001 eth1 (overlay MAC, NM-cloned -- DESIGN.md S2).
-# Unicast to it passes the Linux node's ADIN1110 hardware MAC filter.
-DST_MAC = b"\x02\xad\x11\x10\x00\x03"
-# Source = this AE3 node: next locally-administered address in the series.
-SRC_MAC = b"\x02\xad\x11\x10\x00\x04"
-# IEEE Std 802 "Local Experimental EtherType 1" -- safe, collision-free.
-ETHERTYPE = 0x88B5
-MAGIC = b"BMS5"
+from s5_frames import (build_eth_frame, DST_MAC, SRC_MAC, ETHERTYPE, MAGIC,
+                       DEFAULT_PAYLOAD_LEN as PAYLOAD_LEN)  # noqa: F401 -- re-export
 
 N_FRAMES = 200
-PAYLOAD_LEN = 486          # -> 500-byte frame (14 B Ethernet header)
 LINK_WAIT_MS = 10_000
 PROGRESS_EVERY = 50
-
-
-# ---------------------------------------------------------------- pure helpers
-
-def build_eth_frame(seq, payload_len=PAYLOAD_LEN):
-    """Ethernet frame (no FCS -- the MAC appends it): header + MAGIC +
-    BE32 seq + deterministic pad."""
-    body_fixed = MAGIC + struct.pack(">I", seq)
-    pad_n = payload_len - len(body_fixed)
-    if pad_n < 0:
-        raise ValueError("payload_len %d too small for magic+seq" % payload_len)
-    pad = bytes((i & 0xFF for i in range(pad_n)))
-    return DST_MAC + SRC_MAC + struct.pack(">H", ETHERTYPE) + body_fixed + pad
 
 
 # ---------------------------------------------------------------- target main

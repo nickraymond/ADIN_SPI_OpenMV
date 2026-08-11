@@ -17,7 +17,8 @@ from adin_spi import (build_read_frame, parse_read_value, build_write_frame,
                       round_len, tx_padded_len, build_tx_burst, mdio_c22_cmd,
                       AdinSpi, AdinError)
 from s4_first_light import classify_rx, verdict_line, hexdump
-from s5_frame_tx import build_eth_frame, DST_MAC, SRC_MAC, ETHERTYPE, MAGIC
+from s5_frames import (build_eth_frame, patch_seq, DST_MAC, SRC_MAC,
+                       ETHERTYPE, MAGIC)
 
 
 # Expected wire bytes below are hand-derived from adin1110.c:195-264
@@ -299,6 +300,49 @@ class TestBuildEthFrame(unittest.TestCase):
         a, b = build_eth_frame(0), build_eth_frame(0xFFFFFFFF)
         self.assertNotEqual(a[18:22], b[18:22])
         self.assertEqual(a[:18], b[:18])
+
+    def test_patch_seq_equals_rebuild(self):
+        # the load loop's template patching must produce byte-identical
+        # frames to building from scratch
+        template = bytearray(build_eth_frame(0, 986))
+        patch_seq(template, 424242)
+        self.assertEqual(bytes(template), build_eth_frame(424242, 986))
+
+
+class TestTelemetry(unittest.TestCase):
+    def test_tx_counters_increment(self):
+        hal = SeqHal(reads=[0x800, 0x800])
+        a = AdinSpi(hal)
+        a.send_frame(bytes(100))
+        a.send_frame(bytes(200))
+        self.assertEqual((a.tx_frames, a.tx_bytes), (2, 300))
+
+    def test_status_summary_flags_spi_err(self):
+        hal = SeqHal(reads=[0x0, regs.STATUS1_SPI_ERR])
+        s0, s1, err = AdinSpi(hal).status_summary()
+        self.assertEqual(hal.sent, [build_read_frame(regs.STATUS0),
+                                    build_read_frame(regs.STATUS1)])
+        self.assertTrue(err)
+
+    def test_status_summary_clean(self):
+        hal = SeqHal(reads=[0x0, 0x0])
+        self.assertFalse(AdinSpi(hal).status_summary()[2])
+
+
+class TestWaitLink(unittest.TestCase):
+    def _link_reads(self, up):
+        # one link_up() = two mmd_reads = 2x (3 write-polls + 1 read)
+        val = regs.PMA_STAT1_LINK if up else 0
+        return [TRDONE, TRDONE, TRDONE, TRDONE | val] * 2
+
+    def test_immediate_up_returns_zero(self):
+        hal = SeqHal(reads=self._link_reads(True))
+        self.assertEqual(AdinSpi(hal).wait_link(), 0)
+
+    def test_timeout_raises(self):
+        hal = SeqHal(reads=self._link_reads(False) * 3)
+        with self.assertRaises(AdinError):
+            AdinSpi(hal).wait_link(timeout_ms=200, poll_ms=100)
 
 
 if __name__ == "__main__":

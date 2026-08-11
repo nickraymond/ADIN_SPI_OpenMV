@@ -116,6 +116,10 @@ class AdinSpi:
 
     def __init__(self, hal):
         self.hal = hal
+        # Software TX counters, mirroring the mainline driver's approach
+        # (adin1110.c:420-421 -- it never reads hardware count registers).
+        self.tx_frames = 0
+        self.tx_bytes = 0
 
     def read_reg(self, reg):
         """Read a 32-bit MAC register. Returns (value, raw_rx_bytes)."""
@@ -190,6 +194,25 @@ class AdinSpi:
         st = self.mmd_read(regs.MMD_PMAPMD, regs.PMA_STAT1)
         return bool(st & regs.PMA_STAT1_LINK)
 
+    def wait_link(self, timeout_ms=10_000, poll_ms=100):
+        """Poll for link-up; returns wait in ms or raises loudly."""
+        waited = 0
+        while True:
+            if self.link_up():
+                return waited
+            if waited >= timeout_ms:
+                raise AdinError("adin1100 PHY: no link after %d ms -- check "
+                                "the pair is plugged at both J1s and the "
+                                "partner interface is up" % timeout_ms)
+            self.hal.delay_ms(poll_ms)
+            waited += poll_ms
+
+    def status_summary(self):
+        """(STATUS0, STATUS1, spi_err) for end-of-run health reporting."""
+        s0, _ = self.read_reg(regs.STATUS0)
+        s1, _ = self.read_reg(regs.STATUS1)
+        return s0, s1, bool(s1 & regs.STATUS1_SPI_ERR)
+
     # ------------------------------------------------------------- frame TX
 
     def mac_init(self):
@@ -230,4 +253,6 @@ class AdinSpi:
             self.hal.delay_ms(1)
         self.write_reg(regs.TX_FSIZE, padded)
         self.hal.xfer(burst)
+        self.tx_frames += 1
+        self.tx_bytes += len(frame)
         return stalls
