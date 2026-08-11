@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flash_ae3 import (parse_uname_hashes, read_manifest_sha,
+                       read_manifest_label, label_matches,
                        read_manifest_sha256s, sha256_file, readback_matches,
                        dfu_cmd, dfu_upload_cmd, dfu_boot_cmd,
                        sysfs_has_device, wait_for, main)
@@ -39,6 +40,38 @@ class TestParseUname(unittest.TestCase):
     def test_no_match(self):
         self.assertIsNone(parse_uname_hashes("MicroPython v1.28.0 on 2026-07-02"))
 
+    def test_describe_format_from_tagged_clone(self):
+        # Mac build env clones with tags -> makeversionhdr embeds the full
+        # describe (dashes become dots; observed in built bins 2026-08-11).
+        self.assertEqual(
+            parse_uname_hashes("3.4.0; OpenMV v5.0.0-52.g7d4dbf7ab2; "
+                               "MicroPython 11852aa3d0"),
+            ("v5.0.0-52.g7d4dbf7ab2", "11852aa3d0"))
+
+
+class TestLabelMatches(unittest.TestCase):
+    def test_exact_sha10(self):
+        self.assertTrue(label_matches("7d4dbf7ab2", "7d4dbf7ab2"))
+
+    def test_exact_tag(self):
+        self.assertTrue(label_matches("v5.0.0", "v5.0.0"))
+
+    def test_sha10_inside_describe_id(self):
+        # MANIFEST openmv_sha vs a tagged-clone build's embedded describe.
+        self.assertTrue(label_matches("7d4dbf7ab2", "v5.0.0-52.g7d4dbf7ab2"))
+
+    def test_different_sha_fails(self):
+        self.assertFalse(label_matches("0123456789", "v5.0.0-52.g7d4dbf7ab2"))
+
+    def test_stale_tag_vs_describe_fails(self):
+        # omv.version_string()-style bare tag must NOT satisfy a describe
+        # expectation (the S8 stale-label class).
+        self.assertFalse(label_matches("v5.0.0-52.g7d4dbf7ab2", "v5.0.0"))
+
+    def test_empty_never_matches(self):
+        self.assertFalse(label_matches(None, "7d4dbf7ab2"))
+        self.assertFalse(label_matches("7d4dbf7ab2", ""))
+
 
 HP_SHA = "a" * 64
 HE_SHA = "b" * 64
@@ -48,6 +81,7 @@ class TestManifest(unittest.TestCase):
     MANIFEST = ("built:      2026-08-11T00:00:00Z\n"
                 "rev:        v5.0.0-12-g7d4dbf7ab2\n"
                 "openmv_sha: 7d4dbf7ab2\n"
+                "openmv_label: v5.0.0-12.g7d4dbf7ab2\n"
                 "sdk:        1.6.0 linux-x86_64\n"
                 f"{HP_SHA}  firmware_M55_HP.bin\n"
                 f"{HE_SHA}  firmware_M55_HE.bin\n")
@@ -57,6 +91,13 @@ class TestManifest(unittest.TestCase):
 
     def test_missing_key(self):
         self.assertIsNone(read_manifest_sha("rev: something\n"))
+
+    def test_reads_label(self):
+        self.assertEqual(read_manifest_label(self.MANIFEST),
+                         "v5.0.0-12.g7d4dbf7ab2")
+
+    def test_label_absent_in_old_manifests(self):
+        self.assertIsNone(read_manifest_label("openmv_sha: 7d4dbf7ab2\n"))
 
     def test_reads_sha256_lines(self):
         self.assertEqual(read_manifest_sha256s(self.MANIFEST),

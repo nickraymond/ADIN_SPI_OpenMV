@@ -17,6 +17,53 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (build fix) — HE link failure root-caused: stock docker target flattens per-core build dirs
+
+**Branch:** sprint/9-build-fix
+
+**Done:**
+- Root-caused the S9 blocker (M55_HE image never links in our env,
+  FLASH_TEXT 154% + undefined `dcd_*`): openmv's stock
+  `docker/Makefile build-firmware` → `build.sh` passes `BUILD=<dir>` on
+  the make **command line**; that rides MAKEFLAGS into every sub-make and
+  overrides `ports/alif/alif.mk`'s `BUILD := $(BUILD)/$(MCU_CORE)` — HP
+  and HE share one object dir, so the HE link consumed HP-configured
+  objects (USB device stack on → 2.21 MB text ≈ the HP image). Explains
+  the byte-identical failure with the usermod compiled out. OpenMV CI
+  builds AE3 with plain `make TARGET=` (no docker) and never hits it;
+  upstream's own `build-firmware-dev` (commit `6adf40fd`, 2026-04)
+  documents the nesting requirement in its comments. D24.
+- Verified from clean at `7d4dbf7ab2` before touching the repo: HE links
+  **1,193,520 B / FLASH_TEXT 83.25%** (official artifact 1,185,744 B),
+  HP 2,200,176 B; `build/OPENMV_AE3/M55_{HP,HE}/` nesting present.
+- `build_ae3.sh`: switched to `clean-dev` + `build-firmware-dev`; new
+  `--incremental` flag (dev-loop fast path); HE size-window check; dirty
+  openmv tree now skips rev sync instead of hard-resetting edits away.
+- Label fallout fix: our tagged clone embeds describe-form ids
+  (`v5.0.0-52.g7d4dbf7ab2` — makeversionhdr turns dashes into dots), not
+  the bare sha10 of tagless CI builds. `flash_ae3.py`'s exact-match label
+  check would have false-FAILED every local build after a good byte
+  verify. MANIFEST now records `openmv_label` (exact embedded string);
+  label check accepts a sha10 inside a describe id. Host tests 25 → 33.
+- Docs: D24 decision entry; §S9 open issue marked resolved; HP-only
+  workaround retired.
+
+**Broke/surprised us:**
+- Upstream half-knows: `build-dev.sh`'s comment states the per-core
+  nesting requirement verbatim, but the stock `build-firmware` target is
+  still broken for multi-core Alif targets. Candidate upstream report
+  (alongside the D15 crash).
+- The describe-vs-sha10 label format difference was invisible until a
+  local build actually embedded one — the S7 flash-verify hardening
+  (byte-level readback) was the right call; labels keep proving
+  unreliable as fingerprints.
+
+**Next:** Nick runs the manual test (fresh `build_ae3.sh` from clean →
+MANIFEST + HE bin ~1.19 MB), then PR. S9 bites 2–3 (ADI-HAL, OA data
+path) can now target both cores; S10's HE dependency is unblocked.
+
+---
+
 ## 2026-08-11 — Sprint S9 (bite 1) — bm_spike code-complete: unmodified bm_core driver runs on host; hardware gates = docker + re-strap
 
 **Branch:** sprint/9-oa-first-light

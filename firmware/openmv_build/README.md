@@ -28,19 +28,31 @@ DFU path the headless tool uses.
 ## Build
 
 ```bash
-./build_ae3.sh                      # master HEAD
+./build_ae3.sh                      # master HEAD, from clean
 ./build_ae3.sh --rev v5.0.0         # exact release tag
+./build_ae3.sh --incremental       # dev loop: skip the clean, rebuild deltas
 ```
 
-Wraps `openmv.git`'s own `docker/Makefile build-firmware` (reuse before
+Wraps `openmv.git`'s `docker/Makefile build-firmware-dev` (reuse before
 rewriting) with rev pinning, the amd64-platform + linux-SDK plumbing, and
-artifact verification (existence, plausible size, embedded git hash) into
-`MANIFEST.txt`. First build is the slow one (image + submodules + full tree);
-prints the scp command for the Pi when done.
+artifact verification (existence, per-core size windows, embedded id) into
+`MANIFEST.txt`. First build is the slow one (image + submodules + full tree,
+~15 min); prints the scp command for the Pi when done.
+
+**Why `build-firmware-dev` and not the stock `build-firmware`:** the stock
+target's `build.sh` passes `BUILD=<dir>` on the make command line, which
+rides MAKEFLAGS into every sub-make and overrides `ports/alif/alif.mk`'s
+`BUILD := $(BUILD)/$(MCU_CORE)` per-core nesting. Both cores then share one
+object dir and the M55_HE image links HP-configured objects — FLASH_TEXT
+154%, undefined `dcd_*` (TinyUSB DCD), relocation errors. OpenMV's CI builds
+AE3 *without* docker (`tools/ci.sh`) and never hits it; `build-dev.sh`'s own
+comments document the nesting requirement. Root-caused 2026-08-11 (DESIGN
+decision log); verified fix: HE links at 1,193,520 B vs 1,185,744 B official.
 
 Editing workflow: clone lives at `~/openmv-dev/openmv` — open it in VS Code,
-edit, re-run `build_ae3.sh` (it rebuilds whatever rev is checked out; a
-dirty tree shows as `-dirty` in the manifest rev).
+edit, re-run `build_ae3.sh --incremental`. A dirty tree skips the rev sync
+(your edits are never hard-reset away) and shows as `-dirty` in the manifest
+rev.
 
 ## bm_core next (placeholder)
 
