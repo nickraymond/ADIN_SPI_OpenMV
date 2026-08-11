@@ -121,6 +121,15 @@ unverified — treat as unknown.
   video over the pair, unplug→freeze / replug→resume, USB REPL-only.
   S6 complete = the project's end-state demo (SPEC §Goal) achieved on
   the MicroPython driver.** Detail below.
+- S8 NPU inference bench (bite 1, early-ride exception): **run 2026-08-11
+  (Claude, remote, no sensor / no flash). Per-tile inference is fast
+  (yolov8n_192: 21 ms ≈ 47 fps), but HD (1280×800) tiled coverage at
+  192-px input = 40 tiles → ~1.2 fps, BELOW the T2 ≥3 fps gate; only
+  yolo_lc_192 (4 ms/tile) meets it tiled (6.3 fps). Single-pass HD
+  downscale puts 100–150 px fish at 15–23 px — below the 24 px floor.
+  All ROM detectors are person-class-only → T2 needs a custom
+  Vela-compiled fish detector regardless (Nick concurs); larger input
+  size is the lever that fixes the tiling arithmetic.** Detail below.
 
 ### S0 detail (2026-08-09) — AE3 `machine.SPI(0)` ceiling
 
@@ -702,3 +711,54 @@ PASS verdict. HP download 2,200,784 B / HE 1,185,744 B, clean
   location/port for the AE3 still unverified on the Pi 5.
 - udev rule `99-openmv-dfu.rules` (VID 37c5 → plugdev) makes the whole
   ladder sudo-free; dfu-util 0.11 from Debian arm64 works as-is.
+
+### S8 detail (2026-08-11) — AE3 NPU inference bench, bite 1 (early ride)
+
+Run under the TRACKER's S8 exception (NPU bench as board-selection input);
+the rest of S8 stays gated behind S13. Setup: `bench/ae3_npu_bench.py` via
+`mpremote mount` from nereus000, reef ref scene (P7071008 derivative,
+`bench/assets/ref_scene`), **no sensor** (D15 class avoided), nothing
+flashed. Models discovered live from `/rom`; 10 timed reps after 2 warmups;
+ms/inference includes image→tensor preprocessing (the real `predict()` path).
+Firmware self-reports `OpenMV v5.0.0` — per Nick this is a stale label on
+the in-development build, not a reflash; treat as the dev-build fixture.
+
+Per-model `predict()` latency (reef scene; 320×200 input ≈ tile cost,
+1280×800 shows preprocessing growth):
+
+| model (input) | arena B | ms @320×200 | ms @1280×800 | 1-pass fps |
+|---|---|---|---|---|
+| blazeface_front_128 (128²) | 88,704 | 11.1 | 14.5 | 69.2 |
+| face_landmarks_192 (192²) | 146,304 | 14.1 | 21.5 | 46.5 |
+| fomo_face_detection (96²) | 29,440 | 2.7 | 4.8 | 209.2 |
+| hand_landmarks_full_224 (224²) | 1,176,896 | 57.6 | 65.1 | 15.4 |
+| movenet_singlepose_192 (192²) | 143,360 | 21.5 | 28.8 | 34.7 |
+| palm_detection_full_192 (192²) | 323,200 | 30.0 | 37.4 | 26.8 |
+| person_detect (96²) | 48,384 | 2.8 | 4.9 | 206.0 |
+| yolo_lc_192 (192²) | 34,560 | 4.0 | 8.9 | 113.0 |
+| yolov8n_192 (192², YoloV8 pp) | 195,648 | 21.1 | 28.4 | 35.2 |
+
+(`force_int_quant.tflite` correctly SKIPped — non-image input `(1, 36)`.)
+
+HD (1280×800) full-frame detection, tiles at 32 px overlap, tile cost =
+the 320×200 latency: yolov8n_192 = 40 tiles → 843 ms/frame → **1.19 fps
+(BELOW the T2 ≥3 fps gate)**; yolo_lc_192 = 40 tiles → 159 ms → **6.27 fps
+(MEETS)**; everything else 0.6–1.8 fps (below). Single-pass downscale is
+30–200+ fps everywhere but shrinks 100–150 px fish to 8–26 px, at or
+below the 24–32 px detection floor for every ≤192-px-input model.
+
+**Findings that carry:**
+
+- The NPU is not the T2 bottleneck — per-tile latency is excellent. The
+  bottleneck is coverage arithmetic: tiles × ms/tile. Levers: larger
+  model input (fewer tiles), lighter architecture (yolo_lc-class cost),
+  or reduced coverage (ROI scheduling).
+- Label files read live: `yolov8n_192` and `yolo_lc_192` detect ONE class
+  (`person`); `person_detect` is a person/no-person classifier. "0 det"
+  on the reef scene is therefore the correct artifact, and latency is
+  class-independent — but **any real T2 detector is a custom-trained,
+  Vela-compiled model** (Mac docker env, D23 territory). Nick: needed
+  either way.
+- NPU-vs-CPU dispatch is not queryable from MicroPython — these are
+  wall-clock numbers; attribution unverified (flagged in the script
+  header).
