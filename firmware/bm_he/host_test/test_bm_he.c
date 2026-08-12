@@ -28,6 +28,9 @@ _Static_assert(offsetof(wire_status_t, heap_min) == 68, "heap_min @ 68");
 _Static_assert(sizeof(bm_status_page_t) == 40, "bm page = 10 u32s");
 _Static_assert(offsetof(bm_status_page_t, dbg_ring_widx) == 36,
                "ring widx @ 36");
+// WCMD_PING payload: runner packs "<Q" + echo bytes (Wire.ping_cmd).
+_Static_assert(sizeof(wire_ping_t) == 8, "wire_ping_t hdr must be 8 B");
+_Static_assert(offsetof(wire_ping_t, echo) == 8, "echo bytes @ 8");
 
 // ---- host glue ------------------------------------------------------------
 

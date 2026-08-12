@@ -38,7 +38,18 @@ typedef struct {
                               //         hdr-only, up/down in cmd's pair
 #define WCMD_LINK_UP   0x01u  //         ... carried in 1-byte payload
 #define WCMD_QUERY     0x14u  // HP->HE: request status reply
+#define WCMD_PING      0x15u  // HP->HE: send a BCMP echo request from the
+                              //         stack; payload = wire_ping_t
 #define WREP_STATUS    0x94u  // HE->HP: wire_status_t payload
+
+// WCMD_PING payload: target node id + optional echo payload. echo length
+// = wire_hdr_t.len - 8 (ping.c copies it into EXPECTED_PAYLOAD and
+// validates the reply against it -- send >= 1 byte so the reply check is
+// a real payload compare, not a trivial 0 == 0).
+typedef struct {
+    uint64_t target_node_id;
+    uint8_t  echo[];          // wire_hdr_t.len - 8 bytes
+} __attribute__((packed)) wire_ping_t;
 
 typedef struct {
     uint64_t node_id;
