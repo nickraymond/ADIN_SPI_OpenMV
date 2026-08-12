@@ -59,6 +59,8 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 **Next:** Nick runs the 2a demo (`bm_he/README.md` ladder, one mpremote
 command + pcap pull) → 2b: HP python peer (inject heartbeats →
 neighbor table; BCMP ping both ways) = the INTERIM-2 demo proper → PR.
+→ **demo PASSED (Nick, same day — A/B identical to both rehearsals);
+PR opened.**
 
 ---
 

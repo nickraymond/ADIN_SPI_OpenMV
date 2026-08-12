@@ -376,11 +376,10 @@ USB/MicroPython baseline stays intact as the regression reference
 2. `[~]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
    NetworkDevice (see S10) — no ADIN dependency
    → split 2a/2b (Nick approved 2026-08-12, incl. trait-level mock
-   over chip-level promotion + fetch-and-pin sys_arch). **2a code +
-   rehearsal DONE same day (Claude ran the bench twice, identical
-   PASS: stack RUNNING, heartbeats wire-verified, pcap
-   tcpdump-clean); awaiting Nick's demo run.** 2b (neighbors + ping
-   vs python peer) next.
+   over chip-level promotion + fetch-and-pin sys_arch). **2a DONE
+   2026-08-12: demo run by Nick — PASS (A/B, identical numbers to
+   both rehearsals); PR opened.** 2b (neighbors + ping vs python
+   peer) next.
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety
@@ -547,7 +546,8 @@ a seq-numbered frame lands in tcpdump across the pair.
       boot-µs), pcap reads clean in tcpdump (bonus: MLD6 join of
       ff03::1 visible). Size: 231 K of 256 K region (~88%). Host tests
       72 checks (clang+ASan). S6 USB baseline re-verified after.
-      Awaiting Nick's demo run (README run ladder).
+      → **2a demo PASSED (Nick, 2026-08-12 — identical numbers to
+      both rehearsals); PR opened.**
       → 2b next: HP python peer node — inject heartbeats → neighbor
       table forms; BCMP ping answered both ways; INTERIM-2 demo proper.
 - [!] Validate against reference hardware: dev-kit mote (on hand) sees
