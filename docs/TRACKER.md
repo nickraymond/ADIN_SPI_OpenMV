@@ -367,8 +367,8 @@ USB/MicroPython baseline stays intact as the regression reference
 
 1. `[~]` **S10 bite 1** — FreeRTOS-on-HE + OpenAMP pipe spike (see
    S10) — no ADIN dependency; the interim's first bite
-   → rehearsal PASS 2026-08-12 (A/B/C, ≥5 Mbps gate cleared 2.6×–44×);
-   awaiting Nick's demo run + PR
+   → DONE 2026-08-12: demo run by Nick — PASS (A/B/C, ≥5 Mbps gate
+   cleared 2.6×–44×); PR opened
 2. `[ ]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
    NetworkDevice (see S10) — no ADIN dependency
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
@@ -513,7 +513,9 @@ a seq-numbered frame lands in tcpdump across the pair.
       measured live: vring roles + desc-offset addressing + used.len
       capacity contract (DESIGN §S10), SPI0 SRL absent, pinconf-from-HE
       works. HE-loses fallback MOOT. Bench check (Nick): is anything
-      still wired to AE3 P0–P2? Remaining: Nick's demo run → PR.
+      still wired to AE3 P0–P2?
+      → **DONE 2026-08-12: demo run by Nick — PASS (A/B/C, identical
+      numbers to the rehearsal). PR opened (nibble 4).**
 - [ ] **INTERIM 2** — bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE;
       BCMP up (heartbeat, neighbors, ping) — interim scope: against a
       mock/loopback NetworkDevice (S9 host-test mock promoted to

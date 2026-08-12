@@ -64,6 +64,8 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 **Next:** Nick runs the bite-1 demo (`he_spike/README.md` ladder, one
 mpremote command) → nibble 4 PR → INTERIM 2 (bm_os/lwIP/BCMP on HE vs
 mock NetworkDevice).
+→ **demo PASSED (Nick, same day — identical A/B/C numbers); PR
+opened.**
 
 ---
 
