@@ -1062,11 +1062,13 @@ facts (3)/(4) below.
    VRING_AVAIL_F_NO_INTERRUPT on the remote's TX ring throttled the
    pump to ~1 msg/s (host toggles the flag while draining); the remote
    now kicks unconditionally on TX (spurious MHU word ≈ µs).
-6. **pad-pull RX probe inconclusive**: AE3 P1/MISO reads 0xFF under
-   both PADCTRL pulls even though the pinconf writes verifiably land —
-   something holds the line high. Bench check flagged (is a harness
-   wire still on P0–P2?). Does not gate; first ADIN PHY-ID read from HE
-   is the real RX proof.
+6. **PADCTRL_DRIVER_DISABLED pulls do not steer an AF-mode input on
+   this pad**: AE3 P1/MISO reads 0xFF under BOTH pulls with the pin
+   verifiably unconnected (bench check answered by Nick 2026-08-12:
+   nothing wired to the board) and the pinconf writes verifiably
+   landing (readback ok). The pad floats/reads high regardless →
+   the pull-based RX self-test cannot work here; it stays a non-gating
+   diagnostic. First ADIN PHY-ID read from HE is the real RX proof.
 7. MHU doorbell = one 32-bit word on the RTSS MHU pair
    (HP→HE RX 0x40080000/IRQ 41, HE→HP TX 0x40090000; value ignored by
    both receivers); ~37k doorbells exchanged per bench run, no losses.

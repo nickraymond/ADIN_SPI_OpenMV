@@ -14,13 +14,13 @@
 //     on this SPI0 instance -- the bit reads back 0 immediately after
 //     writing 1 with the controller disabled.
 //   * The pad-pull fallback (MISO via PADCTRL pulls: up -> 0xFF, down ->
-//     0x00) is INCONCLUSIVE on this bench: the line reads 0xFF under
-//     BOTH pulls even though the pinconf writes verifiably land
-//     (readback ok) -- something appears to hold the pin high
-//     (possibly bench wiring still attached to AE3 P1; check on demo
-//     day). The pull test therefore REPORTS but does not gate; the real
-//     RX-data proof is the first PHY-ID read when replacement ADIN
-//     hardware arrives.
+//     0x00) does not work on this pad: the line reads 0xFF under BOTH
+//     pulls with the pin verifiably unconnected (bench-checked by Nick
+//     2026-08-12) and the pinconf writes verifiably landing (readback
+//     ok) -- PADCTRL_DRIVER_DISABLED pulls do not steer an AF-mode
+//     input here. The pull test therefore REPORTS but does not gate;
+//     the real RX-data proof is the first PHY-ID read when replacement
+//     ADIN hardware arrives.
 // Verdict C gates on: pinmux write + READBACK, controller init, and the
 // SPI0 IRQ observed on the HE NVIC.
 //

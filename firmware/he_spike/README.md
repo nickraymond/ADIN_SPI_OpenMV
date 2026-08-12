@@ -94,8 +94,10 @@ Hardware facts found en route (details in DESIGN §S10): vring roles and
 descriptor addressing corrected from live ring dumps; used.len must
 report buffer capacity or the host recycles shrunken buffers; SPI0's
 DW SRL loopback bit is tied off; pinconf works from the HE core
-(write + readback). **Bench check for Nick:** AE3 P1 (MISO) reads high
-under both pad pulls — is a harness wire still attached to P0/P1/P2?
+(write + readback). Bench check ANSWERED (Nick, 2026-08-12): nothing is
+wired to the board — P1 floats/reads high regardless of PADCTRL pulls,
+so `DRIVER_DISABLED` pulls don't steer an AF-mode input on this pad and
+the pull test stays a non-gating diagnostic.
 
 ## Troubleshooting
 
