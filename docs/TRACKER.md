@@ -438,6 +438,18 @@ S7 research notes above + DESIGN §S7 detail.*
       runner (README bite-3 ladder). 1110-vs-2111 delta item 3 recorded:
       adin2111-level init also blocks on a port-2 PHY wait → 1110 needs
       MAC/PHY-layer entry-point bring-up (the bridge).
+      → **PAUSED 2026-08-12 (Nick): demo blocked on replacement PCBAs.**
+      Full-day isolation concluded ≥2 of 3 line interfaces dead — both
+      AOS hats condemned (likely rework transient through the connected
+      pair; SPEC §Open questions has the verdict + new bench rules).
+      Code is COMPLETE and hardware-proven to the wire (init bridge,
+      MDIO-over-OA, TX submit all PASS live); PR opened (nibble 4) so
+      the branch doesn't rot. RESUME when hardware arrives: rebuild a
+      link fixture (new hats, or SG-shield-as-OA + role reshuffle, or
+      ADIN2111 eval hw), then the README bite-3 ladder — the runner is
+      one command. NOTE: hat #2 is currently strapped GENERIC (bisect
+      state); AE3 still carries the bite-3 alif build. Interim work
+      pivots to the USB-only track (S10 spike needs no ADIN hardware).
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;
 a seq-numbered frame lands in tcpdump across the pair.
 **Needs:** S7 flash loop, Mac build env, hat #2 re-strap.

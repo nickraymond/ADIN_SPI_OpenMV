@@ -125,6 +125,12 @@ nibble 4 PR. Debug helpers staged in `~/ae3_flash/` on nereus000.
 **Next:** Nick picks replacement hardware → rebuild fixture → re-run
 `s9_oa_datapath.py` (one command) → nibble 3 manual test → PR.
 
+**SPUN DOWN 2026-08-12 (Nick's call): boards confirmed dead, bite-3 PR
+opened with the demo deferred to hardware arrival. Interim pivot: new
+session plans a USB-only dev track for the BM-native arc (S10's
+FreeRTOS-on-HE + OpenAMP spike needs zero ADIN hardware; TRACKER
+review with fresh eyes). Kickoff prompt handed to Nick.**
+
 ---
 
 ## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found
