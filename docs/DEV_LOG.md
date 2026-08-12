@@ -17,6 +17,122 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (bite 3) — OA data-path bridge PASSES on hardware; link blocked by dead pair (bench check for Nick)
+
+**Branch:** work in worktree branch `claude/s9-oa-datapath-smoke-dc2e62`
+(→ pushes to `sprint/9-oa-datapath` at PR time; that branch is checked
+out in another worktree at the same base commit)
+
+**Done:**
+- Nibble 1 (plan approved by Nick): exploration verified against source —
+  state-nudge theory confirmed (MAC_Init:542/574, ProcessTxQueue:1479);
+  found adin2111-level init ALSO blocks on a port-2 PHY wait
+  (adin2111.c:169) → bridge drives macDriverEntry/phyDriverEntry
+  directly; PHY identity gate is DEVID1+OUI only → predicted pass.
+- Nibble 2: `bm_spike_datapath.c/h` (init bridge, driver byte-identical),
+  dp_* API in both HAL tables, `s9_oa_datapath.py` runner, host tests
+  16 → 41 (mock: writable regs, MDIOACC/clause-45 PHY emulation, OA
+  data-chunk parse + byte-exact TX capture). Both firmware builds green
+  post-D24; HE image byte-count unchanged (guards hold).
+- Rehearsal (partial): flash PASS (byte-verified). **Init bridge PASSES
+  live, first try: rungs 1–6 SUCCESS, MDIO-over-OA proven (DEVID
+  0x0283/0xBC91 through the driver's own PHY layer — the flagged new
+  surface), SyncConfig + SWPD-exit clean.** VERDICT A achieved.
+
+**Broke/surprised us:**
+- **Link never comes up — and it's the BENCH, not the code.** Isolation
+  (one variable at a time): S5-minimal sequence over raw C45 MDIO also
+  fails → not the driver's phyInit extras; far side advertises fine but
+  sees no partner (ethtool, bounced mid-window); **LOFE relatch probe
+  silent** vs bite-2's measured continuous relatch from far-side energy
+  → no energy on the pair. Suspect the pair got unplugged during the
+  bite-2/S6-demo bench work. **Nick: re-seat/check the pair at both J1s**,
+  then re-run `s9_oa_datapath.py` (README bite-3 ladder) — everything
+  else is in place.
+- Chip default AN_CONTROL=0x1000 measured (AN_EN on by default) —
+  retroactively validates S5's power-up-only sequence.
+
+**Next:** Nick's bench check → re-run runner (expect link UP ≲1 s, then
+VERDICT B + frames in tcpdump on nereus001) → nibble 3 manual test →
+nibble 4 PR. Debug helpers staged in `~/ae3_flash/` on nereus000.
+
+**CONTINUED same day (bench debugging with Nick, paused mid-bisect):**
+- Pair re-seated + continuity-verified (J1↔J1) by Nick → STILL no link.
+  Isolation extended, all software-only: far side hardware-reset via
+  module reload (fresh PHY init) → nothing; **forced-mode test (AN
+  bypassed entirely: far = ethtool forced-master, ours = registers per
+  the kernel driver's own recipe, amplitudes matched) → also dead both
+  directions.** Fault is squarely in the analog/MDI domain.
+- Correction recorded: the multimeter AC test I suggested was invalid —
+  DMM bandwidth ≪ 7.5 MBd PAM-3; "no AC" readings are expected even on
+  a healthy line. No line-capable instrument on the bench (LA descoped
+  in S2).
+- New measured facts: **hat #2 straps 2.4 Vpp TX on**
+  (B10L_PMA_CNTRL powers up 0x1000; chip reset default is 0 → AOS
+  TX2P4 strap pulled high — SPEC §Open questions); chip default
+  AN_CONTROL=0x1000 (AN_EN on). Hat blue LEDs track link (dark = no
+  link); red = power.
+- Suspicion worth recording: the S6 demo's unplug/replug was a hot-plug
+  with both ends powered on an unprotected line interface; plus heavy
+  bench handling since. A damaged line driver on either hat explains
+  every observation.
+- **Bisect in progress (paused):** plan = SG shield (known-good,
+  generic SPI) on nereus000 ↔ new shorter pair ↔ hat #1/nereus001,
+  rerun S2's `t1l_link_test.sh`. Links → fault follows hat #2 / old
+  harness. Nick dismantled the AE3 rig (hat #2 off, set aside, straps
+  UNTOUCHED = still OA) and mounted the shield, but **nereus000 stopped
+  joining the network entirely (no tailscale, no LAN ping, even with
+  the shield removed)** — unresolved, needs local console/router check.
+  Note: hat #2 on a Pi is NOT testable while OA-strapped (kernel driver
+  is generic-SPI-only, D13) and a powered-but-unmanaged hat's PHY stays
+  in software powerdown → dark blue LED proves nothing in that config.
+- Fixture state at pause: AE3 rig DISMANTLED (rebuild = D19 wiring for
+  bite-3 demo); AE3 still flashed with the bite-3 alif build; hat #2
+  aside, OA straps intact; SG shield on/near nereus000; nereus000 OFF
+  NETWORK; nereus001 healthy (autoneg on, eth1 up; tailnet name is
+  **nereus001-1**, not nereus001 — post-reflash registration).
+
+**CONTINUED 2026-08-12 (resumed with Nick; INVESTIGATION CLOSED):**
+- nereus000 WiFi root-caused: hard power-cuts → ext4 orphan cleanup ate
+  the NM WiFi profile (dmesg evidence). Nick recreated it. Bench rule:
+  `sudo poweroff`, never pull power.
+- Bisect completed across ALL three endpoint pairings (two cables,
+  three termination styles, AN + matched forced master/slave, straps/
+  overlays/modules/rails all formally verified — incl. Nick's process
+  checks: module vermagic matches running kernel on BOTH nodes, live
+  DT has no adi,spi-crc): **every pairing dead, zero energy either
+  direction. Verdict: ≥2 of 3 line interfaces broken; both AOS hats
+  prime suspects** (single transient into the shared pair; window =
+  post-S6-demo bench-work era). Full logic + the DC-blocked-front-end
+  correction in SPEC §Open questions.
+- Nick's Fluke measurements KILLED a documented "fact": hat J1 is NOT
+  DC-shorted through the winding — both hats OL, shield 2 MΩ = DC-
+  blocked fronts everywhere; my DMM-based localization attempts were
+  invalid (also: DMM AC range can't see 7.5 MBd PAM-3 — recorded so
+  nobody tries again).
+- En-route mishap (fixed): bare `build_adin1110.sh` on nereus001
+  defaults to sg and ADDED a second overlay line to config.txt —
+  removed before it could double-bind SPI CS on next boot. Rule:
+  always pass the sg|aos argument.
+- **Bite-3 status: code DONE and hardware-proven to the wire (bridge +
+  MDIO-over-OA + TX submit all pass live); demo BLOCKED solely on
+  replacement link hardware.** Options for Nick: new AOS hat(s), or
+  ADIN2111 eval hw (bite-1 decision point pre-approved; production
+  direction). SG shield = probable good endpoint; can be re-strapped
+  to OA as the AE3-side chip if roles reshuffle (hat #2 stays generic
+  as the Linux node).
+
+**Next:** Nick picks replacement hardware → rebuild fixture → re-run
+`s9_oa_datapath.py` (one command) → nibble 3 manual test → PR.
+
+**SPUN DOWN 2026-08-12 (Nick's call): boards confirmed dead, bite-3 PR
+opened with the demo deferred to hardware arrival. Interim pivot: new
+session plans a USB-only dev track for the BM-native arc (S10's
+FreeRTOS-on-HE + OpenAMP spike needs zero ADIN hardware; TRACKER
+review with fresh eyes). Kickoff prompt handed to Nick.**
+
+---
+
 ## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found
 
 **Branch:** sprint/9-adi-hal

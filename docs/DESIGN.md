@@ -944,4 +944,68 @@ pinned rev (installed HE untouched, no skew).
 **Fixture note:** AE3 runs the bite-2 alif HP build (MANIFEST sha
 recorded in `~/fw/spike-alif-7d4dbf7ab2/` on nereus000); hat #2 still
 strapped OA; chip exit-sanitized (CONFIG0=0x06). Restore ladder
-unchanged from bite 1.
+unchanged from bite 1. *(Superseded by bite 3 — see below.)*
+
+### S9 detail (2026-08-11) — bite 3: OA data-path smoke (nibble 2 + partial rehearsal)
+
+**Code (driver still byte-identical):** `firmware/bm_spike/src/
+bm_spike_datapath.c/h` — the **init bridge** that supplies exactly what
+the driver's failed init path skips on a 1110: (1) `macDriverEntry.Init`
+tolerated at COMM_TIMEOUT (identity gate, bite-1 fact); (2)
+waitDeviceReady replica polling OUR PHYID + RESETC W1C (mirror of
+adi_mac.c:1107–1157); (3) macInit replica — IMASK0/1, STATUS reads,
+CONFIG0.TXFCSVE clear, CONFIG2.CRC_APPEND set, shadow irqMask fields
+kept consistent (adi_mac.c:581–703); (4) the one-line state nudge
+INITIALIZED → READY (the field lives in spike-owned `pDevMem`); (5) the
+driver's own `PHY_Init` (MDIO addr 1) via wrappers over
+`macDriverEntry.PhyRead/Write`; (6) `SyncConfig` then
+`ExitSoftwarePowerdown` (bm_adin2111.c:327's enable order —
+`adin2111_EnablePort` is verbatim ExitSoftwarePowerdown). TX =
+`macDriverEntry.SubmitTxBuffer` with a single static BufDesc; the
+synchronous HAL completes the whole OA data transaction inline
+(spiCallback recursion, proven since bite 1), so TX needs no IRQ path.
+Python: `dp_init/dp_link/dp_send/dp_stats` (both HAL tables);
+`fresh()` also drops the dp handles. Runner `s9_oa_datapath.py` (S5
+frame format inline → both S5 receivers work unchanged).
+
+**1110-vs-2111 delta item 3 (for S13):** even past the identity gate,
+`adin2111_Init` waits on a port-2 PHY at MDIO addr 2
+(adin2111.c:169–180) which a 1110 lacks — a 1110 port of bm_core must
+drive the MAC/PHY-layer driver entries directly (what the bridge does).
+Host test [8] proves the bridge degrades to the plain driver sequence on
+a 2111 identity (no nudge).
+
+**Host tests 16 → 41** (`host_test/`): mock grew writable MAC regs, a
+MDIOACC engine over a clause-45 PHY model (DEVIDs, powerdown handshake,
+AN), and OA data-chunk parsing (per-chunk footers SYNC=1/TXC=31/odd
+parity; byte-exact TX frame capture). New: [6] bridge rungs on a 1110,
+[7] TX chunk math byte-identical at 500 B/61 B + sub-minimum refusal,
+[8] 2111 degradation, [9] loud PHY-identity refusal.
+
+**Rehearsal (Claude, 2026-08-11, fixture live):** builds green (alif HP
+2,219,008 B carries dp code; HE byte-count unchanged vs D24 reference —
+guards hold; mp regression build compiles). Flash via S7 ladder PASS.
+**On-target: the entire init bridge PASSES first try — rungs 1–6 all
+SUCCESS, PHYID 0x0283BC91 via replica, DEVID 0x0283/0xBC91 through the
+driver's PHY layer = MDIO-over-OA proven (the bite's flagged new
+surface), SyncConfig + powerdown-exit clean.** Then: **link never
+comes up (60 s+, PMA_STAT1 stuck 0x0002, AN_STATUS stuck 0x0008 = AN
+able, no pages).** Isolation ladder, one variable at a time: (a)
+S5-minimal sequence (exit SWPD only, raw C45 MDIO over the bench-handle
+MDIOACC passthrough) — also no link → NOT the driver's phyInit extras;
+(b) far side bounced + inspected (`ethtool`: advertising 10baseT1L,
+AN on, master-slave unknown = sees no partner either); (c) **LOFE
+relatch probe: STATUS0 fully quiet after W1C** vs bite-2's measured
+continuous relatch from far-side energy, same chip/straps/probe →
+**no energy on the pair. Physical medium fault (pair unplugged since
+the bite-2/S6-demo bench work?) — bench check flagged for Nick.**
+Chip register state measured en route (post-reset defaults): AN_CONTROL
+0x1000 (AN_EN set by default — validates S5's assumption), AN_ADV
+0x0001/0x4000/0x3000, CRSM_STAT 0x0007 → 0x0015 after SWPD exit.
+
+**Fixture note:** AE3 now runs the **bite-3 alif HP build**
+(`~/fw/spike-dp-alif-7d4dbf7ab2/` on nereus000, MANIFEST alongside;
+byte-verified flash). Hat #2 strapped OA; chip exit-sanitized. Debug
+helpers added to `~/ae3_flash/`: `s9b3_debug.py` (bridge + 30 s link
+hold), `s9b3_mdio_diag.py` (raw C45 MDIO dump + S5-minimal replay).
+Restore ladder unchanged.

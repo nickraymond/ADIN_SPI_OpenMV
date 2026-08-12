@@ -21,6 +21,7 @@ for f in adi_spi_oa adi_mac adi_phy adi_fcs adin2111; do
     "${CC}" -c ${INC} -O1 -o "${BUILD}/${f}.o" "${VENDOR}/${f}.c"
 done
 "${CC}" -c ${INC} -O1 -Wall -Wextra -Werror -o "${BUILD}/bm_spike_verify.o" "${SRC}/bm_spike_verify.c"
+"${CC}" -c ${INC} -O1 -Wall -Wextra -Werror -o "${BUILD}/bm_spike_datapath.o" "${SRC}/bm_spike_datapath.c"
 "${CC}" -c ${INC} -O1 -Wall -Wextra -Werror -o "${BUILD}/hal_mock.o" hal_mock.c
 "${CC}" -c ${INC} -O1 -Wall -Wextra -Werror -o "${BUILD}/test_verify.o" test_verify.c
 

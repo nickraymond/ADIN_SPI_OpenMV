@@ -1,10 +1,13 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S9 bite 1 OA spike passed, PR #13; HE build
-blocker root-caused + fixed on `sprint/9-build-fix` — build_ae3.sh must
-use docker build-firmware-dev, D24; S9 bites 2–3 next) ·
-Owner/gate: **Nick***
+*Last updated: 2026-08-12 (S9 bite 3: code done + proven to the wire;
+T1L investigation CLOSED — ≥2 of 3 line interfaces broken, both AOS
+hats suspect; demo blocked on replacement link hardware, Nick
+deciding: new AOS hats vs ADIN2111 eval. Hat #2 re-strapped to
+generic during the bisect — bite-3 fixture now needs either a
+re-strap back or the SG-shield-as-OA reshuffle. DEV_LOG top entry has
+the full verdict.) · Owner/gate: **Nick***
 
 ---
 
@@ -416,8 +419,37 @@ S7 research notes above + DESIGN §S7 detail.*
       deferred to S10. PR #15. Bite-3 starters banked: read_reg/
       write_reg passthrough, RX_SAMPLE_DELAY knob for the 20 MHz
       finding, level-trigger conversion option.
-- [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
+- [~] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
+      → IN PROGRESS 2026-08-11 (nibble-1 plan approved by Nick; nibble-2
+      code done): `bm_spike_datapath.c` init bridge (driver still
+      byte-identical — waitDeviceReady/macInit replicas + one-line state
+      nudge past the identity gate in spike-owned memory), dp_* Python
+      API, `s9_oa_datapath.py` runner, host tests 16 → 41 (mock grew
+      MDIO/PHY emulation + OA data-chunk parsing w/ byte-exact TX
+      capture). Rehearsal on hardware: **bridge PASSES live — MDIO-over-OA
+      proven (DEVID 0x0283/0xBC91 through the driver's own PHY layer),
+      PHY init + SyncConfig + powerdown-exit all SUCCESS** — but **link
+      never comes up: measured NO far-side energy (bite-2's continuous
+      LOFE relatch is now absent; both PHYs advertise, neither sees AN
+      pages). Physical pair fault suspected (unplugged since the bite-2 /
+      S6-demo bench work?). BENCH CHECK NEEDED (Nick): J1 pair seated
+      both ends.** Verification one-liner after re-seat = re-run the
+      runner (README bite-3 ladder). 1110-vs-2111 delta item 3 recorded:
+      adin2111-level init also blocks on a port-2 PHY wait → 1110 needs
+      MAC/PHY-layer entry-point bring-up (the bridge).
+      → **PAUSED 2026-08-12 (Nick): demo blocked on replacement PCBAs.**
+      Full-day isolation concluded ≥2 of 3 line interfaces dead — both
+      AOS hats condemned (likely rework transient through the connected
+      pair; SPEC §Open questions has the verdict + new bench rules).
+      Code is COMPLETE and hardware-proven to the wire (init bridge,
+      MDIO-over-OA, TX submit all PASS live); PR opened (nibble 4) so
+      the branch doesn't rot. RESUME when hardware arrives: rebuild a
+      link fixture (new hats, or SG-shield-as-OA + role reshuffle, or
+      ADIN2111 eval hw), then the README bite-3 ladder — the runner is
+      one command. NOTE: hat #2 is currently strapped GENERIC (bisect
+      state); AE3 still carries the bite-3 alif build. Interim work
+      pivots to the USB-only track (S10 spike needs no ADIN hardware).
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;
 a seq-numbered frame lands in tcpdump across the pair.
 **Needs:** S7 flash loop, Mac build env, hat #2 re-strap.
