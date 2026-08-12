@@ -1,21 +1,25 @@
-# s10_bcmp_bench.py -- S10 INTERIM 2a runner. Runs ON the AE3's HP core
+# s10_bcmp_bench.py -- S10 INTERIM 2b runner. Runs ON the AE3's HP core
 # (stock/fixture firmware, no flash) via mpremote from nereus000:
 #
-#   mpremote connect <by-id> cp bm_he.elf :/flash/bm_he.elf   # once/build
+#   mpremote connect <by-id> cp bm_he.elf :/flash/bm_he.elf     # once/build
+#   mpremote connect <by-id> cp s10_peer.py :/flash/s10_peer.py # once/build
 #   mpremote connect <by-id> run s10_bcmp_bench.py
 #
 # Loads the bm_core stack app onto the HE core at runtime (remoteproc ELF
-# load into SRAM9_B), acts as the far end of the mock NetworkDevice's fake
-# wire, and prints the verdict table:
-#   A -- BM stack up on HE (bm_os/lwIP/BCMP init ladder RUNNING, node id +
-#        both IPv6 addresses derived per bm_lwip.c:289-295)
-#   B -- BCMP heartbeats emitted on schedule and wire-correct (Ethernet II
-#        0x86DD / IPv6 next-header 0xBC / BCMP type 0x01 / node id in src
-#        addr bytes 8-15 / BCMP checksum verifies / boot-time monotonic);
-#        frames also written to /flash/bm_he_hb.pcap for Wireshark
-#        (bm_core ships a dissector: proto_bcmp.lua).
+# load into SRAM9_B), then plays a full python PEER NODE (s10_peer.py) on
+# the far end of the mock NetworkDevice's fake wire. Verdicts:
+#   A -- BM stack up on HE (init ladder RUNNING, node id + both IPv6
+#        addresses per bm_lwip.c:289-295)                       [2a]
+#   B -- HE's BCMP heartbeats emitted on schedule + wire-correct [2a]
+#   C -- neighbor table forms: peer heartbeats -> HE lists the peer as an
+#        online neighbor in a BcmpNeighborTableReply             [2b]
+#   D -- BCMP ping peer->HE answered (echo reply: id/seq/payload echoed)
+#   E -- BCMP ping HE->peer answered AND accepted (WCMD_PING ->
+#        HE's echo request on the wire -> peer replies -> ping.c's
+#        acceptance line lands on the HE debug ring)
 #
-# Copy the capture off afterwards:
+# Both directions of the conversation land in /flash/bm_he_hb.pcap
+# (Wireshark: Sofar's proto_bcmp.lua dissector decodes BCMP). Copy off:
 #   mpremote connect <by-id> cp :/flash/bm_he_hb.pcap .
 
 import openamp
@@ -23,20 +27,32 @@ import struct
 import time
 import machine
 
+try:
+    import s10_peer as peer
+except ImportError:
+    raise OSError("s10_peer.py not on the board VFS -- "
+                  "mpremote cp s10_peer.py :/flash/s10_peer.py")
+
 ELF_PATHS = ("/flash/bm_he.elf", "bm_he.elf")
 BM_STATUS_PAGE = 0x600BFE00
 PCAP_PATH = "/flash/bm_he_hb.pcap"
 
 NODE_ID = 0x424D4845AE30BEEF  # bm_stubs.c BM_HE_NODE_ID
 HB_PERIOD_S = 10              # bcmp.c bcmp_heartbeat_s
-CAPTURE_S = 25                # >= 2 timer heartbeats + the link-up one
+CAPTURE_S = 25                # >= 2 HE timer heartbeats
 MIN_HEARTBEATS = 2
+PEER_HB_EVERY_S = 5           # keep the peer's lease (10 s) fresh
+REPLY_TIMEOUT_S = 3
+
+PING_D_PAYLOAD = b"S10-2b peer->HE"
+PING_E_PAYLOAD = b"S10-2b HE->peer"
 
 # wire protocol (bm_he.h)
 WCMD_FRAME_TX = 0x11
 WCMD_FRAME_RX = 0x12
 WCMD_LINK = 0x13
 WCMD_QUERY = 0x14
+WCMD_PING = 0x15
 WREP_STATUS = 0x94
 
 STAGES = {0: "-", 1: "BOOT", 2: "RTOS", 3: "RPMSG", 4: "L2", 5: "IP",
@@ -56,68 +72,28 @@ def bm_page():
             "ring": (f[7], f[8], f[9])}
 
 
-def dump_dbg_ring():
+def read_dbg_ring():
     p = bm_page()
     if not p or not p["ring"][0]:
-        return
+        return ""
     addr, size, widx = p["ring"]
     import uctypes
     ring = bytes(uctypes.bytearray_at(addr, size))
     n = min(widx, size)
     start = widx % size if widx > size else 0
     text = (ring[start:n] + ring[:start]) if widx > size else ring[:n]
+    return text.decode()
+
+
+def dump_dbg_ring():
+    text = read_dbg_ring()
+    if not text:
+        return
     print("-- HE debug ring " + "-" * 44)
-    for line in text.decode().split("\n"):
+    for line in text.split("\n"):
         if line:
             print("   | " + line)
     print("-" * 61)
-
-
-# ---- BCMP wire-format checks (offsets per bm_core network_frames.h) ----
-
-def ipv6_pseudo_checksum(src, dst, payload, next_header):
-    # RFC 2460 upper-layer checksum, as bm_lwip's ip6_chksum_pseudo does.
-    s = 0
-    for b in (src, dst):
-        for i in range(0, 16, 2):
-            s += (b[i] << 8) | b[i + 1]
-    s += len(payload) & 0xFFFFFFFF
-    s += next_header
-    data = payload if len(payload) % 2 == 0 else payload + b"\x00"
-    for i in range(0, len(data), 2):
-        s += (data[i] << 8) | data[i + 1]
-    while s >> 16:
-        s = (s & 0xFFFF) + (s >> 16)
-    return (~s) & 0xFFFF
-
-
-def parse_frame(frame):
-    """Return (kind, detail) -- kind: 'heartbeat', 'bcmp', 'other'."""
-    if len(frame) < 54 + 2:
-        return "other", "runt (%d B)" % len(frame)
-    ethertype = (frame[12] << 8) | frame[13]
-    if ethertype != 0x86DD:
-        return "other", "ethertype 0x%04x" % ethertype
-    if frame[20] != 0xBC:
-        return "other", "ipv6 next-header 0x%02x" % frame[20]
-    src = frame[22:38]
-    dst = frame[38:54]
-    plen = (frame[18] << 8) | frame[19]
-    bcmp = frame[54:54 + plen]
-    btype, bcksum = struct.unpack_from("<HH", bcmp, 0)
-    # Checksum verifies over the BCMP payload with the checksum field
-    # zeroed, against the IPv6 pseudo-header (bm_lwip.c:118).
-    zeroed = bcmp[:2] + b"\x00\x00" + bcmp[4:]
-    calc = ipv6_pseudo_checksum(src, dst, zeroed, 0xBC)
-    # packet.c stores it little-endian in the struct; calc is network sum.
-    csum_ok = bcksum == ((calc >> 8) | ((calc & 0xFF) << 8)) or bcksum == calc
-    detail = {"src": src, "dst": dst, "type": btype, "csum_ok": csum_ok}
-    if btype == 0x01 and len(bcmp) >= 13 + 12:
-        boot_us, lease = struct.unpack_from("<QI", bcmp, 13)
-        detail["boot_us"] = boot_us
-        detail["lease_s"] = lease
-        return "heartbeat", detail
-    return "bcmp", detail
 
 
 # ---- pcap writer (classic format, LINKTYPE_ETHERNET) --------------------
@@ -142,11 +118,18 @@ class Pcap:
 
 # ---- wire endpoint --------------------------------------------------------
 
+def now_s():
+    # ticks-based: MicroPython time.time() is 1 s resolution / 2000 epoch;
+    # relative times read better in Wireshark anyway.
+    return time.ticks_ms() / 1000.0
+
+
 class Wire:
     def __init__(self):
         self.ept = None
         self.status = None
-        self.frames = []          # (bytes, t_seconds)
+        self.frames = []          # HE -> wire: (bytes, t_seconds, port)
+        self.injected = []        # wire -> HE: (bytes, t_seconds), for pcap
 
     def ns(self, src, name):
         if name == "bm-wire":
@@ -158,13 +141,19 @@ class Wire:
             return
         cmd, port, ln = struct.unpack_from("<BBH", b, 0)
         if cmd == WCMD_FRAME_TX and len(b) >= 4 + ln:
-            # ticks-based timestamp: MicroPython time.time() has 1 s
-            # resolution and a 2000 epoch -- relative times read better
-            # in Wireshark anyway.
-            self.frames.append((b[4:4 + ln],
-                                time.ticks_ms() / 1000.0, port))
+            self.frames.append((b[4:4 + ln], now_s(), port))
         elif cmd == WREP_STATUS:
             self.status = b[4:4 + ln]
+
+    def inject(self, frame):
+        self.injected.append((frame, now_s()))
+        self.ept.send(struct.pack("<BBH", WCMD_FRAME_RX, 1, len(frame)) +
+                      frame, timeout=1000)
+
+    def ping_cmd(self, target_node, payload):
+        body = struct.pack("<Q", target_node) + payload
+        self.ept.send(struct.pack("<BBH", WCMD_PING, 0, len(body)) + body,
+                      timeout=1000)
 
     def query(self, timeout_ms=2000):
         self.status = None
@@ -175,6 +164,20 @@ class Wire:
                 raise OSError("no status reply on bm-wire")
             time.sleep_ms(2)
         return struct.unpack("<Q16s16sIIIIIIII", self.status)
+
+    def wait_for(self, cursor, pred, timeout_s=REPLY_TIMEOUT_S):
+        """Scan self.frames from index `cursor` for a parsed frame matching
+        pred(d); returns (d, new_cursor) or (None, new_cursor)."""
+        t0 = time.ticks_ms()
+        while True:
+            while cursor < len(self.frames):
+                d = peer.parse(self.frames[cursor][0])
+                cursor += 1
+                if pred(d):
+                    return d, cursor
+            if time.ticks_diff(time.ticks_ms(), t0) > timeout_s * 1000:
+                return None, cursor
+            time.sleep_ms(20)
 
 
 def load_remote():
@@ -237,25 +240,29 @@ def main():
           % (ip6_str(ll), ip6_str(ucast), "OK" if addr_ok else "MISMATCH"))
     print("   heap free/min   : %d / %d B" % (heap_free, heap_min))
 
-    # ---- verdict B: heartbeats on the wire ------------------------------
-    print("capturing %d s of wire traffic..." % CAPTURE_S)
+    # ---- capture window: HE heartbeats out, peer heartbeats in ----------
+    print("capturing %d s of wire traffic (peer node 0x%016x heartbeating "
+          "every %d s)..." % (CAPTURE_S, peer.PEER_NODE_ID, PEER_HB_EVERY_S))
     w.frames = []
+    hb_boot_us = 1000 * 1000 * 1000   # peer's fake boot clock, monotonic
+    next_hb_ms = 0
     t0 = time.ticks_ms()
     while time.ticks_diff(time.ticks_ms(), t0) < CAPTURE_S * 1000:
+        if time.ticks_diff(time.ticks_ms(), t0) >= next_hb_ms:
+            w.inject(peer.build_heartbeat(hb_boot_us))
+            hb_boot_us += PEER_HB_EVERY_S * 1000 * 1000
+            next_hb_ms += PEER_HB_EVERY_S * 1000
         time.sleep_ms(50)
 
-    pcap = Pcap(PCAP_PATH)
+    # ---- verdict B: HE heartbeats on the wire ---------------------------
     heartbeats = []
     others = []
     for frame, ts, port in w.frames:
-        pcap.frame(frame, ts)
-        kind, detail = parse_frame(frame)
-        if kind == "heartbeat":
-            heartbeats.append(detail)
+        d = peer.parse(frame)
+        if d["kind"] == "heartbeat" and d["src_node"] == NODE_ID:
+            heartbeats.append(d)
         else:
-            others.append((kind, detail))
-    pcap.close()
-
+            others.append(d)
     hb_ok = len(heartbeats) >= MIN_HEARTBEATS
     csum_ok = all(h["csum_ok"] for h in heartbeats)
     src_ok = all(h["src"][8:16] == idb for h in heartbeats)
@@ -271,11 +278,99 @@ def main():
     for h in heartbeats:
         print("   hb: boot %.3f s  lease %d s  dst %s"
               % (h["boot_us"] / 1e6, h["lease_s"], ip6_str(h["dst"])))
+
+    cursor = len(w.frames)   # phases below only look at newer frames
+
+    # ---- verdict C: neighbor table lists the peer -----------------------
+    w.inject(peer.build_neighbor_request(NODE_ID))
+    reply, cursor = w.wait_for(cursor,
+                               lambda d: d["kind"] == "neighbor_reply")
+    entry = None
+    if reply:
+        for n in reply["neighbors"]:
+            if n["node_id"] == peer.PEER_NODE_ID:
+                entry = n
+                break
+    verdicts["C"] = (reply is not None and reply["csum_ok"] and
+                     reply["node_id"] == NODE_ID and entry is not None and
+                     entry["port"] == 1 and entry["online"] == 1)
+    if reply:
+        print("C: neighbor table  : %s  (from 0x%016x, %d port(s), %d "
+              "neighbor(s), peer %s)"
+              % ("PASS" if verdicts["C"] else "FAIL", reply["node_id"],
+                 reply["port_len"], reply["neighbor_len"],
+                 "online, port %d" % entry["port"] if entry else "MISSING"))
+    else:
+        print("C: neighbor table  : FAIL  (no BcmpNeighborTableReply in "
+              "%d s)" % REPLY_TIMEOUT_S)
+
+    # ---- verdict D: ping peer -> HE -------------------------------------
+    w.inject(peer.build_echo_request(NODE_ID, 0xD00D, 1, PING_D_PAYLOAD))
+    reply, cursor = w.wait_for(cursor, lambda d: d["kind"] == "echo_reply")
+    verdicts["D"] = (reply is not None and reply["csum_ok"] and
+                     reply["node_id"] == NODE_ID and
+                     reply["id"] == 0xD00D and reply["seq"] == 1 and
+                     reply["payload"] == PING_D_PAYLOAD)
+    if reply:
+        print("D: ping peer->HE   : %s  (reply from 0x%016x, id 0x%04x, "
+              "seq %d, payload %s, csum %s)"
+              % ("PASS" if verdicts["D"] else "FAIL", reply["node_id"],
+                 reply["id"], reply["seq"],
+                 "echoed" if reply["payload"] == PING_D_PAYLOAD else "BAD",
+                 "OK" if reply["csum_ok"] else "BAD"))
+    else:
+        print("D: ping peer->HE   : FAIL  (no echo reply in %d s)"
+              % REPLY_TIMEOUT_S)
+
+    # ---- verdict E: ping HE -> peer -------------------------------------
+    # ping.c's acceptance narrative on the debug ring is the "reply
+    # accepted" proof; count its marker before and after. (The line's
+    # node id prints garbage under newlib-nano %llx -- 2a fact -- so
+    # match the stable text, not the id.)
+    ring_marker = "bytes from"
+    marks_before = read_dbg_ring().count(ring_marker)
+    w.ping_cmd(peer.PEER_NODE_ID, PING_E_PAYLOAD)
+    req, cursor = w.wait_for(cursor, lambda d: d["kind"] == "echo_request")
+    req_ok = (req is not None and req["csum_ok"] and
+              req["node_id"] == peer.PEER_NODE_ID and
+              req["id"] == (NODE_ID & 0xFFFF) and
+              req["payload"] == PING_E_PAYLOAD)
+    accepted = False
+    if req_ok:
+        w.inject(peer.build_echo_reply(req["id"], req["seq"],
+                                       req["payload"],
+                                       hdr_seq=req["hdr_seq"]))
+        t0 = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), t0) < REPLY_TIMEOUT_S * 1000:
+            if read_dbg_ring().count(ring_marker) > marks_before:
+                accepted = True
+                break
+            time.sleep_ms(100)
+    verdicts["E"] = req_ok and accepted
+    if req is None:
+        print("E: ping HE->peer   : FAIL  (no echo request on the wire in "
+              "%d s)" % REPLY_TIMEOUT_S)
+    else:
+        print("E: ping HE->peer   : %s  (request to 0x%016x id 0x%04x "
+              "seq %d payload %s csum %s; reply %s by ping.c)"
+              % ("PASS" if verdicts["E"] else "FAIL", req["node_id"],
+                 req["id"], req["seq"],
+                 "ok" if req["payload"] == PING_E_PAYLOAD else "BAD",
+                 "OK" if req["csum_ok"] else "BAD",
+                 "ACCEPTED" if accepted else "NOT ACCEPTED"))
+
+    # ---- pcap: both directions, chronological ---------------------------
+    pcap = Pcap(PCAP_PATH)
+    everything = [(f, ts) for f, ts, _ in w.frames] + w.injected
+    everything.sort(key=lambda e: e[1])
+    for frame, ts in everything:
+        pcap.frame(frame, ts)
+    pcap.close()
+    print("   pcap: %s (%d frames, both directions) -- mpremote cp :%s ."
+          % (PCAP_PATH, pcap.n, PCAP_PATH))
     if others:
-        print("   other wire frames: %d (first: %s %s)"
-              % (len(others), others[0][0], others[0][1]))
-    print("   pcap: %s (%d frames) -- mpremote cp :%s ."
-          % (PCAP_PATH, len(heartbeats) + len(others), PCAP_PATH))
+        print("   non-heartbeat HE frames in capture window: %d (first: %s)"
+              % (len(others), others[0].get("why", others[0]["kind"])))
 
     # ---- wrap up ---------------------------------------------------------
     (node, ll, ucast, stage, err, txf, rxf, oversize, link, heap_free,
@@ -287,9 +382,9 @@ def main():
     rp.stop()
     print()
     gate = "PASS" if all(verdicts.values()) else "FAIL"
-    print("S10 INTERIM 2a verdict : %s  (A:%s B:%s)"
-          % (gate, "PASS" if verdicts["A"] else "FAIL",
-             "PASS" if verdicts["B"] else "FAIL"))
+    print("S10 INTERIM 2b verdict : %s  (%s)"
+          % (gate, " ".join("%s:%s" % (k, "PASS" if verdicts[k] else "FAIL")
+                            for k in sorted(verdicts))))
     return gate
 
 

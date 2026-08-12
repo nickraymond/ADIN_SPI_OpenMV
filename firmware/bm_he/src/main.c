@@ -18,7 +18,9 @@
 #include "configuration.h"
 #include "device.h"
 #include "l2.h"
+#include "messages/ping.h"
 #include "timer_callback_handler.h"
+#include "util.h"
 
 #include "bm_he.h"
 #include "bm_net_mock.h"
@@ -113,6 +115,26 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
     case WCMD_QUERY:
         wire_send_status();
         break;
+    case WCMD_PING: {
+        // Send a BCMP echo request to the multicast link-local address,
+        // same as bm_sbc's app-thread usage; the ping reply is validated
+        // inside ping.c (id + payload match) and narrated on the debug
+        // ring -- the runner greps for it (verdict E).
+        if (hdr->len < sizeof(wire_ping_t)) {
+            break;
+        }
+        uint64_t target;
+        memcpy(&target, payload, sizeof(target));   // payload may be unaligned
+        uint16_t echo_len = (uint16_t)(hdr->len - sizeof(wire_ping_t));
+        BmErr perr = bcmp_send_ping_request(
+            target, &multicast_ll_addr,
+            echo_len ? payload + sizeof(wire_ping_t) : NULL, echo_len);
+        he_dbg_printf("wire: ping 0x%08lx%08lx (%u B) err %d\n",
+                      (unsigned long)(target >> 32),
+                      (unsigned long)(target & 0xFFFFFFFFu),
+                      (unsigned)echo_len, (int)perr);
+        break;
+    }
     default:
         he_dbg_printf("wire: unknown cmd 0x%02x\n", hdr->cmd);
         break;

@@ -87,4 +87,4 @@ cat "${HERE}/build/MANIFEST.txt"
 echo
 echo "Ship to the Pi:"
 echo "  ssh pi@nereus000 mkdir -p bm_he && \\"
-echo "  scp ${HERE}/build/bm_he.{elf,bin} ${HERE}/build/MANIFEST.txt ${HERE}/s10_bcmp_bench.py pi@nereus000:bm_he/"
+echo "  scp ${HERE}/build/bm_he.{elf,bin} ${HERE}/build/MANIFEST.txt ${HERE}/s10_bcmp_bench.py ${HERE}/s10_peer.py pi@nereus000:bm_he/"

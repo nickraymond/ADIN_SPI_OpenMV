@@ -26,3 +26,6 @@ cc -std=gnu11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
     -o "${OUT}/test_bm_he"
 
 "${OUT}/test_bm_he"
+
+# 2b: the python peer's frame builders/parsers (pure module, CPython-run).
+python3 "${HERE}/test_peer.py"
