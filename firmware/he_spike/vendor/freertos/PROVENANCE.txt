@@ -1,0 +1,2 @@
+FreeRTOS-Kernel V11.3.0 @ 9b777ae5c5b8e9e456065a00294d1e5f5f9facf5
+https://github.com/FreeRTOS/FreeRTOS-Kernel (MIT). Subset: tasks.c list.c queue.c heap_4.c GCC/ARM_CM55_NTZ/non_secure port + include/.
