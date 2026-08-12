@@ -374,15 +374,14 @@ USB/MicroPython baseline stays intact as the regression reference
    S10) — no ADIN dependency; the interim's first bite
    → DONE 2026-08-12: demo run by Nick — PASS (A/B/C, ≥5 Mbps gate
    cleared 2.6×–44×); PR #17
-2. `[~]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
+2. `[x]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
    NetworkDevice (see S10) — no ADIN dependency
    → split 2a/2b (Nick approved 2026-08-12, incl. trait-level mock
    over chip-level promotion + fetch-and-pin sys_arch). **2a DONE
    2026-08-12: demo run by Nick — PASS (A/B, identical numbers to
-   both rehearsals); PR #18 merged.** 2b (neighbors + ping vs python
-   peer): code + rehearsal DONE 2026-08-12 (branch
-   `sprint/10-bcmp-2b`, plan approved by Nick) — rehearsal PASSES ×2
-   identical (A–E); awaiting Nick's demo = the INTERIM-2 demo proper.
+   both rehearsals); PR #18 merged. 2b DONE 2026-08-12: demo run by
+   Nick — PASS (A–E, identical to both rehearsals) = the INTERIM-2
+   demo proper; branch `sprint/10-bcmp-2b`, PR opened.**
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety
@@ -565,8 +564,9 @@ a seq-numbered frame lands in tcpdump across the pair.
       bonus: HE fires BcmpDeviceInfoRequest at its new neighbor. pcap
       = full 15-frame two-node conversation, tcpdump-clean. Size
       231.5 K (~88%, +0.4 K). Host tests 72 → 112 checks. S6 USB
-      baseline re-verified after (34.1 fps, 0 gaps, 0 bad). Awaiting
-      Nick's demo (README ladder) = the INTERIM-2 demo proper.
+      baseline re-verified after (34.1 fps, 0 gaps, 0 bad).
+      → **2b demo PASSED (Nick, 2026-08-12 — A–E identical to both
+      rehearsals) = INTERIM 2 demo DONE; PR opened.**
 - [!] Validate against reference hardware: dev-kit mote (on hand) sees
       the AE3 as a BM neighbor — needs a live T1L path
       (RESUME-ON-HARDWARE)

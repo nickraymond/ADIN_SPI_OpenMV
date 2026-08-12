@@ -54,6 +54,10 @@ branched from merged PR #18)
 **Next:** Nick runs the 2b demo (`bm_he/README.md` ladder — build/scp
 optional since artifacts are staged; two cp + one run + pcap pull) =
 the INTERIM-2 demo proper → nibble 4 PR.
+→ **demo PASSED (Nick, same day — A–E identical to both rehearsals) =
+INTERIM 2 DONE; PR opened.** ("Unable to load configs from flash." ×3
+in the ring = bm_core's normal first-boot line — the stub config store
+is RAM, born empty per load; persistence is a hardware-day concern.)
 
 ---
 
