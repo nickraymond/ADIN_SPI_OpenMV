@@ -92,6 +92,39 @@ nibble 4 PR. Debug helpers staged in `~/ae3_flash/` on nereus000.
   NETWORK; nereus001 healthy (autoneg on, eth1 up; tailnet name is
   **nereus001-1**, not nereus001 — post-reflash registration).
 
+**CONTINUED 2026-08-12 (resumed with Nick; INVESTIGATION CLOSED):**
+- nereus000 WiFi root-caused: hard power-cuts → ext4 orphan cleanup ate
+  the NM WiFi profile (dmesg evidence). Nick recreated it. Bench rule:
+  `sudo poweroff`, never pull power.
+- Bisect completed across ALL three endpoint pairings (two cables,
+  three termination styles, AN + matched forced master/slave, straps/
+  overlays/modules/rails all formally verified — incl. Nick's process
+  checks: module vermagic matches running kernel on BOTH nodes, live
+  DT has no adi,spi-crc): **every pairing dead, zero energy either
+  direction. Verdict: ≥2 of 3 line interfaces broken; both AOS hats
+  prime suspects** (single transient into the shared pair; window =
+  post-S6-demo bench-work era). Full logic + the DC-blocked-front-end
+  correction in SPEC §Open questions.
+- Nick's Fluke measurements KILLED a documented "fact": hat J1 is NOT
+  DC-shorted through the winding — both hats OL, shield 2 MΩ = DC-
+  blocked fronts everywhere; my DMM-based localization attempts were
+  invalid (also: DMM AC range can't see 7.5 MBd PAM-3 — recorded so
+  nobody tries again).
+- En-route mishap (fixed): bare `build_adin1110.sh` on nereus001
+  defaults to sg and ADDED a second overlay line to config.txt —
+  removed before it could double-bind SPI CS on next boot. Rule:
+  always pass the sg|aos argument.
+- **Bite-3 status: code DONE and hardware-proven to the wire (bridge +
+  MDIO-over-OA + TX submit all pass live); demo BLOCKED solely on
+  replacement link hardware.** Options for Nick: new AOS hat(s), or
+  ADIN2111 eval hw (bite-1 decision point pre-approved; production
+  direction). SG shield = probable good endpoint; can be re-strapped
+  to OA as the AE3-side chip if roles reshuffle (hat #2 stays generic
+  as the Linux node).
+
+**Next:** Nick picks replacement hardware → rebuild fixture → re-run
+`s9_oa_datapath.py` (one command) → nibble 3 manual test → PR.
+
 ---
 
 ## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found

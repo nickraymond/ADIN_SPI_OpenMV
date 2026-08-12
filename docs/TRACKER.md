@@ -1,11 +1,13 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S9 bite 3 nibble 2 done + demo BLOCKED on a
-physical T1L fault: both directions dead, isolated to hat MDI/analog by
-elimination; SG-shield bisect paused — nereus000 dropped off the
-network; AE3 rig dismantled, hat #2 OA straps intact. See DEV_LOG top
-entry for the re-entry checklist.) · Owner/gate: **Nick***
+*Last updated: 2026-08-12 (S9 bite 3: code done + proven to the wire;
+T1L investigation CLOSED — ≥2 of 3 line interfaces broken, both AOS
+hats suspect; demo blocked on replacement link hardware, Nick
+deciding: new AOS hats vs ADIN2111 eval. Hat #2 re-strapped to
+generic during the bisect — bite-3 fixture now needs either a
+re-strap back or the SG-shield-as-OA reshuffle. DEV_LOG top entry has
+the full verdict.) · Owner/gate: **Nick***
 
 ---
 

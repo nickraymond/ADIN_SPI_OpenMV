@@ -172,16 +172,33 @@ pair, USB carrying no video.
   chip state persists across ALL board flashes/reboots (hat is powered
   from the Pi's always-on 3V3 header — D19).
 
-- T1L link dead on the bench pair (found 2026-08-11, S9 bite 3): both
-  hats' chips healthy over SPI, both PHYs configured correctly (AN and
-  forced mode both tried, amplitudes matched), cable continuity good —
-  yet zero energy crosses in either direction (LOFE silent; far side
-  sees no partner). Fault is analog/MDI on one or both hats; no
-  line-capable instrument on the bench (DMMs can't see 7.5 MBd PAM-3).
-  Bisect via SG shield ↔ hat #1 in progress (paused: nereus000 network
-  down). Hot-plug damage is a candidate cause (S6 demo unplugged/
-  replugged the pair with both ends powered; no line protection on
-  these boards) — if confirmed, add a no-hot-plug bench rule.
+- **T1L link dead — CONCLUSION 2026-08-12 (S9 bite 3, full-day
+  isolation with Nick): AT LEAST TWO of the three line interfaces are
+  broken; both AOS hats are the economical suspects.** All three
+  pairings among {hat #1, hat #2, SG shield} fail with zero energy in
+  either direction, across two different cables, three termination
+  styles (crimped Micro-Fit, solder, screw block), both protocols (AN
+  and ethtool-forced master/slave, matched), reference kernel drivers
+  on both ends, verified straps/overlays/modules (vermagic match, no
+  spi-crc), and clean PMIC rail telemetry. If only one endpoint were
+  dead, one pairing would have linked. Damage window: after the S6
+  demo's successful replug (link resumed = hats alive then), during
+  the re-strap/bench-work era — one transient into the shared pair
+  reaches both line drivers at once (no line protection on these
+  boards). Consequences: bench needs replacement link hardware (2nd
+  AOS hat order, or jump to ADIN2111 eval boards per bite-1's
+  pre-approved fallback); SG shield is the one probably-good endpoint
+  (line side never proven though — no shield↔shield pairing possible);
+  add bench rule candidates: no hot-plug of the pair with ends
+  powered, ESD strap during hat handling.
+- CORRECTION (2026-08-12, measured by Nick on BOTH hats + shield,
+  Fluke 15B+, unpowered): the S2 design-file claim "hat J1 DC-shorted
+  through the T1 winding" is WRONG — both hats read OPEN (OL) at the
+  J1 pads, shield reads ~2 MΩ at its terminals. All three line fronts
+  are DC-blocked (series caps); an open/high DC reading is the HEALTHY
+  signature. DC continuity therefore CANNOT verify these line paths
+  (only the bare cable). DESIGN §S2 table row stands corrected here;
+  the netlist parse followed nets through the coupling network.
 - AOS hat TX2P4 strap is PULLED HIGH (measured 2026-08-11 on hat #2:
   B10L_PMA_CNTRL powers up 0x1000 = 2.4 Vpp TX enabled; chip reset
   default is 0). Contradicts the SG-shield-derived assumption that all
