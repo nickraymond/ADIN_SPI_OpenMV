@@ -204,6 +204,27 @@ pair, USB carrying no video.
   default is 0). Contradicts the SG-shield-derived assumption that all
   amplitude straps float. Harmless with AN (amplitude negotiated) but
   matters for forced-mode configs and for the S13 production notes.
+- **AE3 P0–P5 are level-translated, not direct SoC pins** (Nick's
+  schematic review, 2026-08-12): `P0_INT…P3_INT` / `QWIIC_*_INT` nets
+  confirm translation from the SoC's 1.8 V domain; AE3 BOM carries an
+  NXS0104 (4-bit) + NXS0102 (2-bit) — open-drain auto-direction
+  translators, internal 10 kΩ pull-ups, 24 Mbps max. UNVERIFIED detail
+  (flag, don't act): which part sits on which nets was inferred from bit
+  counts, not read off the sheet — needs EE confirmation on the AE3
+  schematic before any mitigation. Consequences if confirmed: (a) a
+  PHYSICAL SPI ceiling independent of the D8 software ceiling — slow
+  open-drain rising edges mean usable SCLK lands well below the
+  ADIN1110's 25 MHz; (b) a clean physical hypothesis for the S9 bite-2
+  finding that 20 MHz OA READS return garbage while 20 MHz generic-SPI
+  TX ran the whole S6 demo at zero loss (MISO-into-AE3 is the
+  edge-sensitive direction; RX_SAMPLE_DELAY sweep already banked as an
+  S9 bite-3 starter, external pull-up stiffening on the hat side is a
+  new mitigation candidate — B-side only, the AE3's internal 10 kΩ is
+  fixed); (c) the "true SCLK at 20/25 MHz" open question below gains a
+  reason to exist beyond curiosity; (d) production v2 PCBA: measure
+  actual clock + rise time at the B2B connector before releasing layout
+  (S13 item), and budget the throughput model for a lower SPI clock.
+  No impact on the current USB-only interim ladder (no SPI involved).
 - SG shield JP1 (5-pin) / JP4 (3-pin): undocumented publicly; hypothesis =
   standalone-MCU breakout. Resolve by continuity or by emailing SG.
 - ~~AOS hat: CS/IRQ/RESET GPIO mapping, strap state, pair-connector

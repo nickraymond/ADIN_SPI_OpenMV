@@ -1,0 +1,14 @@
+Source:   https://git.savannah.nongnu.org/git/lwip/lwip-contrib.git
+          (canonical lwIP contrib repo; the github.com/lwip-tcpip mirror
+          does not carry contrib)
+Revision: 058e53d5b3a5a4639823e6f7cdc96f832643bfab (2021-09-24, master tip
+          at fetch time; the FreeRTOS port last changed well before this)
+Fetched:  2026-08-12 (Nick-approved fetch-and-pin, S10 INTERIM 2 nibble 1)
+Files:    ports/freertos/sys_arch.c              -> sys_arch.c
+          ports/freertos/include/arch/sys_arch.h -> arch/sys_arch.h
+          Byte-identical; NO local modifications. License: BSD-3-Clause,
+          carried in each file header (contrib repo has no root COPYING).
+Purpose:  lwIP OS-mode (NO_SYS=0) glue for FreeRTOS — semaphores, mutexes,
+          mailboxes, tcpip thread creation — required by bm_core's
+          network/bm_lwip.c backend. Config knobs it expects (e.g.
+          LWIP_FREERTOS_CHECK_CORE_LOCKING) are set in ../../src/lwipopts.h.

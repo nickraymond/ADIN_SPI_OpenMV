@@ -80,6 +80,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D23 | 2026-08-11 | Firmware **build host = Nick's Mac** (Apple Silicon), docker `linux/amd64` container under Rosetta with the `linux-x86_64` OpenMV SDK; artifacts scp to the Pi and flash via D22's path. Not docker-on-Pi. Mac is also the one-machine home for OpenMV dev now, bm_core dev next (own container later); VS Code for edits; OpenMV IDE (dmg install) kept as the hands-on flashing option. (Nick's call, 2026-08-11.) | The OpenMV SDK toolchain bundle is published **only** for `linux-x86_64` and `darwin-arm64` (`download.openmv.io` probed 2026-08-11; `linux-aarch64` 404s), so docker on the Pi 5 would mean qemu amd64 emulation on the live fixture host — slow and risky for zero benefit; the Mac runs the same container under Rosetta at near-native speed and the flash step still runs entirely from nereus000, so the loop stays fully remote. Reuses openmv.git's own `docker/Makefile` build (reuse before rewriting); wrapper adds rev pinning, platform/SDK plumbing, artifact verification. Tooling: `firmware/openmv_build/`. |
 | D24 | 2026-08-11 | AE3 firmware builds go through openmv's `docker/Makefile` **`build-firmware-dev`** target, never the stock `build-firmware` — the stock target cannot link the M55_HE image. `build_ae3.sh` updated (clean by default, `--incremental` for the dev loop); this unblocks the S9/S10 arc (bm_core runs on HE). | Root-caused 2026-08-11: stock `docker/build.sh` passes `BUILD=<dir>` on the make **command line**; command-line vars ride MAKEFLAGS into every sub-make and override `ports/alif/alif.mk:34`'s `BUILD := $(BUILD)/$(MCU_CORE)` per-core nesting. HP and HE then share one object dir — HP builds first and links; HE "reuses" HP-configured objects (USB device stack on) → FLASH_TEXT 154% (2.21 MB ≈ the HP image), undefined `dcd_*` TinyUSB DCD refs, "dangerous relocation". Reproduced byte-identical with the S9 usermod fully compiled out — environmental, as suspected. OpenMV CI never hits it: `.github/workflows/firmware.yml` + `tools/ci.sh::ci_build_target` build AE3 with plain `make TARGET=OPENMV_AE3`, no docker, no `BUILD=` override (their docker matrix entry builds only single-core NICLA_VISION). Upstream commit `6adf40fd` (2026-04) added `build-firmware-dev`, whose `build-dev.sh` comment states the nesting requirement verbatim — stock target remains broken for multi-core Alif targets (candidate upstream report). Fix verified from clean at `7d4dbf7ab2`: HE links 1,193,520 B / FLASH_TEXT 83.25% (official artifact 1,185,744 B), HP 2,200,176 B (official 2,200,784 B), `build/OPENMV_AE3/M55_{HP,HE}/` nesting present. Consequence found during verify: our tagged clone embeds describe-form ids (`v5.0.0-52.g7d4dbf7ab2`, dots per micropython `makeversionhdr.py`), not the bare sha10 of tagless CI builds — `flash_ae3.py`'s exact-match label check would have false-failed every local build; MANIFEST now carries `openmv_label` (exact embedded string) and the label check accepts a sha10 inside a describe id (byte-level readback verify unchanged as the real gate). |
 
+| D25 | 2026-08-12 | S10 INTERIM 2 mocks the network at the **NetworkDevice trait** (rpmsg = fake wire), not by promoting S9's chip-level HAL mock on-target; bite split 2a (stack boots + heartbeats out) / 2b (neighbors + ping vs a python peer). lwIP sys_arch = lwip-contrib FreeRTOS port, fetched + pinned. (Nick approved all three, 2026-08-12.) | The bite's risk is the stack (bm_os/lwIP/BCMP), not the driver — S9 proved the driver to the wire on real silicon, and on a 1110 the stock adin2111 init needs the S9 bridge anyway, so driver-over-mock-chip wouldn't rehearse the hardware-day config either. The trait is bm_core's own sanctioned seam (bm_sbc's virtual_port_device + runtime.cpp:511-532 run a non-ADIN device through the identical init ladder — followed verbatim). A scriptable wire lets HP python inject/capture frames (bidirectional BCMP tests in 2b), rehearses S12's actual HP↔HE topology, and gives INTERIM 3's golden captures a replay port. Hardware-day swap-in stays honest: adin2111_network_device() implements the exact same trait. |
+
 ## Verified-facts ledger
 
 See SPEC.md §Confirmed technical facts. Anything not there or here is
@@ -1090,3 +1092,72 @@ wrap ×3, restart-resume.
 build; nothing flashed this bite). `~/he_spike/` on nereus000 holds the
 ELF + runner; `/flash/he_spike.elf` on the board VFS. HE core left
 STOPPED after each run.
+
+### S10 detail (2026-08-12) — INTERIM 2a: bm_core boots on HE vs trait-level mock (as-built)
+
+**Result: both verdicts PASS, twice, identically — Sofar's real BM stack
+(bm_os on FreeRTOS + lwIP 2.2.1 + BCMP) runs on the AE3's HE core and
+speaks wire-correct BCMP into the mock NetworkDevice.** Same
+runtime-load scheme as bite 1 (RemoteProc ELF into SRAM9_B, NOTHING
+flashed). `firmware/bm_he/`; mock rationale = D25.
+
+**Rehearsal numbers (identical across both runs):** init ladder
+RUNNING err 0; node 0x424D4845AE30BEEF; ll fe80::424d:4845:ae30:beef /
+ucast fd00::… (id in bytes 8–15, bm_lwip.c:289); 2 heartbeats in 25 s
+at boot+10.02/20.02 s (bcmp_heartbeat_s = 10, timer-driven — bcmp
+sends none at link-up, matching the source's TODO), lease 10 s, dst
+ff02::1, BCMP checksum + src-node-id + egress-port-1 nibble (src byte 2
+= 0x01) all verified; boot-µs monotonic. pcap artifact reads clean in
+tcpdump: heartbeats decode as ip-proto-188 (0xBC), src MAC
+00:00:ae:30:be:ef per device.c's node-id derivation, plus a bonus MLD6
+listener report joining ff03::1 (bm's global multicast group) — lwIP's
+multicast machinery demonstrably live. Heap: 28.5 K free / 28.4 K min
+of the 64 K FreeRTOS heap. S6 USB baseline re-verified after the bench
+(33.7 fps QVGA q90, 0 gaps, 0 bad).
+
+**Size checkpoint (the flagged 2a risk): fits.** text 70.9 K + data
+0.1 K + bss 156.4 K = 231 K of the 262 K SRAM9_B upper half (~88%).
+The unproven load-to-ITCM lever was not needed; remaining levers if 2b
+grows: config-store (2×13 K), pbuf pool (18 K), heap (64 K).
+
+**Build/integration facts (all bench-earned):**
+1. bm_core @ d4ecc38 compiles for CM55 **byte-identical** — zero
+   patches; every integration knob fit in headers we own (bm_config.h,
+   lwipopts.h, FreeRTOSConfig.h) + RAM/tick stubs (bm_stubs.c).
+2. The init ladder that works is bm_sbc's, not bristlemouth_init():
+   device_init → config_init → bm_l2_init(dev) →
+   timer_callback_handler_init → bm_ip_init → bcmp_init(dev) →
+   bm_l2_netif_set_power(true) → link-up. Link-up must fire AFTER init,
+   never from inside trait enable() (l2 renegotiation-timer race,
+   documented in bm_sbc virtual_port_device.cpp:198).
+3. lwIP needs LWIP_ETHERNET=1 spelled out when LWIP_ARP=0 (it defaults
+   to LWIP_ARP), and the 2021 contrib sys_arch wants
+   configENABLE_BACKWARD_COMPATIBILITY + recursive mutexes.
+   TCPIP_THREAD_STACKSIZE is BYTES (converted at sys_arch.c:475).
+4. newlib-nano: (v)snprintf drags in the syscall layer → src/syscalls.c
+   stubs with a loudly-trapping _sbrk (no libc heap, everything goes
+   through heap_4); nano printf has NO %llx (prints garbage silently —
+   caught live in the debug ring, print u64s as two %08lx halves).
+5. bcmp's dfu_core keeps reboot info in `.noinit` — the ld script +
+   Reset_Handler preserve it across our resets (bss-only zeroing).
+6. FreeRTOS kernel vendor grew timers.c + stream_buffer.c (+ headers),
+   same pinned rev 9b777ae5c5, shared at ../he_spike (its own build
+   unchanged). VPATH gotcha: he_spike/src also has startup.c/main.c —
+   bm_he's Makefile forces src/ first.
+7. Debug ring (4 KB, address published on the bm status page
+   0x600BFE00) carries every bm_debug/lwIP diag line off-core — it
+   surfaced bm_core's own boot narrative and the %llx bug; first stop
+   for any 2b debugging, dumped automatically by the runner on failure.
+
+**Host tests:** 72 checks, clang+ASan/UBSan (`host_test/`): mock trait
+semantics (copy-on-send, port normalization, queue-full drops,
+heartbeat recognition, inject/link callbacks 0-based), config-stub
+bounds + partition independence, RTC date math incl. leap-year
+rollover, node-id/MAC derivation, and compile-time ABI locks for every
+struct the HP runner unpacks blind (wire_status_t = 72 B, offsets
+asserted against the runner's struct format).
+
+**Fixture note:** unchanged (bite-3 alif build on HP; nothing flashed).
+`~/bm_he/` on nereus000 holds ELF + runner + the rehearsal pcap;
+`/flash/bm_he.elf` + `/flash/bm_he_hb.pcap` on the board VFS. HE core
+left STOPPED.

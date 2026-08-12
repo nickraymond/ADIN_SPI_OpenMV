@@ -1,0 +1,35 @@
+#pragma once
+
+#include "l2_policy.h"
+#include "network_device.h"
+#include "util.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef bm_l2_tx_task_priority
+#define bm_l2_tx_task_priority 7
+#endif
+
+typedef void (*L2LinkChangeCb)(uint8_t port, bool state);
+typedef void (*L2PcapCb)(const uint8_t *frame, size_t len);
+
+BmErr bm_l2_handle_device_interrupt(void);
+BmErr bm_l2_link_output(void *buf, uint32_t length);
+void bm_l2_deinit(void);
+BmErr bm_l2_init(NetworkDevice network_device);
+BmErr bm_l2_register_link_change_callback(L2LinkChangeCb cb);
+bool bm_l2_get_port_state(uint8_t port);
+uint8_t bm_l2_get_port_count(void);
+BmErr bm_l2_netif_set_power(bool on);
+BmErr bm_l2_netif_enable_disable_port(uint8_t port_num, bool enable);
+BmErr bm_l2_register_link_local_routing_callback(L2LinkLocalRoutingCb cb);
+BmErr bm_l2_register_pcap_callback(L2PcapCb cb);
+
+#ifdef __cplusplus
+}
+#endif
