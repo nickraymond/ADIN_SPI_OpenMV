@@ -1,13 +1,14 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-12 (S9 bite 3: code done + proven to the wire;
-T1L investigation CLOSED — ≥2 of 3 line interfaces broken, both AOS
-hats suspect; demo blocked on replacement link hardware, Nick
-deciding: new AOS hats vs ADIN2111 eval. Hat #2 re-strapped to
-generic during the bisect — bite-3 fixture now needs either a
-re-strap back or the SG-shield-as-OA reshuffle. DEV_LOG top entry has
-the full verdict.) · Owner/gate: **Nick***
+*Last updated: 2026-08-12 (INTERIM MODE: T1L bench down — both AOS
+hats condemned, replacement PCBAs on order. Active work = the
+USB-only interim ladder in the BM-native arc section below (Nick
+approved 2026-08-12); all ADIN-touching work parked behind
+RESUME-ON-HARDWARE. S9 bite 3: code done + proven to the wire, demo
+deferred to hardware arrival. Hat #2 currently strapped generic
+(bisect state); AE3 carries the bite-3 alif build. DEV_LOG
+2026-08-11/12 entries have the full verdict.) · Owner/gate: **Nick***
 
 ---
 
@@ -356,7 +357,41 @@ rides BM's IPv6/UDP. Power (PoDL) explicitly deferred (Nick). The S6
 MicroPython path stays intact as the regression baseline. Facts base:
 S7 research notes above + DESIGN §S7 detail.*
 
-### S9 — OA first light in C (custom firmware + driver spike)  `[ ]`
+### INTERIM — T1L bench down (2026-08-12 → hardware arrival)  `[~]`
+*USB-only ladder (Nick-approved re-sequencing 2026-08-12). Constraint:
+no working T1L link. Everything here is developable AND testable with
+only: the AE3 over USB on nereus000 (by-id mpremote ONLY), the Pis,
+the Mac docker build env (D23/D24), and host tests. The S6
+USB/MicroPython baseline stays intact as the regression reference
+(restore = S7 flash ladder to dev `7d4dbf7ab2`). Order:*
+
+1. `[x]` **S10 bite 1** — FreeRTOS-on-HE + OpenAMP pipe spike (see
+   S10) — no ADIN dependency; the interim's first bite
+   → DONE 2026-08-12: demo run by Nick — PASS (A/B/C, ≥5 Mbps gate
+   cleared 2.6×–44×); PR #17
+2. `[ ]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
+   NetworkDevice (see S10) — no ADIN dependency
+3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
+   gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
+   + Nick's explicit sign-off before ANY connection (SPEC §Safety
+   absolute); UART side only — the mote's T1L port never touches our
+   bench boards.** Needs Nick at the bench — interleave anytime.
+4. `[ ]` Upstream report to OpenMV: **D24** — stock `build-firmware`
+   docker target flattens per-core build dirs, breaking multi-core
+   Alif HE links (root cause + repro + fix in DESIGN D24)
+5. `[ ]` Upstream report to OpenMV: **D15** — second `start_stream`
+   session per boot hard-faults the AE3 (repro:
+   `firmware/ae3_usb/README.md`; re-validate on current build first;
+   USB-only, restore fixture after)
+
+**RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
+demo — rebuild a link fixture (new hats / SG-shield-as-OA reshuffle /
+ADIN2111 eval), re-strap per DEV_LOG fixture notes, then the README
+bite-3 ladder (`s9_oa_datapath.py`, one command) → nibble 3 → merge.
+
+### S9 — OA first light in C (custom firmware + driver spike)  `[!]`
+*(bites 1–2 done; bite 3 code done + PR open, demo blocked on
+replacement link hardware — see INTERIM above)*
 **Goal:** prove the C dev loop end-to-end and OA mode on our silicon.
 - [~] Bite 1 — **1110-vs-2111 verify spike**: re-strap hat #2 to OA
       (default straps; D13 jumpers reversible), minimal C module in a
@@ -419,7 +454,7 @@ S7 research notes above + DESIGN §S7 detail.*
       deferred to S10. PR #15. Bite-3 starters banked: read_reg/
       write_reg passthrough, RX_SAMPLE_DELAY knob for the 20 MHz
       finding, level-trigger conversion option.
-- [~] OA data-path smoke: one frame TX via OA chunks → tcpdump on
+- [!] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
       → IN PROGRESS 2026-08-11 (nibble-1 plan approved by Nick; nibble-2
       code done): `bm_spike_datapath.c` init bridge (driver still
@@ -456,22 +491,54 @@ a seq-numbered frame lands in tcpdump across the pair.
 
 ### S10 — bm_core boots on the AE3 (HE core)  `[ ]`
 **Goal:** BM stack alive on the camera board; camera side untouched.
-- [ ] Spike first, one bite: FreeRTOS on M55_HE + OpenAMP HP↔HE pipe —
-      measure pipe throughput (**gate: ≥5 Mbps**) and confirm HE can own
-      SPI0 + its IRQ (pinmux/EWIC). Fallback if HE loses: bm_core on HP
-      alongside MicroPython (invasive — price it before choosing).
-- [ ] bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE; BCMP up
-      (heartbeat, neighbors, ping)
-- [ ] Validate against reference hardware: dev-kit mote (on hand) sees
-      the AE3 as a BM neighbor
+- [x] **INTERIM 1** — Spike first, one bite: FreeRTOS on M55_HE + OpenAMP
+      HP↔HE pipe — measure pipe throughput (**gate: ≥5 Mbps**) and
+      confirm HE can own SPI0 + its IRQ (pinmux/EWIC). Fallback if HE
+      loses: bm_core on HP alongside MicroPython (invasive — price it
+      before choosing). No ADIN hardware needed. Branch
+      `sprint/10-he-pipe-spike`.
+      → CODE + REHEARSAL DONE 2026-08-12 (nibbles 1–3 rehearsed; Claude
+      ran the demo twice, identical PASS): **gate answered at rung 0 —
+      stock python↔python pipe = 219 Mbps (44× the gate), zero custom
+      firmware**; then `firmware/he_spike/` (FreeRTOS V11.3.0 on HE,
+      runtime-ELF-loaded into SRAM9_B via stock remoteproc — NOTHING
+      flashed; hand-rolled ~250-line device-role rpmsg vs open-amp+
+      libmetal glue), runner verdicts **A PASS** (FreeRTOS app serves
+      rpmsg), **B PASS** (13.2 Mbps HP→HE / 5.6 HE→HP, python-end-
+      bound, 0 loss/crc errs over 37k msgs), **C PASS** (HE pinmux
+      write+readback, SPI0 init, IRQ 137 on HE NVIC; RX-with-real-data
+      deferred to hardware day — SRL loopback tied off in silicon,
+      pad-pull test inconclusive). Host tests 29 checks (fake-SHM host
+      driver incl. the live-measured recycle semantics). Hardware facts
+      measured live: vring roles + desc-offset addressing + used.len
+      capacity contract (DESIGN §S10), SPI0 SRL absent, pinconf-from-HE
+      works. HE-loses fallback MOOT. Bench check ANSWERED (Nick,
+      2026-08-12): nothing wired to the board → the pad floats high
+      and DRIVER_DISABLED pulls don't steer an AF-mode input on this
+      pad (DESIGN §S10 fact 6); pull test stays non-gating diagnostic.
+      → **DONE 2026-08-12: demo run by Nick — PASS (A/B/C, identical
+      numbers to the rehearsal). PR #17.**
+- [ ] **INTERIM 2** — bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE;
+      BCMP up (heartbeat, neighbors, ping) — interim scope: against a
+      mock/loopback NetworkDevice (S9 host-test mock promoted to
+      on-target); real ADIN swap-in is a hardware-day bite. Likely
+      splits 2a/2b to hold ~300 LoC.
+- [!] Validate against reference hardware: dev-kit mote (on hand) sees
+      the AE3 as a BM neighbor — needs a live T1L path
+      (RESUME-ON-HARDWARE)
 **Demo (Nick):** BCMP ping to the AE3 answered (from mote or Pi);
 heartbeats visible in tcpdump.
-**Needs:** S9.
+**Needs:** S9 bites 1–2 (done) + D24 build env. S9's bite-3 *demo* is
+NOT a blocker for the interim bites.
 
 ### S11 — Pi becomes a BM node (bm_sbc)  `[ ]`
 **Goal:** nereus001 running bm_sbc, attached at full rate.
-- [ ] bm_sbc mainline on the Pi + stock UART-gateway cross-check vs the
-      dev-kit mote (reference bite — needs only the dev kit, not S10)
+- [ ] **INTERIM 3** — bm_sbc mainline on the Pi + stock UART-gateway
+      cross-check vs the dev-kit mote (reference bite — needs only the
+      dev kit, not S10). **HARD SAFETY GATE (SPEC §Safety absolute):
+      meter the mote's port cold + Nick's explicit sign-off before ANY
+      connection; UART side only; never onto a powered bus.** Bonus
+      deliverable: golden BCMP captures to validate INTERIM 2's mock.
 - [ ] raw_eth transport on eth1 (Sofar's
       `feature/adin_linux_implementation` branch / CTO early access;
       finish it ourselves only if theirs stalls) — kernel driver and

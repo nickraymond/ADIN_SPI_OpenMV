@@ -1009,3 +1009,84 @@ byte-verified flash). Hat #2 strapped OA; chip exit-sanitized. Debug
 helpers added to `~/ae3_flash/`: `s9b3_debug.py` (bridge + 30 s link
 hold), `s9b3_mdio_diag.py` (raw C45 MDIO dump + S5-minimal replay).
 Restore ladder unchanged.
+
+### S10 detail (2026-08-12) — bite 1: FreeRTOS on M55_HE + OpenAMP pipe (INTERIM 1, USB-only)
+
+**Result: all three verdicts PASS, twice, identically — the BM-native
+arc's platform assumption holds.** FreeRTOS (V11.3.0, GCC ARM_CM55_NTZ
+port) runs on the HE core serving an rpmsg endpoint; the HP↔HE pipe
+clears the ≥5 Mbps gate with huge margin; the HE core demonstrably owns
+SPI0 + its NVIC line. NOTHING WAS FLASHED — the app is runtime-loaded
+(`openamp.RemoteProc` ELF load into SRAM9_B) and recovery is a stop or
+power cycle. The "bm_core on HP alongside MicroPython" fallback is MOOT.
+
+**Throughput (receiver-counted, seq+CRC on every frame):**
+
+| Path | Rate | Notes |
+|---|---|---|
+| rung 0: stock py↔py, HE pump (C under `ept.send`) | **219 Mbps** | 57k × 480 B msgs/s, flat 10 s; zero custom firmware |
+| our stack: HP→HE (python sender) | 13.2 Mbps | 17.2k msgs/5 s, 0 crc errs, 0 gaps — HP-python-bound |
+| our stack: HE→HP (python rx callback) | 5.6 Mbps | 20,000/20,000, 0 bad — HP-python-bound |
+
+The gate rides the fabric (rung 0), not the Python ends; S12's real
+producer/consumer on the gated hop is C on both sides.
+
+**Verdict C (HE owns SPI0):** pinmux writes from HE land and read back
+(af=4 + padctrl verified via pinconf_get), machine_spi-recipe init runs
+against SPI0 registers, and SPI0's IRQ (137) fires on the HE NVIC
+(RXFIM, counted). RX-with-real-data is deferred to hardware day: see
+facts (3)/(4) below.
+
+**Hardware facts measured this bite (all live, none guessed):**
+
+1. **vring roles are the reverse of modopenamp.c's comment**: rsc
+   vring0 (0x60001400) is the ring the host pre-fills with 64 empty
+   buffers = the REMOTE'S TX; rsc vring1 (0x60000400) carries host
+   sends (avail flags = NO_INTERRUPT) = the REMOTE'S RX. Matches
+   open-amp's host-role vq mapping; the "VRING0 host to remote" comment
+   refers to notify IDs.
+2. **Descriptor .addr fields are offsets** relative to SHM base + 1 KB
+   (first pool buffer = 0x2000 → 0x60002400), not absolute addresses.
+3. **used.len is a capacity contract, not a message length**: the
+   open-amp host recycles rx buffers with used.len as their NEW
+   capacity (message length travels in the rpmsg header; stock remotes
+   report `virtqueue_get_buffer_length()` = capacity,
+   rpmsg_virtio.c:433). Reporting message size shrinks buffers
+   permanently — found live as a pump stall once all 64 buffers had
+   carried one small message; the host-test harness now reproduces the
+   recycle semantics so this class is caught off-target.
+4. **SPI0's DW SRL loopback (CTRLR0 bit 13) is tied off** on this
+   instance — reads 0 after writing 1 with the controller disabled → no
+   internal loopback on this silicon config.
+5. **Kick suppression loses the wakeup race**: honoring
+   VRING_AVAIL_F_NO_INTERRUPT on the remote's TX ring throttled the
+   pump to ~1 msg/s (host toggles the flag while draining); the remote
+   now kicks unconditionally on TX (spurious MHU word ≈ µs).
+6. **PADCTRL_DRIVER_DISABLED pulls do not steer an AF-mode input on
+   this pad**: AE3 P1/MISO reads 0xFF under BOTH pulls with the pin
+   verifiably unconnected (bench check answered by Nick 2026-08-12:
+   nothing wired to the board) and the pinconf writes verifiably
+   landing (readback ok). The pad floats/reads high regardless →
+   the pull-based RX self-test cannot work here; it stays a non-gating
+   diagnostic. First ADIN PHY-ID read from HE is the real RX proof.
+7. MHU doorbell = one 32-bit word on the RTSS MHU pair
+   (HP→HE RX 0x40080000/IRQ 41, HE→HP TX 0x40090000; value ignored by
+   both receivers); ~37k doorbells exchanged per bench run, no losses.
+
+**Design shape (why no open-amp on the HE side):** the host's SHM
+layout is pinned by the flashed firmware (rsc @ 0x60000000, 2×64×512 B),
+so the remote is a ~250-line explicit vring/rpmsg implementation
+(`rpmsg_remote.c`, host-testable with the target's 32-bit address
+arithmetic) instead of a libmetal+open-amp port whose glue would exceed
+the protocol. App lives at 0x60080000 (SRAM9_B upper half — provably
+untouched: HP's .gpu_memory ends exactly there in the D24 maps; SE
+boot_cpu passes non-TCM addresses through unchanged). Status page at
+0x600BFF00 peekable from HP via machine.mem32 — the first debugging
+stop, and how both live bugs were found. Host tests: 29 checks, clang
++ASan, fake-SHM host driver with measured-true recycle semantics, ring
+wrap ×3, restart-resume.
+
+**Fixture note:** unchanged from S9 bite 3 (HP runs the bite-3 alif
+build; nothing flashed this bite). `~/he_spike/` on nereus000 holds the
+ELF + runner; `/flash/he_spike.elf` on the board VFS. HE core left
+STOPPED after each run.

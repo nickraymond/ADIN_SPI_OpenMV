@@ -17,6 +17,58 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-12 — INTERIM re-plan + Sprint S10 (bite 1) — USB-only ladder approved; FreeRTOS-on-HE spike rehearsal PASSES (A/B/C, gate 44×)
+
+**Branch:** worktree `claude/interim-arc-replan-68f99c` (→ pushes to
+`sprint/10-he-pipe-spike` at PR time)
+
+**Done:**
+- Fresh-eyes interim re-plan (Nick approved): TRACKER gains the
+  INTERIM USB-only ladder (S10 bites 1–2 → S11 dev-kit reference w/
+  HARD SAFETY GATE → D24 + D15 upstream reports), S9 marked `[!]` with
+  RESUME-ON-HARDWARE; all ADIN-touching work parked.
+- Nibble 1 exploration paid off big: stock AE3 firmware already ships
+  OpenAMP host+remoteproc on HP and a remote-execution service on HE —
+  **rung-0 probe measured 219 Mbps py↔py through the stock pipe, zero
+  custom firmware → the ≥5 Mbps S10 gate was effectively answered
+  before writing a line of C.**
+- Nibbles 2–3: `firmware/he_spike/` — FreeRTOS V11.3.0 (vendored,
+  CM55_NTZ port) on M55_HE, runtime-ELF-loaded into SRAM9_B via stock
+  remoteproc (NOTHING flashed, recovery = stop/power-cycle);
+  hand-rolled ~250-line device-role rpmsg; MHU doorbells; he-bench
+  endpoint; SPI0 probe. Host tests 29 checks (clang+ASan, fake-SHM
+  host driver). **Demo rehearsed twice, identical PASS: A (FreeRTOS
+  serves rpmsg), B (13.2 Mbps HP→HE / 5.6 HE→HP, 0 loss/crc errs,
+  37k msgs — python-end-bound; fabric does 219), C (HE pinmux
+  write+readback + SPI0 init + IRQ 137 on HE NVIC).** The bm_core-on-HP
+  fallback is MOOT.
+
+**Broke/surprised us:**
+- Three wire-format facts came only from live ring dumps (source
+  inference was wrong or silent): vring roles reversed vs the
+  modopenamp comment; desc .addr = offsets from SHM+1K; **used.len is
+  a capacity contract** — reporting message size made the host recycle
+  shrunken buffers (pump stalled after exactly 64 messages; small
+  replies still flowed — that asymmetry was the tell). Host harness now
+  reproduces the recycle semantics.
+- Honoring NO_INTERRUPT on our TX ring loses the host's wakeup race
+  (~1 msg/s trickle) → kick unconditionally.
+- SPI0's DW SRL loopback bit is tied off in this silicon; the pad-pull
+  fallback is inconclusive (P1 reads high under both pulls though
+  pinconf verifiably lands) → **bench check (Nick): anything still
+  wired to AE3 P0–P2?** RX-with-real-data proof = first PHY-ID read
+  from HE on replacement hardware.
+- One-off `machine.mem32` AttributeError (self-resolved on re-run;
+  README troubleshooting note).
+
+**Next:** Nick runs the bite-1 demo (`he_spike/README.md` ladder, one
+mpremote command) → nibble 4 PR → INTERIM 2 (bm_os/lwIP/BCMP on HE vs
+mock NetworkDevice).
+→ **demo PASSED (Nick, same day — identical A/B/C numbers); PR
+opened.**
+
+---
+
 ## 2026-08-11 — Sprint S9 (bite 3) — OA data-path bridge PASSES on hardware; link blocked by dead pair (bench check for Nick)
 
 **Branch:** work in worktree branch `claude/s9-oa-datapath-smoke-dc2e62`
