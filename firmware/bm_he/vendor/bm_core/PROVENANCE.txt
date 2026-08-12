@@ -1,0 +1,32 @@
+Source:   https://github.com/bristlemouth/bm_core
+Revision: d4ecc3872e93a53dfd02bb9350496069af5453a7 (2026-07-14)
+          — same rev S9 vendored the adin2111 driver from, obtained via the
+          ~/Documents/GitHub/bm_sbc clone's lib/bm_core submodule.
+Copied:   2026-08-12 for S10 INTERIM 2 (bm_os/lwIP/BCMP on HE vs mock
+          NetworkDevice). All files byte-identical to upstream; NO local
+          modifications. Anything the integrator supplies (bm_config.h,
+          bm_configs_generic/bm_dfu_generic/bm_rtc implementations, device
+          cfg, lwipopts.h) lives in ../../src, not here.
+
+Subset (the BCMP-and-below slice; middleware/pubsub/topology/bm_service and
+the adin2111 driver are deliberately NOT vendored here — the driver already
+lives in firmware/bm_spike/vendor/adin2111):
+  bcmp/                all .c + .h incl. messages/ headers (13 sources:
+                       bcmp, packet, heartbeat, neighbors, ping, info, time,
+                       config, configuration, resource_discovery, dfu_core,
+                       dfu_client, dfu_host)
+  common/              bm_freertos.c bm_os.h util.[ch] ll.[ch] device.[ch]
+                       timer_callback_handler.[ch] lib_state_machine.[ch]
+                       bm_common_structs.h
+  network/             l2.[ch] l2_policy.[ch] bm_lwip.c bm_ip.h
+                       network_device.h network_frames.h
+                       (bm_linux.c NOT vendored — POSIX backend)
+  third_party/crc/     crc.h crc16.c crc32.c
+  third_party/tinycbor/ src subset (parser/encoder/validation; json/pretty
+                       convenience files omitted) + LICENSE (MIT)
+                       + tinycbor_alloc.h
+
+lwIP itself is NOT vendored: version 2.2.1 is referenced from the D23/D24
+build env's openmv clone (lib/micropython/lib/lwip), same access pattern as
+the Alif DFP sources. The FreeRTOS sys_arch glue is vendored separately at
+../lwip_contrib (see its PROVENANCE.txt).

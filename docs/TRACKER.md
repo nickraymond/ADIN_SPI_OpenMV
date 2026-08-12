@@ -8,7 +8,11 @@ approved 2026-08-12); all ADIN-touching work parked behind
 RESUME-ON-HARDWARE. S9 bite 3: code done + proven to the wire, demo
 deferred to hardware arrival. Hat #2 currently strapped generic
 (bisect state); AE3 carries the bite-3 alif build. DEV_LOG
-2026-08-11/12 entries have the full verdict.) · Owner/gate: **Nick***
+2026-08-11/12 entries have the full verdict. LATEST: S10 INTERIM 2a
+— bm_core/lwIP/BCMP alive on HE vs trait-level mock, rehearsal
+PASSES ×2, awaiting Nick's demo. NEW SPEC flag: AE3 P0–P5 ride
+level translators — see §Open questions + the S13 item.)
+· Owner/gate: **Nick***
 
 ---
 
@@ -369,8 +373,13 @@ USB/MicroPython baseline stays intact as the regression reference
    S10) — no ADIN dependency; the interim's first bite
    → DONE 2026-08-12: demo run by Nick — PASS (A/B/C, ≥5 Mbps gate
    cleared 2.6×–44×); PR #17
-2. `[ ]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
+2. `[~]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
    NetworkDevice (see S10) — no ADIN dependency
+   → split 2a/2b (Nick approved 2026-08-12, incl. trait-level mock
+   over chip-level promotion + fetch-and-pin sys_arch). **2a DONE
+   2026-08-12: demo run by Nick — PASS (A/B, identical numbers to
+   both rehearsals); PR opened.** 2b (neighbors + ping vs python
+   peer) next.
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety
@@ -518,11 +527,29 @@ a seq-numbered frame lands in tcpdump across the pair.
       pad (DESIGN §S10 fact 6); pull test stays non-gating diagnostic.
       → **DONE 2026-08-12: demo run by Nick — PASS (A/B/C, identical
       numbers to the rehearsal). PR #17.**
-- [ ] **INTERIM 2** — bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE;
+- [~] **INTERIM 2** — bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE;
       BCMP up (heartbeat, neighbors, ping) — interim scope: against a
-      mock/loopback NetworkDevice (S9 host-test mock promoted to
-      on-target); real ADIN swap-in is a hardware-day bite. Likely
-      splits 2a/2b to hold ~300 LoC.
+      mock NetworkDevice; real ADIN swap-in is a hardware-day bite.
+      Split 2a/2b (Nick approved 2026-08-12). Mock revised from the
+      TRACKER's "S9 chip-level mock promoted on-target" parenthetical
+      to a **trait-level mock with rpmsg as the fake wire** (Nick
+      approved; rationale in DESIGN D25 — the bite's risk is the stack,
+      the driver is S9-hardware-proven, and a scriptable wire rehearses
+      S12's HP↔HE topology + INTERIM 3's golden-capture replay).
+      → **2a (stack boots + talks) code + rehearsal DONE 2026-08-12**:
+      `firmware/bm_he/` — bm_core @ d4ecc38 vendored (BCMP slice),
+      lwIP 2.2.1 by reference + pinned contrib sys_arch, RAM/tick
+      stubs, mock device, runner `s10_bcmp_bench.py` + pcap. Claude
+      ran the bench twice, identical PASS: init ladder RUNNING (err 0,
+      node id + fe80::/fd00:: addrs correct), 2 heartbeats/25 s
+      wire-verified (csum, src node id, egress nibble, monotonic
+      boot-µs), pcap reads clean in tcpdump (bonus: MLD6 join of
+      ff03::1 visible). Size: 231 K of 256 K region (~88%). Host tests
+      72 checks (clang+ASan). S6 USB baseline re-verified after.
+      → **2a demo PASSED (Nick, 2026-08-12 — identical numbers to
+      both rehearsals); PR opened.**
+      → 2b next: HP python peer node — inject heartbeats → neighbor
+      table forms; BCMP ping answered both ways; INTERIM-2 demo proper.
 - [!] Validate against reference hardware: dev-kit mote (on hand) sees
       the AE3 as a BM neighbor — needs a live T1L path
       (RESUME-ON-HARDWARE)
@@ -567,6 +594,15 @@ unused; unplug pair → stops; replug → resumes.
       both cores, SPI utilization (did DMA land? measured effect)
 - [ ] ADIN2111 switchover notes: every 1110/2111 delta hit during the
       arc; what the production PCBA needs (feeds Nick's 2111 move)
+- [ ] AE3 SPI translator characterization (SPEC §Open questions
+      2026-08-12: P0–P5 ride NXS0104/NXS0102 open-drain translators,
+      10 kΩ pull-ups, 24 Mbps max — part-to-net mapping UNVERIFIED,
+      EE-confirm first): measure true SCLK + rise time at the B2B
+      connector at 5/10/20 MHz; verifiable = scope shots + a
+      max-reliable-SCLK number recorded in DESIGN.md, and the S9
+      20 MHz-OA-garbage finding either explained or exonerated (pairs
+      with the banked RX_SAMPLE_DELAY sweep). Gates the v2 PCBA layout
+      release and the S12/S13 throughput model.
 - [ ] PoDL/power-path scoping (deferred work, scoped not started)
 - [ ] DESIGN decision entry: production architecture recommendation
 **Demo (Nick):** soak stats live + written report reviewed together.

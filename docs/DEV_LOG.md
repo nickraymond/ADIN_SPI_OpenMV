@@ -17,6 +17,53 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-12 — Sprint S10 (INTERIM 2a) — bm_core/lwIP/BCMP alive on HE vs trait-level mock; rehearsal PASSES ×2; translator flag captured
+
+**Branch:** `sprint/10-bcmp-he` (worktree `sprint-s10-planning-ec0ae3`)
+
+**Done:**
+- Nibble 1 (Nick approved: 2a/2b split, trait-level mock over the
+  TRACKER's chip-level parenthetical, fetch-and-pin sys_arch → D25):
+  bm_core's NetworkDevice trait is the seam; bm_sbc's own
+  virtual-device init ladder followed verbatim.
+- Nibble 2: `firmware/bm_he/` — bm_core @ d4ecc38 vendored
+  byte-identical (BCMP slice, zero patches needed), lwIP 2.2.1 by
+  reference from the D23 openmv clone + pinned contrib sys_arch,
+  RAM/tick integrator stubs, trait-level mock with rpmsg fake wire,
+  4 KB debug ring peekable from HP, runner + pcap writer. Host tests
+  72 checks (clang+ASan). Size checkpoint: 231 K / 262 K (~88%) —
+  fits, ITCM lever unneeded.
+- Rehearsal (Claude, twice, identical): **A PASS** (ladder RUNNING,
+  node id + fe80::/fd00:: addrs correct, link up) · **B PASS**
+  (heartbeats at boot+10.02/20.02 s, checksum + src-node-id +
+  egress-nibble verified, monotonic) · pcap reads clean in tcpdump
+  (heartbeats = ip-proto-188; bonus MLD6 join of ff03::1 visible).
+  S6 USB baseline re-verified after (33.7 fps, 0 gaps, 0 bad).
+- Captured Nick's schematic-review finding (via capture-task): AE3
+  P0–P5 ride NXS0104/NXS0102 level translators (open-drain, 10 kΩ,
+  24 Mbps max; part-to-net mapping UNVERIFIED) → SPEC §Open questions
+  entry + S13 measurement item. Gives the S9 20 MHz-OA-garbage finding
+  a physical hypothesis (MISO edges); no impact on the USB-only interim.
+
+**Broke/surprised us:**
+- bm_core compiled for CM55 with ZERO source patches — the whole
+  integration fit in headers we own + stubs. Rare and pleasant.
+- newlib-nano printf silently mangles %llx (caught live in the debug
+  ring); nano's syscall layer needed explicit stubs with a trapping
+  _sbrk. LWIP_ETHERNET=1 must be spelled out when ARP is off; the 2021
+  contrib sys_arch wants FreeRTOS backward-compat names. VPATH: shared
+  he_spike dir almost shadowed our startup.c/main.c.
+- bcmp sends NO heartbeat at link-up (timer-only, source TODO) —
+  first one lands at +10 s; runner capture window sized accordingly.
+
+**Next:** Nick runs the 2a demo (`bm_he/README.md` ladder, one mpremote
+command + pcap pull) → 2b: HP python peer (inject heartbeats →
+neighbor table; BCMP ping both ways) = the INTERIM-2 demo proper → PR.
+→ **demo PASSED (Nick, same day — A/B identical to both rehearsals);
+PR opened.**
+
+---
+
 ## 2026-08-12 — INTERIM re-plan + Sprint S10 (bite 1) — USB-only ladder approved; FreeRTOS-on-HE spike rehearsal PASSES (A/B/C, gate 44×)
 
 **Branch:** worktree `claude/interim-arc-replan-68f99c` (→ pushes to
