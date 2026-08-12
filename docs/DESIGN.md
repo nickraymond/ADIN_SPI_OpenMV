@@ -1161,3 +1161,62 @@ asserted against the runner's struct format).
 `~/bm_he/` on nereus000 holds ELF + runner + the rehearsal pcap;
 `/flash/bm_he.elf` + `/flash/bm_he_hb.pcap` on the board VFS. HE core
 left STOPPED.
+
+### S10 detail (2026-08-12) — INTERIM 2b: BCMP converses vs a python peer node (as-built)
+
+**Result: all five verdicts PASS, twice, identically — the HE stack
+discovers a neighbor from injected heartbeats, serves its neighbor
+table, and answers/initiates BCMP ping over the 2a fake wire.** This
+was the first live exercise of the RX path (l2 → lwIP → bcmp); it
+worked first try. `firmware/bm_he/` on branch `sprint/10-bcmp-2b`.
+
+**Shape:** the peer is `s10_peer.py` — pure BCMP frame
+builders/parsers (no machine/openamp imports; the same file runs under
+CPython in host tests) imported by the runner on the HP core. One new
+firmware surface: `WCMD_PING` (src/main.c) calls
+`bcmp_send_ping_request()` the way bm_sbc's app threads do. bm_core
+stays vendored byte-identical — still zero patches.
+
+**Rehearsal numbers (identical across both runs):** A/B unchanged from
+2a (RUNNING err 0, heartbeats at +10.02/20.02 s, heap 28,488/28,464).
+C: BcmpNeighborTableReply from the HE node id — 1 port, 1 neighbor =
+peer 0x50454552AE30D00D, port 1, online (formed from peer heartbeats
+every 5 s, lease 10 s). D: echo reply with id 0xD00D/seq 1/15-B payload
+echoed, csum OK. E: HE's echo request on the wire (id = 0xBEEF = low-16
+of its node id, seq 0), peer's reply ACCEPTED — ping.c's 🏓 line on the
+debug ring with the exact payload bytes. Final counters tx 8 / rx 8 /
+oversize 0. pcap = 15 frames, tcpdump-clean: 5 peer hb + 2 HE hb +
+MLD6 join + **BcmpDeviceInfoRequest (HE interrogating its new neighbor
+— unprompted bm_core behavior, good sign)** + neighbor req/reply +
+2×(echo req/reply). Size 231.5 K of 262 K (~88 %, +0.4 K vs 2a).
+
+**Wire-format facts locked (all cited in s10_peer.py's header):**
+1. BCMP checksum on the wire = big-endian RFC 2460 pseudo-header sum:
+   lwIP's `ip6_chksum_pseudo` returns a value whose NATIVE (LE) store
+   yields network-order bytes (inet_chksum.c both algorithms), so
+   packet.c's LE struct read compares against exactly those bytes.
+   Resolves 2a's either-or compare — the "swapped" branch was the live
+   one. Generation verified live (HE accepted every injected frame).
+2. Egress nibble (src addr byte 2, LOW nibble) is COVERED by the
+   sender's checksum; RX's ingress nibble (HIGH) is set by l2 and
+   cleared again by packet.c before validating (l2.c:37-43,
+   packet.c:452-454) — so a peer must build src byte 2 = 0x0<egress>
+   and checksum over it. Host test proves the round trip byte-exact.
+3. Replies go to `data.dst` — the multicast the request was addressed
+   to (ping.c:107, neighbors.c:91), not the requester's unicast; a
+   peer must parse ff02::1 traffic for its answers. Confirmed live.
+4. ping.c validates a reply by id (= low-16 of the pinger's node id)
+   + payload memcmp only — seq is echoed but not checked; its
+   acceptance debug line prints the node id as %llx garbage under
+   newlib-nano (2a fact) so the runner matches the stable "bytes from"
+   text, not the id.
+
+**Host tests:** 72 → 112 checks. New `host_test/test_peer.py` (CPython
+runs the peer module straight from the repo): checksum
+ones-complement invariant, l2/packet.c ingress round trip, all
+builders/parsers round-trip, neighbor-reply layout vs messages.h,
+classification edges; `test_bm_he.c` gains wire_ping_t ABI locks.
+
+**Fixture note:** unchanged (bite-3 alif build on HP; nothing
+flashed). S6 USB baseline re-verified post-bench: 34.1 fps QVGA q90,
+0 gaps, 0 bad JPEGs, valid SOI/EOI on the sample artifact.

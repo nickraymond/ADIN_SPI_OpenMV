@@ -17,6 +17,46 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-12 — Sprint S10 (INTERIM 2b) — BCMP converses: python peer node, neighbor table + ping both ways; rehearsal PASSES ×2
+
+**Branch:** `sprint/10-bcmp-2b` (worktree `s7-headless-ae3-flash-73104e`,
+branched from merged PR #18)
+
+**Done:**
+- Nibble 1 (plan approved by Nick): peer = python on the HP end of the
+  2a fake wire; verdicts C (neighbor table via BcmpNeighborTableRequest
+  — the same query real BM topo tooling uses), D (ping peer→HE), E
+  (ping HE→peer via new WCMD_PING, acceptance proven by ping.c's debug
+  ring line). bm_core stays byte-identical.
+- Nibble 2: `s10_peer.py` (pure builders/parsers, byte-exact BCMP,
+  CPython-testable), WCMD_PING in src/main.c (+~30 LoC C), runner grown
+  to A–E with both directions in the pcap. Host tests 72 → 112 (new
+  test_peer.py: checksum ones-complement invariant, ingress-nibble
+  round trip; wire_ping_t ABI locks). Build 231.5 K (~88 %, +0.4 K).
+- Rehearsal (Claude, twice, identical): **A–E ALL PASS, first try** —
+  neighbor formed + online from 5 s peer heartbeats, both pings
+  answered/accepted, pcap = full 15-frame two-node conversation
+  (tcpdump-clean). First live RX-path exercise (l2→lwIP→bcmp) worked
+  immediately. S6 USB baseline re-verified after (34.1 fps, 0 gaps,
+  0 bad, sample JPEG SOI/EOI valid).
+
+**Broke/surprised us:**
+- Nothing broke. Checksum byte-order question resolved from lwIP source
+  before first injection (native-store = network bytes → 2a's
+  "swapped" compare branch was the live one) — no live calibration
+  needed; every injected frame accepted on the first run.
+- Bonus behavior: HE fires an unprompted BcmpDeviceInfoRequest at its
+  new neighbor (bm_core's discovery path) — now in the pcap.
+- ping.c prints reply seq_num via PRIu32 on a u16 field + %llx node ids
+  (nano-printf garbage) — cosmetic upstream quirks; runner matches
+  stable text instead.
+
+**Next:** Nick runs the 2b demo (`bm_he/README.md` ladder — build/scp
+optional since artifacts are staged; two cp + one run + pcap pull) =
+the INTERIM-2 demo proper → nibble 4 PR.
+
+---
+
 ## 2026-08-12 — Sprint S10 (INTERIM 2a) — bm_core/lwIP/BCMP alive on HE vs trait-level mock; rehearsal PASSES ×2; translator flag captured
 
 **Branch:** `sprint/10-bcmp-he` (worktree `sprint-s10-planning-ec0ae3`)

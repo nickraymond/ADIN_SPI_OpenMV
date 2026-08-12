@@ -8,10 +8,11 @@ approved 2026-08-12); all ADIN-touching work parked behind
 RESUME-ON-HARDWARE. S9 bite 3: code done + proven to the wire, demo
 deferred to hardware arrival. Hat #2 currently strapped generic
 (bisect state); AE3 carries the bite-3 alif build. DEV_LOG
-2026-08-11/12 entries have the full verdict. LATEST: S10 INTERIM 2a
-— bm_core/lwIP/BCMP alive on HE vs trait-level mock, rehearsal
-PASSES ×2, awaiting Nick's demo. NEW SPEC flag: AE3 P0–P5 ride
-level translators — see §Open questions + the S13 item.)
+2026-08-11/12 entries have the full verdict. LATEST: S10 INTERIM 2b
+— BCMP converses: python peer node over the 2a fake wire, neighbor
+table + ping both ways, rehearsal PASSES ×2 identical, awaiting
+Nick's demo (= the INTERIM-2 demo proper). SPEC flag standing: AE3
+P0–P5 ride level translators — see §Open questions + the S13 item.)
 · Owner/gate: **Nick***
 
 ---
@@ -378,8 +379,10 @@ USB/MicroPython baseline stays intact as the regression reference
    → split 2a/2b (Nick approved 2026-08-12, incl. trait-level mock
    over chip-level promotion + fetch-and-pin sys_arch). **2a DONE
    2026-08-12: demo run by Nick — PASS (A/B, identical numbers to
-   both rehearsals); PR opened.** 2b (neighbors + ping vs python
-   peer) next.
+   both rehearsals); PR #18 merged.** 2b (neighbors + ping vs python
+   peer): code + rehearsal DONE 2026-08-12 (branch
+   `sprint/10-bcmp-2b`, plan approved by Nick) — rehearsal PASSES ×2
+   identical (A–E); awaiting Nick's demo = the INTERIM-2 demo proper.
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety
@@ -547,9 +550,23 @@ a seq-numbered frame lands in tcpdump across the pair.
       ff03::1 visible). Size: 231 K of 256 K region (~88%). Host tests
       72 checks (clang+ASan). S6 USB baseline re-verified after.
       → **2a demo PASSED (Nick, 2026-08-12 — identical numbers to
-      both rehearsals); PR opened.**
-      → 2b next: HP python peer node — inject heartbeats → neighbor
-      table forms; BCMP ping answered both ways; INTERIM-2 demo proper.
+      both rehearsals); PR #18 merged.**
+      → **2b code + rehearsal DONE 2026-08-12** (branch
+      `sprint/10-bcmp-2b`): `s10_peer.py` python peer node (byte-exact
+      BCMP builders/parsers, CPython-testable) + one new firmware
+      surface (`WCMD_PING` in src/main.c — bm_core still vendored
+      byte-identical, zero patches). Rehearsal PASSES ×2 identical:
+      A/B (2a regression) · **C neighbor table lists the peer online**
+      (peer heartbeats every 5 s → BcmpNeighborTableReply) · **D ping
+      peer→HE echoed** (id/seq/payload, csum) · **E ping HE→peer
+      accepted** (WCMD_PING → echo request on wire → peer reply →
+      ping.c's 🏓 acceptance line on the debug ring). First live
+      exercise of the RX path (l2→lwIP→bcmp) — worked first try;
+      bonus: HE fires BcmpDeviceInfoRequest at its new neighbor. pcap
+      = full 15-frame two-node conversation, tcpdump-clean. Size
+      231.5 K (~88%, +0.4 K). Host tests 72 → 112 checks. S6 USB
+      baseline re-verified after (34.1 fps, 0 gaps, 0 bad). Awaiting
+      Nick's demo (README ladder) = the INTERIM-2 demo proper.
 - [!] Validate against reference hardware: dev-kit mote (on hand) sees
       the AE3 as a BM neighbor — needs a live T1L path
       (RESUME-ON-HARDWARE)
