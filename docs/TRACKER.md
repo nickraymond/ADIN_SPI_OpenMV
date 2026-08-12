@@ -367,6 +367,8 @@ USB/MicroPython baseline stays intact as the regression reference
 
 1. `[~]` **S10 bite 1** — FreeRTOS-on-HE + OpenAMP pipe spike (see
    S10) — no ADIN dependency; the interim's first bite
+   → rehearsal PASS 2026-08-12 (A/B/C, ≥5 Mbps gate cleared 2.6×–44×);
+   awaiting Nick's demo run + PR
 2. `[ ]` **S10 bite 2** — bm_os/lwIP/BCMP on HE vs mock/loopback
    NetworkDevice (see S10) — no ADIN dependency
 3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
@@ -493,9 +495,25 @@ a seq-numbered frame lands in tcpdump across the pair.
       HP↔HE pipe — measure pipe throughput (**gate: ≥5 Mbps**) and
       confirm HE can own SPI0 + its IRQ (pinmux/EWIC). Fallback if HE
       loses: bm_core on HP alongside MicroPython (invasive — price it
-      before choosing). No ADIN hardware needed (SPI0 ownership shown
-      via pinmux + internal loopback; live-chip re-check queued for
-      hardware day). Branch `sprint/10-he-pipe-spike`.
+      before choosing). No ADIN hardware needed. Branch
+      `sprint/10-he-pipe-spike`.
+      → CODE + REHEARSAL DONE 2026-08-12 (nibbles 1–3 rehearsed; Claude
+      ran the demo twice, identical PASS): **gate answered at rung 0 —
+      stock python↔python pipe = 219 Mbps (44× the gate), zero custom
+      firmware**; then `firmware/he_spike/` (FreeRTOS V11.3.0 on HE,
+      runtime-ELF-loaded into SRAM9_B via stock remoteproc — NOTHING
+      flashed; hand-rolled ~250-line device-role rpmsg vs open-amp+
+      libmetal glue), runner verdicts **A PASS** (FreeRTOS app serves
+      rpmsg), **B PASS** (13.2 Mbps HP→HE / 5.6 HE→HP, python-end-
+      bound, 0 loss/crc errs over 37k msgs), **C PASS** (HE pinmux
+      write+readback, SPI0 init, IRQ 137 on HE NVIC; RX-with-real-data
+      deferred to hardware day — SRL loopback tied off in silicon,
+      pad-pull test inconclusive). Host tests 29 checks (fake-SHM host
+      driver incl. the live-measured recycle semantics). Hardware facts
+      measured live: vring roles + desc-offset addressing + used.len
+      capacity contract (DESIGN §S10), SPI0 SRL absent, pinconf-from-HE
+      works. HE-loses fallback MOOT. Bench check (Nick): is anything
+      still wired to AE3 P0–P2? Remaining: Nick's demo run → PR.
 - [ ] **INTERIM 2** — bm_os(FreeRTOS) + lwIP + NetworkDevice glue on HE;
       BCMP up (heartbeat, neighbors, ping) — interim scope: against a
       mock/loopback NetworkDevice (S9 host-test mock promoted to

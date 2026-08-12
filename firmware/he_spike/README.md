@@ -76,11 +76,40 @@ Expected output ends with `S10 bite 1 verdict : PASS (A:... B:... C:...)`.
   peek `machine.mem32[0x600BFF00]` — 0x48455350 means the HE app is
   still resident; a fresh runner invocation re-loads it anyway.
 
+## Rehearsal results (Claude, 2026-08-12, two consecutive runs — identical PASS)
+
+```
+A: FreeRTOS on HE  : PASS  (core 160 MHz, stage RUNNING)
+B: HP->HE          : PASS  13.2 Mbps (17,200 msgs / 5 s, 0 crc errs, 0 gaps)
+   HE->HP          : PASS  5.6 Mbps (20,000/20,000 msgs, 0 bad)
+C: HE owns SPI0    : PASS  (pinmux+readback, init, IRQ on HE NVIC)
+```
+
+Context for B: both directions are bounded by the HP **Python** end
+(send loop / rx callback), not the pipe — the rung-0 C-side pump did
+219 Mbps on the same fabric. The gate needs 5; S12's real producer is
+C-side on both ends of the hop that matters.
+
+Hardware facts found en route (details in DESIGN §S10): vring roles and
+descriptor addressing corrected from live ring dumps; used.len must
+report buffer capacity or the host recycles shrunken buffers; SPI0's
+DW SRL loopback bit is tied off; pinconf works from the HE core
+(write + readback). **Bench check for Nick:** AE3 P1 (MISO) reads high
+under both pad pulls — is a harness wire still attached to P0/P1/P2?
+
+## Troubleshooting
+
+- `AttributeError: machine has no attribute 'mem32'` — seen once,
+  immediately self-resolved; just re-run. (OpenMV lazy-loader quirk.)
+- Runner dies mid-run: `mpremote connect $AE3 soft-reset`, re-run.
+
 ## Known limits / levers (documented, not gates)
 
 - HE runs uncached out of SRAM9_B; caches are a perf lever if a future
   bite needs it (MPU already carves the SHM non-cacheable).
-- `CTRLR0` bit 13 = DW SRL loopback is inferred from the DW SSI layout
-  (Alif's spi.h names bits 12 and 14, leaves 13 unnamed); the loopback
-  test is self-verifying either way.
+- `CTRLR0` bit 13 (DW SRL loopback): measured tied-off on this SPI0
+  instance (reads 0 after writing 1 while disabled) — no internal
+  loopback available; verdict C's RX-data evidence therefore waits for
+  real ADIN hardware (the pad-pull fallback was inconclusive, see
+  rehearsal notes).
 - EWIC (deep-sleep wake) is out of spike scope — no sleep states here.

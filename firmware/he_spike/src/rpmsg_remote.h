@@ -37,6 +37,8 @@ struct rpmsg_remote {
     } vr[2];                   // [0] host->remote, [1] remote->host
     uint32_t consumed[2];      // device-side ring cursors
     uint32_t stat_rx, stat_tx, stat_tx_stall;
+    // last tx-failure diagnostics (1=no-buffer 2=bad-head 3=no-room)
+    uint32_t dbg_reason, dbg_a, dbg_b;
 };
 
 // Parse + sanity-check the host's rsc table; snapshot ring cursors from

@@ -1,9 +1,12 @@
 // test_he_spike.c -- host harness for the HE spike's rpmsg remote + bench
 // protocol. Plays the HP HOST side against a malloc'd fake SHM laid out
-// exactly like micropython extmod/modopenamp.c does on the AE3 (rsc table
-// @ +0, vring0 host->remote @ +0x1400, vring1 remote->host @ +0x400,
-// buffer pool @ +0x2400). The remote code under test runs its real 32-bit
-// target address arithmetic via rr's addr_offset.
+// exactly like the LIVE host on the AE3 (ring dump measured 2026-08-12):
+// rsc table @ +0; rsc vring0 @ +0x1400 = host RX (pre-filled with 64
+// empty buffers, avail flags 0) = the remote's TX; rsc vring1 @ +0x400 =
+// host TX (avail flags = NO_INTERRUPT) = the remote's RX; descriptor
+// .addr fields are OFFSETS relative to +0x400 (first pool buffer 0x2000).
+// The remote code under test runs its real 32-bit target address
+// arithmetic via rr's addr_offset.
 //
 // Deliberately independent implementation of the ring structs -- a layout
 // disagreement between this file and rpmsg_remote.c is a test failure,
@@ -20,9 +23,9 @@
 
 // ---- fake SHM ----------------------------------------------------------
 #define TGT_BASE   0x60000000u
-#define TGT_V0     0x60001400u   /* rsc vring0 = host->remote (VRING_TX_ADDR) */
-#define TGT_V1     0x60000400u   /* rsc vring1 = remote->host (VRING_RX_ADDR) */
-#define TGT_POOL   0x60002400u
+#define TGT_V0     0x60001400u   /* rsc vring0 = host RX / remote TX (measured) */
+#define TGT_V1     0x60000400u   /* rsc vring1 = host TX / remote RX (measured) */
+#define POOL_OFF   0x2000u       /* first buffer, offset from TGT_BASE+0x400 */
 #define NUM        64u
 #define ALIGN      32u
 #define BUFSZ      512u
@@ -30,6 +33,8 @@
 static uint8_t shm[0x10000] __attribute__((aligned(64)));
 #define OFF ((intptr_t)shm - (intptr_t)TGT_BASE)
 static void *T2H(uint32_t t) { return shm + (t - TGT_BASE); }
+/* descriptor offset -> host pointer (offsets are relative to +0x400) */
+static void *B2H(uint32_t off) { return shm + 0x400 + off; }
 
 // ---- independent ring view ----------------------------------------------
 typedef struct __attribute__((packed)) {
@@ -50,7 +55,7 @@ typedef struct {
     uint16_t last_used;          // host's used-ring cursor
 } hq_t;
 
-static hq_t q0, q1;              // vring0 (host tx), vring1 (host rx)
+static hq_t q_htx, q_hrx;        // host TX = rsc vring1, host RX = rsc vring0
 
 static void hq_init(hq_t *q, uint32_t tgt_base) {
     q->desc = (t_desc *)T2H(tgt_base);
@@ -83,14 +88,18 @@ static void host_openamp_init(void) {
     r->vring[1] = (typeof(r->vring[1])) {TGT_V1, ALIGN, NUM, 1, 0};
     r->status = 0x07;            // ACK|DRIVER|DRIVER_OK
 
-    hq_init(&q0, TGT_V0);
-    hq_init(&q1, TGT_V1);
+    hq_init(&q_hrx, TGT_V0);     // host RX = rsc vring0 (measured)
+    hq_init(&q_htx, TGT_V1);     // host TX = rsc vring1
 
-    // Host pre-queues NUM empty rx buffers on vring1 (pool bufs 0..63).
+    // Live host sets NO_INTERRUPT on its tx ring's avail (measured).
+    q_htx.avail->flags = 1;
+
+    // Host pre-queues NUM empty rx buffers on its RX ring (pool offsets
+    // 0x2000.. as measured; desc addrs are offsets, not addresses).
     for (uint32_t i = 0; i < NUM; i++) {
-        q1.desc[i] = (t_desc) {.addr = TGT_POOL + i * BUFSZ, .len = BUFSZ};
-        q1.avail->ring[q1.avail->idx % NUM] = (uint16_t)i;
-        q1.avail->idx++;
+        q_hrx.desc[i] = (t_desc) {.addr = POOL_OFF + i * BUFSZ, .len = BUFSZ};
+        q_hrx.avail->ring[q_hrx.avail->idx % NUM] = (uint16_t)i;
+        q_hrx.avail->idx++;
     }
 }
 
@@ -100,14 +109,14 @@ typedef struct __attribute__((packed)) {
 } t_hdr;
 
 #define HOST_EPT 1025u
-#define POOL_TX_FIRST 64u        // pool bufs 64..109 are host tx buffers
+#define POOL_TX_FIRST 64u        // pool bufs 64..103 are host tx buffers
 #define POOL_TX_COUNT 40u
 static uint32_t tx_next;         // round-robin; recycled via used ring
 
 static void host_send(uint32_t dst, const void *payload, uint32_t len) {
-    uint32_t buf = TGT_POOL + (POOL_TX_FIRST + (tx_next % POOL_TX_COUNT)) * BUFSZ;
+    uint32_t off = POOL_OFF + (POOL_TX_FIRST + (tx_next % POOL_TX_COUNT)) * BUFSZ;
     tx_next++;
-    t_hdr *h = (t_hdr *)T2H(buf);
+    t_hdr *h = (t_hdr *)B2H(off);
     h->src = HOST_EPT;
     h->dst = dst;
     h->reserved = 0;
@@ -115,30 +124,35 @@ static void host_send(uint32_t dst, const void *payload, uint32_t len) {
     h->flags = 0;
     memcpy((uint8_t *)h + sizeof(*h), payload, len);
 
-    uint16_t d = (uint16_t)(q0.avail->idx % NUM);
-    q0.desc[d] = (t_desc) {.addr = buf, .len = sizeof(*h) + len};
-    q0.avail->ring[q0.avail->idx % NUM] = d;
-    q0.avail->idx++;
+    uint16_t d = (uint16_t)(q_htx.avail->idx % NUM);
+    q_htx.desc[d] = (t_desc) {.addr = off, .len = sizeof(*h) + len};
+    q_htx.avail->ring[q_htx.avail->idx % NUM] = d;
+    q_htx.avail->idx++;
 }
 
 // Pop one message the remote produced on vring1; returns payload length or
 // -1 if none. Recycles the buffer back to avail (as open-amp's host does).
 static int host_recv(uint32_t *src, uint32_t *dst, uint8_t *out,
                      uint32_t cap) {
-    if (q1.last_used == q1.used->idx) {
+    if (q_hrx.last_used == q_hrx.used->idx) {
         return -1;
     }
-    t_uelem *e = &q1.used->ring[q1.last_used % NUM];
-    t_desc *d = &q1.desc[e->id % NUM];
-    t_hdr *h = (t_hdr *)T2H((uint32_t)d->addr);
+    t_uelem *e = &q_hrx.used->ring[q_hrx.last_used % NUM];
+    t_desc *d = &q_hrx.desc[e->id % NUM];
+    t_hdr *h = (t_hdr *)B2H((uint32_t)d->addr);
     uint32_t len = h->len < cap ? h->len : cap;
     *src = h->src;
     *dst = h->dst;
     memcpy(out, (uint8_t *)h + sizeof(*h), len);
-    q1.last_used++;
-    // recycle
-    q1.avail->ring[q1.avail->idx % NUM] = (uint16_t)(e->id % NUM);
-    q1.avail->idx++;
+    q_hrx.last_used++;
+    // Recycle EXACTLY like the live open-amp host: the buffer's new
+    // capacity is the used.len the remote reported (rpmsg_virtio.c rx
+    // path). A remote that reports message size instead of capacity
+    // shrinks buffers permanently -- the live bug of 2026-08-12; this
+    // harness now reproduces that behavior so tests catch it.
+    d->len = e->len;
+    q_hrx.avail->ring[q_hrx.avail->idx % NUM] = (uint16_t)(e->id % NUM);
+    q_hrx.avail->idx++;
     return (int)len;
 }
 

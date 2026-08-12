@@ -187,21 +187,25 @@ def main():
     # ---- verdict C: SPI0 ownership -------------------------------------
     rep = b.cmd(b"\x07", timeout_ms=5000)
     flags, txc, rxc, irqs, ctrlr0 = struct.unpack_from("<IIIII", rep, 4)
-    verdicts["C"] = (flags & 0x0F) == 0x0F
-    print("C: HE owns SPI0    : %s  (pinmux %d init %d loop %d irq %d "
-          "[%d irqs] CTRLR0 0x%04x)"
+    # Gate = pinmux(with readback) + init + IRQ (bits 0,1,3). The pad-pull
+    # rx test (bit 2) reports only -- inconclusive on this bench (line
+    # reads high under both pulls; possibly still-wired P1). Real RX-data
+    # proof = first PHY-ID read on replacement ADIN hardware.
+    verdicts["C"] = (flags & 0x0B) == 0x0B
+    print("C: HE owns SPI0    : %s  (pinmux+readback %d init %d irq %d "
+          "[%d irqs]; rx-pull diag %s [up 0x%08x dn 0x%08x])"
           % ("PASS" if verdicts["C"] else "FAIL", flags & 1,
-             (flags >> 1) & 1, (flags >> 2) & 1, (flags >> 3) & 1, irqs,
-             ctrlr0))
+             (flags >> 1) & 1, (flags >> 3) & 1, irqs,
+             "ok" if (flags >> 2) & 1 else "inconclusive", txc, rxc))
 
     # ---- wrap up --------------------------------------------------------
     print("final status page  :", status_page())
     rp.stop()
     print()
     gate = "PASS" if all(verdicts.values()) else "FAIL"
+    a, bb, c = ["PASS" if verdicts[k] else "FAIL" for k in "ABC"]
     print("S10 bite 1 verdict : %s  (A:%s B:%s C:%s, gate >= %.0f Mbps)"
-          % (gate, *["PASS" if verdicts[k] else "FAIL" for k in "ABC"],
-             GATE_MBPS))
+          % (gate, a, bb, c, GATE_MBPS))
     return gate
 
 

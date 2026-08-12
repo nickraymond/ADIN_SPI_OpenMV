@@ -18,15 +18,17 @@
 #define SHM_BASE        0x60000000u
 #define SHM_SIZE        0x00010000u
 #define RSC_ADDR        (SHM_BASE)
-#define VRING0_ADDR     (SHM_BASE + 0x0400u + 0x1000u)  /* see note below */
-#define VRING1_ADDR     (SHM_BASE + 0x0400u + 0x0000u)  /* see note below */
-// NOTE on the two lines above: modopenamp.c names its addresses from the
-// HOST's perspective: VRING_RX_ADDR (+0x000 after rsc) is where the host
-// RECEIVES, i.e. the remote->host ring (vring1 in rsc-table numbering);
-// VRING_TX_ADDR (+0x1000) is host->remote (vring0). We keep rsc-table
-// numbering here (vring0 = host->remote) -- rpmsg_remote.c reads the
-// authoritative addresses from the rsc table at init anyway and only
-// falls back to these on a malformed table.
+#define METAL_RSC_SIZE  1024u
+// Ring direction, MEASURED live 2026-08-12 (ring dump while the host was
+// initialized): rsc vring0 (da 0x60001400) is the ring the host pre-fills
+// with 64 EMPTY buffers = the host's RX = the REMOTE'S TX ring; rsc
+// vring1 (da 0x60000400) is where the host queues its own sends (avail
+// flags = NO_INTERRUPT) = the REMOTE'S RX ring. Matches open-amp's host
+// role mapping (rvq = vrings_info[0]); modopenamp.c's "VRING0 host to
+// remote" comment refers to notify IDs, not data direction.
+// Descriptor .addr fields are OFFSETS into the buffer region relative to
+// SHM_BASE + METAL_RSC_SIZE (measured: first pool buffer = 0x2000 ->
+// 0x60002400), not absolute addresses.
 #define VRING_NUM       64u          // VRING_NUM_BUFFS, modopenamp.c:73
 #define VRING_ALIGN     32u          // VRING_ALIGNMENT, modopenamp.c:71
 #define RPMSG_BUF_SIZE  512u         // open-amp RPMSG_BUFFER_SIZE default
@@ -49,6 +51,9 @@ typedef struct {
     volatile uint32_t rx_count;     // vring0 messages consumed
     volatile uint32_t tx_count;     // vring1 messages produced
     volatile uint32_t irq_count;    // MHU RX doorbells
+    volatile uint32_t dbg_reason;   // last rr_send failure reason
+    volatile uint32_t dbg_a;        // reason-specific (see rpmsg_remote.c)
+    volatile uint32_t dbg_b;
 } he_status_page_t;
 #define HE_MAGIC 0x48455350u
 
