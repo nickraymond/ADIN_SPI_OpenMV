@@ -12,6 +12,12 @@
 //                                             bm_spike.actual_hz()
 //   bm_spike.HAL == "mp"                      bm_spike.HAL == "alif"
 //
+// S9 bite 3 (both HALs; on mp a prior verify/bench call binds SPI/CS):
+//   fail = bm_spike.dp_init()[0]      -- init bridge, prints rung verdicts
+//   up   = bm_spike.dp_link()         -- AN link status via the PHY driver
+//   done = bm_spike.dp_send(frame)    -- one raw frame; done == 1 wanted
+//   bm_spike.dp_stats()               -- 8-tuple, see bm_spike_datapath.h
+//
 // Auto-registered by openmv's modules/micropython.mk wildcard when these
 // sources are copied into the openmv tree's modules/ dir (build_spike.sh).
 
@@ -21,6 +27,7 @@
 #include "py/mphal.h"
 
 #include "bm_spike_verify.h"
+#include "bm_spike_datapath.h"
 #include "bm_spike_hal_choice.h"
 
 #if !defined(BM_SPIKE_HAL_ALIF)
@@ -79,14 +86,102 @@ static mp_obj_t bm_spike_run_verdicts(void)
     return mp_obj_new_tuple(3, items);
 }
 
-// Fresh-session guard: drop the persistent bench handle (C statics survive
-// soft resets; a stale handle benches all-fails). Runners call this first.
+// Fresh-session guard: drop the persistent bench + datapath handles (C
+// statics survive soft resets; a stale handle benches all-fails). Runners
+// call this first.
 static mp_obj_t bm_spike_fresh_fn(void)
 {
     bm_spike_bench_reset();
+    bm_spike_dp_reset();
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_fresh_obj, bm_spike_fresh_fn);
+
+// ---------------- S9 bite 3: OA data path (both HALs) ----------------
+// On the mp HAL a prior verify()/bench() call must have bound SPI/CS.
+
+static mp_obj_t bm_spike_dp_init_fn(void)
+{
+    bm_spike_dp_report_t rep;
+    int fail_rung = bm_spike_dp_init(&rep);
+
+    mp_printf(&mp_plat_print,
+              "dp rung 1 -- MAC_Init: %d (%s)%s\n",
+              rep.mac_init, bm_spike_result_str(rep.mac_init),
+              (rep.mac_init == 4) ? " [expected on 1110: identity gate]" : "");
+    if (rep.ready >= 0) {
+        mp_printf(&mp_plat_print,
+                  "dp rung 2 -- device ready @ our identity: %d (%s) PHYID=0x%08X\n",
+                  rep.ready, bm_spike_result_str(rep.ready), (unsigned)rep.phyid);
+        mp_printf(&mp_plat_print,
+                  "dp rung 3 -- macInit replica (IMASK/FCS regs): %d (%s)\n",
+                  rep.mac_cfg, bm_spike_result_str(rep.mac_cfg));
+        if (rep.mac_cfg == 0) {
+            mp_printf(&mp_plat_print,
+                      "dp rung 4 -- state nudged INITIALIZED -> READY (the bridge)\n");
+        }
+    }
+    mp_printf(&mp_plat_print,
+              "dp rung 5 -- driver PHY_Init (MDIO over OA): %d (%s) "
+              "DEVID=0x%04X/0x%04X\n",
+              rep.phy_init, bm_spike_result_str(rep.phy_init),
+              rep.devid1, rep.devid2);
+    mp_printf(&mp_plat_print,
+              "dp rung 6 -- SyncConfig: %d (%s) / ExitSoftwarePowerdown: %d (%s)\n",
+              rep.sync, bm_spike_result_str(rep.sync),
+              rep.exit_pd, bm_spike_result_str(rep.exit_pd));
+
+    mp_obj_t items[6] = {
+        mp_obj_new_int(fail_rung),                 // 0 = bridge up
+        mp_obj_new_int(rep.mac_init),
+        mp_obj_new_int_from_uint(rep.phyid),
+        mp_obj_new_int(rep.phy_init),
+        mp_obj_new_int_from_uint(((uint32_t)rep.devid1 << 16) | rep.devid2),
+        mp_obj_new_int(rep.sync),
+    };
+    return mp_obj_new_tuple(6, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_dp_init_obj, bm_spike_dp_init_fn);
+
+static mp_obj_t bm_spike_dp_link_fn(void)
+{
+    int up = 0;
+    int r = bm_spike_dp_link(&up);
+    if (r != 0) {
+        mp_raise_msg_varg(&mp_type_RuntimeError,
+                          MP_ERROR_TEXT("link status failed: %s"),
+                          bm_spike_result_str(r));
+    }
+    return mp_obj_new_bool(up);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_dp_link_obj, bm_spike_dp_link_fn);
+
+static mp_obj_t bm_spike_dp_send_fn(mp_obj_t frame_in)
+{
+    mp_buffer_info_t buf;
+    mp_get_buffer_raise(frame_in, &buf, MP_BUFFER_READ);
+    uint32_t done = 0;
+    int r = bm_spike_dp_send((const uint8_t *)buf.buf, (uint32_t)buf.len, &done);
+    if (r != 0) {
+        mp_raise_msg_varg(&mp_type_RuntimeError,
+                          MP_ERROR_TEXT("dp_send failed: %s"),
+                          bm_spike_result_str(r));
+    }
+    return mp_obj_new_int_from_uint(done);   // TX-done callbacks (want 1)
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(bm_spike_dp_send_obj, bm_spike_dp_send_fn);
+
+static mp_obj_t bm_spike_dp_stats_fn(void)
+{
+    uint32_t s[8];
+    bm_spike_dp_stats(s);
+    mp_obj_t items[8];
+    for (int i = 0; i < 8; i++) {
+        items[i] = mp_obj_new_int_from_uint(s[i]);
+    }
+    return mp_obj_new_tuple(8, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(bm_spike_dp_stats_obj, bm_spike_dp_stats_fn);
 
 // Raw register passthrough (both HALs; mp build needs a prior bind via
 // verify/bench). Raises on driver error so a bad read can't masquerade as
@@ -162,6 +257,10 @@ static const mp_rom_map_elem_t bm_spike_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_bench), MP_ROM_PTR(&bm_spike_bench_obj) },
     { MP_ROM_QSTR(MP_QSTR_read_reg), MP_ROM_PTR(&bm_spike_read_reg_obj) },
     { MP_ROM_QSTR(MP_QSTR_write_reg), MP_ROM_PTR(&bm_spike_write_reg_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_init), MP_ROM_PTR(&bm_spike_dp_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_link), MP_ROM_PTR(&bm_spike_dp_link_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_send), MP_ROM_PTR(&bm_spike_dp_send_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_stats), MP_ROM_PTR(&bm_spike_dp_stats_obj) },
 };
 
 #else
@@ -251,6 +350,10 @@ static const mp_rom_map_elem_t bm_spike_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_actual_hz), MP_ROM_PTR(&bm_spike_actual_hz_obj) },
     { MP_ROM_QSTR(MP_QSTR_read_reg), MP_ROM_PTR(&bm_spike_read_reg_obj) },
     { MP_ROM_QSTR(MP_QSTR_write_reg), MP_ROM_PTR(&bm_spike_write_reg_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_init), MP_ROM_PTR(&bm_spike_dp_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_link), MP_ROM_PTR(&bm_spike_dp_link_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_send), MP_ROM_PTR(&bm_spike_dp_send_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dp_stats), MP_ROM_PTR(&bm_spike_dp_stats_obj) },
 };
 
 #endif // BM_SPIKE_HAL_ALIF

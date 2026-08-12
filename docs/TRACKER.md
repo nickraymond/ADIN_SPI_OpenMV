@@ -1,9 +1,9 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S9 bite 1 OA spike passed, PR #13; HE build
-blocker root-caused + fixed on `sprint/9-build-fix` — build_ae3.sh must
-use docker build-firmware-dev, D24; S9 bites 2–3 next) ·
+*Last updated: 2026-08-11 (S9 bite 3 nibble 2 done: OA data-path bridge
+PASSES on hardware incl. MDIO-over-OA; link blocked by measured loss of
+far-side energy on the pair — bench check flagged for Nick) ·
 Owner/gate: **Nick***
 
 ---
@@ -416,8 +416,25 @@ S7 research notes above + DESIGN §S7 detail.*
       deferred to S10. PR #15. Bite-3 starters banked: read_reg/
       write_reg passthrough, RX_SAMPLE_DELAY knob for the 20 MHz
       finding, level-trigger conversion option.
-- [ ] OA data-path smoke: one frame TX via OA chunks → tcpdump on
+- [~] OA data-path smoke: one frame TX via OA chunks → tcpdump on
       nereus001 (Pi side untouched, generic SPI + kernel driver)
+      → IN PROGRESS 2026-08-11 (nibble-1 plan approved by Nick; nibble-2
+      code done): `bm_spike_datapath.c` init bridge (driver still
+      byte-identical — waitDeviceReady/macInit replicas + one-line state
+      nudge past the identity gate in spike-owned memory), dp_* Python
+      API, `s9_oa_datapath.py` runner, host tests 16 → 41 (mock grew
+      MDIO/PHY emulation + OA data-chunk parsing w/ byte-exact TX
+      capture). Rehearsal on hardware: **bridge PASSES live — MDIO-over-OA
+      proven (DEVID 0x0283/0xBC91 through the driver's own PHY layer),
+      PHY init + SyncConfig + powerdown-exit all SUCCESS** — but **link
+      never comes up: measured NO far-side energy (bite-2's continuous
+      LOFE relatch is now absent; both PHYs advertise, neither sees AN
+      pages). Physical pair fault suspected (unplugged since the bite-2 /
+      S6-demo bench work?). BENCH CHECK NEEDED (Nick): J1 pair seated
+      both ends.** Verification one-liner after re-seat = re-run the
+      runner (README bite-3 ladder). 1110-vs-2111 delta item 3 recorded:
+      adin2111-level init also blocks on a port-2 PHY wait → 1110 needs
+      MAC/PHY-layer entry-point bring-up (the bridge).
 **Demo (Nick):** custom-firmware AE3 prints `PHY ID — OK (OA mode)`;
 a seq-numbered frame lands in tcpdump across the pair.
 **Needs:** S7 flash loop, Mac build env, hat #2 re-strap.

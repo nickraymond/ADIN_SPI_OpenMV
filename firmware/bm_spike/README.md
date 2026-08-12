@@ -6,9 +6,13 @@ custom OpenMV AE3 firmware.
 
 - **Bite 1 (PASSED 2026-08-11):** verify spike over a MicroPython-backed
   HAL — proved OA transport + pinned the 2-item 1110/2111 delta.
-- **Bite 2:** same driver, same verdicts, but `adi_hal.h` implemented
-  **Alif-native** (`--hal alif`): bare-metal SPI0 FIFO-burst engine +
-  real INT_N IRQ delivery. See "Bite 2" sections below.
+- **Bite 2 (PASSED 2026-08-11):** same driver, same verdicts, but
+  `adi_hal.h` implemented **Alif-native** (`--hal alif`): bare-metal SPI0
+  FIFO-burst engine + real INT_N IRQ delivery.
+- **Bite 3:** OA data-path smoke — an init **bridge** past the identity
+  gate (driver still byte-identical), then seq-numbered raw Ethernet
+  frames through the driver's own `SubmitTxBuffer`/OA chunk state machine
+  into tcpdump on nereus001. See "Bite 3" sections below.
 
 ## Provenance
 
@@ -53,16 +57,24 @@ custom OpenMV AE3 firmware.
   (SPI0 FIFO-burst full duplex, ≤16 frames in flight; NVIC-gated INT_N
   IRQ; real critical sections; stats counters). Hardware facts cited in
   the file header, all verified in openmv.git @ the pinned rev.
+- `src/bm_spike_datapath.c/h` — bite 3: the init bridge (MAC-layer +
+  PHY-layer driver entries driven directly; waitDeviceReady/macInit
+  replicas + the one-line state nudge past the identity gate) and the
+  TX submit path. Every replica cites the adi_mac.c line it mirrors.
 - `src/bm_spike_mod.c` — `bm_spike` usermod; Python API follows the staged
   HAL (`bm_spike.HAL` == `"mp"` / `"alif"`)
 - `host_test/` — clang build of the UNMODIFIED driver + a mock ADIN
-  speaking the OA control wire format (`run_host_tests.sh`, 16 checks)
+  speaking the OA wire format: control transactions, the MDIOACC engine
+  over a small clause-45 PHY model, and OA data chunks with footer
+  generation + byte-exact TX-frame capture (`run_host_tests.sh`, 41 checks)
 - `build_spike.sh` — stages sources into `<openmv>/modules/`, runs
   `firmware/openmv_build/build_ae3.sh`, un-stages on exit; `--hal mp|alif`
   picks the HAL (exactly one is staged — they define the same symbols)
 - `s9_oa_spike.py` — bite-1 runner (needs a `--hal mp` build)
 - `s9_hal_native.py` — bite-2 runner (needs `--hal alif`): verify through
   the native engine, 5/10/20 MHz bench ladder, INT_N IRQ proof
+- `s9_oa_datapath.py` — bite-3 runner (needs `--hal alif`): init bridge,
+  link wait, 20 seq-numbered S5-format frames → receiver on nereus001
 
 ### Bite-2 API (`--hal alif` builds)
 
@@ -106,6 +118,46 @@ MRAM and that symbol is taken; riding the dispatch avoids any fork).
    straps whenever the generic-SPI/S6 baseline is needed again.
    Bench debug helpers live in `~/ae3_flash/` on nereus000:
    `s9_raw_probe.py`, `s9_matrix.py`, `s9_regs.py`, `s9_wrtest.py`.
+
+### Bite-3 API (both HALs; on `mp` a prior `verify`/`bench` binds SPI/CS)
+
+```python
+fail = bm_spike.dp_init()[0]   # init bridge; prints per-rung verdicts;
+                               # fail == 0 means MAC READY+synced, PHY out
+                               # of software powerdown (autoneg running)
+bm_spike.dp_link()             # True once AN completes (driver AN_STATUS)
+bm_spike.dp_send(frame)        # one raw Ethernet frame (60..1518 B, no
+                               # FCS -- the MAC appends); returns tx-done
+                               # callback count for THIS call (want 1)
+bm_spike.dp_stats()            # (tx_done, txc_credits, state, hdr_par,
+                               #  ftr_par, sync_err, frame_drop, spi_err)
+```
+
+The bridge's rungs and why each exists are documented in
+`src/bm_spike_datapath.h`. Key point: on our 1110 the driver's own init
+is EXPECTED to report COMM_TIMEOUT (rung 1 — the identity gate); the
+bridge then supplies exactly what the failed path skipped and nudges the
+driver's state word (which lives in spike-owned memory) to READY. On a
+real 2111 the bridge degrades to the plain driver call sequence (host
+test [8]). This asymmetry is delta item 3 for S13's 2111 notes.
+
+## Run ladder — bite 3 (OA data path)
+
+1. Host tests (no hardware): `host_test/run_host_tests.sh` → 41 checks PASS
+2. Mac build: `./build_spike.sh --clean --no-prot --hal alif`
+3. Fixture check (bite-2 end state): hat #2 strapped OA, S4 harness on
+   P0–P5, pair connected, nereus001 eth1 up (the S5 receive fixture)
+4. scp the HP bin → flash HP via the S7 ladder
+5. Receiver on nereus001 (before the sender; either or both):
+   `sudo tcpdump -i eth1 ether proto 0x88B5 -XX -c 20`
+   `sudo python3 bench/frame_counter.py --iface eth1 --duration 30`
+6. `mpremote connect <by-id> run firmware/bm_spike/s9_oa_datapath.py` →
+   expect: VERDICT A init bridge UP (rungs 1–6 printed), link UP ≲1 s,
+   VERDICT B 20/20 tx-done + zero OA errors — then the receiver's count
+   is the demo artifact (trust artifacts: sender PASS alone proves only
+   the FIFO accepted the frames)
+7. Restore path: unchanged (reflash stock dev HP; re-bridge straps for
+   the S6 generic-SPI baseline)
 
 ## Run ladder — bite 2 (Alif-native HAL)
 

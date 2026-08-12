@@ -17,6 +17,47 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-11 — Sprint S9 (bite 3) — OA data-path bridge PASSES on hardware; link blocked by dead pair (bench check for Nick)
+
+**Branch:** work in worktree branch `claude/s9-oa-datapath-smoke-dc2e62`
+(→ pushes to `sprint/9-oa-datapath` at PR time; that branch is checked
+out in another worktree at the same base commit)
+
+**Done:**
+- Nibble 1 (plan approved by Nick): exploration verified against source —
+  state-nudge theory confirmed (MAC_Init:542/574, ProcessTxQueue:1479);
+  found adin2111-level init ALSO blocks on a port-2 PHY wait
+  (adin2111.c:169) → bridge drives macDriverEntry/phyDriverEntry
+  directly; PHY identity gate is DEVID1+OUI only → predicted pass.
+- Nibble 2: `bm_spike_datapath.c/h` (init bridge, driver byte-identical),
+  dp_* API in both HAL tables, `s9_oa_datapath.py` runner, host tests
+  16 → 41 (mock: writable regs, MDIOACC/clause-45 PHY emulation, OA
+  data-chunk parse + byte-exact TX capture). Both firmware builds green
+  post-D24; HE image byte-count unchanged (guards hold).
+- Rehearsal (partial): flash PASS (byte-verified). **Init bridge PASSES
+  live, first try: rungs 1–6 SUCCESS, MDIO-over-OA proven (DEVID
+  0x0283/0xBC91 through the driver's own PHY layer — the flagged new
+  surface), SyncConfig + SWPD-exit clean.** VERDICT A achieved.
+
+**Broke/surprised us:**
+- **Link never comes up — and it's the BENCH, not the code.** Isolation
+  (one variable at a time): S5-minimal sequence over raw C45 MDIO also
+  fails → not the driver's phyInit extras; far side advertises fine but
+  sees no partner (ethtool, bounced mid-window); **LOFE relatch probe
+  silent** vs bite-2's measured continuous relatch from far-side energy
+  → no energy on the pair. Suspect the pair got unplugged during the
+  bite-2/S6-demo bench work. **Nick: re-seat/check the pair at both J1s**,
+  then re-run `s9_oa_datapath.py` (README bite-3 ladder) — everything
+  else is in place.
+- Chip default AN_CONTROL=0x1000 measured (AN_EN on by default) —
+  retroactively validates S5's power-up-only sequence.
+
+**Next:** Nick's bench check → re-run runner (expect link UP ≲1 s, then
+VERDICT B + frames in tcpdump on nereus001) → nibble 3 manual test →
+nibble 4 PR. Debug helpers staged in `~/ae3_flash/` on nereus000.
+
+---
+
 ## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found
 
 **Branch:** sprint/9-adi-hal
