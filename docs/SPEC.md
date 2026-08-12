@@ -172,6 +172,21 @@ pair, USB carrying no video.
   chip state persists across ALL board flashes/reboots (hat is powered
   from the Pi's always-on 3V3 header — D19).
 
+- T1L link dead on the bench pair (found 2026-08-11, S9 bite 3): both
+  hats' chips healthy over SPI, both PHYs configured correctly (AN and
+  forced mode both tried, amplitudes matched), cable continuity good —
+  yet zero energy crosses in either direction (LOFE silent; far side
+  sees no partner). Fault is analog/MDI on one or both hats; no
+  line-capable instrument on the bench (DMMs can't see 7.5 MBd PAM-3).
+  Bisect via SG shield ↔ hat #1 in progress (paused: nereus000 network
+  down). Hot-plug damage is a candidate cause (S6 demo unplugged/
+  replugged the pair with both ends powered; no line protection on
+  these boards) — if confirmed, add a no-hot-plug bench rule.
+- AOS hat TX2P4 strap is PULLED HIGH (measured 2026-08-11 on hat #2:
+  B10L_PMA_CNTRL powers up 0x1000 = 2.4 Vpp TX enabled; chip reset
+  default is 0). Contradicts the SG-shield-derived assumption that all
+  amplitude straps float. Harmless with AN (amplitude negotiated) but
+  matters for forced-mode configs and for the S13 production notes.
 - SG shield JP1 (5-pin) / JP4 (3-pin): undocumented publicly; hypothesis =
   standalone-MCU breakout. Resolve by continuity or by emailing SG.
 - ~~AOS hat: CS/IRQ/RESET GPIO mapping, strap state, pair-connector

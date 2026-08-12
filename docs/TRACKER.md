@@ -1,10 +1,11 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-11 (S9 bite 3 nibble 2 done: OA data-path bridge
-PASSES on hardware incl. MDIO-over-OA; link blocked by measured loss of
-far-side energy on the pair — bench check flagged for Nick) ·
-Owner/gate: **Nick***
+*Last updated: 2026-08-11 (S9 bite 3 nibble 2 done + demo BLOCKED on a
+physical T1L fault: both directions dead, isolated to hat MDI/analog by
+elimination; SG-shield bisect paused — nereus000 dropped off the
+network; AE3 rig dismantled, hat #2 OA straps intact. See DEV_LOG top
+entry for the re-entry checklist.) · Owner/gate: **Nick***
 
 ---
 

@@ -56,6 +56,42 @@ out in another worktree at the same base commit)
 VERDICT B + frames in tcpdump on nereus001) → nibble 3 manual test →
 nibble 4 PR. Debug helpers staged in `~/ae3_flash/` on nereus000.
 
+**CONTINUED same day (bench debugging with Nick, paused mid-bisect):**
+- Pair re-seated + continuity-verified (J1↔J1) by Nick → STILL no link.
+  Isolation extended, all software-only: far side hardware-reset via
+  module reload (fresh PHY init) → nothing; **forced-mode test (AN
+  bypassed entirely: far = ethtool forced-master, ours = registers per
+  the kernel driver's own recipe, amplitudes matched) → also dead both
+  directions.** Fault is squarely in the analog/MDI domain.
+- Correction recorded: the multimeter AC test I suggested was invalid —
+  DMM bandwidth ≪ 7.5 MBd PAM-3; "no AC" readings are expected even on
+  a healthy line. No line-capable instrument on the bench (LA descoped
+  in S2).
+- New measured facts: **hat #2 straps 2.4 Vpp TX on**
+  (B10L_PMA_CNTRL powers up 0x1000; chip reset default is 0 → AOS
+  TX2P4 strap pulled high — SPEC §Open questions); chip default
+  AN_CONTROL=0x1000 (AN_EN on). Hat blue LEDs track link (dark = no
+  link); red = power.
+- Suspicion worth recording: the S6 demo's unplug/replug was a hot-plug
+  with both ends powered on an unprotected line interface; plus heavy
+  bench handling since. A damaged line driver on either hat explains
+  every observation.
+- **Bisect in progress (paused):** plan = SG shield (known-good,
+  generic SPI) on nereus000 ↔ new shorter pair ↔ hat #1/nereus001,
+  rerun S2's `t1l_link_test.sh`. Links → fault follows hat #2 / old
+  harness. Nick dismantled the AE3 rig (hat #2 off, set aside, straps
+  UNTOUCHED = still OA) and mounted the shield, but **nereus000 stopped
+  joining the network entirely (no tailscale, no LAN ping, even with
+  the shield removed)** — unresolved, needs local console/router check.
+  Note: hat #2 on a Pi is NOT testable while OA-strapped (kernel driver
+  is generic-SPI-only, D13) and a powered-but-unmanaged hat's PHY stays
+  in software powerdown → dark blue LED proves nothing in that config.
+- Fixture state at pause: AE3 rig DISMANTLED (rebuild = D19 wiring for
+  bite-3 demo); AE3 still flashed with the bite-3 alif build; hat #2
+  aside, OA straps intact; SG shield on/near nereus000; nereus000 OFF
+  NETWORK; nereus001 healthy (autoneg on, eth1 up; tailnet name is
+  **nereus001-1**, not nereus001 — post-reflash registration).
+
 ---
 
 ## 2026-08-11 — Sprint S9 (bite 2) — Alif-native ADI-HAL: demo PASSES repeatably; PROTE self-flip + dead reset line found
