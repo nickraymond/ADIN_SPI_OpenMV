@@ -180,8 +180,9 @@ interface · `ethtool -i <if>` reports driver `adin1110`.
       → DONE 2026-08-10: 10-min sustained run under systemd at D17
       settings — **18,032 frames / 615 s = 29.3 fps avg, 4.60 Mbps,
       0 gaps, 0 resets (zero frame loss)**. DESIGN.md §S3 detail.
-**Demo (Nick):** open `http://nereus001-1:8080/stream` in a browser → live
-video that crossed the pair (page with stats at `/`).
+**Demo (Nick):** open `http://nereus001:8080/stream` in a browser → live
+video that crossed the pair (page with stats at `/`; hostname was
+`nereus001-1` until the 2026-08-14 tailnet cleanup).
 **Needs:** S2 done. This receive side is FROZEN after S3 — S6 must plug into it
 unchanged.
 
@@ -400,12 +401,30 @@ USB/MicroPython baseline stays intact as the regression reference
      baseline byte-identical without it). DESIGN §S14.
    **Demo (Nick):** printed relay Mbps + PASS/FAIL verdict; size table.
    **Either gate failing re-plans BUILD-2/BUILD-4 before code.**
-4. `[ ]` **S15 — BUILD-1+3: udp_port_device + transport factory**
+4. `[~]` **S15 — BUILD-1+3: udp_port_device + transport factory**
    (BENCHSPEC Stage 1) — two-Pi bench, nereus000 eth0 ↔ nereus001
-   eth0 direct, 10.42.0.0/24 (bench check: both eth0 free);
-   neighbors + ping + rate limiter measured + REV-13 drop counters.
+   eth0 direct, 10.42.0.0/24 (bench check DONE: cable in 2026-08-14,
+   1000/full both ends); neighbors + ping + rate limiter measured +
+   REV-13 drop counters.
+   → CODE + FULL REHEARSAL DONE 2026-08-14 (nibbles 1–2; plan approved
+   by Nick): bm_sbc fork `feature/udp-transport` (base 17ea904) =
+   BUILD-3 factory (`transport=` key, validate.sh all green) +
+   BUILD-1 `udp_port_device` (VPD-derived, REV-11/12/14 invariants
+   preserved, 10 Mbps token bucket) + `stream_bench` app +
+   `udp_multinode_test.sh` 15/15 (incl. chain ends-do-NOT-neighbor
+   invariant). bm_core fork `bench/d4ecc38-obs` = d4ecc38 + ONE
+   observability commit (TX/RX L2 drop counters — D27; REV-23
+   verified: 17ea904 pins d4ecc38 exactly, zero drift). Bench IPs up
+   (.1/.2, never-default; dev stays wlan). Cross-cable rehearsal:
+   NEIGHBOR_UP + 🏓 bcmp_seq both ends; limiter 15→9.30 Mbps payload
+   (=10.0 wire) with 36,622/36,622 zero loss (throttling = wall
+   stretch, NOT drops — measured semantics in D27 + bm_bench README);
+   8→8.00 unshaped 19,532/19,532. Node IDs fixed: be9c…01/02/03.
+   Repo side: `pi/bm_bench/` (TOMLs, deploy.sh w/ pin verify, README
+   demo ladder). Remaining: Nick creates the two GitHub forks + push,
+   nibble 3 (Nick runs the README demo ladder), nibble 4 (PRs).
    **Demo (Nick):** NEIGHBOR_UP + bcmp_seq across the cable; limiter
-   numbers.
+   numbers. = `pi/bm_bench/README.md` demos 1–3.
 5. `[ ]` **S16 — BUILD-2: AE3 joins the chain** (BENCHSPEC Stages
    2–3) — HE trait device promoted (rpmsg = real wire), HP CDC bridge
    (uart_l2 codec, crash-persistence rule), Pi side = bm_sbc `--uart`

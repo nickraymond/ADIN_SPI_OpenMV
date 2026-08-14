@@ -4,7 +4,7 @@
 # S0-proven max useful clock; falls back to 5 MHz with a loud note if the
 # PHY ID read fails at 20). Pair with bench/frame_counter.py on the Pi:
 #
-#   ssh pi@nereus001-1 "cd ~/ADIN_SPI_OpenMV && \
+#   ssh pi@nereus001 "cd ~/ADIN_SPI_OpenMV && \
 #       sudo python3 bench/frame_counter.py --iface eth1 --duration 60"
 #
 # Run from nereus000 (start the counter FIRST):
