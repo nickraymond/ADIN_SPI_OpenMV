@@ -1,11 +1,18 @@
-// main.c -- S10 INTERIM 2: bm_core (FreeRTOS bm_os + lwIP + BCMP) on the
-// AE3's M55_HE core against the mock NetworkDevice, wired to the HP
-// runner over rpmsg. Loaded at runtime into SRAM9_B (nothing flashed),
-// exactly like the bite-1 spike.
+// main.c -- S16 BUILD-2a: bm_core (FreeRTOS bm_os + lwIP + BCMP +
+// middleware) on the AE3's M55_HE core, attached to the BM network through
+// the real rpmsg-wire NetworkDevice (bm_net_wire) and the HP bridge.
+// Loaded at runtime into SRAM9_B (nothing flashed), exactly like the
+// bite-1 spike.
 //
 // Init order mirrors Sofar's own custom-device integration (bm_sbc
 // runtime.cpp:470-532): device_init -> config_init -> bm_l2_init ->
-// timer_callback_handler_init -> bm_ip_init -> bcmp_init -> power/link.
+// timer_callback_handler_init -> bm_ip_init -> bcmp_init -> topology ->
+// bm_service -> pubsub -> middleware -> sys_info -> power/link.
+//
+// Link discipline (REV-12): the HP bridge announces link state with
+// WCMD_LINK; l2 collects UP from retry_negotiation on its 100 ms timer.
+// Nothing here fires link-up directly -- the S10 init-ladder auto-link is
+// gone with the mock.
 
 #include <string.h>
 
@@ -22,22 +29,23 @@
 #include "timer_callback_handler.h"
 #include "util.h"
 
-#if AUDIT_MIDDLEWARE
 #include "bm_service.h"
 #include "middleware.h"
 #include "pubsub.h"
 #include "sys_info_service.h"
 #include "topology.h"
-#endif
 
 #include "bm_he.h"
-#include "bm_net_mock.h"
+#include "bm_net_wire.h"
 #include "he_spike.h"     // rpmsg/MHU scaffold constants + he status page
 #include "mhu.h"
 #include "rpmsg_remote.h"
+#include "wire_frag.h"
 
 #define VDEV_DRIVER_OK 0x04u
-#define WIRE_MAX_FRAME (RPMSG_BUF_SIZE - 16u /*rpmsg hdr*/ - sizeof(wire_hdr_t))
+// Per-message payload budget after the wire header (492 B); full L2
+// frames up to 1514 B span ceil(1514/492) = 4 messages (wire_frag.h).
+#define WIRE_MSG_PAYLOAD (RPMSG_BUF_SIZE - 16u /*rpmsg hdr*/ - sizeof(wire_hdr_t))
 
 static he_status_page_t *const SP = (he_status_page_t *)STATUS_PAGE_ADDR;
 static bm_status_page_t *const BP = (bm_status_page_t *)BM_STATUS_PAGE_ADDR;
@@ -48,7 +56,13 @@ BmErr bm_stubs_device_init(void);       // bm_stubs.c
 
 static TaskHandle_t s_wire_task;
 static rpmsg_remote_t s_rr;
-static uint32_t s_tx_oversize;
+static wire_reasm_t s_reasm;            // HP->HE frame reassembly
+
+// Stream publisher (WCMD_STREAM -> pub/sub on STREAM_TOPIC).
+static BmQueue s_stream_q;
+static volatile uint32_t s_stream_sent;
+static volatile uint32_t s_stream_errs;
+static volatile bool s_stream_stop;
 
 // MHU doorbell (IRQ context) -> wake the wire task.
 static void doorbell(void) {
@@ -72,7 +86,7 @@ static void wire_send_status(void) {
         wire_status_t status;
     } __attribute__((packed)) reply;
 
-    mock_stats_t stats = bm_net_mock_stats();
+    netwire_stats_t stats = bm_net_wire_stats();
     reply.hdr = (wire_hdr_t){.cmd = WREP_STATUS,
                              .port = 0,
                              .len = sizeof(wire_status_t)};
@@ -82,10 +96,14 @@ static void wire_send_status(void) {
         .stack_err = BP->err,
         .tx_frames = stats.tx_frames,
         .rx_frames = stats.rx_frames,
-        .tx_oversize = s_tx_oversize,
+        .tx_oversize = stats.tx_oversize,
         .link_up = stats.link_up ? 1u : 0u,
         .heap_free = (uint32_t)xPortGetFreeHeapSize(),
         .heap_min = (uint32_t)xPortGetMinimumEverFreeHeapSize(),
+        .tx_dropped = stats.tx_dropped,
+        .frag_errors = s_reasm.errors,
+        .stream_sent = s_stream_sent,
+        .stream_errs = s_stream_errs,
     };
     const BmIpAddr *ll = bm_ip_get(0);
     const BmIpAddr *ucast = bm_ip_get(1);
@@ -107,27 +125,42 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
     }
     const wire_hdr_t *hdr = (const wire_hdr_t *)data;
     const uint8_t *payload = data + sizeof(wire_hdr_t);
-    if (len < sizeof(wire_hdr_t) + hdr->len) {
-        return;
-    }
+    uint16_t in_msg = (uint16_t)(len - sizeof(wire_hdr_t));
 
     switch (hdr->cmd) {
-    case WCMD_FRAME_RX:
-        // l2 copies before queueing, transient buffer is fine.
-        bm_net_mock_inject(hdr->port, (uint8_t *)payload, hdr->len);
+    case WCMD_FRAME_RX: {
+        // hdr->len is the TOTAL frame length (wire_frag.h); this message
+        // carries min(total, budget) bytes of it.
+        uint16_t done = wire_reasm_first(&s_reasm, hdr->port, hdr->len,
+                                         payload, in_msg);
+        if (done) {
+            // l2 copies before queueing, the reasm buffer may be reused.
+            bm_net_wire_inject(hdr->port, s_reasm.buf, done);
+        }
         break;
+    }
+    case WCMD_FRAG: {
+        uint16_t done = wire_reasm_frag(&s_reasm, payload, in_msg);
+        if (done) {
+            bm_net_wire_inject(s_reasm.port, s_reasm.buf, done);
+        }
+        break;
+    }
     case WCMD_LINK:
-        bm_net_mock_set_link(hdr->port,
-                             hdr->len >= 1 && payload[0] == WCMD_LINK_UP);
+        bm_net_wire_link_state(hdr->port, hdr->len >= 1 && in_msg >= 1 &&
+                                              payload[0] == WCMD_LINK_UP);
         break;
     case WCMD_QUERY:
         wire_send_status();
         break;
     case WCMD_PING: {
+        if (in_msg < hdr->len) {
+            break;   // truncated control message
+        }
         // Send a BCMP echo request to the multicast link-local address,
         // same as bm_sbc's app-thread usage; the ping reply is validated
         // inside ping.c (id + payload match) and narrated on the debug
-        // ring -- the runner greps for it (verdict E).
+        // ring -- runners/demos grep for it.
         if (hdr->len < sizeof(wire_ping_t)) {
             break;
         }
@@ -143,6 +176,20 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
                       (unsigned)echo_len, (int)perr);
         break;
     }
+    case WCMD_STREAM: {
+        if (hdr->len < sizeof(wire_stream_t) ||
+            in_msg < sizeof(wire_stream_t) || !s_stream_q) {
+            break;
+        }
+        wire_stream_t cfg;
+        memcpy(&cfg, payload, sizeof(cfg));         // may be unaligned
+        if (cfg.rate_bps == 0) {
+            s_stream_stop = true;   // polled by a running publisher
+        } else if (bm_queue_send(s_stream_q, &cfg, 0) != BmOK) {
+            he_dbg_printf("wire: stream cmd dropped (busy)\n");
+        }
+        break;
+    }
     default:
         he_dbg_printf("wire: unknown cmd 0x%02x\n", hdr->cmd);
         break;
@@ -152,30 +199,83 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
 // ---- HE -> host: forward stack TX frames ---------------------------------
 
 static void wire_pump_tx(void) {
-    mock_tx_frame_t frame;
+    netwire_tx_frame_t frame;
     static uint8_t msg[RPMSG_BUF_SIZE];   // wire task only
 
-    while (bm_net_mock_pop_tx(&frame, 0)) {
-        if (frame.len > WIRE_MAX_FRAME) {
-            s_tx_oversize++;
-            he_dbg_printf("wire: oversize frame dropped (%u B)\n",
-                          frame.len);
-        } else {
-            wire_hdr_t *hdr = (wire_hdr_t *)msg;
-            *hdr = (wire_hdr_t){.cmd = WCMD_FRAME_TX,
-                                .port = frame.port,
-                                .len = frame.len};
-            memcpy(msg + sizeof(*hdr), frame.data, frame.len);
+    while (bm_net_wire_pop_tx(&frame, 0)) {
+        wire_frag_iter_t it;
+        wire_frag_start(&it, WCMD_FRAME_TX, frame.port, frame.data,
+                        frame.len);
+        uint16_t n;
+        while ((n = wire_frag_next(&it, msg, WIRE_MSG_PAYLOAD)) != 0) {
             // Retry briefly: the host recycles buffers as it reads.
             for (int tries = 0; tries < 100; tries++) {
-                if (rr_send(&s_rr, s_rr.peer_addr, msg,
-                            sizeof(*hdr) + frame.len)) {
+                if (rr_send(&s_rr, s_rr.peer_addr, msg, n)) {
                     break;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1));
             }
         }
         bm_free(frame.data);
+    }
+}
+
+// ---- stream publisher (WCMD_STREAM) --------------------------------------
+
+static void stream_task(void *param) {
+    (void)param;
+    static uint8_t payload[STREAM_MAX_PAYLOAD];   // stream task only
+    memset(payload, 0xA5, sizeof(payload));
+
+    for (;;) {
+        wire_stream_t cfg;
+        if (bm_queue_receive(s_stream_q, &cfg, UINT32_MAX) != BmOK) {
+            continue;
+        }
+        if (cfg.rate_bps == 0 || cfg.payload_len == 0) {
+            continue;
+        }
+        if (cfg.payload_len > STREAM_MAX_PAYLOAD) {
+            cfg.payload_len = STREAM_MAX_PAYLOAD;
+        }
+        s_stream_stop = false;
+        s_stream_sent = 0;
+        s_stream_errs = 0;
+        he_dbg_printf("stream: start %lu bps, %u B, %u s\n",
+                      (unsigned long)cfg.rate_bps, cfg.payload_len,
+                      cfg.secs);
+
+        // Quota pacing (same scheme as stream_bench's tx role): publish
+        // whatever the offered rate owes by now, then sleep. bm_pub
+        // blocks in the L2 enqueue when the wire is saturated, so
+        // overload shows as wall-clock stretch, not drops (D27).
+        uint32_t seq = 0;
+        uint64_t sent_bytes = 0;
+        uint32_t t0 = bm_get_tick_count();
+        for (;;) {
+            uint32_t el_ms = bm_ticks_to_ms(bm_get_tick_count() - t0);
+            if (s_stream_stop || el_ms >= (uint32_t)cfg.secs * 1000u) {
+                break;
+            }
+            uint64_t quota = (uint64_t)cfg.rate_bps / 8u * el_ms / 1000u;
+            while (sent_bytes < quota && !s_stream_stop) {
+                memcpy(payload, &seq, sizeof(seq));   // u32 LE seq stamp
+                if (bm_pub(STREAM_TOPIC, payload, cfg.payload_len, 0,
+                           BM_COMMON_PUB_SUB_VERSION) == BmOK) {
+                    s_stream_sent = s_stream_sent + 1;
+                } else {
+                    s_stream_errs = s_stream_errs + 1;
+                }
+                seq++;
+                sent_bytes += cfg.payload_len;
+            }
+            bm_delay(5);
+        }
+        uint32_t wall_ms = bm_ticks_to_ms(bm_get_tick_count() - t0);
+        he_dbg_printf("stream: done sent %lu errs %lu wall %lu ms\n",
+                      (unsigned long)s_stream_sent,
+                      (unsigned long)s_stream_errs,
+                      (unsigned long)wall_ms);
     }
 }
 
@@ -214,10 +314,9 @@ static void bm_init_ladder(NetworkDevice device) {
     }
     BP->stage = BM_STAGE_BCMP;
 
-#if AUDIT_MIDDLEWARE
-    // S14 / BENCHSPEC V15 size audit: the BUILD-4 middleware slice,
-    // initialized in bm_sbc's runtime.cpp order so nothing is linked
-    // dead. Compiled only under AUDIT_MIDDLEWARE=1.
+    // Middleware slice, initialized in bm_sbc's runtime.cpp order.
+    // Promoted from the S14 AUDIT_MIDDLEWARE size-audit build (V15: fits
+    // at 91.6% and runs) -- BUILD-2/4 use it for real.
     if ((err = topology_init(device.trait->num_ports())) != BmOK) {
         bm_set_err(err);
         return;
@@ -235,16 +334,24 @@ static void bm_init_ladder(NetworkDevice device) {
         return;
     }
     sys_info_service_init();
-    he_dbg_printf("audit: middleware slice up\n");
-#endif
+
+    // Stream publisher: waits on WCMD_STREAM configs.
+    s_stream_q = bm_queue_create(1, sizeof(wire_stream_t));
+    if (!s_stream_q ||
+        xTaskCreate(stream_task, "stream", 768 /* words */, NULL,
+                    tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+        bm_set_err(BmENOMEM);
+        return;
+    }
 
     if ((err = bm_l2_netif_set_power(true)) != BmOK) {
         bm_set_err(err);
         return;
     }
-    // Fire link-up AFTER init completes -- never from inside enable()
-    // (bm_sbc's virtual_port_device.cpp:198 documents the l2 timer race).
-    bm_net_mock_set_link(1, true);
+    // No link-up here (REV-12): the HP bridge announces WCMD_LINK and
+    // l2's 100 ms renegotiation timer collects it via the device's
+    // retry_negotiation. RUNNING means "ladder complete", link may
+    // still be down until the bridge attaches.
     BP->stage = BM_STAGE_RUNNING;
     // newlib-nano printf has no %llx -- print the id in halves.
     he_dbg_printf("bm stack RUNNING, node 0x%08lx%08lx\n",
@@ -273,12 +380,12 @@ static void wire_task(void *param) {
     BP->stage = BM_STAGE_RPMSG;
 
     // The BM stack comes up from this task so its failures land on the
-    // status page before the runner ever asks.
-    NetworkDevice device = bm_net_mock_device();
+    // status page before the bridge ever asks.
+    NetworkDevice device = bm_net_wire_device();
     bm_init_ladder(device);
 
     for (;;) {
-        mock_stats_t stats = bm_net_mock_stats();
+        netwire_stats_t stats = bm_net_wire_stats();
         BP->tick = xTaskGetTickCount();
         BP->tx_frames = stats.tx_frames;
         BP->rx_frames = stats.rx_frames;

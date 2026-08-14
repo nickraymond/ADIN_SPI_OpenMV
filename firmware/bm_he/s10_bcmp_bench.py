@@ -7,7 +7,8 @@
 #
 # Loads the bm_core stack app onto the HE core at runtime (remoteproc ELF
 # load into SRAM9_B), then plays a full python PEER NODE (s10_peer.py) on
-# the far end of the mock NetworkDevice's fake wire. Verdicts:
+# the far end of the rpmsg wire (bm_net_wire; this runner doubles as the
+# bridge: it announces WCMD_LINK and speaks the S16 frag rules). Verdicts:
 #   A -- BM stack up on HE (init ladder RUNNING, node id + both IPv6
 #        addresses per bm_lwip.c:289-295)                       [2a]
 #   B -- HE's BCMP heartbeats emitted on schedule + wire-correct [2a]
@@ -37,7 +38,7 @@ ELF_PATHS = ("/flash/bm_he.elf", "bm_he.elf")
 BM_STATUS_PAGE = 0x600BFE00
 PCAP_PATH = "/flash/bm_he_hb.pcap"
 
-NODE_ID = 0x424D4845AE30BEEF  # bm_stubs.c BM_HE_NODE_ID
+NODE_ID = 0xBE9C000000000003  # bm_stubs.c BM_HE_NODE_ID (Camera, S16)
 HB_PERIOD_S = 10              # bcmp.c bcmp_heartbeat_s
 CAPTURE_S = 25                # >= 2 HE timer heartbeats
 MIN_HEARTBEATS = 2
@@ -51,8 +52,10 @@ PING_E_PAYLOAD = b"S10-2b HE->peer"
 WCMD_FRAME_TX = 0x11
 WCMD_FRAME_RX = 0x12
 WCMD_LINK = 0x13
+WCMD_LINK_UP = 0x01
 WCMD_QUERY = 0x14
 WCMD_PING = 0x15
+WCMD_FRAG = 0x16
 WREP_STATUS = 0x94
 
 STAGES = {0: "-", 1: "BOOT", 2: "RTOS", 3: "RPMSG", 4: "L2", 5: "IP",
@@ -130,20 +133,50 @@ class Wire:
         self.status = None
         self.frames = []          # HE -> wire: (bytes, t_seconds, port)
         self.injected = []        # wire -> HE: (bytes, t_seconds), for pcap
+        self.reasm = None         # (port, total, bytearray) mid-assembly
+        self.frag_errors = 0
 
     def ns(self, src, name):
         if name == "bm-wire":
             self.ept = openamp.Endpoint("bm-wire", self.rx, dest=src)
 
     def rx(self, src, data):
+        # S16 wire: WCMD_FRAME_TX carries hdr.len = TOTAL frame length;
+        # frames beyond one rpmsg message continue in WCMD_FRAG msgs
+        # (wire_frag.h; in-order vring, no seq).
         b = bytes(data)
         if len(b) < 4:
             return
         cmd, port, ln = struct.unpack_from("<BBH", b, 0)
-        if cmd == WCMD_FRAME_TX and len(b) >= 4 + ln:
-            self.frames.append((b[4:4 + ln], now_s(), port))
+        if cmd == WCMD_FRAME_TX:
+            if self.reasm is not None:
+                self.frag_errors += 1     # frame while frame open: resync
+                self.reasm = None
+            if len(b) - 4 >= ln:
+                self.frames.append((b[4:4 + ln], now_s(), port))
+            else:
+                self.reasm = (port, ln, bytearray(b[4:]))
+        elif cmd == WCMD_FRAG:
+            if self.reasm is None:
+                self.frag_errors += 1
+                return
+            rport, total, buf = self.reasm
+            buf += b[4:4 + ln]
+            if len(buf) >= total:
+                self.reasm = None
+                if len(buf) == total:
+                    self.frames.append((bytes(buf), now_s(), rport))
+                else:
+                    self.frag_errors += 1
         elif cmd == WREP_STATUS:
             self.status = b[4:4 + ln]
+
+    def link(self, up):
+        # Bridge-role link announcement; the HE reports it to l2 from
+        # retry_negotiation on the 100 ms timer (REV-12) -- allow ~200 ms
+        # before expecting link_up in the status.
+        self.ept.send(struct.pack("<BBHB", WCMD_LINK, 1, 1,
+                                  WCMD_LINK_UP if up else 0), timeout=1000)
 
     def inject(self, frame):
         self.injected.append((frame, now_s()))
@@ -163,7 +196,10 @@ class Wire:
             if time.ticks_diff(time.ticks_ms(), t0) > timeout_ms:
                 raise OSError("no status reply on bm-wire")
             time.sleep_ms(2)
-        return struct.unpack("<Q16s16sIIIIIIII", self.status)
+        # wire_status_t (88 B): the S10 fields + tx_dropped, frag_errors,
+        # stream_sent, stream_errs (drop-ledger counters, S16). This
+        # runner only uses the first 11.
+        return struct.unpack("<Q16s16sIIIIIIIIIIII", self.status)[:11]
 
     def wait_for(self, cursor, pred, timeout_s=REPLY_TIMEOUT_S):
         """Scan self.frames from index `cursor` for a parsed frame matching
@@ -211,13 +247,20 @@ def main():
             raise OSError("bm-wire never announced (see status page)")
         time.sleep_ms(5)
 
+    # S16 promotion: link-up is no longer scripted in the init ladder --
+    # this runner plays the bridge and announces it (the HE reports it to
+    # l2 from retry_negotiation on the 100 ms timer, REV-12).
+    w.link(True)
+
     # The stack initializes right after the announce; give the ladder a
     # moment, then poll the status until RUNNING (or 5 s).
     t0 = time.ticks_ms()
     while True:
         (node, ll, ucast, stage, err, txf, rxf, oversize, link, heap_free,
          heap_min) = w.query()
-        if stage == 7 or err != 0 or \
+        # stage RUNNING now means "ladder complete"; link-up lands up to
+        # ~100 ms later via the renegotiation timer -- wait for both.
+        if (stage == 7 and link == 1) or err != 0 or \
                 time.ticks_diff(time.ticks_ms(), t0) > 5000:
             break
         time.sleep_ms(100)
