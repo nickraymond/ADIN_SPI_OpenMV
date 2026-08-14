@@ -5,12 +5,17 @@
 # /dev/serial/by-id CDC path -- zero new Pi-side transport code (REV-20).
 #
 # Runs ON the AE3's HP core (MicroPython, stock firmware, nothing
-# flashed), deployed as /flash/main.py via main_bridge.py. Ops model =
-# the S14 pump (firmware/bm_bridge/README.md rules are law): warm
-# `mpremote reset` is the service entry; mpremote attach kills it
-# (KeyboardInterrupt); every exit cause persists to /flash/bridge_crash.txt
-# because a traceback printed into bm_sbc's decoder is lost as COBS
-# garbage (BENCHSPEC BUILD-2b).
+# flashed), deployed as /flash/main.py via main_bridge.py. Ops model
+# (firmware/bm_bridge/README.md rules are law): warm `mpremote reset`
+# is the service entry. STOP MODEL (changed from the S14 pump, found
+# live): kbd_intr is disabled for the service's life -- COBS bytes
+# contain 0x03 and would kill the pump -- so ctrl-C/mpremote CANNOT
+# stop a linked bridge; instead the bridge exits ITSELF 30 s after the
+# Pi side goes quiet (stop bm_sbc, wait, then the board is at the
+# REPL), or 10 min with no Pi attach at all; uhubctl stays the hammer.
+# Every exit cause persists to /flash/bridge_crash.txt because a
+# traceback printed into bm_sbc's decoder is lost as COBS garbage
+# (BENCHSPEC BUILD-2b).
 #
 # Wire protocol facts (firmware/bm_he/src/bm_he.h + wire_frag.h):
 #   rpmsg msg = 4 B header <BBH (cmd, port, len)> + payload, <=496 B total.
@@ -63,6 +68,9 @@ TRACE_PATH = "/flash/bridge_trace.txt"
 ELF_PATH = "/flash/bm_he.elf"
 BM_STATUS_PAGE = 0x600BFE00
 RPMSG_QUEUE_CAP = 256       # HE->bridge backlog cap (drops counted)
+PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
+QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
+                            #   heartbeat period) -> Pi gone, clean exit
 
 
 class BridgeCore:
@@ -336,6 +344,22 @@ def main():
         pass
     _trace("bridge up, cfg %s" % json.dumps(cfg))
 
+    # THE console is the wire (found live, first chain bring-up): MicroPython
+    # scans inbound VCP bytes for the interrupt char 0x03 and raises
+    # KeyboardInterrupt in the running service -- and COBS output freely
+    # contains 0x03, so bm_sbc's first frames kill the bridge. Disable it
+    # for the service's whole life; ctrl-C therefore CANNOT stop the
+    # bridge -- it stops itself when the Pi side goes quiet (below), and
+    # the uhubctl cold cycle stays the hammer (cold boot = REPL).
+    kbd_off = False
+    try:
+        import micropython
+        micropython.kbd_intr(-1)
+        kbd_off = True
+    except Exception:
+        pass
+    _trace("kbd_intr %s" % ("disabled" if kbd_off else "UNAVAILABLE"))
+
     rp = he.start()
     _trace("he loaded, bm-wire announced")
 
@@ -344,7 +368,13 @@ def main():
         # (bm_sbc's gateway heartbeats on its UART port as soon as it
         # opens the tty). Until link-up the HE stack transmits nothing,
         # so the pipe stays quiet while unowned. Drain rpmsg meanwhile.
+        # Bounded: a bridge nobody ever attaches to exits on its own
+        # (ctrl-C is disabled -- see kbd_intr above).
+        t0 = time.ticks_ms()
         while not usb.any():
+            if time.ticks_diff(time.ticks_ms(), t0) > PHASE1_TIMEOUT_MS:
+                _trace("phase 1 timeout -- no Pi attach, exiting")
+                return
             if he.queue:
                 he.queue.pop(0)
             time.sleep_ms(20)
@@ -359,6 +389,7 @@ def main():
         stream_sent = False
         ping_sent = False
         last_stat = time.ticks_ms()
+        last_rx = time.ticks_ms()
 
         while True:
             idle = True
@@ -372,8 +403,16 @@ def main():
             # Pi -> HE
             if usb.any():
                 idle = False
+                last_rx = time.ticks_ms()
                 for msg in core.vcp_bytes(usb.read_available()):
                     he.send(msg)
+            elif time.ticks_diff(time.ticks_ms(), last_rx) > QUIET_EXIT_MS:
+                # The Pi side heartbeats every ~10 s while alive; a long
+                # silence means bm_sbc is gone. Exit cleanly -- this IS
+                # the bridge's stop mechanism (ctrl-C is disabled).
+                _trace("vcp quiet %d ms -- pi side gone, exiting"
+                       % QUIET_EXIT_MS)
+                break
 
             # one-shot triggers, delays counted from link-up
             now = time.ticks_ms()
@@ -422,3 +461,9 @@ def main():
         except Exception:
             _trace("he stop FAILED -- recovery: sudo uhubctl -l 3 -p 1 "
                    "-a cycle -d 3, then mpremote reset")
+        if kbd_off:
+            try:
+                import micropython
+                micropython.kbd_intr(3)   # console is a console again
+            except Exception:
+                pass

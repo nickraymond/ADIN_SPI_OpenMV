@@ -185,9 +185,12 @@ ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV
 3. **Telemetry** (nereus001): start within ~10 s of Light (the one-shot
    ping window, S15 demo-1 gotcha).
 
-To stop: Ctrl-C the Pi nodes; stop the bridge by attaching mpremote
-(the injected KeyboardInterrupt IS the stop signal; the bridge persists
-its ledger, stops the HE, and drops to REPL).
+To stop: Ctrl-C the Pi nodes; the bridge then **stops itself ~30 s
+after the VCP goes quiet** (ctrl-C cannot reach it — kbd_intr is
+disabled because COBS bytes contain 0x03; found live). It persists its
+ledger + HE ring dump, stops the HE, and drops to REPL — wait ~30 s
+after stopping Light before attaching mpremote. Each demo gets a fresh
+bridge (warm reset re-arms the cfg one-shots).
 
 ## S16 demo 1 — chain topology (never a star)
 
@@ -263,10 +266,10 @@ Telemetry `total_msgs` + every counted drop). Margin context: the S14
 relay measured 5.4 Mbps sustained through this exact path shape — 2.7×
 the gate.
 
-Afterwards stop the bridge (mpremote attach) and read
-`/flash/bridge_trace.txt` + `/flash/bridge_crash.txt` for the final
-ledger; V5 (Sofar's serial path first-ever hardware run) says surprises
-land there.
+Afterwards stop the Pi nodes, wait ~30 s for the bridge's quiet-exit,
+then read `/flash/bridge_trace.txt` + `/flash/bridge_crash.txt` for the
+final ledger (the trace ends with the HE debug-ring dump — the stream
+publisher's `stream: done` line and any 🏓 acceptance live there).
 
 ## Where drops actually happen (S15 finding, for S16)
 

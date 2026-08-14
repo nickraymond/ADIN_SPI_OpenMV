@@ -65,10 +65,43 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 - Nothing else: host tests and the cross-build passed first try; both
   Pi deploys green.
 
-**Next:** VCP gate — Nick's explicit go in chat, then: AE3 staging
-(main.py swap per README §S16 deploy), live chain rehearsal, nibble 3
-(Nick runs README §S16 demos 1–3), nibble 4 PR. Session end after
-demos: fixture restore + sha-verify + S6 USB baseline re-run.
+**Same-session continuation — VCP gate opened (Nick: "Go"), staged +
+FULL CHAIN REHEARSED:**
+- Staging: fixture sha recorded (55fa6ccf… confirmed), five files
+  sha-verified on board, warm reset. First bring-up DIED instantly
+  when Light spoke — **V5 find #1: MicroPython's console scans inbound
+  VCP bytes for 0x03 (kbd interrupt) and COBS frames contain 0x03
+  freely → bm_sbc's first heartbeat injected KeyboardInterrupt into
+  the pump.** (Crash file made it a 2-minute diagnosis.) Fix:
+  `micropython.kbd_intr(-1)` for the service's life + NEW STOP MODEL —
+  bridge exits itself after 30 s VCP silence (heartbeats every 10 s
+  while alive) or 10 min unattached; ctrl-C can't stop a linked
+  bridge; one bridge lifetime per demo (cfg one-shots re-arm on warm
+  reset).
+- **Chain rehearsal PASS (all three demo shapes):** (1) topology —
+  Light NEIGHBOR_UP …01 port 1 AND …03 port 15; Telemetry neighbors
+  ONLY Light, yet 🏓 from …02 (0 ms) and …03 (9–10 ms, 2 hops) —
+  never-a-star holds; ×2 runs. (2) forwarded pub/sub — Camera's
+  2 Mbps/1400 B stream: **Telemetry RX_STAT steady 1.99–2.02 Mbps,
+  21.1 MB/15,084 msgs; Light transit ledger tx_drops=0, rx_drops=0;
+  ZERO uart decode errors both sessions (22.4 MB + 27.7 MB relayed,
+  every ~1490 B frame crossing the 4-msg rpmsg frag path;
+  frag_errors 0, qdrops 0).** REV-12 live on silicon ("Renegotiated
+  on port: 1" on the HE ring). (3) Camera-sourced 2-hop ping — **V5
+  find #2: ll-multicast (ff02::1) ping never crossed Light (REV-6
+  measured live)**; WCMD_PING switched to `multicast_global_addr`
+  (ff03::1, what multinode itself pings), ELF rebuilt/restaged →
+  **🏓 16 bytes … payload "S16 camera 2-hop" accepted by ping.c.**
+- Known-cosmetic: newlib-nano %llx/%lu artifacts in ring prints
+  ("…lx", "time=lu"); "Unable to load configs from flash" ×3 =
+  RAM-stub config, expected (REV-27).
+- Board state: bridge staged as /flash/main.py (board at REPL, HE
+  stopped), demo cfg armed (stream 2.0/1400/600 s delay 15; ping
+  target …01 delay 30). ELF on board = 45a9615d… (global-addr ping).
+
+**Next:** nibble 3 — Nick runs README §S16 demos 1–3 → nibble 4 PR
+(repo + fork). Session end after demos: fixture restore + sha-verify +
+S6 USB baseline re-run.
 
 ---
 

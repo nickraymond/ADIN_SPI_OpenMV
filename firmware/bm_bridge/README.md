@@ -39,14 +39,26 @@ AE3 HP core / CPython on Pi + host tests).
 - While the bridge runs the VCP is a data pipe: REPL unavailable, zero
   prints. State goes to `/flash/bridge_trace.txt` (30 s stats snapshots,
   final ledger, HE debug-ring dump at exit).
-- Any exit (KeyboardInterrupt included) persists to
-  `/flash/bridge_crash.txt`, announces link-down to the HE, and stops
-  the HE (end-of-life stop; next session warm-resets first). If the
-  bridge died harder (stale HE still running at next boot), it refuses
-  to start and names the recovery pair: `sudo uhubctl -l 3 -p 1 -a
-  cycle -d 3`, then warm reset.
-- Pi-side failure sequence: link death → stop bm_sbc → `mpremote`
-  attach → read `/flash/bridge_crash.txt` + `/flash/bridge_trace.txt`.
+- **Stop model (found live, first chain bring-up):** MicroPython scans
+  inbound console bytes for 0x03 and COBS frames contain it freely —
+  bm_sbc's first heartbeat killed the pump with an injected
+  KeyboardInterrupt. The bridge therefore runs with
+  `micropython.kbd_intr(-1)`: **ctrl-C / mpremote cannot stop a linked
+  bridge.** It stops ITSELF: 30 s of VCP silence after link-up (= the
+  Pi side is gone; heartbeats come every 10 s while alive) or 10 min
+  with no Pi attach at all → clean exit, kbd_intr restored, HE
+  stopped, board at REPL. So: stop bm_sbc, wait ~30 s, then attach.
+  One bridge lifetime per demo — the cfg one-shots re-arm on warm
+  reset. `sudo uhubctl -l 3 -p 1 -a cycle -d 3` stays the hammer
+  (cold boot = REPL on this build).
+- Any exit persists to `/flash/bridge_crash.txt`, announces link-down
+  to the HE, and stops the HE (end-of-life stop; next session
+  warm-resets first). If the bridge died harder (stale HE still
+  running at next boot), it refuses to start and names the recovery
+  pair.
+- Pi-side failure sequence: link death → stop bm_sbc → wait ~30 s →
+  `mpremote` attach → read `/flash/bridge_crash.txt` +
+  `/flash/bridge_trace.txt`.
 
 ## Measured results (2026-08-14, all receiver-side, 0 gaps, 0 CRC errors)
 

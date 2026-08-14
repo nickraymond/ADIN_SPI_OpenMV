@@ -157,10 +157,14 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
         if (in_msg < hdr->len) {
             break;   // truncated control message
         }
-        // Send a BCMP echo request to the multicast link-local address,
-        // same as bm_sbc's app-thread usage; the ping reply is validated
-        // inside ping.c (id + payload match) and narrated on the debug
-        // ring -- runners/demos grep for it.
+        // Send a BCMP echo request to the GLOBAL multicast address
+        // (ff03::1) -- the class L2 forwards through the pass-through
+        // node (REV-6), and what bm_sbc's multinode app itself pings.
+        // Link-local ff02::1 stops at the direct neighbor (measured
+        // live, S16 rehearsal: a Camera->Telemetry ping via ll never
+        // crossed Light). The reply is validated inside ping.c (id +
+        // payload match) and narrated on the debug ring -- runners/
+        // demos grep for it.
         if (hdr->len < sizeof(wire_ping_t)) {
             break;
         }
@@ -168,7 +172,7 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
         memcpy(&target, payload, sizeof(target));   // payload may be unaligned
         uint16_t echo_len = (uint16_t)(hdr->len - sizeof(wire_ping_t));
         BmErr perr = bcmp_send_ping_request(
-            target, &multicast_ll_addr,
+            target, &multicast_global_addr,
             echo_len ? payload + sizeof(wire_ping_t) : NULL, echo_len);
         he_dbg_printf("wire: ping 0x%08lx%08lx (%u B) err %d\n",
                       (unsigned long)(target >> 32),
