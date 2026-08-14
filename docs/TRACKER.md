@@ -382,15 +382,22 @@ USB/MicroPython baseline stays intact as the regression reference
    both rehearsals); PR #18 merged. 2b DONE 2026-08-12: demo run by
    Nick — PASS (A–E, identical to both rehearsals) = the INTERIM-2
    demo proper; branch `sprint/10-bcmp-2b`, PR opened.**
-3. `[ ]` **S14 — bench rung 0: gates before code** (BENCHSPEC.md
+3. `[~]` **S14 — bench rung 0: gates before code** (BENCHSPEC.md
    V15/V16, Stage 0)
-   - bm_sbc @ main builds on nereus001; ctest + `validate.sh` green
-     (their CI as-is)
-   - Relay throughput bench: HE→HP rpmsg + HP→Pi VCP **simultaneous**
-     relay, gate **≥2 Mbps sustained 10 min** (target 2×) — reuses the
-     he_spike pump + ae3_usb host pattern; no new architecture
-   - HE size audit: link pubsub+bm_service+cbor slice, read the map
-     vs the 262 K region (image at ~88% today)
+   - bm_sbc @ main builds + ctest + `validate.sh` — run on **nereus000**
+     (the new Light host; nereus001 unreachable on the tailnet
+     2026-08-14 — bench check for Nick, needed by S15)
+   - [x] Relay throughput bench → **V16 MEASURED 2026-08-14: full relay
+     (HE→rpmsg→HP uart_l2 framing→VCP→Pi) = 5.4–5.5 Mbps sustained,
+     600 s run 5.425 Mbps / 288k frames / 0 gaps / 0 drops — 2.7× the
+     2 Mbps gate.** Framing+USB alone 13.1 Mbps; rpmsg drain is the
+     ceiling (= he_spike's 5.6). CRC-32C in viper is free (rung E:
+     identical vs no-CRC). `firmware/bm_bridge/` + `bench/
+     s14_relay_counter.py`; ops rules bench-earned (cold boot ≠
+     main.py, mpremote kills service, HE load-once — DESIGN §S14).
+   - [x] HE size audit → **V15 FITS: 240,000 B of 262,144 (91.6%),
+     slice cost +8.5 K, ~21.6 K headroom** (AUDIT_MIDDLEWARE=1 build;
+     baseline byte-identical without it). DESIGN §S14.
    **Demo (Nick):** printed relay Mbps + PASS/FAIL verdict; size table.
    **Either gate failing re-plans BUILD-2/BUILD-4 before code.**
 4. `[ ]` **S15 — BUILD-1+3: udp_port_device + transport factory**

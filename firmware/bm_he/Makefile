@@ -105,7 +105,28 @@ LWIP_SRCS = \
     $(LWIP)/api/tcpip.c \
     $(LWIP)/netif/ethernet.c
 
+# S14 / BENCHSPEC V15: the BUILD-4 middleware slice, linked only for the
+# size audit (AUDIT_MIDDLEWARE=1). The standing INTERIM-2 image is
+# byte-identical without the flag.
+MW_SRCS = \
+    $(BM)/middleware/middleware.c \
+    $(BM)/middleware/pubsub.c \
+    $(BM)/middleware/bm_service.c \
+    $(BM)/middleware/bm_service_request.c \
+    $(BM)/middleware/cbor_service_helper.c \
+    $(BM)/middleware/sys_info_service.c \
+    $(BM)/middleware/power_info_service.c \
+    $(BM)/common/cb_queue.c \
+    $(BM)/integrations/topology.c \
+    $(BM)/bm_common_messages/sys_info_svc_reply_msg.c \
+    $(BM)/bm_common_messages/power_info_reply_msg.c \
+    $(BM)/bm_common_messages/bm_messages_helper.c
+
 SRCS = $(APP_SRCS) $(FR_SRCS) $(BM_SRCS) $(LWIP_SRCS)
+ifeq ($(AUDIT_MIDDLEWARE),1)
+SRCS += $(MW_SRCS)
+CFLAGS_EXTRA += -DAUDIT_MIDDLEWARE=1 -I$(BM)/middleware -I$(BM)/integrations -I$(BM)/bm_common_messages
+endif
 
 # Our headers FIRST: bm_he's FreeRTOSConfig.h must beat he_spike's.
 INC = -Isrc \
@@ -122,7 +143,8 @@ CFLAGS = -mcpu=cortex-m55 -mthumb -mfloat-abi=hard \
          -Wall -Wextra -Werror -Wno-unused-parameter \
          -std=gnu11 $(INC) \
          -DCBOR_CUSTOM_ALLOC_INCLUDE='"tinycbor_alloc.h"' \
-         -DCBOR_PARSER_MAX_RECURSIONS=10
+         -DCBOR_PARSER_MAX_RECURSIONS=10 \
+         $(CFLAGS_EXTRA)
 
 LDFLAGS = -mcpu=cortex-m55 -mthumb -mfloat-abi=hard \
           -T src/bm_he.ld -nostartfiles \
