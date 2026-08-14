@@ -460,6 +460,19 @@ USB/MicroPython baseline stays intact as the regression reference
    session per boot hard-faults the AE3 (repro:
    `firmware/ae3_usb/README.md`; re-validate on current build first;
    USB-only, restore fixture after)
+10. `[ ]` Upstream reports to Bristlemouth — **GATED (Nick,
+   2026-08-14): not before the entire bench (S15–S17) works as
+   expected.** Three pieces, each verifiable as a filed issue/PR URL
+   recorded in DEV_LOG: (a) bm_core `l2.c` silent-drop observability
+   gap — RX-path multicast forward ignores `bm_l2_tx`'s BmENOMEM
+   (l2.c:396 @ d4ecc38) and RX ingress drops silently; ready-made
+   fix = our `bench/d4ecc38-obs` counter commit (e031f11, D27);
+   (b) bm_sbc **V13** latent bugs (BENCHSPEC §7): `gw_retry_
+   negotiation`/`gw_port_stats` 0-based vs 1-based port arg — top
+   VPD port never renegotiates at 14 peers; (c) optional feature PR:
+   transport factory + udp_port_device (fork branch
+   `feature/udp-transport`, upstream CI green). Outward-facing —
+   each needs Nick's explicit go at filing time.
 
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
 demo — rebuild a link fixture (new hats / SG-shield-as-OA reshuffle /
