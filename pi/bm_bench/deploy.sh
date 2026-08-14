@@ -17,7 +17,7 @@
 # Pins (S15, 2026-08-14). Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="4ebdbc3d6d3878f39ba0e7c454011f96ab0f2c6c"
+BM_SBC_PIN="4ebdbc3582e224b8d5524ae8b8f4290f60373106"
 BM_CORE_PIN="e031f11fc8305566eb5dc46fe296727d39007826"
 
 set -euo pipefail
