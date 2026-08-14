@@ -1221,3 +1221,94 @@ classification edges; `test_bm_he.c` gains wire_ping_t ABI locks.
 **Fixture note:** unchanged (bite-3 alif build on HP; nothing
 flashed). S6 USB baseline re-verified post-bench: 34.1 fps QVGA q90,
 0 gaps, 0 bad JPEGs, valid SOI/EOI on the sample artifact.
+
+### S14 detail (2026-08-14) — bench rung 0: V15/V16 gates measured (as-built)
+
+**Result: both BENCHSPEC Stage-0 gates answered with measurements —
+V16 relay = PASS at 5.4 Mbps sustained (2.7× the 2 Mbps
+gate), V15 middleware slice FITS at 91.6% of the HE region.** Branch
+`sprint/14-bench-rung0`; code: `firmware/bm_bridge/` +
+`bench/s14_relay_counter.py` + the bm_he AUDIT_MIDDLEWARE knob.
+
+**V16 relay bench (receiver-side ledger, D21 philosophy):**
+- Codec on HP (viper): crc32c 7.34 MB/s; full uart_l2 frame encode
+  10.1 Mbps L2-equivalent @ 1412 B — the codec is not the bottleneck.
+- Rung B (framing+USB only, no HE): **13.1 Mbps**.
+- Rung C (full relay HE→rpmsg→HP framing→VCP→Pi): **5.5 Mbps**,
+  rpmsg-drain-bound (matches he_spike's measured 5.6 Mbps HE→HP
+  python-bound ceiling); agg=3 (1412 B wire frames, the S16 chunk
+  shape): 5.4 Mbps.
+- Rung E: crc32c vs builtin-crc32 vs no-CRC = 5.55 Mbps IDENTICAL —
+  viper CRC-32C is free at this rate; no C-usermod escalation needed.
+- **Rung D gate (600 s, agg 3): 5.425 Mbps sustained, 288,162/288,162
+  frames, 864,487 rpmsg msgs, 0 seq gaps, 0 src gaps, 0 queue drops,
+  0 in-stream decode errors, HE alive after — **PASS** (verdict from the
+  shipped counter; its gate ignores the single structural pre-stream
+  text segment, which every run produces).**
+- Rung A regression: existing s10_pipe_bench PASS (13.1 HP→HE /
+  5.5 HE→HP — unchanged from bite 1).
+- Headroom note for BUILD-4: the 2 Mbps stream leaves ~3.4 Mbps of
+  relay margin, but capture+encode will share the HP core (D8/D21) —
+  BENCHSPEC's "re-check with capture+encode live" stands.
+
+**V15 size audit:** middleware slice (pubsub, middleware, bm_service +
+request, cbor_service_helper, sys_info + power_info services, cb_queue,
+topology, 2× bm_common_messages codecs + helper) vendored at the same
+rev d4ecc38 behind `AUDIT_MIDDLEWARE=1`, initialized in bm_sbc's
+runtime.cpp order. Audit image: **text 79,384 + data 108 + bss 160,508
+= 240,000 B of 262,144 (91.6%)** vs baseline 231,548 (slice cost
++8,452 B). ~21.6 K headroom for BUILD-4 app code; levers untouched
+(config store 26 K, pbuf 18 K, 64 K heap). Baseline image byte-identical
+without the flag (sha-verified).
+
+**Bench-earned operating rules (now in firmware/bm_bridge/README.md):**
+1. **Cold boot does not run main.py on this build** — uhubctl/replug
+   alone leaves the board at the REPL; service entry = warm
+   `mpremote reset`. (Every prior fixture "cold recovery" was followed
+   by a protocol-level reboot, which is why this was never seen.)
+2. mpremote attach kills the service via injected KeyboardInterrupt
+   (by design); pyserial attach is harmless.
+3. HE lifecycle: load once per service boot; never stop mid-life (a
+   2nd stop→load cycle in one boot loses the ns announcement — the
+   prior host endpoint shadows the rebind); drain the in-flight burst
+   at every rung end so HE is idle wherever the service can die.
+   Stale-idle-HE restart works; stale-mid-burst blocks in C. Recovery:
+   `sudo uhubctl -l 3 -p 1 -a cycle -d 3` (answers S7's open uhubctl
+   topology question: hub 3 port 1 on nereus000) + warm reset.
+4. Crash/trace persistence: /flash/s14_crash.txt (every exit cause
+   incl. KeyboardInterrupt) + /flash/s14_trace.txt (state
+   transitions) — a traceback printed into an owned VCP is otherwise
+   lost as COBS garbage (BENCHSPEC BUILD-2b rule, adopted early,
+   promoted to the S16 bridge).
+5. Counter handshake before config: newline → fresh banner proves the
+   read loop is live (a boot-buffered banner alone proves nothing).
+
+**V15 bonus — the audit image RUNS, not just fits:** cold-cycled
+board, audit ELF staged as /flash/bm_he.elf, full 2a/2b bench = A–E
+ALL PASS with `audit: middleware slice up` on the ring; heap
+24,112/23,912 free (middleware init costs ~4.4 K of the 64 K heap vs
+baseline 28,488). 2b artifact restored byte-identical after (cmp).
+
+**Rung 0 (bm_sbc CI):** built on **nereus000** (the BENCHSPEC Light
+host; nereus001 unreachable on the tailnet 2026-08-14 — bench check),
+bm_sbc @ 17ea904, ctest 100%, `scripts/validate.sh` 15/15 — first
+verified bm_sbc build on our hardware. ~/bm_sbc on nereus000 is the
+standing checkout.
+
+**Fixture:** main.py restored to the ae3_usb service (sha 55fa6ccf…
+= repo copy) + S6 baseline re-verified: QVGA q90 = 35.0 fps, 0 gaps,
+0 bad JPEGs, sample artifact valid. Restore lesson recorded: a
+main.py swap attempted while the old service holds the VCP can
+silently not land — restore from REPL/cold state and sha-verify
+AFTER, which the README now instructs. s14 pump/codec stay staged on
+/flash (inert; main.py decides what runs); HE left stopped.
+
+**Codec provenance:** `uart_codec.py` is byte-exact vs bm_sbc's C
+(golden vectors generated by compiling their frame_codec/cobs/crc32c
+on the Mac — embedded in host_test/test_uart_codec.py). Host tests 50
+checks (codec + simulated pump-session protocol). The S16 bridge
+reuses codec + splitter + crash rule as-is.
+
+**rpmsg fragmentation fact for S16:** the pipe carries ≤496 B/msg
+(480 used) → a 1514 B L2 frame spans 4 rpmsg messages; the bench's
+agg=3 path (3×468 B → 1412 B wire frames) is the shape S16 inherits.

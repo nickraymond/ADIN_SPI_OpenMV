@@ -100,6 +100,18 @@ def main():
             "no pump banner. Is main_s14.py deployed + board rebooted? "
             "(firmware/bm_bridge/README.md §Deploy; check /flash/s14_crash.txt)")
 
+    # Handshake: a bare newline makes the pump's readline return an empty
+    # line and re-print its banner immediately -- proving the READ loop is
+    # live (a boot-buffered banner alone proves nothing; found live when
+    # first-rung-after-boot configs vanished).
+    ser.reset_input_buffer()
+    ser.write(b"\n")
+    ser.flush()
+    if not wait_banner(ser, timeout=6.0):
+        raise SystemExit("banner seen but read-loop handshake failed -- "
+                         "service not consuming stdin; warm-reset the board "
+                         "and check /flash/s14_trace.txt")
+
     if args.quit:
         ser.write(b'{"rung":"Q"}\n')
         ser.flush()
@@ -120,6 +132,10 @@ def main():
     last_seq = -1
     summary = None
     t_first = None
+    # Text preceding the leading delimiter (banner + CFG echo) decodes as
+    # exactly one structural error on every run; only errors AFTER the
+    # first valid frame indicate stream corruption.
+    errs_at_first_frame = None
     deadline = time.time() + args.secs + 30     # generous rung watchdog
 
     while time.time() < deadline:
@@ -134,6 +150,8 @@ def main():
                 summary = json.loads(l2[6:].decode())
                 break
             if l2.startswith(b"S14F") and len(l2) >= 8:
+                if errs_at_first_frame is None:
+                    errs_at_first_frame = splitter.errors
                 seq = struct.unpack_from("<I", l2, 4)[0]
                 if last_seq >= 0 and seq != last_seq + 1:
                     seq_gaps += 1
@@ -160,7 +178,9 @@ def main():
     print("  wire bytes      : %d  -> %.3f Mbps (framing overhead %.1f%%)"
           % (wire_bytes, mbps_wire,
              100.0 * (wire_bytes - l2_bytes) / l2_bytes if l2_bytes else 0))
-    print("  decode/crc errs : %d" % splitter.errors)
+    stream_errs = splitter.errors - (errs_at_first_frame or 0)
+    print("  decode/crc errs : %d in-stream (%d incl. pre-stream text)"
+          % (stream_errs, splitter.errors))
     print("  seq gaps        : %d" % seq_gaps)
     if args.rung == "C":
         print("  rpmsg src       : %d msgs, %d gaps, %d queue drops"
@@ -169,7 +189,7 @@ def main():
 
     if args.gate is not None:
         ok = (mbps_l2 >= args.gate
-              and splitter.errors == 0
+              and stream_errs == 0
               and seq_gaps == 0
               and not summary.get("aborted")
               and frames == summary["frames"]

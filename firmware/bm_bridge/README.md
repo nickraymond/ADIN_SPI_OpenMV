@@ -71,13 +71,23 @@ python3 s14_relay_counter.py --quit                        # service -> REPL
 ## Restore the fixture (ALWAYS, at session end)
 
 `/flash/main.py` must go back to the S6 baseline service (byte-identical
-to `firmware/ae3_usb/main.py` — verified by sha256 before the swap):
+to `firmware/ae3_usb/main.py`). **Restore from a quiet board state and
+sha-verify AFTER the copy** — a swap attempted while the old service
+holds the VCP can silently not land (found live). Cold-cycle first
+(cold boot = REPL on this build), then:
 
 ```bash
 scp firmware/ae3_usb/main.py pi@nereus000:/tmp/main_ae3usb.py
 ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; \
-  mpremote connect $P cp /tmp/main_ae3usb.py :/flash/main.py + rm :/flash/s14_crash.txt && mpremote connect $P reset'
+  sudo -n uhubctl -l 3 -p 1 -a cycle -d 3 >/dev/null && sleep 8 && \
+  mpremote connect $P cp /tmp/main_ae3usb.py :/flash/main.py && \
+  mpremote connect $P exec "import hashlib; h=hashlib.sha256(); h.update(open(\"/flash/main.py\",\"rb\").read()); print(h.digest().hex()[:16])" && \
+  mpremote connect $P reset'
 ```
 
-Then re-verify the S6 USB baseline per the established custom
-(`bench/usb_stream_bench.py`).
+Expect sha `55fa6ccfdd3f7f65` (repo `firmware/ae3_usb/main.py`). Then
+re-verify the S6 USB baseline per the established custom:
+
+```bash
+ssh pi@nereus000 'python3 ADIN_SPI_OpenMV/bench/usb_stream_bench.py --modes QVGA:90 --seconds 20'
+```

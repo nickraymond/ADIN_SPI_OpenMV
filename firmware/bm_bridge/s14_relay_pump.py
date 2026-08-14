@@ -60,9 +60,21 @@ STATUS_PAGE = 0x600BFF00
 BURST = 2000            # rung C: msgs per BCMD_PUMP request
 QUEUE_CAP = 64          # rung C: relay backlog cap (drops counted, not silent)
 
+TRACE_PATH = "/flash/s14_trace.txt"
+
 BPUMP_DATA = 0x45
 BREP_PUMP = 0x85
 BCMD_PUMP = 5
+
+
+def trace(msg):
+    # Forensics for silent states: the VCP may be owned by a host that
+    # cannot show us text, so state transitions go to flash too.
+    try:
+        with open(TRACE_PATH, "a") as f:
+            f.write("%d %s\n" % (time.ticks_ms(), msg))
+    except Exception:
+        pass
 
 
 def he_tick():
@@ -330,16 +342,26 @@ def main():
     usb = UsbVcp()
     he = HePump()
     rp = None
+    try:
+        import os
+        os.remove(TRACE_PATH)
+    except Exception:
+        pass
+    trace("service up")
     while True:
         usb.write(b"\r\n" + BANNER.encode() + b"\r\n")
         line = usb.readline(timeout_ms=2000)
         if not line:
-            continue                # timeout or blank: re-print the banner
+            continue                # timeout, blank, or handshake newline:
+                                    # re-print the banner (the counter's
+                                    # liveness probe relies on this)
         try:
             cfg = json.loads(line)
         except ValueError:
+            trace("bad json: %r" % line[:40])
             usb.write(b"ERR bad json\r\n")
             continue
+        trace("cfg %r" % line[:80])
         if cfg.get("rung") == "Q":     # host asks the service to exit to REPL
             if rp is not None:
                 rp.stop()              # leave HE STOPPED (S10 fixture custom)
@@ -349,4 +371,5 @@ def main():
             rp = he.start()            # once per boot -- see start()'s rules
         usb.write(("CFG " + json.dumps(cfg) + "\r\n").encode())
         summary = run_rung(usb, cfg, he)
+        trace("rung end %s" % json.dumps(summary))
         usb.write(("DONE " + json.dumps(summary) + "\r\n").encode())
