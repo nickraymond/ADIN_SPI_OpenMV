@@ -1,7 +1,9 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-14 (INTERIM MODE → BENCH arc: T1L bench down —
+*Last updated: 2026-08-14 evening (S16 BUILD-2 code complete on
+`sprint/16-ae3-chain`, both Pis deployed at the new pin; live chain
+bring-up waits at the VCP gate. INTERIM MODE → BENCH arc: T1L bench down —
 both AOS hats condemned, replacement PCBAs ~1 month out. Active work =
 the **three-node software bench per docs/BENCHSPEC.md (v3, Nick
 approved 2026-08-14)**: real bm_core on three nodes over UDP +
@@ -431,15 +433,25 @@ USB/MicroPython baseline stays intact as the regression reference
    ~10 s (or restart the quiet one).
    **Demo (Nick):** NEIGHBOR_UP + bcmp_seq across the cable; limiter
    numbers. = `pi/bm_bench/README.md` demos 1–3. ✅
-5. `[ ]` **S16 — BUILD-2: AE3 joins the chain** (BENCHSPEC Stages
+5. `[~]` **S16 — BUILD-2: AE3 joins the chain** (BENCHSPEC Stages
    2–3) — HE trait device promoted (rpmsg = real wire), HP CDC bridge
    (uart_l2 codec, crash-persistence rule), Pi side = bm_sbc `--uart`
    on the AE3's by-id CDC device. Three-node chain; pub/sub from
    Camera lands at Telemetry (transits Light = L2 forwarding; 2-hop
    BCMP ping labeled as BCMP re-tx); then 2 Mbps ≥10 min, zero CRC
    errors, drop ledger.
+   → CODE COMPLETE 2026-08-14 (nibbles 1–2; plan + 3 decision points
+   approved by Nick): bites A (bm_net_wire promotion + wire_frag +
+   WCMD_STREAM publisher + middleware always-on, node id be9c…03,
+   host tests 122, ELF 93.1% of region) · B (bm_bridge.py BridgeCore
+   pump + crash/trace persistence, 35 host checks) · C (light.toml
+   uart-device; bm_sbc pin +1 commit 4ccbf95 = RX_STAT tx_drops
+   transit ledger, deploy.sh PASS both Pis; README S16 demo ladder).
+   Design record: D28 + DESIGN §S16 detail. Branch
+   `sprint/16-ae3-chain`. **NEXT: VCP gate (Nick's go) → AE3 staging
+   + live chain rehearsal → nibble 3 demos → PR.**
    **Demo (Nick):** chain topology + forwarded pub/sub + sustained-rate
-   verdict.
+   verdict. = `pi/bm_bench/README.md` §S16 demos 1–3.
 6. `[ ]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) — light/camera
    services on bm_service/pubsub, gateway_ipc uplink, power HAL sim;
    time sync gated on RTC-backend decision (BENCHSPEC §9.5).

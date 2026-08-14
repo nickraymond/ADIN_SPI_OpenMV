@@ -17,6 +17,61 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
+
+**Branch:** `sprint/16-ae3-chain` (repo) + bm_sbc fork
+`feature/udp-transport` @ 4ccbf95 (pin +1, D28)
+
+**Done:**
+- Nibble 1 plan approved (Nick) incl. 3 decision points: rename to
+  bm_net_wire; stream_bench RX_STAT tx_drops fork commit (pin move);
+  stream trigger via /flash/bridge_cfg.json.
+- Bite A (HE promotion, `firmware/bm_he`): bm_net_mock → bm_net_wire —
+  link-up ONLY from retry_negotiation (REV-12; measured: l2 passes the
+  1-BASED port_num at l2.c:425, link_change wants 0-based, REV-1 —
+  both asserted in host tests); send() enforces 1514 + counter
+  (REV-14); `wire_frag.{c,h}` (first msg carries TOTAL length,
+  WCMD_FRAG continuations, ≤492 B frames byte-identical to the S10
+  wire — 2a/2b regression wire-stable); node id 0xbe9c000000000003 /
+  "bm_camera"; middleware always-on (AUDIT flag retired); WCMD_STREAM
+  quota-paced publisher on s15/stream; wire_status_t 72→88 B with the
+  drop ledger. Host tests 72→122 checks; ELF builds: **243,976 B of
+  262,144 (93.1%, ~18.2 K headroom; +4.0 K over the V15 audit image).**
+- Bite B (HP bridge, `firmware/bm_bridge`): bm_bridge.py — BridgeCore
+  (pure data plane, 35 host checks incl. duplex + noise/CRC cases) +
+  service loop: HE load-once w/ stale-HE refusal, link held DOWN until
+  first VCP bytes (bm_sbc's gateway heartbeats on open → pipe quiet
+  while unowned), zero prints while pumping, bridge_cfg.json one-shots
+  (stream/ping), trace + HE-ring dump to flash, every exit cause to
+  /flash/bridge_crash.txt (main_bridge.py, BUILD-2b rule).
+- Bite C (Pi side): light.toml + uart-device (by-id) — factory
+  composes gateway over udp (verified in source; port 15 math checked,
+  V13(b) defused). Fork commit 4ccbf95: RX_STAT gains tx_drops (the
+  Light transit ledger); deploy.sh pin updated from `git rev-parse`
+  (not hand-expanded — S15 lesson), **deploy.sh PASS on BOTH Pis**
+  (ctest 3/3 each; repo branch checked out on both). README: S16
+  deploy/start-order/demos 1–3 ladder; S15 demos retitled + regression
+  note (light.toml now opens the CDC port — comment out uart-device
+  for two-Pi-only runs).
+- Staged for the gated deploy: bm_he.elf (sha ee4be49f… = MANIFEST) +
+  bridge files + bridge_cfg.json on nereus000:/tmp. Docs: D28 +
+  DESIGN §S16 detail; TRACKER item 5 → [~].
+
+**Broke/surprised us:**
+- l2's renegotiation timer passes the 1-BASED port number into
+  retry_negotiation (timer id seeded from port_num 1..N) while
+  link_change wants 0-based — the same convention split behind REV-1/
+  V13, now pinned by host tests on our device.
+- Nothing else: host tests and the cross-build passed first try; both
+  Pi deploys green.
+
+**Next:** VCP gate — Nick's explicit go in chat, then: AE3 staging
+(main.py swap per README §S16 deploy), live chain rehearsal, nibble 3
+(Nick runs README §S16 demos 1–3), nibble 4 PR. Session end after
+demos: fixture restore + sha-verify + S6 USB baseline re-run.
+
+---
+
 ## 2026-08-14 — Sprint S15 (BUILD-1+3) — udp transport + factory: two-Pi bench live, zero-loss limiter rehearsal both directions
 
 **Branch:** `sprint/15-udp-transport` (repo) + bm_sbc fork
