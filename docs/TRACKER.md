@@ -1,19 +1,19 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-12 (INTERIM MODE: T1L bench down — both AOS
-hats condemned, replacement PCBAs on order. Active work = the
-USB-only interim ladder in the BM-native arc section below (Nick
-approved 2026-08-12); all ADIN-touching work parked behind
+*Last updated: 2026-08-14 (INTERIM MODE → BENCH arc: T1L bench down —
+both AOS hats condemned, replacement PCBAs ~1 month out. Active work =
+the **three-node software bench per docs/BENCHSPEC.md (v3, Nick
+approved 2026-08-14)**: real bm_core on three nodes over UDP +
+USB-CDC, ADIN swap-in on hardware day; ladder = interim items 3–6
+below (sprints S14–S17). S11 INTERIM 3 (dev-kit reference) stays on
+the ladder as an interleave bite — nibble-1 plan presented
+2026-08-14, deferred by Nick. All ADIN-touching work parked behind
 RESUME-ON-HARDWARE. S9 bite 3: code done + proven to the wire, demo
 deferred to hardware arrival. Hat #2 currently strapped generic
-(bisect state); AE3 carries the bite-3 alif build. DEV_LOG
-2026-08-11/12 entries have the full verdict. LATEST: S10 INTERIM 2b
-— BCMP converses: python peer node over the 2a fake wire, neighbor
-table + ping both ways, rehearsal PASSES ×2 identical, awaiting
-Nick's demo (= the INTERIM-2 demo proper). SPEC flag standing: AE3
-P0–P5 ride level translators — see §Open questions + the S13 item.)
-· Owner/gate: **Nick***
+(bisect state); AE3 carries the bite-3 alif build. SPEC flag
+standing: AE3 P0–P5 ride level translators — see §Open questions +
+the S13 item.) · Owner/gate: **Nick***
 
 ---
 
@@ -382,15 +382,49 @@ USB/MicroPython baseline stays intact as the regression reference
    both rehearsals); PR #18 merged. 2b DONE 2026-08-12: demo run by
    Nick — PASS (A–E, identical to both rehearsals) = the INTERIM-2
    demo proper; branch `sprint/10-bcmp-2b`, PR opened.**
-3. `[ ]` **S11 bite 1** — dev-kit-mote reference: bm_sbc + stock UART
+3. `[ ]` **S14 — bench rung 0: gates before code** (BENCHSPEC.md
+   V15/V16, Stage 0)
+   - bm_sbc @ main builds on nereus001; ctest + `validate.sh` green
+     (their CI as-is)
+   - Relay throughput bench: HE→HP rpmsg + HP→Pi VCP **simultaneous**
+     relay, gate **≥2 Mbps sustained 10 min** (target 2×) — reuses the
+     he_spike pump + ae3_usb host pattern; no new architecture
+   - HE size audit: link pubsub+bm_service+cbor slice, read the map
+     vs the 262 K region (image at ~88% today)
+   **Demo (Nick):** printed relay Mbps + PASS/FAIL verdict; size table.
+   **Either gate failing re-plans BUILD-2/BUILD-4 before code.**
+4. `[ ]` **S15 — BUILD-1+3: udp_port_device + transport factory**
+   (BENCHSPEC Stage 1) — two-Pi bench, nereus000 eth0 ↔ nereus001
+   eth0 direct, 10.42.0.0/24 (bench check: both eth0 free);
+   neighbors + ping + rate limiter measured + REV-13 drop counters.
+   **Demo (Nick):** NEIGHBOR_UP + bcmp_seq across the cable; limiter
+   numbers.
+5. `[ ]` **S16 — BUILD-2: AE3 joins the chain** (BENCHSPEC Stages
+   2–3) — HE trait device promoted (rpmsg = real wire), HP CDC bridge
+   (uart_l2 codec, crash-persistence rule), Pi side = bm_sbc `--uart`
+   on the AE3's by-id CDC device. Three-node chain; pub/sub from
+   Camera lands at Telemetry (transits Light = L2 forwarding; 2-hop
+   BCMP ping labeled as BCMP re-tx); then 2 Mbps ≥10 min, zero CRC
+   errors, drop ledger.
+   **Demo (Nick):** chain topology + forwarded pub/sub + sustained-rate
+   verdict.
+6. `[ ]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) — light/camera
+   services on bm_service/pubsub, gateway_ipc uplink, power HAL sim;
+   time sync gated on RTC-backend decision (BENCHSPEC §9.5).
+   **Demo (Nick):** capture triggered → stream at Telemetry → light
+   commanded → uplink out via gateway_ipc.
+7. `[ ]` **S11 INTERIM 3** — dev-kit-mote reference: bm_sbc + UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety
    absolute); UART side only — the mote's T1L port never touches our
    bench boards.** Needs Nick at the bench — interleave anytime.
-4. `[ ]` Upstream report to OpenMV: **D24** — stock `build-firmware`
+   Nibble-1 plan presented 2026-08-14 (deferred, stands as written);
+   now doubles as hardware validation of the same uart_l2 gateway
+   wire format the S16 CDC leg rides.
+8. `[ ]` Upstream report to OpenMV: **D24** — stock `build-firmware`
    docker target flattens per-core build dirs, breaking multi-core
    Alif HE links (root cause + repro + fix in DESIGN D24)
-5. `[ ]` Upstream report to OpenMV: **D15** — second `start_stream`
+9. `[ ]` Upstream report to OpenMV: **D15** — second `start_stream`
    session per boot hard-faults the AE3 (repro:
    `firmware/ae3_usb/README.md`; re-validate on current build first;
    USB-only, restore fixture after)
@@ -604,6 +638,9 @@ both ways over the pair.
 **Demo (Nick):** same browser URL as S3/S6, live video, USB data pipe
 unused; unplug pair → stops; replug → resumes.
 **Needs:** S10 + S11.
+*Bench rehearsal: BENCHSPEC BUILD-4's camera service + 2 Mbps stream
+(S16/S17) is S12's dry run — same chunking, same pub/sub path,
+transport swapped later.*
 
 ### S13 — soak, numbers, production notes  `[ ]`
 **Goal:** the decision package for the production camera node.
