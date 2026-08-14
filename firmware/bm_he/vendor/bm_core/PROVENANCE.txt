@@ -30,3 +30,15 @@ lwIP itself is NOT vendored: version 2.2.1 is referenced from the D23/D24
 build env's openmv clone (lib/micropython/lib/lwip), same access pattern as
 the Alif DFP sources. The FreeRTOS sys_arch glue is vendored separately at
 ../lwip_contrib (see its PROVENANCE.txt).
+
+Added 2026-08-14 for S14 (BENCHSPEC V15 size audit -- the BUILD-4
+middleware slice), same rev d4ecc38, byte-identical, via the same clone:
+  middleware/{middleware,pubsub,bm_service,bm_service_request,
+              cbor_service_helper,sys_info_service,power_info_service}.c/.h
+  middleware/bm_service_common.h
+  common/cb_queue.{c,h}
+  integrations/topology.{c,h}
+  bm_common_messages/{sys_info_svc_reply_msg,power_info_reply_msg}.{c,h}
+    (bm_common_messages submodule @ 2efc77f, as pinned by bm_core d4ecc38)
+Compiled only when the Makefile is invoked with AUDIT_MIDDLEWARE=1;
+the standing INTERIM-2 image is unchanged without the flag.

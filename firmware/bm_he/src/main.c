@@ -22,6 +22,14 @@
 #include "timer_callback_handler.h"
 #include "util.h"
 
+#if AUDIT_MIDDLEWARE
+#include "bm_service.h"
+#include "middleware.h"
+#include "pubsub.h"
+#include "sys_info_service.h"
+#include "topology.h"
+#endif
+
 #include "bm_he.h"
 #include "bm_net_mock.h"
 #include "he_spike.h"     // rpmsg/MHU scaffold constants + he status page
@@ -205,6 +213,30 @@ static void bm_init_ladder(NetworkDevice device) {
         return;
     }
     BP->stage = BM_STAGE_BCMP;
+
+#if AUDIT_MIDDLEWARE
+    // S14 / BENCHSPEC V15 size audit: the BUILD-4 middleware slice,
+    // initialized in bm_sbc's runtime.cpp order so nothing is linked
+    // dead. Compiled only under AUDIT_MIDDLEWARE=1.
+    if ((err = topology_init(device.trait->num_ports())) != BmOK) {
+        bm_set_err(err);
+        return;
+    }
+    if ((err = bm_service_init()) != BmOK) {
+        bm_set_err(err);
+        return;
+    }
+    if ((err = bm_pubsub_init()) != BmOK) {
+        bm_set_err(err);
+        return;
+    }
+    if ((err = bm_middleware_init()) != BmOK) {
+        bm_set_err(err);
+        return;
+    }
+    sys_info_service_init();
+    he_dbg_printf("audit: middleware slice up\n");
+#endif
 
     if ((err = bm_l2_netif_set_power(true)) != BmOK) {
         bm_set_err(err);
