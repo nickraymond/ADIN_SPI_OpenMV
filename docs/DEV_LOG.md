@@ -17,6 +17,54 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-14 — S11 nibble-1 plan + BENCHSPEC review — bench arc adopted (docs PR)
+
+**Branch:** claude/s11-interim-3-uart-gateway-97913a (worktree) → PR to main
+
+**Done:**
+- S11 INTERIM 3 nibble-1 plan researched + presented (no code): bm_sbc
+  gateway fully mapped (raw L2 / COBS / CRC-32C / 0x00 delim, `--pcap`
+  built in; bm_core pinned d4ecc38 = our vendored rev). KEY FIND: **no
+  stock mote firmware speaks it** — counterpart = `native_serial_bridge`
+  on bm_protocol branch `feat/uart-sbc` (open PR #378, never
+  hardware-validated by Sofar; baud hardcoded 115200, PLUART/LPUART1).
+  Dev kit facts (sourced): 24 V wall-charger powered via bus ports (USB
+  cannot power it), console = native USB-C CDC ×2 (CLI = port ending 1),
+  payload UART on dev-board terminals 1/13/14 at 3.3 V, flash = ROM DFU
+  (no SWD rig needed). Bite = flash that branch's app; plan incl. bench
+  meter checklist + golden-capture diff via s10_peer.py parsers.
+  **Nick deferred the bite** (kept on ladder, item 7).
+- BENCHSPEC v2 (three-node bench, agent-drafted outside this repo)
+  reviewed against project context: topology/BUILD-1/3/4 sound — its
+  REV-1/REV-12 findings independently match our INTERIM-2a live
+  experience. **BUILD-2 (HE core claims USB) rejected**: HP's stock
+  firmware owns the one USB controller and the whole dev loop rides it
+  (REPL, remoteproc ELF load, DFU flash, recovery). Replacement = the
+  D25 rpmsg seam promoted to a real wire + HP CDC bridge (uart_l2 codec
+  over the VCP, crash-persistence rule) + bm_sbc `--uart` on
+  /dev/ttyACM* (zero new Pi transport code).
+- Docs landed (Nick approved drafts in chat): **docs/BENCHSPEC.md v3**
+  (REV-20..28, V15/V16 gates, V11/V12 resolved, host mapping
+  nereus000=Light / nereus001=Telemetry), TRACKER interim ladder →
+  S14–S17 bench sprints (+ S11 kept, upstream reports kept), D26.
+
+**Broke/surprised us:**
+- Sofar's own uart-gateway doc ends in a TODO — "Not yet validated on
+  physical hardware." Whoever runs it first validates it (us, either
+  via the S16 CDC leg or the S11 dev-kit bite).
+- v1's bmcam pipeline (bm_cam_legacy) speaks **bm_serial** — a
+  different serial protocol (typed pub/sub, CRC16) than bm_sbc's
+  uart_l2 (raw L2, CRC-32C). Easy to conflate; now recorded in both
+  BENCHSPEC and the S11 plan.
+- The two bench-spec agents' only critical error traced to one missing
+  fact (HE stack is runtime-loaded via stock HP firmware, nothing
+  flashed) — REV-22 now pins it so nobody re-derives the USB mistake.
+
+**Next:** merge this docs PR → S14 nibble 1 (relay-throughput bench
+plan — the V16 gate everything else hangs on), then S15 (udp device).
+
+---
+
 ## 2026-08-12 — Sprint S10 (INTERIM 2b) — BCMP converses: python peer node, neighbor table + ping both ways; rehearsal PASSES ×2
 
 **Branch:** `sprint/10-bcmp-2b` (worktree `s7-headless-ae3-flash-73104e`,
