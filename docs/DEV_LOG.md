@@ -82,6 +82,13 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 --clone=false`, same for bm_core), then I push the branches; nibble 3 =
 Nick runs `pi/bm_bench/README.md` demos 1–3; nibble 4 = repo PR + fork
 PRs. Then S16 (BUILD-2: AE3 joins via rpmsg + HP bridge).
+→ Same-day close-out: forks created + branches pushed (4ebdbc3 /
+e031f11); deploy.sh PASS both Pis (pin check caught + fixed a wrong
+hand-expanded sha); **demos 1–3 run by Nick + re-confirmed by Claude,
+identical numbers = S15 demo PASS; PR #22 open.** Demo-1 start-window
+gotcha (one-shot ping at t+3 s) documented in the README. Upstream PRs
+to bristlemouth (factory + udp device; drop counters) = a separate
+decision for Nick, not opened. Next: merge #22 → S16.
 
 ---
 

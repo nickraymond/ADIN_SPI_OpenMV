@@ -421,10 +421,16 @@ USB/MicroPython baseline stays intact as the regression reference
    stretch, NOT drops — measured semantics in D27 + bm_bench README);
    8→8.00 unshaped 19,532/19,532. Node IDs fixed: be9c…01/02/03.
    Repo side: `pi/bm_bench/` (TOMLs, deploy.sh w/ pin verify, README
-   demo ladder). Remaining: Nick creates the two GitHub forks + push,
-   nibble 3 (Nick runs the README demo ladder), nibble 4 (PRs).
+   demo ladder). Forks created (Nick) + branches pushed; deploy.sh
+   PASS on both Pis (its pin check caught a wrong hand-expanded sha
+   first — fixed).
+   → **DEMOS 1–3 RUN BY NICK 2026-08-14 + re-run/confirmed by Claude
+   (identical numbers, both 🏓 paddles, pcap tcpdump-clean): PASS.
+   PR #22 open (nibble 4). Remaining: merge.** Demo-1 gotcha now in
+   README: multinode pings once at t+3 s → start both nodes within
+   ~10 s (or restart the quiet one).
    **Demo (Nick):** NEIGHBOR_UP + bcmp_seq across the cable; limiter
-   numbers. = `pi/bm_bench/README.md` demos 1–3.
+   numbers. = `pi/bm_bench/README.md` demos 1–3. ✅
 5. `[ ]` **S16 — BUILD-2: AE3 joins the chain** (BENCHSPEC Stages
    2–3) — HE trait device promoted (rpmsg = real wire), HP CDC bridge
    (uart_l2 codec, crash-persistence rule), Pi side = bm_sbc `--uart`
