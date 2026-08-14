@@ -56,6 +56,11 @@ Terminal B (nereus001 / Telemetry):
 ~/bm_sbc_s15/build/all/bm_sbc_multinode --init ~/bm_bench/telemetry.toml
 ```
 
+**Start both within ~10 s of each other** — each node sends exactly ONE
+multicast ping, 3 s after its own start, so a node started before its
+peer never sees a reply. If one end is missing its 🏓 line, leave the
+other running and just restart the quiet one.
+
 Expect within ~15 s, on BOTH ends (Ctrl-C to stop):
 
 - `NEIGHBOR_UP node=be9c000000000001` on Light /
