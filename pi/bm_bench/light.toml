@@ -1,9 +1,10 @@
 # bm_bench/light.toml — Light node (nereus000, pass-through)
 #
 # BENCHSPEC v3 §2: Light = nereus000 = 10.42.0.2, UDP port 22000.
-# In S16 this node adds the AE3 leg: uart-device = the AE3's
-# /dev/serial/by-id CDC path (gateway wrapper composes over this same
-# udp transport — that is what BUILD-3's factory exists for).
+# S16: uart-device adds the AE3 leg — the factory composes the gateway
+# wrapper over this same udp transport (BUILD-3), Camera rides port 15.
+# START ORDER: the AE3 bridge must be running (warm mpremote reset,
+# by-id settle) BEFORE this node starts, or the uart open fails.
 #
 # Usage (from ~/bm_sbc_s15 on nereus000):
 #   ./build/all/bm_sbc_multinode    --init ~/bm_bench/light.toml
@@ -16,6 +17,11 @@ transport = "udp"
 udp-listen    = "10.42.0.2:22000"
 udp-peers     = ["10.42.0.1:22000"]   # port 1 → Telemetry (nereus001)
 udp-rate-mbps = 10                     # 10BASE-T1L emulation (0 = off)
+
+# Camera leg (S16): the AE3's CDC device, by-id ONLY (ops rule). A CDC
+# tty ignores baud — 115200 just has to be a termios-supported value.
+uart-device = "/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+uart-baud   = 115200
 
 pcap       = "/tmp/bm_bench_light.pcap"
 log-stdout = true

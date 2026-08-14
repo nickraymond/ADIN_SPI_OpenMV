@@ -14,10 +14,12 @@
 # Trust artifacts: the script ends by printing the binary path, its
 # build id, and the verified revs. If it didn't print PASS, it didn't work.
 #
-# Pins (S15, 2026-08-14). Fork branches:
+# Pins (S16, 2026-08-14 — bm_sbc moved by ONE commit: stream_bench
+# RX_STAT gains tx_drops, the Light node's transit ledger; bm_core
+# unchanged). Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="4ebdbc3582e224b8d5524ae8b8f4290f60373106"
+BM_SBC_PIN="4ccbf9502ab5e0d18f97a570858bfee5293f0e60"
 BM_CORE_PIN="e031f11fc8305566eb5dc46fe296727d39007826"
 
 set -euo pipefail
