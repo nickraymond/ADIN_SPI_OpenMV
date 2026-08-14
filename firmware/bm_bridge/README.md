@@ -1,21 +1,52 @@
-# bm_bridge — S14 relay bench (BENCHSPEC V16) + the uart_l2 codec
+# bm_bridge — the S16 HP bridge (BUILD-2b) + S14 relay bench + uart_l2 codec
 
-The codec (`uart_codec.py`) is the permanent piece: bm_sbc's `uart_l2`
-wire format (COBS + CRC-32C + 2-byte BE length, `0x00` delimiter),
-byte-exact against Sofar's C implementation (golden vectors in
+Two generations live here. The **S16 bridge** (`bm_bridge.py` +
+`main_bridge.py`) is the production piece: it moves L2 frames between
+the HE's bm_core stack (rpmsg endpoint `bm-wire`, `firmware/bm_he`) and
+the USB VCP in bm_sbc's `uart_l2` framing, making the AE3 a real BM node
+behind the Light Pi's stock `--uart` gateway. The S14 pump
+(`s14_relay_pump.py`) stays as the throughput bench that gated it (V16).
+
+The codec (`uart_codec.py`) is shared: bm_sbc's `uart_l2` wire format
+(COBS + CRC-32C + 2-byte BE length, `0x00` delimiter), byte-exact
+against Sofar's C implementation (golden vectors in
 `host_test/test_uart_codec.py`), dual-runtime (MicroPython viper on the
-AE3 HP core / CPython on Pi + host tests). The S16 bridge reuses it
-as-is.
-
-The rest is the S14 bench: can one HP MicroPython loop relay HE rpmsg
-traffic onto the USB VCP with real framing at ≥2 Mbps sustained?
+AE3 HP core / CPython on Pi + host tests).
 
 | File | Runs on | Role |
 |---|---|---|
 | `uart_codec.py` | AE3 HP + Pi + CPython | the codec (permanent) |
-| `s14_relay_pump.py` | AE3 HP | rung service: B (local gen) / C (HE relay) / crc c·z·n |
-| `main_s14.py` | AE3 (as `/flash/main.py`) | boot launcher + crash persistence |
-| `../../bench/s14_relay_counter.py` | Pi (nereus000) | orchestrator + receiver ledger + gate verdict |
+| `bm_bridge.py` | AE3 HP | **S16 bridge**: rpmsg ↔ VCP duplex pump (`BridgeCore` = host-testable data plane) |
+| `main_bridge.py` | AE3 (as `/flash/main.py`) | S16 boot launcher + crash persistence (`/flash/bridge_crash.txt`) |
+| `s14_relay_pump.py` | AE3 HP | S14 rung service: B (local gen) / C (HE relay) / crc c·z·n |
+| `main_s14.py` | AE3 (as `/flash/main.py`) | S14 boot launcher + crash persistence |
+| `../../bench/s14_relay_counter.py` | Pi (nereus000) | S14 orchestrator + receiver ledger + gate verdict |
+
+## S16 bridge operation
+
+- Deploy `bm_bridge.py`, `uart_codec.py`, the promoted `bm_he.elf`
+  (→ `/flash/bm_he.elf`) and `main_bridge.py` (→ `/flash/main.py`); the
+  optional `/flash/bridge_cfg.json` arms one-shot triggers:
+  `{"stream": {"mbps": 2.0, "payload": 1400, "secs": 600, "delay": 10},
+  "ping": {"target": "0xbe9c000000000001", "delay": 5}}` (delays count
+  from link-up).
+- Service entry = warm `mpremote reset` (rule 1 below). On boot the
+  bridge loads the HE ELF once, waits for `bm-wire`, then **holds
+  WCMD_LINK down until the first bytes arrive on the VCP** — bm_sbc's
+  gateway heartbeats as soon as it opens the tty, and until link-up the
+  HE transmits nothing, so the pipe is quiet while unowned. Start order
+  therefore: bridge first, then bm_sbc on the Pi.
+- While the bridge runs the VCP is a data pipe: REPL unavailable, zero
+  prints. State goes to `/flash/bridge_trace.txt` (30 s stats snapshots,
+  final ledger, HE debug-ring dump at exit).
+- Any exit (KeyboardInterrupt included) persists to
+  `/flash/bridge_crash.txt`, announces link-down to the HE, and stops
+  the HE (end-of-life stop; next session warm-resets first). If the
+  bridge died harder (stale HE still running at next boot), it refuses
+  to start and names the recovery pair: `sudo uhubctl -l 3 -p 1 -a
+  cycle -d 3`, then warm reset.
+- Pi-side failure sequence: link death → stop bm_sbc → `mpremote`
+  attach → read `/flash/bridge_crash.txt` + `/flash/bridge_trace.txt`.
 
 ## Measured results (2026-08-14, all receiver-side, 0 gaps, 0 CRC errors)
 
