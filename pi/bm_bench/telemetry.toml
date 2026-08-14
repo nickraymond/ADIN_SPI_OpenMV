@@ -1,0 +1,21 @@
+# bm_bench/telemetry.toml — Telemetry node (nereus001, head of chain)
+#
+# BENCHSPEC v3 §2: Telemetry = nereus001 = 10.42.0.1, UDP port 22000.
+# Node IDs fixed 2026-08-14 (Nick): be9c…01 Telemetry / …02 Light /
+# …03 Camera (reserved for S16). Never reuse.
+#
+# Usage (from ~/bm_sbc_s15 on nereus001):
+#   ./build/all/bm_sbc_multinode    --init ~/bm_bench/telemetry.toml
+#   ./build/all/bm_sbc_stream_bench --init ~/bm_bench/telemetry.toml
+
+node-id   = "0xbe9c000000000001"
+cfg-dir   = "/home/pi/bm_bench/cfg"
+transport = "udp"
+
+udp-listen    = "10.42.0.1:22000"
+udp-peers     = ["10.42.0.2:22000"]   # port 1 → Light (nereus000)
+udp-rate-mbps = 10                     # 10BASE-T1L emulation (0 = off)
+
+pcap       = "/tmp/bm_bench_telemetry.pcap"
+log-stdout = true
+log-level  = "debug"   # bcmp ping replies (bcmp_seq=) log at debug level

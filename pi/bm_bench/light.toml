@@ -1,0 +1,22 @@
+# bm_bench/light.toml — Light node (nereus000, pass-through)
+#
+# BENCHSPEC v3 §2: Light = nereus000 = 10.42.0.2, UDP port 22000.
+# In S16 this node adds the AE3 leg: uart-device = the AE3's
+# /dev/serial/by-id CDC path (gateway wrapper composes over this same
+# udp transport — that is what BUILD-3's factory exists for).
+#
+# Usage (from ~/bm_sbc_s15 on nereus000):
+#   ./build/all/bm_sbc_multinode    --init ~/bm_bench/light.toml
+#   ./build/all/bm_sbc_stream_bench --init ~/bm_bench/light.toml
+
+node-id   = "0xbe9c000000000002"
+cfg-dir   = "/home/pi/bm_bench/cfg"
+transport = "udp"
+
+udp-listen    = "10.42.0.2:22000"
+udp-peers     = ["10.42.0.1:22000"]   # port 1 → Telemetry (nereus001)
+udp-rate-mbps = 10                     # 10BASE-T1L emulation (0 = off)
+
+pcap       = "/tmp/bm_bench_light.pcap"
+log-stdout = true
+log-level  = "debug"   # bcmp ping replies (bcmp_seq=) log at debug level

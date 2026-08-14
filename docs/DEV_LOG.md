@@ -17,6 +17,81 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-14 — Sprint S15 (BUILD-1+3) — udp transport + factory: two-Pi bench live, zero-loss limiter rehearsal both directions
+
+**Branch:** `sprint/15-udp-transport` (repo) + bm_sbc fork
+`feature/udp-transport` + bm_core fork `bench/d4ecc38-obs` (D27)
+
+**Done:**
+- Physical gate: Nick ran the direct eth0↔eth0 cable; verified
+  1000/full carrier both ends before any config. Bench IPs live per
+  BENCHSPEC (nereus001=.1 Telemetry, nereus000=.2 Light,
+  never-default, IPv6 off); dev access stayed on wlan/tailnet
+  throughout (verified during every run).
+- REV-23 pin check: bm_sbc 17ea904 pins bm_core d4ecc38 = our
+  firmware/bm_he vendor exactly — zero drift. (Upstream main moved to
+  6a4d73c; src delta 1 line; we stay pinned.)
+- Bite 1 (factory, BUILD-3): `transport =` TOML key / `--transport`
+  CLI (virtual|udp|serial|adin), construction extracted from
+  runtime.cpp into transport_factory; default = virtual; singleton +
+  callbacks-sharing constraints honored. Their full validate.sh green
+  with the refactor (ctest, loopback 6/6, multinode 13/13, IPC 15/15).
+- Bite 2 (udp device, BUILD-1): udp_port_device derived
+  member-for-member from virtual_port_device (REV-11 constant 15
+  ports; REV-12 link-up only from retry_negotiation, configured-peer
+  check; REV-14 1514 enforced both directions, oversize logged with
+  true length via MSG_TRUNC); token-bucket shaper (virtual-clock,
+  integer-exact, default 10 Mbps) + device stats; stream_bench app
+  (offered-rate publisher / receiver ledger, D21); host tests: 18
+  (transport_kind) + 24 (parse+shaper); udp_multinode_test.sh 15/15
+  incl. 3-node chain with ends-do-NOT-neighbor invariant.
+- bm_core observability commit (the ONE patch, D27): TX + RX L2
+  queue-drop counters + accessors; log 1st + every 256th.
+- Bite 3 (two-Pi): nereus001 toolchain installed (cmake, socat),
+  pinned clone via bench cable (Tailscale SSH blocks plain git —
+  bench-IP ssh key provisioned instead), build + ctest green on both
+  Pis. Cross-cable rehearsal: NEIGHBOR_UP with peer node id + 🏓
+  bcmp_seq= BOTH ends; limiter 15 Mbps offered → 9.30 payload
+  (=10.0 wire exactly), **36,622/36,622 delivered, zero loss**;
+  control 8 Mbps → 8.00/20.0 s unshaped, 19,532/19,532. pcaps
+  written by --pcap on both nodes.
+- Repo: `pi/bm_bench/` (node TOMLs w/ fixed IDs be9c…01/02/03,
+  deploy.sh with hard pin verification, README demo ladder);
+  housekeeping rider: stale `nereus001-1` refs fixed in
+  s5_tx_load.py, DESIGN §S6 URL note, TRACKER S3 demo (DEV_LOG
+  history untouched).
+
+**Broke/surprised us:**
+- **REV-13's silent TX BmENOMEM drop cannot fire from a lone
+  publisher on a Pi**: POSIX queue enqueue blocks ≤10 ms vs ~0.9 ms
+  service at 10 Mbps → overload becomes blocking backpressure
+  (offered 15 → achieved 9.3 over 32.2 s wall; 200 Mbps loopback →
+  244,141/244,141, zero drops anywhere). Real silent-drop sites: RX
+  zero-timeout enqueue (now counted), S16's forward path (L2 thread
+  enqueues into its own queue — guaranteed timeout; THE transit
+  ledger), device oversize (logged). Demo verdict reframed to
+  "zero loss + counters consistent," honest per measurement.
+- bcmp ping replies log at debug level — invisible at the TOMLs'
+  initial info level; looked like a real cross-cable ping failure
+  for one run. TOMLs now set log-level=debug with a comment.
+- Tailscale SSH intercepts inter-Pi git (interactive auth URL);
+  fixed by real authorized_keys over the bench IPs — which also
+  makes deploys ride the 1 GbE cable instead of WiFi.
+
+**Next:** Nick: create the two forks (`gh repo fork bristlemouth/bm_sbc
+--clone=false`, same for bm_core), then I push the branches; nibble 3 =
+Nick runs `pi/bm_bench/README.md` demos 1–3; nibble 4 = repo PR + fork
+PRs. Then S16 (BUILD-2: AE3 joins via rpmsg + HP bridge).
+→ Same-day close-out: forks created + branches pushed (4ebdbc3 /
+e031f11); deploy.sh PASS both Pis (pin check caught + fixed a wrong
+hand-expanded sha); **demos 1–3 run by Nick + re-confirmed by Claude,
+identical numbers = S15 demo PASS; PR #22 open.** Demo-1 start-window
+gotcha (one-shot ping at t+3 s) documented in the README. Upstream PRs
+to bristlemouth (factory + udp device; drop counters) = a separate
+decision for Nick, not opened. Next: merge #22 → S16.
+
+---
+
 ## 2026-08-14 — Sprint S14 (bench rung 0) — V16 relay gate PASS (5.4 Mbps sustained); V15 middleware fits AND runs (91.6%)
 
 **Branch:** `sprint/14-bench-rung0` (worktree, from merged PR #20)
