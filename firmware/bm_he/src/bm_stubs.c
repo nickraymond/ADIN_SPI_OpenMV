@@ -20,18 +20,18 @@
 #include "device.h"
 
 // ---- device identity ----------------------------------------------------
-// Interim node id: fixed, non-zero, obviously synthetic ("BEEF" tail) --
-// visible in every heartbeat/verdict so nobody mistakes it for a real
-// fleet id. Real derivation (chip UID?) is a hardware-day question
-// (SPEC §Open questions).
-#define BM_HE_NODE_ID 0x424D4845AE30BEEFull
+// Camera node id per BENCHSPEC/pi/bm_bench: be9c…01 Telemetry / …02 Light /
+// …03 Camera. Fixed by Nick 2026-08-14, never reused. (The S10 interim id
+// 0x424D4845AE30BEEF retired with the mock; real UID-derived ids are a
+// hardware-day question, SPEC §Open questions.)
+#define BM_HE_NODE_ID 0xBE9C000000000003ull
 
 BmErr bm_stubs_device_init(void) {
   DeviceCfg cfg = {
       .node_id = BM_HE_NODE_ID,
       .git_sha = 0,               // stamped by build? interim: 0
-      .device_name = "bm_he",
-      .version_string = "bm_he S10 INTERIM 2",
+      .device_name = "bm_camera",
+      .version_string = "bm_he S16 BUILD-2",
       .vendor_id = 0,
       .product_id = 0,
       .hw_ver = 0,

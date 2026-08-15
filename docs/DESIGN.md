@@ -84,6 +84,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D26 | 2026-08-14 | Interim development pivots to a **three-node software bench** (`docs/BENCHSPEC.md` v3): Telemetry (nereus001) ↔ UDP ↔ Light (nereus000) ↔ USB-CDC ↔ Camera (AE3 HE core), all nodes on bm_core @ d4ecc38; ADIN replaces only the network-device layer on hardware day (Pi side then = Sofar's raw_eth branch). **AE3 attaches via the INTERIM-2 trait device promoted to a real rpmsg wire + an HP MicroPython bridge speaking bm_sbc's uart_l2 codec over the USB VCP — NOT by giving the HE core the USB controller.** Ladder = S14–S17; S11 INTERIM 3 (dev-kit reference, plan of 2026-08-14) kept as an interleave bite. (Nick, 2026-08-14.) | HP's stock firmware owns the single USB controller and the entire dev loop rides it (mpremote REPL, remoteproc ELF load of the HE stack, S7 DFU flash ladder, D15/uhubctl recovery); an HE-owned USB stack would be a multi-bite bare-metal project that destroys the toolchain. The rpmsg seam was designed for this promotion (D25). Pi side needs zero new transport code — bm_sbc's `--uart` gateway opens any tty, incl. `/dev/ttyACM*`. One-VCP consequence designed in: bridge runs = VCP is a data pipe (REPL between runs, as in S3/S6 ops); bridge persists its own tracebacks to `/flash/bridge_crash.txt` because a traceback printed into bm_sbc's decoder is otherwise lost as COBS garbage. Gates before code (BENCHSPEC Stage 0): combined relay ≥2 Mbps measured (V16), HE size audit at ~88% full (V15). BENCHSPEC v2's BUILD-2 premise (HE claims USB) corrected in v3 REV-20..22; v2's REV-1/REV-12 trait findings independently match our INTERIM-2a live experience, which raises confidence in the rest of its source review. |
 
 | D27 | 2026-08-14 | S15 bench code lives in **GitHub forks with pinned revs**, not vendored patches: bm_sbc fork branch `feature/udp-transport` (base `17ea904`, +2 commits: BUILD-3 transport factory; BUILD-1 udp_port_device + stream_bench + tests) and **bm_core fork branch `bench/d4ecc38-obs` = d4ecc38 + exactly ONE observability commit** (TX/RX L2-queue drop counters + accessors, REV-13; zero behavior change, wire format untouched). The bm_sbc fork's submodule pins the patched bm_core. All bench nodes stay protocol-identical to d4ecc38; the AE3's vendored copy stays byte-identical; any pin move is an all-nodes change (REV-23). Exact shas: `pi/bm_bench/deploy.sh` (deploy fails loudly on drift). (Nick approved fork + patch, 2026-08-14.) | Fork over patch files because the work is C++ inside their build/test system — their CI (`validate.sh`) is the regression harness and must run in place (it did: all steps green with the factory refactor, incl. 13/13 multinode + 15/15 IPC), and the factory + udp device are upstream-PR material. The bm_core patch exists because the only silent-drop sites live in their `l2.c`; measured on the bench (S15 rehearsal): a lone publisher CANNOT trip the TX BmENOMEM path on a Pi — POSIX queue enqueue blocks ≤10 ms while service at 10 Mbps wire is ~0.9 ms/frame, so overload becomes blocking backpressure (offered 15 Mbps → achieved 9.3 over 32.2 s wall, 36,622/36,622 delivered, zero loss; 200 Mbps loopback → 244,141/244,141). Real drop sites: RX zero-timeout enqueue (now counted), the S16 forward path where the L2 thread enqueues into its own queue (guaranteed timeout under load — the S16 transit ledger), and device-level oversize (logged with length + ingress port, REV-14). |
+| D28 | 2026-08-14 | S16 BUILD-2 wire design (Nick approved plan + 3 decision points): **(1) frag protocol** — the 4-byte `wire_hdr_t` is kept; `WCMD_FRAME_*` carries hdr.len = TOTAL L2 frame length, frames >492 B continue in `WCMD_FRAG` msgs (in-order vring, no seq field); frames ≤492 B are byte-identical to the S10 wire, so 2a/2b control traffic is unchanged. **(2) link handshake** — link-up is only ever reported from `retry_negotiation` on l2's 100 ms timer (REV-12); the HP bridge announces `WCMD_LINK` and holds it DOWN until the first bytes arrive on the VCP, so the HE transmits nothing while the pipe is unowned; DOWN fires immediately. **(3) bm_sbc pin moved by ONE commit** (4ebdbc3 → 4ccbf95: stream_bench RX_STAT gains `tx_drops`, the pass-through transit ledger; bm_core pin untouched) — a D27-discipline pin move, redeployed on both Pis same session. **(4) stream trigger** = `/flash/bridge_cfg.json` one-shots (WCMD_STREAM / WCMD_PING after link-up + delay), NOT a BM service — that is S17 BUILD-4's camera service. | Frag-with-total-in-first-msg keeps the old parser shape and the regression bench wire-stable while carrying 1514 B (REV-14) over the ≤496 B rpmsg budget (§S14 fact); a seq field would duplicate what the FIFO vring already guarantees. Link-follows-the-Pi gives the chain a real link semantic on a wire that has no carrier signal: bm_sbc's gateway heartbeats the moment it opens the tty, and l2.c:425 measured behavior (timer id = 1-based port_num) plus REV-1's 0-based `link_change` are asserted in host tests so the convention split cannot silently regress. Config-file triggers keep the VCP a pure data pipe (no in-band control protocol to collide with uart_l2) at the cost of a reset per config change — acceptable for bench one-shots. |
 
 ## Verified-facts ledger
 
@@ -1315,3 +1316,75 @@ reuses codec + splitter + crash rule as-is.
 **rpmsg fragmentation fact for S16:** the pipe carries ≤496 B/msg
 (480 used) → a 1514 B L2 frame spans 4 rpmsg messages; the bench's
 agg=3 path (3×468 B → 1412 B wire frames) is the shape S16 inherits.
+
+### S16 detail (2026-08-14) — BUILD-2 code complete: AE3 joins the chain (as-built, demos pending)
+
+**Scope:** BENCHSPEC Stages 2–3 (BUILD-2a/b/c). Code + host tests +
+cross-build done and rehearsable; **live chain bring-up gated on the VCP
+gate** (fixture main.py swap needs Nick's explicit go) — demos not yet
+run.
+
+**(a) HE netdev promotion (`firmware/bm_he`):** `bm_net_mock` →
+`bm_net_wire` (git mv; the real device the ADIN driver replaces on
+hardware day). Link-up ONLY from `retry_negotiation` (REV-12; l2 passes
+the 1-based port_num — measured at l2.c:425 — while `link_change` takes
+the 0-based index, REV-1; both asserted in host tests). `send()`
+enforces 1514 (REV-14) with a `tx_oversize` counter. `wire_frag.{c,h}`
+implements the D28 frag protocol (pure functions, host-tested both
+directions). Node id `0xbe9c000000000003`, name `bm_camera`. Middleware
+slice always-on (AUDIT_MIDDLEWARE retired). `WCMD_STREAM` publisher
+task: quota-paced `bm_pub` of seq-stamped ≤1400 B payloads on
+`s15/stream` (the S15 stream_bench topic). `wire_status_t` grew the
+drop ledger (tx_dropped, frag_errors, stream counters; 72→88 B, ABI
+asserts updated). **Build: text 80,424 + data 108 + bss 163,444 =
+243,976 B of 262,144 (93.1%, ~18.2 K headroom — V15 tracking: +4.0 K
+over the audit image for frag buffers + stream task).** Host tests
+72 → 122 checks. s10 runner updated (announces WCMD_LINK, reassembles
+frags, waits for stage RUNNING **and** link before verdict A) — 2a/2b
+stay the permanent regression bench.
+
+**(b) HP bridge (`firmware/bm_bridge/bm_bridge.py` + `main_bridge.py`):**
+`BridgeCore` = pure host-testable data plane (35 checks: 1514 B/4-msg
+round trips both directions, orphan/resync/overrun errors, WREP_STATUS
+unpack, slivered reads, boot-banner resync, CRC corruption, duplex
+session). Service rules per README: load HE once per boot (stale-HE
+refusal with the uhubctl recovery pair named), link handshake per D28,
+zero prints while pumping (stats → `/flash/bridge_trace.txt` with HE
+ring dump at exit), every exit cause → `/flash/bridge_crash.txt`
+(BUILD-2b), HE stopped at end-of-life.
+
+**(c) Pi side:** `light.toml` + `uart-device` (by-id CDC path) is the
+entire change — S15's factory composes the gateway over the udp base as
+designed. Gateway port math verified in source: `MAX_TOTAL_PORTS`=15
+caps VPD to 14, serial port = 15 = `GATEWAY_UART_PORT` (V13(b) defused).
+stream_bench RX_STAT now prints `tx_drops` (the transit ledger — D28
+pin move). Both Pis deployed + green at the new pin (deploy.sh PASS,
+ctest 3/3, shas verified from `git rev-parse`, not hand-expanded).
+
+**Staged for the gated AE3 deploy:** bm_he.elf (sha ee4be49f…, matches
+MANIFEST) + bridge files + bridge_cfg.json on nereus000:/tmp. Demo
+ladder = `pi/bm_bench/README.md` §S16 (start order: bridge → Light →
+Telemetry; demo 1 chain topology incl. the never-a-star invariant;
+demo 2 forwarded pub/sub labeled vs BCMP re-tx per REV-6/V10; demo 3
+600 s @ 2 Mbps with the per-hop drop ledger). Expected margin: S14
+measured 5.4 Mbps through this exact relay shape = 2.7× the gate.
+**V5 stands:** first-ever hardware run of bm_sbc's serial path.
+
+**S16 addendum (2026-08-15) — live bring-up results.** Chain rehearsed
+and (after fixes) all three demos re-run end-to-end: 600 s @ 2.00 Mbps,
+Camera sent 107,142 = Telemetry received 107,142, zero loss/CRC at
+every hop. Three V5-class finds, all fixed same-session: (1) MicroPython
+console kbd-interrupt scan kills the bridge on 0x03-bearing COBS bytes →
+`kbd_intr(-1)` + quiet-exit stop model (bridge exits 30 s after VCP
+silence; one lifetime per demo). (2) Camera-sourced ping to ff02::1
+stops at Light (REV-6 measured live) → WCMD_PING targets ff03::1.
+(3) **Upstream bm_core heap corruption**: bm_l2_tx frees the L2
+reference on enqueue failure (lwIP contract) but both bm_linux TX paths
+freed again on error → over-free → glibc abort on the FIRST real
+TX-queue overflow (impossible from a lone publisher, S15; fired under
+publish+forward+uart contention). Fixed in fork commit eec6e82; pins
+moved (bm_sbc 1a806c7); verified by repro (drops counted, no abort).
+Bench facts earned: Pi 5 root-hub ppps does NOT cut VBUS (uhubctl
+cannot power-cycle the AE3; `sudo reboot` on the Pi re-inits xhci and
+recovers an off-bus board — ae3-usb-unstick skill); a bridge session
+survives Pi reboots blocked mid-write.

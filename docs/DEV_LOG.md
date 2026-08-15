@@ -17,6 +17,134 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
+
+**Branch:** `sprint/16-ae3-chain` (repo) + bm_sbc fork
+`feature/udp-transport` @ 4ccbf95 (pin +1, D28)
+
+**Done:**
+- Nibble 1 plan approved (Nick) incl. 3 decision points: rename to
+  bm_net_wire; stream_bench RX_STAT tx_drops fork commit (pin move);
+  stream trigger via /flash/bridge_cfg.json.
+- Bite A (HE promotion, `firmware/bm_he`): bm_net_mock → bm_net_wire —
+  link-up ONLY from retry_negotiation (REV-12; measured: l2 passes the
+  1-BASED port_num at l2.c:425, link_change wants 0-based, REV-1 —
+  both asserted in host tests); send() enforces 1514 + counter
+  (REV-14); `wire_frag.{c,h}` (first msg carries TOTAL length,
+  WCMD_FRAG continuations, ≤492 B frames byte-identical to the S10
+  wire — 2a/2b regression wire-stable); node id 0xbe9c000000000003 /
+  "bm_camera"; middleware always-on (AUDIT flag retired); WCMD_STREAM
+  quota-paced publisher on s15/stream; wire_status_t 72→88 B with the
+  drop ledger. Host tests 72→122 checks; ELF builds: **243,976 B of
+  262,144 (93.1%, ~18.2 K headroom; +4.0 K over the V15 audit image).**
+- Bite B (HP bridge, `firmware/bm_bridge`): bm_bridge.py — BridgeCore
+  (pure data plane, 35 host checks incl. duplex + noise/CRC cases) +
+  service loop: HE load-once w/ stale-HE refusal, link held DOWN until
+  first VCP bytes (bm_sbc's gateway heartbeats on open → pipe quiet
+  while unowned), zero prints while pumping, bridge_cfg.json one-shots
+  (stream/ping), trace + HE-ring dump to flash, every exit cause to
+  /flash/bridge_crash.txt (main_bridge.py, BUILD-2b rule).
+- Bite C (Pi side): light.toml + uart-device (by-id) — factory
+  composes gateway over udp (verified in source; port 15 math checked,
+  V13(b) defused). Fork commit 4ccbf95: RX_STAT gains tx_drops (the
+  Light transit ledger); deploy.sh pin updated from `git rev-parse`
+  (not hand-expanded — S15 lesson), **deploy.sh PASS on BOTH Pis**
+  (ctest 3/3 each; repo branch checked out on both). README: S16
+  deploy/start-order/demos 1–3 ladder; S15 demos retitled + regression
+  note (light.toml now opens the CDC port — comment out uart-device
+  for two-Pi-only runs).
+- Staged for the gated deploy: bm_he.elf (sha ee4be49f… = MANIFEST) +
+  bridge files + bridge_cfg.json on nereus000:/tmp. Docs: D28 +
+  DESIGN §S16 detail; TRACKER item 5 → [~].
+
+**Broke/surprised us:**
+- l2's renegotiation timer passes the 1-BASED port number into
+  retry_negotiation (timer id seeded from port_num 1..N) while
+  link_change wants 0-based — the same convention split behind REV-1/
+  V13, now pinned by host tests on our device.
+- Nothing else: host tests and the cross-build passed first try; both
+  Pi deploys green.
+
+**Same-session continuation — VCP gate opened (Nick: "Go"), staged +
+FULL CHAIN REHEARSED:**
+- Staging: fixture sha recorded (55fa6ccf… confirmed), five files
+  sha-verified on board, warm reset. First bring-up DIED instantly
+  when Light spoke — **V5 find #1: MicroPython's console scans inbound
+  VCP bytes for 0x03 (kbd interrupt) and COBS frames contain 0x03
+  freely → bm_sbc's first heartbeat injected KeyboardInterrupt into
+  the pump.** (Crash file made it a 2-minute diagnosis.) Fix:
+  `micropython.kbd_intr(-1)` for the service's life + NEW STOP MODEL —
+  bridge exits itself after 30 s VCP silence (heartbeats every 10 s
+  while alive) or 10 min unattached; ctrl-C can't stop a linked
+  bridge; one bridge lifetime per demo (cfg one-shots re-arm on warm
+  reset).
+- **Chain rehearsal PASS (all three demo shapes):** (1) topology —
+  Light NEIGHBOR_UP …01 port 1 AND …03 port 15; Telemetry neighbors
+  ONLY Light, yet 🏓 from …02 (0 ms) and …03 (9–10 ms, 2 hops) —
+  never-a-star holds; ×2 runs. (2) forwarded pub/sub — Camera's
+  2 Mbps/1400 B stream: **Telemetry RX_STAT steady 1.99–2.02 Mbps,
+  21.1 MB/15,084 msgs; Light transit ledger tx_drops=0, rx_drops=0;
+  ZERO uart decode errors both sessions (22.4 MB + 27.7 MB relayed,
+  every ~1490 B frame crossing the 4-msg rpmsg frag path;
+  frag_errors 0, qdrops 0).** REV-12 live on silicon ("Renegotiated
+  on port: 1" on the HE ring). (3) Camera-sourced 2-hop ping — **V5
+  find #2: ll-multicast (ff02::1) ping never crossed Light (REV-6
+  measured live)**; WCMD_PING switched to `multicast_global_addr`
+  (ff03::1, what multinode itself pings), ELF rebuilt/restaged →
+  **🏓 16 bytes … payload "S16 camera 2-hop" accepted by ping.c.**
+- Known-cosmetic: newlib-nano %llx/%lu artifacts in ring prints
+  ("…lx", "time=lu"); "Unable to load configs from flash" ×3 =
+  RAM-stub config, expected (REV-27).
+- Board state: bridge staged as /flash/main.py (board at REPL, HE
+  stopped), demo cfg armed (stream 2.0/1400/600 s delay 15; ping
+  target …01 delay 30). ELF on board = 45a9615d… (global-addr ping).
+
+**Same-session continuation 2 (2026-08-15) — Nick's demo hit a real
+crash; root-caused, fixed, ALL demos re-run by Claude (Nick's request)
+and PASS:**
+- **V5 find #3 (the big one): upstream heap corruption on the L2
+  TX-overflow path.** Nick's demo run (stream_bench TX 15 Mbps on Light
+  while forwarding the Camera stream + carrying the uart leg) hit the
+  FIRST real `bm_l2_tx` queue overflow on a Pi → glibc "corrupted
+  double-linked list" abort within ms. Cause: bm_l2_tx frees the L2
+  reference itself on enqueue failure (the contract lwIP forces), but
+  BOTH bm_linux TX paths freed again on the error return (bm_udp_tx
+  even documented "must free twice") — one over-free. Can never fire
+  from a lone publisher (S15 measurement), which is why it survived all
+  prior testing. Fix: bm_core fork +1 commit (`eec6e82`, error-path
+  frees deleted with the ownership contract documented), bm_sbc
+  submodule bump (`1a806c7`), deploy.sh pins moved, both Pis rebuilt
+  green. AE3 unaffected (compiles bm_lwip.c). Upstream-PR-worthy.
+- **Crash repro on the fixed build: PASS** — same overload hit the same
+  `evt queue full, dropped frame` line and ran to completion: TX_STAT
+  `ok=3792 enomem=2 l2_drops=2`, drops counted + surfaced (`Unable to
+  publish, err 12`), no abort. The D27 observability told the story.
+- **Full demo re-run (fixed pins): d1 topology PASS (Light neighbors
+  01+03, Telemetry only 02, 2-hop 🏓 10–11 ms both ways) · d2 PASS
+  (both hops steady 1.99–2.00, 23.6/24.7 MB, all-zero ledgers) ·
+  d3 PASS — 600 s @ 2.00 Mbps, Camera sent 107,142 = Telemetry
+  received 107,142, ZERO loss/CRC/drops at every hop, ledger
+  consistent end-to-end (bridge 107,215 frames / 158.25 MB,
+  frag_errors 0).**
+- En-route ops finds (now in the ae3-usb-unstick SKILL + READMEs):
+  (a) the AE3 fell OFF the USB bus (error -71) after mpremote was
+  pointed at a phase-1 bridge concurrently with a reset — uhubctl
+  could NOT recover it because **the Pi 5 root hub's ppps never
+  actually cuts VBUS** (measured: the bridge session survived a Pi
+  reboot still blocked mid-write); **`sudo reboot` on the Pi = the
+  fix** (fresh xhci re-enumerates; Nick's call). (b) by-id
+  lingers→drops→reappears bit the start ladder once more — the full
+  absent→present→settle dance is mandatory, and demo-to-demo
+  transitions must wait out the bridge's 30 s quiet-exit before any
+  mpremote contact.
+
+**Next:** Nick's call — bless Claude's re-run as the S16 demo or run
+README §S16 demos 1–3 himself (board staged + armed either way) →
+nibble 4 PR (repo + both fork branches). Session end: fixture restore
++ sha-verify + S6 USB baseline re-run.
+
+---
+
 ## 2026-08-14 — Sprint S15 (BUILD-1+3) — udp transport + factory: two-Pi bench live, zero-loss limiter rehearsal both directions
 
 **Branch:** `sprint/15-udp-transport` (repo) + bm_sbc fork

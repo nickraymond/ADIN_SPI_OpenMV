@@ -14,11 +14,15 @@
 # Trust artifacts: the script ends by printing the binary path, its
 # build id, and the verified revs. If it didn't print PASS, it didn't work.
 #
-# Pins (S15, 2026-08-14). Fork branches:
+# Pins (S16, 2026-08-15 — bm_core +1: bm_linux over-free fix on the L2
+# TX-overflow path, found live when Nick's demo aborted with glibc
+# heap corruption; bm_sbc +1 = the submodule bump. Wire format
+# untouched; the AE3's vendored copy compiles bm_lwip.c, not
+# bm_linux.c, so it stays byte-identical). Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="4ebdbc3582e224b8d5524ae8b8f4290f60373106"
-BM_CORE_PIN="e031f11fc8305566eb5dc46fe296727d39007826"
+BM_SBC_PIN="1a806c757eff97f9d33025f6b6f4fa3f26d80e1c"
+BM_CORE_PIN="eec6e82f0010fe43b96464bb8215c9c9ffd7665b"
 
 set -euo pipefail
 

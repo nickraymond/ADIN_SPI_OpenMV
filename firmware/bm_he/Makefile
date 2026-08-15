@@ -30,7 +30,8 @@ APP_SRCS = \
     src/he_dbg.c \
     src/syscalls.c \
     src/bm_stubs.c \
-    src/bm_net_mock.c \
+    src/bm_net_wire.c \
+    src/wire_frag.c \
     $(SPIKE)/src/mhu.c \
     $(SPIKE)/src/rpmsg_remote.c
 
@@ -105,9 +106,9 @@ LWIP_SRCS = \
     $(LWIP)/api/tcpip.c \
     $(LWIP)/netif/ethernet.c
 
-# S14 / BENCHSPEC V15: the BUILD-4 middleware slice, linked only for the
-# size audit (AUDIT_MIDDLEWARE=1). The standing INTERIM-2 image is
-# byte-identical without the flag.
+# Middleware slice (pubsub, bm_service, topology, standard services).
+# Introduced for the S14 V15 size audit (AUDIT_MIDDLEWARE=1); promoted to
+# always-on in S16 BUILD-2 -- the audit proved it fits (91.6%) and runs.
 MW_SRCS = \
     $(BM)/middleware/middleware.c \
     $(BM)/middleware/pubsub.c \
@@ -122,11 +123,8 @@ MW_SRCS = \
     $(BM)/bm_common_messages/power_info_reply_msg.c \
     $(BM)/bm_common_messages/bm_messages_helper.c
 
-SRCS = $(APP_SRCS) $(FR_SRCS) $(BM_SRCS) $(LWIP_SRCS)
-ifeq ($(AUDIT_MIDDLEWARE),1)
-SRCS += $(MW_SRCS)
-CFLAGS_EXTRA += -DAUDIT_MIDDLEWARE=1 -I$(BM)/middleware -I$(BM)/integrations -I$(BM)/bm_common_messages
-endif
+SRCS = $(APP_SRCS) $(FR_SRCS) $(BM_SRCS) $(LWIP_SRCS) $(MW_SRCS)
+CFLAGS_EXTRA += -I$(BM)/middleware -I$(BM)/integrations -I$(BM)/bm_common_messages
 
 # Our headers FIRST: bm_he's FreeRTOSConfig.h must beat he_spike's.
 INC = -Isrc \
@@ -157,8 +155,8 @@ OBJS = $(patsubst %.c,$(BUILD)/%.o,$(notdir $(SRCS)))
 VPATH = src $(sort $(dir $(filter-out src/%,$(SRCS))))
 
 # Vendor code (bm_core, lwIP, FreeRTOS, contrib) is not ours to -Werror.
-APP_OBJS = startup.o main.o he_dbg.o bm_stubs.o bm_net_mock.o \
-           mhu.o rpmsg_remote.o syscalls.o
+APP_OBJS = startup.o main.o he_dbg.o bm_stubs.o bm_net_wire.o \
+           wire_frag.o mhu.o rpmsg_remote.o syscalls.o
 VENDOR_OBJS = $(filter-out $(APP_OBJS),$(notdir $(OBJS)))
 $(addprefix $(BUILD)/,$(VENDOR_OBJS)): CFLAGS := $(filter-out -Werror,$(CFLAGS))
 

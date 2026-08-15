@@ -52,8 +52,7 @@ DOCKER_DEFAULT_PLATFORM=linux/amd64 docker run --rm \
     -v "${SDK_DIR}:/sdk:ro" \
     -w /work \
     firmware-builder:latest \
-    make CROSS=/sdk/gcc/bin/arm-none-eabi- OPENMV_DIR=/openmv SPIKE=/he_spike \
-         AUDIT_MIDDLEWARE="${AUDIT_MIDDLEWARE:-0}"
+    make CROSS=/sdk/gcc/bin/arm-none-eabi- OPENMV_DIR=/openmv SPIKE=/he_spike
 
 # Trust artifacts, not exit codes.
 BIN="${HERE}/build/bm_he.bin"
