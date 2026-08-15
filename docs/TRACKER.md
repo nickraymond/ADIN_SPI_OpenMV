@@ -515,6 +515,63 @@ USB/MicroPython baseline stays intact as the regression reference
    documented). Repro = the S17 injection probe (DESIGN §S17
    addendum). Pairs with the S16 over-free report.
 
+## Product arc on the bench (added 2026-08-15, Nick) — S18+
+
+*Core-product development on the working S17 bench; all of it
+transport-independent (survives the ADIN swap unchanged). Sequence set
+by Nick: web bench tool → light intelligence → CV. Upstream bug
+reports (items 8–10 above) explicitly HELD for now (Nick).*
+
+### S18 — Camera bench web tool  `[ ]`  *(plan approved by Nick
+2026-08-15 — D30; branch `sprint/18-web-bench` from main AFTER PR #24
+merges)*
+**Goal:** a web control panel on the Telemetry Pi that drives the
+camera/light over the BM chain — the standing instrument for image-
+quality comparisons.
+- [ ] Bite A — stack plumbing: **resolution field (QVGA|VGA)** through
+      camera_req_t → wire_capture_t → bridge CaptureEngine
+      (`sensor.set_framesize` per command; watch the D15 re-init crash
+      class), **q exposed on the stream command**; lockstep ABI update
+      (camera_svc.h + fork structs + BridgeCore), host tests, size
+      audit (REV-25 standing).
+- [ ] Bite B — fork app: **loopback-only control socket** on the
+      telemetry role (JSON command in / JSON status out: last replies,
+      current params, live receiver ledger) + **still-save** to
+      `~/bench_captures/` with JSON sidecars (all params + measured
+      stats at capture time). Fork pin move — Nick pushes.
+- [ ] Bite C — `pi/bench_web/` (stdlib python, S3-server pattern):
+      controls (resolution/q/fps/rate/secs, capture/stream/stop, light
+      level+strobe), embedded live `/stream`, **commanded-vs-actual
+      pill** (receiver-ledger fps + Mbps, ~1 Hz), **feasibility
+      warnings** (client-side model from measured constants — encode
+      ms/resolution, chunk overhead, 5.26 Mbps relay ceiling; yellow =
+      fps will cap, red = exceeds transport; labeled estimates),
+      **gallery + side-by-side compare view**, **RGB+luma histograms**
+      (canvas, client-side, live + per-still — the OpenMV-IDE-style
+      levels view).
+- [ ] Bite D — demo ladder + docs; optional systemd units (chain +
+      web tool at boot — retires the manual start commands).
+**Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
+q90 stills → compare view shows both + histograms → start a VGA stream
+→ the warning predicts and the pill confirms the fps drop.
+**Scope calls (Nick may override):** resolutions QVGA+VGA only (HD-mono
+later); warnings client-side from measured constants, not camera-
+queried.
+
+### S19 — Light intelligence (stub — flesh out at kickoff)
+Camera self-detects dark scenes (HP luma stats) → camera node issues
+`light/control` requests (HE `bm_service_request`) → light auto-on;
+customer never thinks about it. All on bm_service (§6.2).
+
+### S20 — CV: count-and-report (stub — flesh out at kickoff)
+Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
+D29 context). Requires a custom Vela-compiled detector (S8 finding:
+ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
+evidence stills ride the existing bridge→pub/sub path. Data collection
+for training can use the S18 tool + S17 pipeline.
+
+---
+
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
 demo — rebuild a link fixture (new hats / SG-shield-as-OA reshuffle /
 ADIN2111 eval), re-strap per DEV_LOG fixture notes, then the README

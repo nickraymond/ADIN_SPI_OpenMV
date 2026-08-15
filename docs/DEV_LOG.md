@@ -122,6 +122,20 @@ nibble-4 PR (repo + fork). AFTER the demo: fixture main.py restore
 (55fa6ccf…) + sha-verify + S6 USB baseline re-run + python-client
 uplink injection (needs an interactive second shell).
 
+**Post-demo continuation (2026-08-15, same session): demo re-run trip
++ demo_up.sh + S18 planned.** Nick re-ran the demo and camera requests
+timed out — because the close-out fixture restore means the AE3 is NOT
+a BM node until the bridge is re-staged (working as designed, badly
+communicated). Fixed live (re-stage + reset), then hardened:
+**`pi/bm_bench/demo_up.sh`** — one-command demo-day re-stage with sha/
+staged-file/busy-bridge checks (README §Demo day). Product direction
+set by Nick: bench-hosted product arc = **S18 camera bench web tool
+(plan approved, D30) → S19 light intelligence → S20 CV**; upstream
+reports (items 8–10) explicitly HELD. TRACKER carries the full S18
+requirements (PROMPTS.md rule: prompts stay generic). Image-quality
+levers explained to Nick (q, resolution, light; encoder-bound); S18
+delivers them as controls.
+
 **DEMO RUN BY NICK 2026-08-15 — PASS ("this is fantastic"):** live
 interactive session from his own terminals — `stream 2.0 15 60` from
 the Telemetry CLI → CAM_REPLY ok=1 → 15.0 fps steady, dropped=0,
