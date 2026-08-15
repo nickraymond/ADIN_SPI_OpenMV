@@ -109,6 +109,7 @@ STATUS_KEYS = ("node_id", "ip_ll", "ip_ucast", "stage", "err",
 CFG_PATH = "/flash/bridge_cfg.json"
 CRASH_PATH = "/flash/bridge_crash.txt"
 TRACE_PATH = "/flash/bridge_trace.txt"
+TRACE_PREV_PATH = "/flash/bridge_trace.prev.txt"   # last run, kept for crashes
 ELF_PATH = "/flash/bm_he.elf"
 BM_STATUS_PAGE = 0x600BFE00
 RPMSG_QUEUE_CAP = 256       # HE->bridge backlog cap (drops counted)
@@ -625,9 +626,19 @@ def main():
     engine = CaptureEngine()
     cfg = _load_cfg()
 
+    # Keep ONE generation of the previous trace instead of deleting it.
+    # Bench-earned (S18 bite A): a capture hard-faulted the board below
+    # MicroPython -- no traceback, no exit record -- and the board came
+    # back up running this launcher, whose first act was to wipe the only
+    # evidence of what it had been doing. A crash you cannot read twice
+    # is a crash you debug twice.
     try:
         import os
-        os.remove(TRACE_PATH)
+        try:
+            os.remove(TRACE_PREV_PATH)
+        except Exception:
+            pass
+        os.rename(TRACE_PATH, TRACE_PREV_PATH)
     except Exception:
         pass
     _trace("bridge up, cfg %s" % json.dumps(cfg))

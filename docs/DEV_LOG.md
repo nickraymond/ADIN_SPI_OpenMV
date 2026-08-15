@@ -72,7 +72,51 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   out not to run JS at all for files outside the project folder — the
   preview pane says so and I missed it; it needs a real browser.
 
-**Next:** nibble 3 — Nick pushes the fork, then the geometry ladder in
+**Nibble-3 addendum (same session, Claude drove the hardware at Nick's
+"run the checks"): ABI PROVEN LIVE, then VGA hard-faulted the board.**
+- Fork + repo branch pushed; `deploy.sh` **PASS on both Pis** at
+  ba594ec/eec6e82. En route: nereus000's bm_sbc checkout was detached at
+  c1d0df9 (the S17 trap again) and my `git checkout` landed on a stale
+  local branch at 4ebdbc3 — caught by deploy.sh's pin check, fixed with
+  an explicit ff-only pull. Stale S17 apps were still running on BOTH
+  Pis (nereus001 had two racing telemetry instances); stopped first.
+- Staged ELF + bridge, **on-board shas verified** against the Mac
+  (4be541ae…, 7a00a19…). Chain formed: Camera …03 ↔ Light …02 ↔
+  Telemetry …01.
+- **The S18 ABI works end to end over two BM hops:** `cam-status` →
+  `res=default pf=default`; `capture 50 qvga color` → `ok=1 res=qvga
+  pf=color`, 3 chunks / 3,871 B published. HE service, HP bridge and
+  fork app all agree on 18 B / 14 B.
+- **`capture 50 vga color` KILLED THE BOARD** — accepted, then
+  uart_l2 decode error, neighbor offline, AE3 off the USB bus
+  (error -71). Recovered via the `ae3-usb-unstick` ladder (Pi reboot;
+  uhubctl cannot help — the Pi 5 root hub never cuts VBUS).
+- **Bisected on a clean REPL: VGA standalone works (10,833 B), the
+  QVGA→VGA→QVGA runtime switch works, QVGA under the bridge works.
+  Only VGA WITH the HE stack live fails.** No Python traceback and no
+  bridge exit record → the fault is below MicroPython, D15 family.
+  Full evidence + candidate causes in SPEC §Open questions.
+- Fix shipped for the next attempt: the bridge no longer deletes its
+  trace at boot (`bridge_trace.prev.txt`). The first crash's trace was
+  destroyed by the bridge that restarted after it.
+- Board restored to the S6 fixture, sha-verified 55fa6ccf… . Bench apps
+  stopped on both Pis.
+
+**Honest note on my own reporting:** I first read a 320×200 JPEG off
+`:8080/frame.jpg` as proof the QVGA capture had landed. It was a STALE
+frame from the S17 session (`stats.json uptime_s=99594`,
+`ingest_connected=false`); no frame completed at the receiver this run
+(`frames_ok=0 gaps=2`, cause not isolated — the S17 startup race is the
+untested candidate). Caught and corrected in-session, but it is exactly
+the "trust artifacts, not exit codes" failure this repo warns about:
+the artifact was real, it just wasn't *this run's* artifact.
+
+**Next:** Nick's call on the VGA/HD blocker before bites B–D (the tool's
+premise is resolution comparison). Cheapest next probe = `bridge_cfg`
+VGA one-shot with HE loaded and no Pi chain, reading
+`bridge_trace.prev.txt` after the fault.
+
+**Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
 `pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated
 format+resolution cycling as the D15 probe, a deliberate refusal, and
 HD-mono stream). **The numbers that matter: in-bridge fps at VGA and HD,

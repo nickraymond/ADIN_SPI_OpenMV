@@ -134,6 +134,35 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
+  bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
+  `capture 50 vga color` over the BM chain was accepted (`ok=1
+  res=vga pf=color`) and the board then died: `uart_l2: decode error`
+  on the Light node (garbage mid-transmission), neighbor offline 46 s
+  later, and the AE3 off the USB bus entirely (`device not accepting
+  address, error -71`, `unable to enumerate`). Recovered only by the
+  `ae3-usb-unstick` ladder (Pi reboot).
+  **Isolated by bisection on a clean REPL, same firmware, same session:**
+  (a) QVGA capture under the bridge — **works** (3 chunks published);
+  (b) VGA capture standalone, no HE stack — **works** (640×400,
+  10,833 B); (c) the runtime switch QVGA→VGA→QVGA standalone —
+  **works** (3,898 / 10,779 / 3,889 B, 4 MB heap free throughout).
+  Only VGA *with the HE stack loaded and the bridge pumping* fails, so
+  it is neither VGA itself nor the re-init/switch path.
+  **The fault is below MicroPython:** no Python traceback was raised
+  (the bridge's non-fatal sensor handler never ran) and
+  `bridge_crash.txt` has a `boot:` line with no matching exit record,
+  where every clean shutdown writes one. Same family as D15.
+  Candidate causes, none verified — do not guess in code: framebuffer
+  allocation (VGA RGB565 = 512,000 B) colliding with the OpenAMP/rpmsg
+  shared-memory mapping; sensor DMA vs MHU/rpmsg contention; heap
+  fragmentation under the loaded ELF. Next probe: a `bridge_cfg.json`
+  VGA one-shot with the HE loaded but no Pi chain, now that the bridge
+  preserves `bridge_trace.prev.txt` across a restart (the first crash's
+  trace was wiped by the relaunching bridge).
+  **Consequence: S18's VGA+HD scope is BLOCKED on this** — the bench
+  tool's whole point is comparing resolutions. QVGA is unaffected.
+
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
   mode with PROTE=0 and the bit does NOT accept a write (tried plain and
