@@ -85,6 +85,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 
 | D27 | 2026-08-14 | S15 bench code lives in **GitHub forks with pinned revs**, not vendored patches: bm_sbc fork branch `feature/udp-transport` (base `17ea904`, +2 commits: BUILD-3 transport factory; BUILD-1 udp_port_device + stream_bench + tests) and **bm_core fork branch `bench/d4ecc38-obs` = d4ecc38 + exactly ONE observability commit** (TX/RX L2-queue drop counters + accessors, REV-13; zero behavior change, wire format untouched). The bm_sbc fork's submodule pins the patched bm_core. All bench nodes stay protocol-identical to d4ecc38; the AE3's vendored copy stays byte-identical; any pin move is an all-nodes change (REV-23). Exact shas: `pi/bm_bench/deploy.sh` (deploy fails loudly on drift). (Nick approved fork + patch, 2026-08-14.) | Fork over patch files because the work is C++ inside their build/test system — their CI (`validate.sh`) is the regression harness and must run in place (it did: all steps green with the factory refactor, incl. 13/13 multinode + 15/15 IPC), and the factory + udp device are upstream-PR material. The bm_core patch exists because the only silent-drop sites live in their `l2.c`; measured on the bench (S15 rehearsal): a lone publisher CANNOT trip the TX BmENOMEM path on a Pi — POSIX queue enqueue blocks ≤10 ms while service at 10 Mbps wire is ~0.9 ms/frame, so overload becomes blocking backpressure (offered 15 Mbps → achieved 9.3 over 32.2 s wall, 36,622/36,622 delivered, zero loss; 200 Mbps loopback → 244,141/244,141). Real drop sites: RX zero-timeout enqueue (now counted), the S16 forward path where the L2 thread enqueues into its own queue (guaranteed timeout under load — the S16 transit ledger), and device-level oversize (logged with length + ingress port, REV-14). |
 | D28 | 2026-08-14 | S16 BUILD-2 wire design (Nick approved plan + 3 decision points): **(1) frag protocol** — the 4-byte `wire_hdr_t` is kept; `WCMD_FRAME_*` carries hdr.len = TOTAL L2 frame length, frames >492 B continue in `WCMD_FRAG` msgs (in-order vring, no seq field); frames ≤492 B are byte-identical to the S10 wire, so 2a/2b control traffic is unchanged. **(2) link handshake** — link-up is only ever reported from `retry_negotiation` on l2's 100 ms timer (REV-12); the HP bridge announces `WCMD_LINK` and holds it DOWN until the first bytes arrive on the VCP, so the HE transmits nothing while the pipe is unowned; DOWN fires immediately. **(3) bm_sbc pin moved by ONE commit** (4ebdbc3 → 4ccbf95: stream_bench RX_STAT gains `tx_drops`, the pass-through transit ledger; bm_core pin untouched) — a D27-discipline pin move, redeployed on both Pis same session. **(4) stream trigger** = `/flash/bridge_cfg.json` one-shots (WCMD_STREAM / WCMD_PING after link-up + delay), NOT a BM service — that is S17 BUILD-4's camera service. | Frag-with-total-in-first-msg keeps the old parser shape and the regression bench wire-stable while carrying 1514 B (REV-14) over the ≤496 B rpmsg budget (§S14 fact); a seq field would duplicate what the FIFO vring already guarantees. Link-follows-the-Pi gives the chain a real link semantic on a wire that has no carrier signal: bm_sbc's gateway heartbeats the moment it opens the tty, and l2.c:425 measured behavior (timer id = 1-based port_num) plus REV-1's 0-based `link_change` are asserted in host tests so the convention split cannot silently regress. Config-file triggers keep the VCP a pure data pipe (no in-band control protocol to collide with uart_l2) at the cost of a reset per config change — acceptable for bench one-shots. |
+| D29 | 2026-08-15 | S17 BUILD-4 application-layer design (Nick approved plan + answers to 6 decision points): **(1) camera data plane** — image bytes are born on HP, so two node-internal wire cmds close the loop: `WREP_CAPTURE` (HE→HP: params from the `camera/control` service) and `WCMD_PUB` (HP→HE: one ≤1400 B chunk payload, riding the existing wire_frag reassembly, published verbatim on `camera/stream`). Chunk header = BMV6 adapted, 10 B little-endian (`frame_seq u32, idx u16, count u16, len u16`), contract in `camera_svc.h`, replicated with static_asserts in the fork app. **(2) services speak packed-LE structs, not CBOR** — shipped cbor_service_helper is config-map-only, tinycbor req/rep costs flash the 93%-full HE lacks (REV-25), both ends are ours; shipped services (power) keep their CBOR. **(3) uplink = option A**: Telemetry aggregates in-app and calls the SHIPPED `spotter_tx_data()` (publishes `spotter/transmit-data`; no mote on the bench — the publish + pcap is the artifact, stated honestly); gateway_ipc runs in its shipped inbound direction (python client → gateway → network) — the socket is one-way by design, REV-8's own definition. **(4) RTC = O1**: keep the AE3's tick-derived RAM RTC (bm_stubs.c, settable, 1 ms res); Telemetry is the time authority via `bcmp_time_set_time` (BCMP re-tx crosses Light; time.c already compiled + registered); hardware RTC = hardware-day. **(5) light HAL backend = nereus000's onboard ACT LED via sysfs** (visual check, zero wiring; GPIO26/pin-37 external LED documented as alternative), state-file artifact + file-only fallback. **(6) camera stream rate target = bite-0 measured ÷ 2, capped 2.0 Mbps** — committed only after the V16-with-capture number exists (reef-encode load per S0's ref-scene finding). Fork app `apps/bench_apps` (new; stream_bench untouched as the S15/S16 regression instrument); pin move +2 commits (c094f66, c1d0df9), bm_core pin unchanged. | The wire cmds are node-internal plumbing below the BM layer (rpmsg between the AE3's own cores) — REV-6/§6.2 govern node-to-node messaging, which stays 100% bm_service/pubsub on ff03::1; nothing new crosses the network. Chunker on HP + publisher on HE keeps the HE flash cost at +2,056 B (audit: 246,032/262,144 = 93.9%, ~15.7 K headroom) because the middleware slice was already linked (V15). Reassembler is strictly sequential (single ordered publisher; any gap drops the frame, every drop counted — D21 receiver-side ledger; 21-check ctest in the fork). Telemetry→web reuses the FROZEN S3 receiver verbatim (ingest :8081 JSON-header framing — the S12 "shim v2" shape arriving early); the browser at nereus001:8080 is the Stage-4 centerpiece demo. |
 
 ## Verified-facts ledger
 
@@ -1388,3 +1389,71 @@ Bench facts earned: Pi 5 root-hub ppps does NOT cut VBUS (uhubctl
 cannot power-cycle the AE3; `sudo reboot` on the Pi re-inits xhci and
 recovers an off-bus board — ae3-usb-unstick skill); a bridge session
 survives Pi reboots blocked mid-write.
+
+### S17 detail (2026-08-15) — BUILD-4 apps: code complete (demos gated at the VCP)
+
+**Scope:** BENCHSPEC Stage 4 (BUILD-4) per D29. Code + host tests +
+cross-build + Pi build all green; **bite-0 measurement and all live
+demos wait at the VCP gate** (fixture main.py swap needs Nick's go).
+
+**Bite 0 (measure first, S0 discipline):** `s17_capture_pump.py` +
+`main_s17.py` extend the S14 relay pump with rung **F** (relay + reef
+`ref_color_320x200.bmp` encode paced at a target fps — dim-room frames
+compress ~2× too well, S0 finding) and rung **G** (F + the JPEG pushed
+down to HE via he_spike's `BCMD_SINK_DATA` — both rpmsg directions +
+VCP + capture in one HP loop = the real camera-path shape, zero new
+firmware). Counter grew F/G (`--fps/--q`, capture/sink ledger, gate
+terms incl. he_alive + sink integrity). `binascii.crc32 == he_crc32`
+pinned by host test. **The rung-G 600 s number commits the stream rate
+target (÷2, cap 2.0 Mbps — D29.6).**
+
+**Bite A (HE):** `camera_svc.{c,h}` — `camera/control` service
+(packed-LE camera_req_t 16 B / camera_rep_t 24 B, magic 'CAM1';
+capture/stream/status/stop; handler never blocks: single-slot last-wins
+mailbox → wire task → `WREP_CAPTURE`), `camera_svc_publish` (REV-28
+guard + pub ledger). `WCMD_PUB` (0x18) rides the existing `wire_frag`
+reassembly, kind-dispatched against WCMD_FRAME_RX (in-order vring, one
+buffer). `power_hal.h` + `power_hal_sim.c` (duty sim 3300/300 s,
+synthetic 11.8–12.2 V / 180 mA rails carried for the hardware-day chip
+swap) feeding `power_info_service_init` — service was already linked
+(V15), so **bite-A flash cost = +2,056 B: 246,032/262,144 = 93.9%,
+~15.7 K headroom** (REV-25 audit BEFORE bite B). `wire_status_t`
+untouched (88 B ABI stable — camera counters ride the service reply).
+Host tests 122 → 170. ELF sha `4c04b51a…` (MANIFEST).
+
+**Bite B (HP bridge):** BridgeCore grew WREP_CAPTURE parse
+(bridge-owned defaults: q50/D20, 10 fps, 60 s; REV-28 clamp) and
+`capture_pub_msgs` (JPEG → 10 B-header chunks ≤1400 B → WCMD_PUB +
+frag msgs). `CaptureEngine`: lazy QVGA sensor bring-up (failure traced,
+relay unaffected), fps-slot pacing + rate_bps byte budget,
+single/stream/stop. `bridge_cfg.json` gains an optional `camera`
+one-shot (bring-up aid). Host tests 35 → 61.
+
+**Bites C1/C2 (bm_sbc fork, D27 pin move +2):** `apps/bench_apps` —
+one binary, `S17_ROLE=light|telemetry`. Light: `light/control` service
+(level/strobe/query, packed-LE 'LIT1') over the sysfs ACT-LED HAL
+(green LED = the visual check; `/tmp/s17_light_state` artifact;
+file-only fallback + logged chmod fix). Telemetry: subscribes
+`camera/stream` (payloads copied off the RX thread, bounded queue,
+drops counted), `chunk_reasm.h` sequential reassembler (21-check
+ctest), frozen-S3-ingest client (JSON frame header + bytes,
+reconnect+backoff), 1 Hz TEL_STAT ledger; stdin operator CLI (capture/
+stream/stop/cam-status/light/strobe/light-status/power/time-sync/
+status); 30 s aggregated `UPLINK_TX` via `spotter_tx_data()`; shipped
+`gateway_ipc` listener (env socket-path override) for the python
+client. Full build + ctest 4/4 on nereus000 (scratch tree). Pins:
+`deploy.sh` → bm_sbc `c1d0df9…`, bm_core unchanged `eec6e82…`.
+
+**Demo ladder:** `pi/bm_bench/README.md` §S17 (deploy incl. one-time
+LED chmod + `t1l-chunk-shim` stop on nereus001 — it crash-loops on the
+missing eth1 and must not race the single-producer ingest; demo 1
+services round trip; demo 2 capture→stream→browser at
+`http://nereus001:8080/stream`; demo 3 uplink surfaces). Verified en
+route: `t1l-stream-server.service` ACTIVE on nereus001 (frozen ingest
+:8081/HTTP :8080 still standing since S3); ACT/PWR LEDs present +
+trigger-controllable on both Pis.
+
+**Gated/blocked:** (1) VCP gate — bite-0 run + AE3 restage + all
+demos; (2) fork push `feature/udp-transport` (c094f66+c1d0df9) blocked
+by session permissions — Nick pushes, then both-Pi `deploy.sh`;
+(3) rate-target number pending bite 0.

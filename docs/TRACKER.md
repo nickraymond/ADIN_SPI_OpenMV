@@ -1,9 +1,11 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-14 evening (S16 BUILD-2 code complete on
-`sprint/16-ae3-chain`, both Pis deployed at the new pin; live chain
-bring-up waits at the VCP gate. INTERIM MODE → BENCH arc: T1L bench down —
+*Last updated: 2026-08-15 (S17 BUILD-4 code complete on
+`sprint/17-build4-apps` + fork `feature/udp-transport` @ c1d0df9;
+bite-0 measurement + demos wait at the VCP gate; fork push = Nick.
+Previous: S16 BUILD-2 demoed end-to-end — three-node chain, 600 s @
+2.00 Mbps, zero loss, PR #23 merged. INTERIM MODE → BENCH arc: T1L bench down —
 both AOS hats condemned, replacement PCBAs ~1 month out. Active work =
 the **three-node software bench per docs/BENCHSPEC.md (v3, Nick
 approved 2026-08-14)**: real bm_core on three nodes over UDP +
@@ -452,11 +454,28 @@ USB/MicroPython baseline stays intact as the regression reference
    + live chain rehearsal → nibble 3 demos → PR.**
    **Demo (Nick):** chain topology + forwarded pub/sub + sustained-rate
    verdict. = `pi/bm_bench/README.md` §S16 demos 1–3.
-6. `[ ]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) — light/camera
+6. `[~]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) — light/camera
    services on bm_service/pubsub, gateway_ipc uplink, power HAL sim;
    time sync gated on RTC-backend decision (BENCHSPEC §9.5).
-   **Demo (Nick):** capture triggered → stream at Telemetry → light
-   commanded → uplink out via gateway_ipc.
+   → CODE COMPLETE 2026-08-15 (nibbles 1–2; plan + 6 decision points
+   approved by Nick — D29): bite 0 (capture-relay bench, reef-encode
+   rungs F/G — the V16-with-capture number that commits the stream
+   rate target) · A (HE camera/control service + WCMD_PUB publish
+   path + power HAL sim; size audit 93.9%, ~15.7 K headroom; host
+   tests 170) · B (bridge CaptureEngine + chunker; 61 checks) ·
+   C1/C2 (bm_sbc fork `apps/bench_apps`: light service on the ACT-LED
+   HAL, telemetry subscribe→reassemble→frozen-S3-ingest → browser at
+   nereus001:8080, operator CLI, spotter_tx_data uplink + gateway_ipc
+   listener; ctest 21 checks; pin move +2 → c1d0df9). RTC = O1 (RAM
+   stub + BCMP time-set from Telemetry, zero new code). Demo ladder =
+   `pi/bm_bench/README.md` §S17. **NEXT: Nick pushes the fork branch
+   (session perms blocked it) → both-Pi deploy.sh → VCP gate (Nick's
+   go) → bite-0 measurement → rate target committed → demos 1–3 →
+   PR. Session end: fixture restore + sha + S6 baseline.**
+   **Demo (Nick):** capture triggered → stream at Telemetry (browser,
+   through Light) → light commanded (LED) → uplink out via
+   gateway_ipc — with the drop ledger + the bite-0 number in the
+   verdict.
 7. `[ ]` **S11 INTERIM 3** — dev-kit-mote reference: bm_sbc + UART
    gateway (see S11). **HARD SAFETY GATE: meter the mote's port cold
    + Nick's explicit sign-off before ANY connection (SPEC §Safety

@@ -17,6 +17,71 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-15 — Sprint S17 (BUILD-4) — application services: code complete across all four surfaces; bite-0 measurement + demos wait at the VCP gate
+
+**Branch:** `sprint/17-build4-apps` (repo) + bm_sbc fork
+`feature/udp-transport` @ c1d0df9 (pin +2, D29; bm_core pin unchanged)
+
+**Done:**
+- Nibble 1 plan approved (Nick) with 6 decision points → D29: WCMD_PUB/
+  WREP_CAPTURE node-internal wire; packed-LE service structs (CBOR
+  helper is config-only; HE flash-poor); uplink option A (spotter_tx_data
+  = the shipped primitive; gateway_ipc is inbound-only BY DESIGN — read
+  from source, REV-8's own definition); RTC O1 (Telemetry = time
+  authority via BCMP time-set; AE3's settable RAM RTC already exists);
+  light HAL on nereus000's ACT LED (verified present + controllable,
+  zero wiring); rate target = bite-0 measured ÷2 cap 2.0; new fork app
+  (stream_bench stays the regression instrument). Reef-image trick
+  (Nick) folded into bite 0; web-video demo (Nick) = the frozen S3
+  receiver reused verbatim — S12's shim-v2 shape arriving early.
+- Bite 0: `s17_capture_pump.py`/`main_s17.py` — S14 pump + rung F
+  (relay + paced reef encode) + rung G (F + JPEG sunk to HE via
+  BCMD_SINK_DATA: both rpmsg directions + VCP + capture in ONE HP
+  loop, zero new firmware). Counter grew F/G + ledger + gate terms.
+  binascii.crc32 == he_crc32 pinned by test. 29 new checks.
+- Bite A (HE): camera/control service (16 B req / 24 B rep, 'CAM1';
+  non-blocking handler → mailbox → WREP_CAPTURE), WCMD_PUB → bm_pub on
+  camera/stream via existing wire_frag (kind-dispatch), power_hal.h +
+  sim feeding the already-linked power_info service. wire_status_t ABI
+  untouched. Host tests 122→170. **Size audit (REV-25, before bite B):
+  +2,056 B → 246,032/262,144 = 93.9%, ~15.7 K headroom.** ELF 4c04b51a….
+- Bite B (bridge): WREP_CAPTURE parse w/ bridge-owned defaults,
+  capture_pub_msgs chunker (10 B LE header, ≤1400 B, REV-28),
+  CaptureEngine (lazy sensor, fps slots + rate budget, non-fatal
+  sensor failure), optional bridge_cfg `camera` one-shot. Tests 35→61.
+- Bites C1/C2 (fork): `apps/bench_apps` — S17_ROLE=light (light/control
+  service + sysfs-LED HAL + state artifact) | telemetry (subscribe →
+  chunk_reasm (21-check ctest) → frozen-S3 ingest client → browser
+  demo; stdin CLI: capture/stream/light/strobe/power/time-sync;
+  UPLINK_TX via spotter_tx_data every 30 s; gateway_ipc listener with
+  env socket path for the python client). Built + ctest 4/4 on
+  nereus000 (scratch tree — ~/bm_sbc_s15 untouched). deploy.sh pins →
+  c1d0df9/eec6e82.
+- Docs: D29 + DESIGN §S17 detail + README §S17 deploy/start/demos 1–3
+  (incl. one-time LED chmod; stop t1l-chunk-shim on nereus001 — it
+  crash-loops on missing eth1 and would race the single-producer
+  ingest). Verified en route: t1l-stream-server ACTIVE on nereus001
+  since S3 (the browser endpoint is already standing).
+
+**Broke/surprised us:**
+- gateway_ipc is strictly one-way client→gateway (no outbound socket
+  exists) — "subscribe→aggregate→out via gateway_ipc" as literally
+  worded is unimplementable with shipped code; resolved as D29.3
+  (aggregate in-app → spotter_tx_data; ipc demoed in its real
+  direction). Caught in nibble 1 by reading the source, not the doc
+  title.
+- Session permission classifier blocked `git push` to the fork — C1/C2
+  are committed locally (c094f66, c1d0df9) but NOT on GitHub yet;
+  deploy.sh on the Pis will fail its pin check until Nick pushes.
+
+**Next:** Nick: (1) `cd ~/Documents/GitHub/bm_sbc && git push fork
+feature/udp-transport`, (2) both-Pi deploy.sh, (3) open the VCP gate →
+bite-0 rungs C/F/G + 600 s gate → rate target committed → restage
+bridge → README §S17 demos 1–3 → nibble-4 PR. Session end: fixture
+restore + sha-verify + S6 USB baseline re-run.
+
+---
+
 ## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
 
 **Branch:** `sprint/16-ae3-chain` (repo) + bm_sbc fork

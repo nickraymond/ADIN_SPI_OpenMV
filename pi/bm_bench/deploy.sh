@@ -14,14 +14,14 @@
 # Trust artifacts: the script ends by printing the binary path, its
 # build id, and the verified revs. If it didn't print PASS, it didn't work.
 #
-# Pins (S16, 2026-08-15 — bm_core +1: bm_linux over-free fix on the L2
-# TX-overflow path, found live when Nick's demo aborted with glibc
-# heap corruption; bm_sbc +1 = the submodule bump. Wire format
-# untouched; the AE3's vendored copy compiles bm_lwip.c, not
-# bm_linux.c, so it stays byte-identical). Fork branches:
+# Pins (S17, 2026-08-15 — bm_sbc +2: apps/bench_apps, the BUILD-4
+# application layer (light service + telemetry camera consumer/CLI/
+# uplink) + its chunk_reasm ctest. bm_core pin UNCHANGED — no stack or
+# wire changes; the app rides existing pubsub/bm_service/gateway_ipc/
+# spotter surfaces). Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="1a806c757eff97f9d33025f6b6f4fa3f26d80e1c"
+BM_SBC_PIN="c1d0df948d57bb8ce20e714c32b49c4fc0295088"
 BM_CORE_PIN="eec6e82f0010fe43b96464bb8215c9c9ffd7665b"
 
 set -euo pipefail
