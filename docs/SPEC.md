@@ -184,14 +184,36 @@ pair, USB carrying no video.
   COUNT to fit the pool, so an unpinned shrink silently re-allocates
   several buffers and the later grow has to expand the pool into
   SRAM9_B; pinning the count to 1 stops the pool reflowing.
-  **Honest limit of the evidence:** the passing run changed BOTH
-  variables (max-before-HE *and* pinned count), so this proves the
-  combination, not the minimal sufficient condition. **HD is UNTESTED**
-  — 1280×800×2 = 2,048,000 B, 4× VGA — and the whole recipe hinges on
-  the maximum fitting below SRAM9_B, so HD must be probed before it is
-  offered. Underlying allocator behaviour is still a candidate upstream
-  OpenMV report (the allocator should refuse to grow into a loaded
-  remoteproc image rather than corrupting it); pairs with D15.
+  **HD PROVEN 2026-08-15 (`s18_hd_probe.py`) — the full ladder is
+  switchable in-session with the HE core live**, including pixel-format
+  swaps: HD-preHE 36,845 B → HE loaded → HD-with-HE 36,694 → VGA 11,233
+  → QVGA 4,080 → VGA 11,277 → **HD regrown 36,489** → HD-mono 25,131 →
+  HD-colour 36,544 → clean HE stop, board alive.
+  **THE RECIPE (bridge must follow exactly):**
+  1. `sensor.reset()`
+  2. `set_pixformat(RGB565)`
+  3. `set_framesize(QVGA)` — small, always safe
+  4. `set_framebuffers(1)` — pins the count; **cannot be called earlier**,
+     it raises "Pixel format is not supported or is not set" and then
+     "Frame size is not supported or is not set" until both exist (both
+     found live). QVGA-then-pin sidesteps the chicken-and-egg: an
+     unpinned `set_framesize(HD)` is the over-allocation to avoid.
+  5. `set_framesize(HD)` — claim the session CEILING before the HE loads
+  6. load the HE ELF
+  7. thereafter, per change: `set_pixformat` (if changing) →
+     `set_framebuffers(1)` → `set_framesize(<= ceiling)` → settle
+  **Still untested:** growing ABOVE the pre-HE ceiling. Every passing
+  run allocated the maximum before loading the HE, so the ceiling rule
+  stands as stated — do not assume a bridge that booted at QVGA can
+  reach HD.
+  **Watch item:** MicroPython heap drifted 3,893,968 → 3,755,904 B
+  across seven switches (~20 KB each) in one run. Not fatal here, and
+  the framebuffer itself is NOT on this heap (it stayed ~3.8 MB with HD
+  allocated), but a long web-tool session doing hundreds of switches
+  should be checked for a plateau.
+  Underlying allocator behaviour remains a candidate upstream OpenMV
+  report — it should refuse to grow into a loaded remoteproc image
+  rather than corrupting it. Pairs with D15.
 
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA

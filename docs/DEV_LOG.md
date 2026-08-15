@@ -147,11 +147,27 @@ this proves the combination and not the minimal condition — and **HD
 (2,048,000 B, 4× VGA) is still untested**, which matters because the
 recipe depends on the maximum fitting below SRAM9_B.
 
-**Next:** probe HD under the same recipe before offering it; then the
-bite-A code change this all implies — pin the count before every
-framesize call, bring the sensor up at the session max before loading
-the HE, and hard-refuse any grow that would exceed the allocated
-maximum so the web tool can never brick the board from a click.
+**Probe 4 (`s18_hd_probe.py`) — HD PASSES, full ladder switchable.**
+HD-preHE 36,845 B → HE loaded → HD-with-HE 36,694 → VGA 11,233 → QVGA
+4,080 → VGA 11,277 → **HD regrown 36,489** → HD-mono 25,131 → HD-colour
+36,544 → clean HE stop, board alive, no reboot needed. Pixel-format
+swaps at HD work too, which is what S18's HD-greyscale video needs.
+Two ordering constraints found live along the way (each cost a run, both
+clean exceptions rather than crashes): `set_framebuffers()` refuses
+until BOTH pixformat and framesize are set. Since an unpinned
+`set_framesize(HD)` is precisely the over-allocation to avoid, the
+bootstrap has to come up at QVGA, pin the count there, then grow to the
+ceiling. Full recipe now in SPEC §Open questions.
+Scene note: HD colour q50 measured 36.5–36.8 KB on the dim bench vs the
+93,253 B reef figure in DESIGN §S0 — scene-bound as expected, not a
+contradiction.
+
+**Next:** the bite-A code change this implies, which is a SUBSTANTIAL
+departure from the approved plan and needs Nick's nod: sensor bring-up
+stops being lazy and becomes an eager bootstrap that claims the HD
+ceiling BEFORE the HE ELF loads, plus a hard refusal of any grow beyond
+that ceiling so a click on the web page can never brick the board.
+Nothing above the pre-HE ceiling has been proven reachable.
 
 **Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
 `pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated
