@@ -111,10 +111,35 @@ untested candidate). Caught and corrected in-session, but it is exactly
 the "trust artifacts, not exit codes" failure this repo warns about:
 the artifact was real, it just wasn't *this run's* artifact.
 
-**Next:** Nick's call on the VGA/HD blocker before bites B–D (the tool's
-premise is resolution comparison). Cheapest next probe = `bridge_cfg`
-VGA one-shot with HE loaded and no Pi chain, reading
-`bridge_trace.prev.txt` after the fault.
+**Probe results (Nick: "run the probe") — ROOT CAUSE FOUND.** Two
+breadcrumb probes, each flushing every step to flash BEFORE the call it
+names, so a fault that takes USB down still leaves the answer:
+- Probe 1 (HE loaded → QVGA → grow to VGA): died inside
+  `set_framesize(VGA)` with **4,067,616 B heap free** (VGA needs
+  512,000) and **zero VCP traffic**. Not exhaustion, not the bridge.
+- Probe 2 (VGA allocated FIRST, then load HE): VGA pre-HE 10,957 B ·
+  HE load OK · **VGA capture WITH HE up 10,935 B OK** · shrink to QVGA
+  OK · QVGA 4,007 B · **grow back to VGA → dead**.
+- **Verdict: growing the framebuffer with the HE core loaded is fatal;
+  shrinking is safe; VGA alongside a live HE stack is fine.** The HE
+  ELF loads at 0x60080000 (SRAM9_B upper half) and the framebuffer
+  allocator grows into it. QVGA (128,000 B) stays clear, VGA (512,000)
+  does not — which is exactly why S17 (QVGA only, never grew) never saw
+  this and bite A hit it on the first VGA command.
+- Cost: three `ae3-usb-unstick` Pi reboots. Board left healthy, fixture
+  re-verified 55fa6ccf…, sensor capturing 4,054 B.
+- Correction to my own earlier reasoning: I had guessed heap/DMA
+  contention. Both were wrong — the heap was 4 MB free and no traffic
+  was flowing. The breadcrumb file, not the hypothesis, produced the
+  answer.
+
+**Next:** Nick's call on how S18 handles resolution given the
+constraint — fixed per bridge session (page re-stages to change),
+`set_windowing()` on a max-size buffer (crops, so different FOV — a
+product decision), or an upstream OpenMV fix. Two cheap untested probes
+could still restore free switching: does re-applying
+`set_framebuffers(1)` after a shrink permit a later grow, and does
+windowing behave. Bites B–D otherwise unblocked at a fixed resolution.
 
 **Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
 `pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated

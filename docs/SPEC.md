@@ -153,15 +153,36 @@ pair, USB carrying no video.
   (the bridge's non-fatal sensor handler never ran) and
   `bridge_crash.txt` has a `boot:` line with no matching exit record,
   where every clean shutdown writes one. Same family as D15.
-  Candidate causes, none verified — do not guess in code: framebuffer
-  allocation (VGA RGB565 = 512,000 B) colliding with the OpenAMP/rpmsg
-  shared-memory mapping; sensor DMA vs MHU/rpmsg contention; heap
-  fragmentation under the loaded ELF. Next probe: a `bridge_cfg.json`
-  VGA one-shot with the HE loaded but no Pi chain, now that the bridge
-  preserves `bridge_trace.prev.txt` across a restart (the first crash's
-  trace was wiped by the relaunching bridge).
-  **Consequence: S18's VGA+HD scope is BLOCKED on this** — the bench
-  tool's whole point is comparing resolutions. QVGA is unaffected.
+  **ROOT CAUSE FOUND 2026-08-15 by two breadcrumb probes (each step
+  flushed to flash before the call it names, so the fault leaves a
+  record): GROWING the framebuffer while the HE core is loaded is
+  fatal. Shrinking is safe. VGA capture alongside a running HE stack is
+  completely fine.**
+  Probe 1 (`s18_vga_probe.py`, HE loaded → QVGA → grow to VGA): last
+  breadcrumb `set_framesize(VGA) ->`, board gone. Heap was **4,067,616
+  B free** against a 512,000 B VGA framebuffer and there was **no VCP
+  traffic at all** — so neither exhaustion nor bridge activity.
+  Probe 2 (`s18_order_probe.py`, VGA allocated FIRST, then HE loaded):
+  VGA capture pre-HE 10,957 B OK · HE load OK · **VGA capture WITH HE
+  up 10,935 B OK** · shrink to QVGA OK · QVGA capture 4,007 B OK ·
+  **grow back to VGA → dead**.
+  Mechanism (consistent with both runs, not yet confirmed against the
+  allocator source): the HE ELF loads at **0x60080000, the SRAM9_B
+  upper half** (bm_he MANIFEST `load_base`), and OpenMV's framebuffer
+  allocator grows into that region, destroying the running core. QVGA
+  (320×200×2 = 128,000 B) stays below the collision; VGA (512,000 B)
+  does not. Explains why S17 never hit it — QVGA only, framebuffer
+  never grew — and why S18's switching code hit it immediately.
+  **Not yet tested:** whether re-applying `set_framebuffers(1)` after a
+  shrink permits a later grow (would restore in-session switching), and
+  whether `set_windowing()` on a max-size buffer is a viable substitute
+  (crops rather than scales — different field of view, a product
+  decision not just a technical one).
+  **Consequence for S18:** resolution cannot change freely while the
+  bridge is up. Options are a fixed resolution per bridge session (page
+  re-stages the chain to change it), windowing, or an upstream OpenMV
+  fix so the allocator refuses to grow into a loaded remoteproc image.
+  Candidate upstream report — pairs with D15.
 
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
