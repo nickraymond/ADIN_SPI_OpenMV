@@ -133,13 +133,25 @@ names, so a fault that takes USB down still leaves the answer:
   was flowing. The breadcrumb file, not the hypothesis, produced the
   answer.
 
-**Next:** Nick's call on how S18 handles resolution given the
-constraint — fixed per bridge session (page re-stages to change),
-`set_windowing()` on a max-size buffer (crops, so different FOV — a
-product decision), or an upstream OpenMV fix. Two cheap untested probes
-could still restore free switching: does re-applying
-`set_framebuffers(1)` after a shrink permit a later grow, and does
-windowing behave. Bites B–D otherwise unblocked at a fixed resolution.
+**Probe 3 (`s18_fb_probe.py`) — WORKAROUND PROVEN, switching restored.**
+Pinning `set_framebuffers(1)` immediately before every `set_framesize()`
+(with the session maximum allocated before the HE ELF loads) makes the
+grow that killed the board twice succeed repeatably: VGA pre-HE 11,331 B
+→ HE loaded → VGA-with-HE 11,423 B → shrink QVGA 3,965 B → **grow back
+to VGA OK** → second cycle 3,950 / 10,978 B → clean HE stop, board
+alive, no reboot needed. Reading: OpenMV sizes the framebuffer COUNT to
+fit the pool, so an unpinned shrink re-allocates several buffers and the
+next grow expands into SRAM9_B; pinning the count stops the reflow.
+Caveat recorded honestly: the passing run changed BOTH variables, so
+this proves the combination and not the minimal condition — and **HD
+(2,048,000 B, 4× VGA) is still untested**, which matters because the
+recipe depends on the maximum fitting below SRAM9_B.
+
+**Next:** probe HD under the same recipe before offering it; then the
+bite-A code change this all implies — pin the count before every
+framesize call, bring the sensor up at the session max before loading
+the HE, and hard-refuse any grow that would exceed the allocated
+maximum so the web tool can never brick the board from a click.
 
 **Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
 `pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated

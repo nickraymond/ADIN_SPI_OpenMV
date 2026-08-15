@@ -173,16 +173,25 @@ pair, USB carrying no video.
   (320×200×2 = 128,000 B) stays below the collision; VGA (512,000 B)
   does not. Explains why S17 never hit it — QVGA only, framebuffer
   never grew — and why S18's switching code hit it immediately.
-  **Not yet tested:** whether re-applying `set_framebuffers(1)` after a
-  shrink permits a later grow (would restore in-session switching), and
-  whether `set_windowing()` on a max-size buffer is a viable substitute
-  (crops rather than scales — different field of view, a product
-  decision not just a technical one).
-  **Consequence for S18:** resolution cannot change freely while the
-  bridge is up. Options are a fixed resolution per bridge session (page
-  re-stages the chain to change it), windowing, or an upstream OpenMV
-  fix so the allocator refuses to grow into a loaded remoteproc image.
-  Candidate upstream report — pairs with D15.
+  **WORKAROUND FOUND + PROVEN 2026-08-15 (`s18_fb_probe.py`): pin
+  `sensor.set_framebuffers(1)` immediately BEFORE every
+  `set_framesize()`, and allocate the session's maximum resolution
+  BEFORE loading the HE ELF.** With that recipe the grow that killed
+  the board twice now succeeds repeatably: VGA pre-HE 11,331 B → HE
+  loaded → VGA-with-HE 11,423 B → shrink QVGA 3,965 B → **grow back to
+  VGA OK** 10,968 B → second shrink/grow cycle 3,950 / 10,978 B →
+  clean HE stop, board alive. Reading: OpenMV sizes the framebuffer
+  COUNT to fit the pool, so an unpinned shrink silently re-allocates
+  several buffers and the later grow has to expand the pool into
+  SRAM9_B; pinning the count to 1 stops the pool reflowing.
+  **Honest limit of the evidence:** the passing run changed BOTH
+  variables (max-before-HE *and* pinned count), so this proves the
+  combination, not the minimal sufficient condition. **HD is UNTESTED**
+  — 1280×800×2 = 2,048,000 B, 4× VGA — and the whole recipe hinges on
+  the maximum fitting below SRAM9_B, so HD must be probed before it is
+  offered. Underlying allocator behaviour is still a candidate upstream
+  OpenMV report (the allocator should refuse to grow into a loaded
+  remoteproc image rather than corrupting it); pairs with D15.
 
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
