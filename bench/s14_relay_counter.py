@@ -13,6 +13,12 @@ Usage (on nereus000):
     python3 s14_relay_counter.py --rung C --secs 60 --crc z       # rung E
     python3 s14_relay_counter.py --quit    # ask the service to exit to REPL
 
+S17 bite 0 (pump = s17_capture_pump.py, same protocol; reef-encode +
+optional sink leg woven into the relay loop):
+    python3 s14_relay_counter.py --rung F --secs 60 --agg 3            # +capture/encode
+    python3 s14_relay_counter.py --rung G --secs 60 --agg 3            # +sink leg
+    python3 s14_relay_counter.py --rung G --secs 600 --agg 3 --gate 2.0  # the number
+
 Gate semantics (--gate MBPS, the V16 rung-D run): PASS iff measured L2
 throughput >= gate, 0 CRC/decode errors, 0 seq gaps, 0 source gaps/drops,
 not aborted, and the pump's own frame count matches ours.
@@ -36,7 +42,10 @@ for _cand in (_here, path.join(_here, "..", "firmware", "bm_bridge")):
 import uart_codec as uc  # noqa: E402
 
 PORT_GLOB = "/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_*-if00"
-BANNER = b"S14-PUMP ready"
+# S14 and S17 pumps speak the same protocol; the banner names which
+# service is deployed (rungs F/G need the S17 pump).
+BANNERS = (b"S14-PUMP ready", b"S17-PUMP ready")
+BANNER = BANNERS[0]                      # kept for external references
 
 
 def find_port(explicit=None):
@@ -58,27 +67,35 @@ def crc_fn_for(mode):
 
 
 def wait_banner(ser, timeout=15.0):
-    """Drain text until the pump's banner (it re-prints after each rung)."""
+    """Drain text until a pump banner (re-printed after each rung).
+
+    Returns the matched banner bytes, or None on timeout.
+    """
     buf = b""
     t0 = time.time()
     while time.time() - t0 < timeout:
         chunk = ser.read(256)
         if chunk:
             buf += chunk
-            if BANNER in buf:
-                return True
+            for b in BANNERS:
+                if b in buf:
+                    return b
         else:
             time.sleep(0.02)
-    return False
+    return None
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--rung", choices=["B", "C"], default="B")
+    ap.add_argument("--rung", choices=["B", "C", "F", "G"], default="B")
     ap.add_argument("--secs", type=int, default=10)
     ap.add_argument("--unit", type=int, default=480)
     ap.add_argument("--agg", type=int, default=1)
     ap.add_argument("--crc", choices=["c", "z", "n"], default="c")
+    ap.add_argument("--fps", type=float, default=15.0,
+                    help="rung F/G: target capture rate")
+    ap.add_argument("--q", type=int, default=50,
+                    help="rung F/G: JPEG quality (D20 standing = 50)")
     ap.add_argument("--gate", type=float, default=None,
                     help="Mbps gate: turns this run into a PASS/FAIL verdict")
     ap.add_argument("--port", default=None)
@@ -95,10 +112,15 @@ def main():
     ser = serial.Serial(port, 115200, timeout=0.2)  # baud ignored on CDC
     print("port   : %s" % port)
 
-    if not wait_banner(ser):
+    banner = wait_banner(ser)
+    if not banner:
         raise SystemExit(
-            "no pump banner. Is main_s14.py deployed + board rebooted? "
-            "(firmware/bm_bridge/README.md §Deploy; check /flash/s14_crash.txt)")
+            "no pump banner. Is main_s14.py/main_s17.py deployed + board "
+            "rebooted? (firmware/bm_bridge/README.md; /flash/s14_crash.txt)")
+    print("pump   : %s" % banner.decode())
+    if args.rung in ("F", "G") and banner != b"S17-PUMP ready":
+        raise SystemExit("rung %s needs the S17 pump (main_s17.py) -- the "
+                         "deployed service is the S14 one" % args.rung)
 
     # Handshake: a bare newline makes the pump's readline return an empty
     # line and re-print its banner immediately -- proving the READ loop is
@@ -120,6 +142,9 @@ def main():
 
     cfg = {"rung": args.rung, "secs": args.secs, "unit": args.unit,
            "agg": args.agg, "crc": args.crc}
+    if args.rung in ("F", "G"):
+        cfg["fps"] = args.fps
+        cfg["q"] = args.q
     ser.write((json.dumps(cfg) + "\n").encode())
     ser.flush()
     print("config : %s" % json.dumps(cfg))
@@ -182,10 +207,30 @@ def main():
     print("  decode/crc errs : %d in-stream (%d incl. pre-stream text)"
           % (stream_errs, splitter.errors))
     print("  seq gaps        : %d" % seq_gaps)
-    if args.rung == "C":
+    if args.rung in ("C", "F", "G"):
         print("  rpmsg src       : %d msgs, %d gaps, %d queue drops"
               % (summary.get("src_msgs", -1), summary.get("src_gaps", -1),
                  summary.get("q_drops", -1)))
+    if args.rung in ("F", "G"):
+        print("  capture         : %d frames -> %.2f fps achieved "
+              "(target %.1f), enc %.2f ms avg, sensor=%d ref=%s"
+              % (summary.get("caps", -1), summary.get("cap_fps", 0),
+                 summary.get("fps_target", 0), summary.get("enc_ms", 0),
+                 summary.get("sensor", -1), summary.get("ref_src", "?")))
+        print("  jpeg (reef q%d) : avg %d B  min %d  max %d  gc %.1f ms total"
+              % (summary.get("q", 0), summary.get("jpeg_avg", 0),
+                 summary.get("jpeg_min", 0), summary.get("jpeg_max", 0),
+                 summary.get("gc_ms", 0)))
+    if args.rung == "G":
+        print("  sink (HP->HE)   : %d msgs / %d B sent (%.3f Mbps, "
+              "%d send fails); HE saw %d msgs / %d B, %d crc errs, %d gaps"
+              % (summary.get("sink_msgs", -1), summary.get("sink_bytes", -1),
+                 summary.get("sink_mbps", 0),
+                 summary.get("sink_send_fails", -1),
+                 summary.get("he_sink_count", -1),
+                 summary.get("he_sink_bytes", -1),
+                 summary.get("he_sink_crc_errs", -1),
+                 summary.get("he_sink_gaps", -1)))
 
     if args.gate is not None:
         ok = (mbps_l2 >= args.gate
@@ -195,6 +240,18 @@ def main():
               and frames == summary["frames"]
               and summary.get("src_gaps", 0) == 0
               and summary.get("q_drops", 0) == 0)
+        if args.rung in ("F", "G"):
+            # Capture must actually have run at a useful rate, and the HE
+            # must have survived (rung C's verdict semantics untouched).
+            ok = (ok and summary.get("he_alive") == 1
+                  and summary.get("caps", 0) > 0
+                  and summary.get("cap_fps", 0) >= args.fps * 0.9)
+        if args.rung == "G":
+            ok = (ok and summary.get("sink_send_fails", 1) == 0
+                  and summary.get("he_sink_crc_errs", 1) == 0
+                  and summary.get("he_sink_gaps", 1) == 0
+                  and summary.get("he_sink_count", -1)
+                      == summary.get("sink_msgs", -2))
         print()
         print("V16 GATE (%.1f Mbps, %d s): %s"
               % (args.gate, args.secs, "PASS" if ok else "FAIL"))
