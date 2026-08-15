@@ -285,3 +285,117 @@ blocking backpressure (measured: 200 Mbps offered on loopback →
    by `bm_l2_get_tx_queue_drops()`. This is the S16 transit-loss ledger.
 3. **Device level**: oversize frames (>1514, REV-14) — dropped with a
    logged length + ingress port (proven by `udp_multinode_test.sh` u3).
+
+---
+
+## S17 deploy (BUILD-4 apps — the pin move + AE3 restage)
+
+Pin move (D27): bm_sbc `feature/udp-transport` +2 commits (c094f66
+bench_apps C1, c1d0df9 CLI/uplink C2); bm_core pin unchanged. On BOTH
+Pis after the fork branch is pushed:
+
+```bash
+cd ~/bm_sbc_s15 && git pull && git submodule update --init && cd ~/ADIN_SPI_OpenMV && git fetch && git checkout sprint/17-build4-apps && git pull && pi/bm_bench/deploy.sh
+```
+
+AE3 staging (VCP GATE — Nick's go; board at REPL, cold-cycle first if a
+service holds the VCP). Build `firmware/bm_he/build_bm_he.sh` on the
+Mac (S17 ELF sha in its MANIFEST), then:
+
+```bash
+scp firmware/bm_he/build/bm_he.elf firmware/bm_bridge/{bm_bridge.py,main_bridge.py,uart_codec.py} pi@nereus000:/tmp/
+```
+
+```bash
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; \
+  mpremote connect $P cp /tmp/bm_he.elf :/flash/bm_he.elf + cp /tmp/bm_bridge.py :/flash/bm_bridge.py + cp /tmp/uart_codec.py :/flash/uart_codec.py + cp /tmp/main_bridge.py :/flash/main.py'
+```
+
+For S17 the cfg one-shots stay EMPTY (triggers come from the operator
+CLI over BM — that's the point):
+
+```bash
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; \
+  printf "{}" > /tmp/bridge_cfg.json && mpremote connect $P cp /tmp/bridge_cfg.json :/flash/bridge_cfg.json'
+```
+
+One-time per boot on nereus000 (LED HAL permission) — restore
+`mmc0` when done:
+
+```bash
+ssh pi@nereus000 'sudo chmod a+w /sys/class/leds/ACT/trigger /sys/class/leds/ACT/brightness'
+```
+
+One-time on nereus001: the frozen S3 receiver must own ingest :8081
+alone — stop the S6 shim (its eth1 source is gone; it crash-loops):
+
+```bash
+ssh pi@nereus001 'sudo systemctl stop t1l-chunk-shim && systemctl is-active t1l-stream-server'
+```
+
+## S17 start order
+
+1. **Bridge:** `mpremote connect $P reset` → by-id absent→present→settle.
+2. **Light** (nereus000):
+
+```bash
+S17_ROLE=light ~/bm_sbc_s15/build/all/bm_sbc_bench_apps --init ~/bm_bench/light.toml
+```
+
+3. **Telemetry** (nereus001, within ~10 s):
+
+```bash
+S17_ROLE=telemetry BM_SBC_GATEWAY_IPC=/tmp/s17_ipc.sock ~/bm_sbc_s15/build/all/bm_sbc_bench_apps --init ~/bm_bench/telemetry.toml
+```
+
+Stop = Ctrl-C the Pi nodes; bridge quiet-exits ~30 s later (S16 stop
+model). One bridge lifetime per demo.
+
+## S17 demo 1 — services round trip (light + power + time)
+
+At the Telemetry CLI (type into the running bench_apps; `help` lists
+commands):
+
+- `time-sync` → `TIME_SYNC …` (camera inherits this node's clock — O1).
+- `light 100` → **the green ACT LED on nereus000 lights**;
+  `LIGHT_REPLY … ok=1 level=100`; state artifact:
+  `cat /tmp/s17_light_state` on nereus000 changed.
+- `strobe 200 200 10` → LED blinks 10×; `LIGHT_REPLY … strobing=1`.
+- `power` → `POWER_REPLY total_on=…s remaining_on=…s upcoming_off=300s`
+  — a 2-hop service round trip to the AE3's simulated power HAL
+  (values are synthetic round numbers, by design).
+
+## S17 demo 2 — capture → stream → browser (THE demo)
+
+- `capture` → `CAM_REPLY … ok=1`; one TEL_STAT frame; then open
+  `http://nereus001:8080/frame.jpg` — the still that crossed
+  AE3→rpmsg→CDC→Light→UDP→Telemetry.
+- `stream 2.0 15 60` (rate cap 2.0 Mbps, 15 fps — the measured encode
+  ceiling; 60 s) → **browser: `http://nereus001:8080/stream` over the
+  tailnet — live video**. `TEL_STAT fps≈15`; `/stats.json` gaps=0.
+  Delivered kBps is SCENE-bound (dim room ≈ 1.9 KB/frame ≈ 0.23 Mbps;
+  reef-q50 would be ≈ 1.1 Mbps) — capacity was proven separately
+  (bite 0: relay 5.26 Mbps sustained with capture live).
+- Ledger at every hop (S16 demo-3 table applies): bridge trace
+  (`cap_frames/cap_chunks`, frag_errors), HE camera service counters
+  (`cam-status` → pub_ok/pub_errs), Light `tx_drops` (transit), TEL_STAT
+  `dropped/gaps/hdr_errs/q_drops`, ingest_ok. Honesty note: a dim scene
+  encodes below the commanded rate — the rate CAPACITY claim is bite 0's
+  reef number, the browser demo shows whatever the bench sees.
+
+## S17 demo 3 — uplink out via gateway_ipc (shipped surfaces only)
+
+- Passive: every 30 s Telemetry prints `UPLINK_TX … {…ledger json…}` —
+  that's `spotter_tx_data()` publishing on `spotter/transmit-data`
+  (pcap-visible at both Pis; no mote exists to receive it — stated, not
+  hidden).
+- Active (the python client, second shell on nereus001):
+
+```bash
+cd ~/bm_sbc_s15/clients/python && BM_SBC_GATEWAY_IPC=/tmp/s17_ipc.sock python3 -c "import bm_sbc_gateway as g; g.spotter_tx(b'S17 uplink demo'); g.sensor_data('s17/demo', b'hello from ipc')"
+```
+
+  Telemetry logs `IPC RX spotter_tx …` / `IPC RX sensor_data …`; the
+  sensor publish (`sensor/<node>/s17/demo`) is pcap-visible crossing to
+  Light. Client → gateway → BM network: the shipped uplink door, end to
+  end.

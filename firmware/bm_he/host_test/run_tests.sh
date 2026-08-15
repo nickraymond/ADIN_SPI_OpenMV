@@ -9,12 +9,15 @@ OUT="${HERE}/build"
 mkdir -p "${OUT}"
 
 # On-target sources compiled UNCHANGED (that's the point of the harness):
-# bm_net_wire.c, wire_frag.c, bm_stubs.c, and vendored device.c.
+# bm_net_wire.c, wire_frag.c, bm_stubs.c, camera_svc.c, power_hal_sim.c
+# and vendored device.c. bm_service/pubsub are FAKED in test_bm_he.c
+# (register/pub capture) -- the real middleware runs on target only.
 # bm_config.h's bm_debug -> he_dbg_printf resolves to the test's sink.
 cc -std=gnu11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
     -Wall -Wextra -Werror -Wno-unused-parameter \
     -I"${SRC}" \
     -I"${BM}/bcmp" -I"${BM}/common" -I"${BM}/network" \
+    -I"${BM}/middleware" -I"${BM}/bm_common_messages" \
     -I"${BM}/third_party" -I"${BM}/third_party/crc" \
     -I"${BM}/third_party/tinycbor/src" \
     -DCBOR_CUSTOM_ALLOC_INCLUDE='"tinycbor_alloc.h"' \
@@ -23,6 +26,8 @@ cc -std=gnu11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
     "${SRC}/bm_net_wire.c" \
     "${SRC}/wire_frag.c" \
     "${SRC}/bm_stubs.c" \
+    "${SRC}/camera_svc.c" \
+    "${SRC}/power_hal_sim.c" \
     "${BM}/common/device.c" \
     -o "${OUT}/test_bm_he"
 

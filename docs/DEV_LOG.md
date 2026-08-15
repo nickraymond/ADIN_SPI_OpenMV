@@ -17,6 +17,128 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-15 — Sprint S17 (BUILD-4) — application services: code complete across all four surfaces; bite-0 measurement + demos wait at the VCP gate
+
+**Branch:** `sprint/17-build4-apps` (repo) + bm_sbc fork
+`feature/udp-transport` @ c1d0df9 (pin +2, D29; bm_core pin unchanged)
+
+**Done:**
+- Nibble 1 plan approved (Nick) with 6 decision points → D29: WCMD_PUB/
+  WREP_CAPTURE node-internal wire; packed-LE service structs (CBOR
+  helper is config-only; HE flash-poor); uplink option A (spotter_tx_data
+  = the shipped primitive; gateway_ipc is inbound-only BY DESIGN — read
+  from source, REV-8's own definition); RTC O1 (Telemetry = time
+  authority via BCMP time-set; AE3's settable RAM RTC already exists);
+  light HAL on nereus000's ACT LED (verified present + controllable,
+  zero wiring); rate target = bite-0 measured ÷2 cap 2.0; new fork app
+  (stream_bench stays the regression instrument). Reef-image trick
+  (Nick) folded into bite 0; web-video demo (Nick) = the frozen S3
+  receiver reused verbatim — S12's shim-v2 shape arriving early.
+- Bite 0: `s17_capture_pump.py`/`main_s17.py` — S14 pump + rung F
+  (relay + paced reef encode) + rung G (F + JPEG sunk to HE via
+  BCMD_SINK_DATA: both rpmsg directions + VCP + capture in ONE HP
+  loop, zero new firmware). Counter grew F/G + ledger + gate terms.
+  binascii.crc32 == he_crc32 pinned by test. 29 new checks.
+- Bite A (HE): camera/control service (16 B req / 24 B rep, 'CAM1';
+  non-blocking handler → mailbox → WREP_CAPTURE), WCMD_PUB → bm_pub on
+  camera/stream via existing wire_frag (kind-dispatch), power_hal.h +
+  sim feeding the already-linked power_info service. wire_status_t ABI
+  untouched. Host tests 122→170. **Size audit (REV-25, before bite B):
+  +2,056 B → 246,032/262,144 = 93.9%, ~15.7 K headroom.** ELF 4c04b51a….
+- Bite B (bridge): WREP_CAPTURE parse w/ bridge-owned defaults,
+  capture_pub_msgs chunker (10 B LE header, ≤1400 B, REV-28),
+  CaptureEngine (lazy sensor, fps slots + rate budget, non-fatal
+  sensor failure), optional bridge_cfg `camera` one-shot. Tests 35→61.
+- Bites C1/C2 (fork): `apps/bench_apps` — S17_ROLE=light (light/control
+  service + sysfs-LED HAL + state artifact) | telemetry (subscribe →
+  chunk_reasm (21-check ctest) → frozen-S3 ingest client → browser
+  demo; stdin CLI: capture/stream/light/strobe/power/time-sync;
+  UPLINK_TX via spotter_tx_data every 30 s; gateway_ipc listener with
+  env socket path for the python client). Built + ctest 4/4 on
+  nereus000 (scratch tree — ~/bm_sbc_s15 untouched). deploy.sh pins →
+  c1d0df9/eec6e82.
+- Docs: D29 + DESIGN §S17 detail + README §S17 deploy/start/demos 1–3
+  (incl. one-time LED chmod; stop t1l-chunk-shim on nereus001 — it
+  crash-loops on missing eth1 and would race the single-producer
+  ingest). Verified en route: t1l-stream-server ACTIVE on nereus001
+  since S3 (the browser endpoint is already standing).
+
+**Broke/surprised us:**
+- gateway_ipc is strictly one-way client→gateway (no outbound socket
+  exists) — "subscribe→aggregate→out via gateway_ipc" as literally
+  worded is unimplementable with shipped code; resolved as D29.3
+  (aggregate in-app → spotter_tx_data; ipc demoed in its real
+  direction). Caught in nibble 1 by reading the source, not the doc
+  title.
+- Session permission classifier blocked `git push` to the fork — C1/C2
+  are committed locally (c094f66, c1d0df9) but NOT on GitHub yet;
+  deploy.sh on the Pis will fail its pin check until Nick pushes.
+
+**Next:** Nick: (1) `cd ~/Documents/GitHub/bm_sbc && git push fork
+feature/udp-transport`, (2) both-Pi deploy.sh, (3) open the VCP gate →
+bite-0 rungs C/F/G + 600 s gate → rate target committed → restage
+bridge → README §S17 demos 1–3 → nibble-4 PR. Session end: fixture
+restore + sha-verify + S6 USB baseline re-run.
+
+**Same-session continuation (Nick pushed the fork; "move forward" =
+VCP-gate go) — bite 0 measured, a THIRD V5-class upstream bug found +
+root-caused + worked around, FULL rehearsal PASS:**
+- Deploys: both Pis PASS at pin c1d0df9 (nereus000's checkout was
+  detached — pull was a silent no-op, caught by deploy.sh's pin check).
+  Found + killed a stale S16-era stream_bench still running on
+  nereus001 with telemetry.toml.
+- S16 leftover surfaced: /flash/main.py was STILL the S16 bridge
+  (sha 170e637c…) — the fixture restore in S16's "Next" never ran.
+  Folded into this session's end-of-demo restore.
+- Bite 0: rung C 5.424 (=S14) · rung F 600 s **5.262 Mbps sustained
+  with capture live, 15.00 fps, 279,512/279,512, 0 gaps/CRC** (printed
+  FAIL = unbounded-pump q_drops only, semantics documented) · rung G
+  duplex flood = 0.52 Mbps (bench artifact; real path rate-bounded).
+  Reef q50 = 9,198 B / enc 19.94 ms → encoder is the ceiling (~15 fps
+  ≈ 1.1 Mbps reef) — D29.6 resolved: demo = `stream 2.0 15 60`.
+- **V5 find #4 (upstream, the biggest of the arc): bm_core L2 writes
+  the ingress-port nibble into the IPv6 src address of every inbound
+  frame with NO checksum adjustment → lwIP receivers silently drop ALL
+  inbound pub/sub UDP.** First inbound-to-HE service request ever sent
+  = first hit. Isolated via a no-Pi rpmsg injection probe; fix for the
+  bench = CHECKSUM_CHECK_UDP=0 (lwipopts, config-only, documented);
+  proper fix = RFC 1624 incremental update in l2_policy.c (upstream
+  report item added; TX-side helper has a second byte-arithmetic bug).
+  En route: bm_he Makefile has no header deps — lwipopts-only changes
+  need --clean (two phantom builds shipped identical ELFs; sha caught
+  it). S17 ELF now 3cdd1f66….
+- **Rehearsal (all Stage-4 legs): PASS** — topology ✓, time-sync ✓,
+  LED light/strobe ✓, 2-hop power query ✓ (total_on=50s/3250s/300s),
+  capture → valid JPEG at :8080/frame.jpg ✓ (1,861 B dark-room),
+  stream 15.0 fps steady / 455 frames / gaps 0 into the frozen S3 web
+  server ✓, 8 spotter_tx uplinks + gateway_ipc up ✓. Ledger exact at
+  every hop: 912 pub chunks = 455×2 + 2 orphans of one startup-race
+  frame (first capture raced subscribe propagation; only loss all
+  session). Board staged for Nick's demo; LED trigger restored between
+  sessions.
+
+**Next:** Nick runs README §S17 demos 1–3 (chain start fresh) →
+nibble-4 PR (repo + fork). AFTER the demo: fixture main.py restore
+(55fa6ccf…) + sha-verify + S6 USB baseline re-run + python-client
+uplink injection (needs an interactive second shell).
+
+**DEMO RUN BY NICK 2026-08-15 — PASS ("this is fantastic"):** live
+interactive session from his own terminals — `stream 2.0 15 60` from
+the Telemetry CLI → CAM_REPLY ok=1 → 15.0 fps steady, dropped=0,
+ingest 191+ frames while he watched, browser stream live at
+nereus001:8080 (daylight frames ~5 KB vs the rehearsal's 1.9 KB night
+frames — scene-bound rate demonstrated in the wild). Close-out:
+apps stopped, LED trigger restored (mmc0), bridge quiet-exited
+(ops-rule refresher en route: a polling mpremote loop feeds the quiet
+timer and deadlocks the exit — true zero-contact silence required),
+**fixture restored + sha-verified 55fa6ccf… (clears S16's pending
+restore too) + S6 USB baseline re-run PASS (QVGA q90: 33.0 fps,
+0 gaps, 0 bad JPEGs)**. Board state: S6 fixture service standing; S17
+stack staged inert on /flash (bm_he.elf 3cdd1f66…, bridge, pumps,
+reef bmp). PR opened (nibble 4).
+
+---
+
 ## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
 
 **Branch:** `sprint/16-ae3-chain` (repo) + bm_sbc fork

@@ -31,10 +31,14 @@
 #
 # Stream trigger (Nick-approved): /flash/bridge_cfg.json, e.g.
 #   {"stream": {"mbps": 2.0, "payload": 1400, "secs": 600, "delay": 10},
-#    "ping":   {"target": "0xbe9c000000000001", "delay": 5}}
+#    "ping":   {"target": "0xbe9c000000000001", "delay": 5},
+#    "camera": {"mode": "stream", "fps": 10, "mbps": 2.0, "secs": 60,
+#               "delay": 10}}
 # stream -> WCMD_STREAM to the HE publisher (delay counts from link-up);
 # ping -> one WCMD_PING (a Camera-sourced 2-hop BCMP ping; the acceptance
-# line lands on the HE debug ring -- dumped to the trace file at exit).
+# line lands on the HE debug ring -- dumped to the trace file at exit);
+# camera -> a local CaptureEngine one-shot (S17 bring-up aid -- the real
+# trigger is the camera/control service via WREP_CAPTURE).
 
 import json
 import struct
@@ -52,10 +56,28 @@ WCMD_QUERY = 0x14
 WCMD_PING = 0x15
 WCMD_FRAG = 0x16
 WCMD_STREAM = 0x17
+WCMD_PUB = 0x18             # HP->HE: publish payload on camera/stream (S17)
 WREP_STATUS = 0x94
+WREP_CAPTURE = 0x95         # HE->HP: camera command, wire_capture_t <BBHIHH
 
 MSG_PAYLOAD = 492           # 496 rpmsg budget - 4 B wire header
 MAX_L2 = 1514               # REV-14 network-wide max frame
+
+# S17 camera data plane: chunk header inside each camera/stream payload
+# (camera_svc.h contract -- BMV6 adapted, little-endian like the rest of
+# this wire, unlike BMV6's big-endian original):
+#   frame_seq u32 | chunk_idx u16 | chunk_count u16 | payload_len u16
+CHUNK_HDR_FMT = "<IHHH"
+CHUNK_HDR_LEN = 10
+CAMERA_MAX_PAYLOAD = 1400   # REV-28 ceiling (== HE's CAMERA_MAX_PAYLOAD)
+# Bridge-side defaults (0 in wire_capture_t means "bridge default" --
+# the defaults live HERE and nowhere else, camera_svc.c passes zeros).
+CAP_DEFAULT_Q = 50          # D20 standing setting
+CAP_DEFAULT_FPS_X10 = 100   # 10.0 fps
+CAP_DEFAULT_SECS = 60
+CAMERA_MODE_STOP = 0
+CAMERA_MODE_SINGLE = 1
+CAMERA_MODE_STREAM = 2
 STATUS_FMT = "<Q16s16sIIIIIIIIIIII"   # wire_status_t (88 B)
 STATUS_KEYS = ("node_id", "ip_ll", "ip_ucast", "stage", "err",
                "tx_frames", "rx_frames", "tx_oversize", "link_up",
@@ -86,6 +108,7 @@ class BridgeCore:
         self.splitter = uc.StreamSplitter()
         self.reasm = None           # (port, total, bytearray) mid-assembly
         self.status = None          # last WREP_STATUS, dict
+        self.capture_cmd = None     # last WREP_CAPTURE, dict (take_capture)
         # Preallocated encode buffers (hot path, no per-frame allocation).
         self._payload_buf = bytearray(MAX_L2 + uc.FRAME_OVERHEAD)
         self._wire = bytearray(uc.cobs_max_encoded(MAX_L2 + uc.FRAME_OVERHEAD) + 1)
@@ -95,6 +118,8 @@ class BridgeCore:
             "frag_errors": 0,                        # HE->HP reassembly drops
             "oversize": 0,                           # Pi frames > 1514 (REV-14)
             "unknown_cmds": 0,
+            "cap_frames": 0, "cap_bytes": 0,         # JPEGs chunked (S17)
+            "cap_chunks": 0,                         # WCMD_PUB payloads sent
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -134,8 +159,73 @@ class BridgeCore:
                 vals = struct.unpack_from(STATUS_FMT, b, 4)
                 self.status = dict(zip(STATUS_KEYS, vals))
             return []
+        if cmd == WREP_CAPTURE:
+            if ln >= 12 and len(b) - 4 >= 12:
+                mode, q, fps_x10, rate_bps, secs, payload_max = \
+                    struct.unpack_from("<BBHIHH", b, 4)
+                # Zeros mean "bridge default" (camera_svc.c passes them
+                # through untouched -- the defaults live here only).
+                self.capture_cmd = {
+                    "mode": mode,
+                    "q": q or CAP_DEFAULT_Q,
+                    "fps_x10": fps_x10 or CAP_DEFAULT_FPS_X10,
+                    "rate_bps": rate_bps,           # 0 = fps-paced only
+                    "secs": secs or CAP_DEFAULT_SECS,
+                    "payload_max": min(payload_max or CAMERA_MAX_PAYLOAD,
+                                       CAMERA_MAX_PAYLOAD),
+                }
+            return []
         self.stats["unknown_cmds"] += 1
         return []
+
+    def take_capture(self):
+        """Fetch-and-clear the last camera command (mirrors the HE-side
+        single-slot last-wins mailbox)."""
+        cmd = self.capture_cmd
+        self.capture_cmd = None
+        return cmd
+
+    # ---- camera data plane: JPEG -> chunks -> WCMD_PUB msgs ---------------
+
+    def capture_pub_msgs(self, jpeg, frame_seq, payload_max):
+        """One JPEG -> list of rpmsg messages (WCMD_PUB + WCMD_FRAG).
+
+        Each chunk = CHUNK_HDR_FMT header + a JPEG slice, total <=
+        payload_max (<= 1400, REV-28). Each chunk is one WCMD_PUB
+        payload; payloads beyond the 492 B rpmsg budget continue in
+        WCMD_FRAG msgs -- the same fragmentation shape as vcp_bytes(),
+        reassembled by the HE's wire_frag + published verbatim on
+        camera/stream.
+        """
+        mv = memoryview(jpeg)
+        n = len(mv)
+        if n == 0:
+            return []
+        data_max = payload_max - CHUNK_HDR_LEN
+        if data_max <= 0:
+            return []
+        count = (n + data_max - 1) // data_max
+        msgs = []
+        off = 0
+        for idx in range(count):
+            take = min(data_max, n - off)
+            payload = struct.pack(CHUNK_HDR_FMT, frame_seq, idx, count,
+                                  take) + mv[off:off + take]
+            off += take
+            total = len(payload)
+            first = min(total, MSG_PAYLOAD)
+            msgs.append(struct.pack("<BBH", WCMD_PUB, 0, total) +
+                        payload[:first])
+            p = first
+            while p < total:
+                part = min(total - p, MSG_PAYLOAD)
+                msgs.append(struct.pack("<BBH", WCMD_FRAG, 0, part) +
+                            payload[p:p + part])
+                p += part
+            self.stats["cap_chunks"] += 1
+        self.stats["cap_frames"] += 1
+        self.stats["cap_bytes"] += n
+        return msgs
 
     def _encode(self, frame_mv, n):
         w = uc.frame_encode_into(self._wire, self._payload_buf, frame_mv, n)
@@ -331,10 +421,104 @@ class HeWire:
         self.ept.send(msg, timeout=1000)
 
 
+class CaptureEngine:
+    """Camera capture/encode for the S17 camera service (HP side).
+
+    Commands arrive parsed from WREP_CAPTURE (BridgeCore.take_capture);
+    poll() returns a JPEG to chunk-and-send when a capture is due.
+    Frames are REAL camera captures (whatever the bench scene is) --
+    the rate target was committed against reef-scene encode numbers
+    (bite 0), a dim scene runs lighter than target, and that is stated
+    in the demo, not hidden.
+
+    Sensor bring-up is lazy (first command) and its failure is not
+    fatal to the bridge: the relay keeps running, the refusal is
+    traced, and the HE-side service ledger shows zero publishes.
+    """
+
+    def __init__(self):
+        self.mode = CAMERA_MODE_STOP
+        self.sensor_ok = None       # None = not tried yet
+        self.q = CAP_DEFAULT_Q
+        self.interval_ms = 100
+        self.rate_bps = 0
+        self.payload_max = CAMERA_MAX_PAYLOAD
+        self.until = 0
+        self.t_start = 0
+        self.slots = 0              # pacing slots consumed this stream
+        self.caps = 0               # total frames captured (lifetime)
+        self.sent_bytes = 0         # JPEG bytes this stream (rate cap)
+
+    def _ensure_sensor(self):
+        if self.sensor_ok is None:
+            try:
+                import sensor
+                sensor.reset()
+                sensor.set_pixformat(sensor.RGB565)
+                sensor.set_framesize(sensor.QVGA)   # the T1 shape
+                sensor.skip_frames(time=300)
+                self.sensor_ok = True
+                _trace("camera: sensor up (QVGA RGB565)")
+            except Exception as e:
+                self.sensor_ok = False
+                _trace("camera: sensor init FAILED: %r" % e)
+        return self.sensor_ok
+
+    def command(self, cmd):
+        if cmd["mode"] == CAMERA_MODE_STOP:
+            if self.mode != CAMERA_MODE_STOP:
+                _trace("camera: stop (%d frames, %d B this stream)"
+                       % (self.slots, self.sent_bytes))
+            self.mode = CAMERA_MODE_STOP
+            return
+        if not self._ensure_sensor():
+            _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
+            return
+        self.q = cmd["q"]
+        self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
+        self.rate_bps = cmd["rate_bps"]
+        self.payload_max = cmd["payload_max"]
+        self.mode = cmd["mode"]
+        self.t_start = time.ticks_ms()
+        self.until = time.ticks_add(self.t_start, cmd["secs"] * 1000)
+        self.slots = 0
+        self.sent_bytes = 0
+        _trace("camera: mode %d q=%d %dms/frame rate=%d secs=%d pmax=%d"
+               % (self.mode, self.q, self.interval_ms, self.rate_bps,
+                  cmd["secs"], self.payload_max))
+
+    def poll(self, now):
+        """Capture+encode one frame if due; returns JPEG bytes or None."""
+        if self.mode == CAMERA_MODE_STOP:
+            return None
+        if self.mode == CAMERA_MODE_STREAM:
+            if time.ticks_diff(self.until, now) <= 0:
+                _trace("camera: stream done (%d frames, %d B)"
+                       % (self.slots, self.sent_bytes))
+                self.mode = CAMERA_MODE_STOP
+                return None
+            el = time.ticks_diff(now, self.t_start)
+            if el < (self.slots + 1) * self.interval_ms:
+                return None          # next fps slot not due
+            if self.rate_bps and self.sent_bytes * 8000 > self.rate_bps * el:
+                return None          # over the byte budget, skip the slot
+        import sensor
+        img = sensor.snapshot()
+        jpg = img.to_jpeg(quality=self.q, copy=True)
+        b = jpg.bytearray()          # proven idiom (s6_video_tx.py)
+        self.slots += 1
+        self.caps += 1
+        self.sent_bytes += len(b)
+        if self.mode == CAMERA_MODE_SINGLE:
+            self.mode = CAMERA_MODE_STOP
+        return b
+
+
 def main():
     core = BridgeCore()
     usb = UsbVcp()
     he = HeWire()
+    engine = CaptureEngine()
     cfg = _load_cfg()
 
     try:
@@ -386,8 +570,10 @@ def main():
 
         stream_cfg = cfg.get("stream") or None
         ping_cfg = cfg.get("ping") or None
+        camera_cfg = cfg.get("camera") or None
         stream_sent = False
         ping_sent = False
+        camera_sent = False
         last_stat = time.ticks_ms()
         last_rx = time.ticks_ms()
 
@@ -431,6 +617,38 @@ def main():
                 he.send(core.ping_msg(int(ping_cfg["target"], 0)))
                 ping_sent = True
                 _trace("ping cmd sent: %s" % json.dumps(ping_cfg))
+            if camera_cfg and not camera_sent and \
+                    time.ticks_diff(now, t_link) >= \
+                    int(camera_cfg.get("delay", 10)) * 1000:
+                # Local camera one-shot (bring-up aid): same engine path
+                # as a service-triggered command, no HE round trip.
+                engine.command({
+                    "mode": (CAMERA_MODE_STREAM
+                             if camera_cfg.get("mode", "stream") == "stream"
+                             else CAMERA_MODE_SINGLE),
+                    "q": int(camera_cfg.get("q", CAP_DEFAULT_Q)),
+                    "fps_x10": int(float(camera_cfg.get("fps", 10.0)) * 10),
+                    "rate_bps": int(float(camera_cfg.get("mbps", 0)) * 1e6),
+                    "secs": int(camera_cfg.get("secs", CAP_DEFAULT_SECS)),
+                    "payload_max": min(int(camera_cfg.get("payload",
+                                                          CAMERA_MAX_PAYLOAD)),
+                                       CAMERA_MAX_PAYLOAD),
+                })
+                camera_sent = True
+                _trace("camera cfg armed: %s" % json.dumps(camera_cfg))
+
+            # S17 camera service: commands from the HE (WREP_CAPTURE ->
+            # take_capture), captures go back down as WCMD_PUB chunks
+            # which the HE publishes on camera/stream.
+            cap_cmd = core.take_capture()
+            if cap_cmd is not None:
+                engine.command(cap_cmd)
+            jpeg = engine.poll(now)
+            if jpeg is not None:
+                idle = False
+                for msg in core.capture_pub_msgs(jpeg, engine.caps - 1,
+                                                 engine.payload_max):
+                    he.send(msg)
 
             # periodic stats snapshot (flash only -- the VCP is a data pipe)
             if time.ticks_diff(now, last_stat) >= 30000:

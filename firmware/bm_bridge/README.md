@@ -111,6 +111,46 @@ python3 s14_relay_counter.py --rung C --secs 600 --agg 3 --gate 2.0   # RUNG D G
 python3 s14_relay_counter.py --quit                        # service -> REPL
 ```
 
+## S17 bite 0 — capture-relay bench (V16 re-check with capture+encode live)
+
+The S17 pump (`s17_capture_pump.py` + `main_s17.py`) extends the S14
+service with rungs **F** (relay + reef-image capture/encode paced at a
+target fps) and **G** (F + the JPEG pushed down to HE via
+BCMD_SINK_DATA — both rpmsg directions + VCP + camera in one loop, the
+real BUILD-4 camera-path shape). Rungs B/C/E delegate to the S14 code
+unchanged. Same protocol, banner `S17-PUMP ready`; the counter refuses
+F/G against an S14 deploy. Reef facts: the encode source is
+`bench/assets/ref_scene/ref_color_320x200.bmp` (S0 pipeline) staged at
+`/flash` — the dim bench room compresses ~2× too well for an honest
+bitrate (S0 finding). Sensor runs only when the reef fits on the GC
+heap (`ref=heap` in the summary); `ref=fb` means encode-only — read the
+summary, not assumptions.
+
+Deploy (VCP GATE — displaces the fixture main.py, Nick's go required):
+
+```bash
+scp firmware/bm_bridge/{s17_capture_pump.py,s14_relay_pump.py,main_s17.py,uart_codec.py} bench/s14_relay_counter.py bench/assets/ref_scene/ref_color_320x200.bmp pi@nereus000:/tmp/
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; \
+  mkdir -p ~/s14 && cp /tmp/s14_relay_counter.py /tmp/uart_codec.py ~/s14/ && \
+  mpremote connect $P cp /tmp/s17_capture_pump.py :/flash/s17_capture_pump.py + cp /tmp/s14_relay_pump.py :/flash/s14_relay_pump.py + cp /tmp/uart_codec.py :/flash/uart_codec.py + cp /tmp/ref_color_320x200.bmp :/flash/ref_color_320x200.bmp + cp /tmp/main_s17.py :/flash/main.py && \
+  mpremote connect $P reset'
+```
+
+Run (on nereus000; order = one variable at a time):
+
+```bash
+cd ~/s14
+python3 s14_relay_counter.py --rung C --secs 60 --agg 3              # relay-only regression (expect ~5.4)
+python3 s14_relay_counter.py --rung F --secs 60 --agg 3              # + capture/encode @15 fps
+python3 s14_relay_counter.py --rung G --secs 60 --agg 3              # + sink leg (full camera shape)
+python3 s14_relay_counter.py --rung G --secs 600 --agg 3 --gate 2.0  # THE NUMBER (10 min sustained)
+python3 s14_relay_counter.py --quit                                  # service -> REPL
+```
+
+The rung-G 600 s `mbps_l2` + `cap_fps` pair is the V16-with-capture
+number BUILD-4's stream rate target commits against (target = measured
+÷ 2, capped at 2.0 Mbps — D-entry at sprint end records the decision).
+
 ## Restore the fixture (ALWAYS, at session end)
 
 `/flash/main.py` must go back to the S6 baseline service (byte-identical

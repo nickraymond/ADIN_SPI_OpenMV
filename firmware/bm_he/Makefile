@@ -32,6 +32,8 @@ APP_SRCS = \
     src/bm_stubs.c \
     src/bm_net_wire.c \
     src/wire_frag.c \
+    src/camera_svc.c \
+    src/power_hal_sim.c \
     $(SPIKE)/src/mhu.c \
     $(SPIKE)/src/rpmsg_remote.c
 

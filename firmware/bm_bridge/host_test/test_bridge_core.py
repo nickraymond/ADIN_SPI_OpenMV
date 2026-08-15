@@ -15,7 +15,10 @@ import uart_codec as uc            # noqa: E402
 from bm_bridge import (            # noqa: E402
     BridgeCore, MSG_PAYLOAD, MAX_L2, STATUS_FMT,
     WCMD_FRAME_TX, WCMD_FRAME_RX, WCMD_FRAG, WCMD_LINK, WCMD_LINK_UP,
-    WCMD_PING, WCMD_QUERY, WCMD_STREAM, WREP_STATUS,
+    WCMD_PING, WCMD_QUERY, WCMD_STREAM, WCMD_PUB, WREP_STATUS,
+    WREP_CAPTURE, CHUNK_HDR_FMT, CHUNK_HDR_LEN, CAMERA_MAX_PAYLOAD,
+    CAP_DEFAULT_Q, CAP_DEFAULT_FPS_X10, CAP_DEFAULT_SECS,
+    CAMERA_MODE_SINGLE, CAMERA_MODE_STREAM,
 )
 
 checks = 0
@@ -186,6 +189,111 @@ decoded = [uc.frame_decode(w[:-1]) for w in he_out]
 check(decoded == he_frames, "duplex: HE frames byte-exact on the wire")
 check(core.stats["frag_errors"] == 0 and core.splitter.errors == 0,
       "duplex: zero errors")
+
+# ---- S17: WREP_CAPTURE parse + camera chunker ----------------------------
+
+core = BridgeCore()
+
+# WREP_CAPTURE: explicit values pass through; the reply produces no VCP
+# output; take_capture is fetch-and-clear.
+cap_body = struct.pack("<BBHIHH", CAMERA_MODE_STREAM, 60, 150, 2000000,
+                       600, 1000)
+out = core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) +
+                  cap_body)
+check(out == [], "capture: no wire output")
+cmd = core.take_capture()
+check(cmd == {"mode": CAMERA_MODE_STREAM, "q": 60, "fps_x10": 150,
+              "rate_bps": 2000000, "secs": 600, "payload_max": 1000},
+      "capture: explicit fields pass through")
+check(core.take_capture() is None, "capture: fetch-and-clear")
+
+# Zeros -> bridge defaults; oversize payload_max clamped to REV-28.
+cap_body = struct.pack("<BBHIHH", CAMERA_MODE_SINGLE, 0, 0, 0, 0, 1500)
+core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) + cap_body)
+cmd = core.take_capture()
+check(cmd["q"] == CAP_DEFAULT_Q and cmd["fps_x10"] == CAP_DEFAULT_FPS_X10
+      and cmd["secs"] == CAP_DEFAULT_SECS, "capture: zeros -> defaults")
+check(cmd["rate_bps"] == 0, "capture: rate 0 stays 0 (fps-paced)")
+check(cmd["payload_max"] == CAMERA_MAX_PAYLOAD, "capture: pmax clamped")
+
+# Truncated capture msg ignored, no crash, nothing pending.
+core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, 4) + b"\x01\x00\x00\x00")
+check(core.take_capture() is None, "capture: truncated body ignored")
+
+
+def reassemble_pubs(msgs):
+    """HE-side view: wire_frag reassembly of WCMD_PUB (+FRAG) messages ->
+    the payloads camera_svc_publish would bm_pub verbatim."""
+    payloads = []
+    cur = None
+    total = 0
+    for m in msgs:
+        cmd_b, _port, ln = struct.unpack_from("<BBH", m, 0)
+        body = m[4:]
+        if cmd_b == WCMD_PUB:
+            assert cur is None, "frame while open"
+            if len(body) >= ln:
+                payloads.append(bytes(body[:ln]))
+            else:
+                cur = bytearray(body)
+                total = ln
+        else:
+            assert cmd_b == WCMD_FRAG and cur is not None
+            cur += body[:ln]
+            if len(cur) == total:
+                payloads.append(bytes(cur))
+                cur = None
+    assert cur is None, "dangling assembly"
+    return payloads
+
+
+# Small JPEG (fits one chunk, one rpmsg msg).
+jpeg = bytes(range(256)) * 1               # 256 B
+msgs = core.capture_pub_msgs(jpeg, 7, CAMERA_MAX_PAYLOAD)
+check(len(msgs) == 1, "chunker: small jpeg -> one msg")
+pubs = reassemble_pubs(msgs)
+check(len(pubs) == 1, "chunker: one chunk")
+seq, idx, count, plen = struct.unpack_from(CHUNK_HDR_FMT, pubs[0], 0)
+check((seq, idx, count, plen) == (7, 0, 1, 256), "chunker: header fields")
+check(pubs[0][CHUNK_HDR_LEN:] == jpeg, "chunker: payload byte-exact")
+
+# Reef-sized JPEG: multi-chunk, every chunk <= 1400, frags correct,
+# reassembled JPEG byte-exact.
+core = BridgeCore()
+jpeg = bytes((i * 37 + 11) & 0xFF for i in range(9200))
+msgs = core.capture_pub_msgs(jpeg, 42, CAMERA_MAX_PAYLOAD)
+pubs = reassemble_pubs(msgs)
+data_max = CAMERA_MAX_PAYLOAD - CHUNK_HDR_LEN
+want_chunks = (len(jpeg) + data_max - 1) // data_max
+check(len(pubs) == want_chunks, "chunker: chunk count (9200 B -> %d)"
+      % want_chunks)
+check(all(len(p) <= CAMERA_MAX_PAYLOAD for p in pubs),
+      "chunker: REV-28 ceiling on every payload")
+got = bytearray()
+for i, p in enumerate(pubs):
+    seq, idx, count, plen = struct.unpack_from(CHUNK_HDR_FMT, p, 0)
+    check(seq == 42 and idx == i and count == want_chunks
+          and plen == len(p) - CHUNK_HDR_LEN,
+          "chunker: header consistent (chunk %d)" % i)
+    got += p[CHUNK_HDR_LEN:]
+check(bytes(got) == jpeg, "chunker: multi-chunk jpeg byte-exact")
+check(core.stats["cap_frames"] == 1 and core.stats["cap_chunks"] ==
+      want_chunks and core.stats["cap_bytes"] == 9200,
+      "chunker: stats ledger")
+# Every rpmsg message respects the 496 B budget.
+check(all(len(m) <= 4 + MSG_PAYLOAD for m in msgs),
+      "chunker: rpmsg budget on every msg")
+
+# Custom (small) payload_max still splits correctly.
+core = BridgeCore()
+msgs = core.capture_pub_msgs(bytes(100), 0, 64)
+pubs = reassemble_pubs(msgs)
+check(len(pubs) == 2 and all(len(p) <= 64 for p in pubs),
+      "chunker: custom payload_max")
+check(core.capture_pub_msgs(b"", 0, CAMERA_MAX_PAYLOAD) == [],
+      "chunker: empty jpeg -> nothing")
+check(core.capture_pub_msgs(bytes(10), 0, CHUNK_HDR_LEN) == [],
+      "chunker: degenerate payload_max -> nothing")
 
 print("bm_bridge host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)
