@@ -21,7 +21,7 @@
 # spotter surfaces). Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="c1d0df948d57bb8ce20e714c32b49c4fc0295088"
+BM_SBC_PIN="ba594ecb54959f157aae5b1232f58786befd81d4"
 BM_CORE_PIN="eec6e82f0010fe43b96464bb8215c9c9ffd7665b"
 
 set -euo pipefail
