@@ -15,8 +15,12 @@
 #include "bm_os.h"
 #include "bm_configs_generic.h"
 #include "bm_rtc.h"
+#include "camera_svc.h"
 #include "configuration.h"
 #include "device.h"
+#include "power_hal.h"
+#include "pubsub.h"
+#include "bm_service.h"
 #include "wire_frag.h"
 
 // ---- ABI locks: the HP bridge/runner unpacks these blind ------------------
@@ -39,6 +43,17 @@ _Static_assert(sizeof(wire_ping_t) == 8, "wire_ping_t hdr must be 8 B");
 _Static_assert(offsetof(wire_ping_t, echo) == 8, "echo bytes @ 8");
 // WCMD_STREAM payload: bridge packs "<IHH" (bridge_cfg stream trigger).
 _Static_assert(sizeof(wire_stream_t) == 8, "wire_stream_t must be 8 B");
+// S17 camera service ABI: bridge unpacks wire_capture_t "<BBHIHH"; the
+// bm_sbc fork app (apps/bench_apps) replicates camera_req_t /
+// camera_rep_t byte-for-byte -- lockstep or not at all (camera_svc.h).
+_Static_assert(sizeof(wire_capture_t) == 12, "wire_capture_t must be 12 B");
+_Static_assert(offsetof(wire_capture_t, rate_bps) == 4, "rate_bps @ 4");
+_Static_assert(sizeof(camera_req_t) == 16, "camera_req_t must be 16 B");
+_Static_assert(offsetof(camera_req_t, cmd) == 4, "cmd @ 4");
+_Static_assert(offsetof(camera_req_t, rate_bps) == 8, "req rate_bps @ 8");
+_Static_assert(sizeof(camera_rep_t) == 24, "camera_rep_t must be 24 B");
+_Static_assert(offsetof(camera_rep_t, cmds) == 8, "rep cmds @ 8");
+_Static_assert(offsetof(camera_rep_t, pub_bytes) == 20, "pub_bytes @ 20");
 
 // ---- host glue ------------------------------------------------------------
 
@@ -377,12 +392,169 @@ static void test_device_identity(void) {
     CHECK(strcmp(device_name(), "bm_camera") == 0);
 }
 
+// ---- S17: camera service + power HAL --------------------------------------
+// Fakes for the two middleware symbols camera_svc.c touches; the real
+// bm_service/pubsub are exercised on target (they're Sofar's, vendored).
+
+static BmServiceHandler s_svc_handler;
+static char s_svc_name[64];
+bool bm_service_register(size_t service_strlen, const char *service,
+                         BmServiceHandler service_handler) {
+    if (service_strlen >= sizeof(s_svc_name)) {
+        return false;
+    }
+    memcpy(s_svc_name, service, service_strlen);
+    s_svc_name[service_strlen] = '\0';
+    s_svc_handler = service_handler;
+    return true;
+}
+
+static BmErr s_pub_ret = BmOK;
+static char s_pub_topic[64];
+static uint16_t s_pub_len;
+static uint8_t s_pub_first;
+static uint8_t s_pub_version;
+static int s_pub_calls;
+BmErr bm_pub(const char *topic, const void *data, uint16_t len, uint8_t type,
+             uint8_t version) {
+    (void)type;
+    s_pub_calls++;
+    snprintf(s_pub_topic, sizeof(s_pub_topic), "%s", topic);
+    s_pub_len = len;
+    s_pub_first = len ? ((const uint8_t *)data)[0] : 0;
+    s_pub_version = version;
+    return s_pub_ret;
+}
+
+static bool svc_call(const void *req, size_t req_len, camera_rep_t *rep) {
+    // Drive the service exactly as bm_service.c would: through the
+    // registered callback with its reply-buffer contract.
+    uint8_t buf[64];
+    size_t blen = sizeof(buf);
+    bool handled = s_svc_handler(strlen(CAMERA_SERVICE), CAMERA_SERVICE,
+                                 req_len, (uint8_t *)(uintptr_t)req, &blen,
+                                 buf);
+    if (handled && rep) {
+        CHECK(blen == sizeof(*rep));
+        memcpy(rep, buf, sizeof(*rep));
+    }
+    return handled;
+}
+
+static void test_camera_svc(void) {
+    CHECK(camera_svc_init() == BmOK);
+    CHECK(s_svc_handler != NULL);
+    CHECK(strcmp(s_svc_name, "camera/control") == 0);
+
+    wire_capture_t cap;
+    camera_rep_t rep;
+
+    // Nothing pending before any command.
+    CHECK(!camera_svc_take_pending(&cap));
+
+    // Single capture: accepted, mailbox filled, params passed through.
+    camera_req_t req = {.magic = CAMERA_REQ_MAGIC,
+                        .cmd = CAMERA_CMD_CAPTURE,
+                        .quality = 60,
+                        .payload_max = 1000};
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 1 && rep.magic == CAMERA_REQ_MAGIC);
+    CHECK(rep.mode_active == CAMERA_MODE_SINGLE && rep.cmds == 1);
+    CHECK(camera_svc_take_pending(&cap));
+    CHECK(cap.mode == CAMERA_MODE_SINGLE && cap.quality == 60 &&
+          cap.payload_max == 1000);
+    CHECK(!camera_svc_take_pending(&cap));   // mailbox is fetch-and-clear
+
+    // Stream: fields through, payload_max clamped to REV-28's ceiling.
+    req = (camera_req_t){.magic = CAMERA_REQ_MAGIC,
+                         .cmd = CAMERA_CMD_STREAM,
+                         .fps_x10 = 150,
+                         .rate_bps = 2000000,
+                         .secs = 600,
+                         .payload_max = 1500};
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 1 && rep.mode_active == CAMERA_MODE_STREAM &&
+          rep.cmds == 2);
+    CHECK(camera_svc_take_pending(&cap));
+    CHECK(cap.mode == CAMERA_MODE_STREAM && cap.fps_x10 == 150 &&
+          cap.rate_bps == 2000000 && cap.secs == 600);
+    CHECK(cap.payload_max == CAMERA_MAX_PAYLOAD);
+
+    // Last-wins mailbox: two commands before a take -> the second one.
+    req.cmd = CAMERA_CMD_CAPTURE;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    req.cmd = CAMERA_CMD_STOP;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(camera_svc_take_pending(&cap) && cap.mode == CAMERA_MODE_STOP);
+    CHECK(rep.mode_active == CAMERA_MODE_STOP);
+
+    // Status: no side effect on the mailbox or the command counter.
+    uint32_t cmds_before = rep.cmds;
+    req.cmd = CAMERA_CMD_STATUS;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 1 && rep.cmds == cmds_before);
+    CHECK(!camera_svc_take_pending(&cap));
+
+    // Malformed: wrong length / wrong magic -> unanswered (bm_service
+    // sends no reply when the handler returns false).
+    CHECK(!svc_call(&req, sizeof(req) - 1, NULL));
+    req.magic = 0xDEADBEEF;
+    CHECK(!svc_call(&req, sizeof(req), NULL));
+    // Unknown command: answered, not accepted.
+    req.magic = CAMERA_REQ_MAGIC;
+    req.cmd = 99;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 0);
+
+    // Publish path: ok / pub-failure / size-guard, all counted.
+    s_pub_calls = 0;
+    uint8_t payload[CAMERA_MAX_PAYLOAD + 1];
+    memset(payload, 0x5A, sizeof(payload));
+    s_pub_ret = BmOK;
+    camera_svc_publish(payload, 1200);
+    CHECK(s_pub_calls == 1 && s_pub_len == 1200);
+    CHECK(strcmp(s_pub_topic, CAMERA_STREAM_TOPIC) == 0);
+    CHECK(s_pub_version == BM_COMMON_PUB_SUB_VERSION);
+    s_pub_ret = BmENOMEM;
+    camera_svc_publish(payload, 100);
+    s_pub_ret = BmOK;
+    camera_svc_publish(payload, CAMERA_MAX_PAYLOAD + 1);  // over REV-28
+    camera_svc_publish(payload, 0);                       // empty
+    CHECK(s_pub_calls == 2);   // the guards never reached bm_pub
+    req.cmd = CAMERA_CMD_STATUS;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.pub_ok == 1 && rep.pub_errs == 3 && rep.pub_bytes == 1200);
+}
+
+static void test_power_hal(void) {
+    CHECK(power_hal_init() == BmOK);
+    // fake clock continues from the RTC tests; measure deltas, not
+    // absolutes.
+    power_hal_reading_t a = power_hal_read();
+    CHECK(a.remaining_on_s + a.upcoming_off_s > 0);
+    fake_os_advance_ms(10 * 1000);
+    power_hal_reading_t b = power_hal_read();
+    CHECK(b.total_on_s == a.total_on_s + 10);
+    CHECK(a.remaining_on_s == 0 || b.remaining_on_s <= a.remaining_on_s ||
+          b.remaining_on_s > 3000);   // rollover into the next on-period
+    CHECK(b.upcoming_off_s == 300);
+    CHECK(b.voltage_mv >= 11800 && b.voltage_mv <= 12200);
+    CHECK(b.current_ma > 0);
+    // Service adapter mirrors the HAL timing fields.
+    PowerInfoReplyData d = power_hal_power_info_cb(NULL);
+    power_hal_reading_t c = power_hal_read();
+    CHECK(d.total_on_s == c.total_on_s);
+    CHECK(d.upcoming_off_s == c.upcoming_off_s);
+}
+
 int main(void) {
     test_wire_device();
     test_wire_frag();
     test_config_stubs();
     test_rtc_stub();
     test_device_identity();
+    test_camera_svc();
+    test_power_hal();
     printf("bm_he host tests: %d checks, %d failures\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

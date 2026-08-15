@@ -35,8 +35,12 @@
 #include "sys_info_service.h"
 #include "topology.h"
 
+#include "power_info_service.h"
+
 #include "bm_he.h"
 #include "bm_net_wire.h"
+#include "camera_svc.h"
+#include "power_hal.h"
 #include "he_spike.h"     // rpmsg/MHU scaffold constants + he status page
 #include "mhu.h"
 #include "rpmsg_remote.h"
@@ -56,7 +60,12 @@ BmErr bm_stubs_device_init(void);       // bm_stubs.c
 
 static TaskHandle_t s_wire_task;
 static rpmsg_remote_t s_rr;
-static wire_reasm_t s_reasm;            // HP->HE frame reassembly
+static wire_reasm_t s_reasm;            // HP->HE reassembly (frames + pubs)
+// What the open reassembly (or last one-shot) is: WCMD_FRAME_RX -> L2
+// inject, WCMD_PUB -> camera publish. The vring is in-order, so frags
+// always belong to the most recent first-message -- one buffer serves
+// both kinds (S17).
+static uint8_t s_reasm_kind = WCMD_FRAME_RX;
 
 // Stream publisher (WCMD_STREAM -> pub/sub on STREAM_TOPIC).
 static BmQueue s_stream_q;
@@ -131,6 +140,7 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
     case WCMD_FRAME_RX: {
         // hdr->len is the TOTAL frame length (wire_frag.h); this message
         // carries min(total, budget) bytes of it.
+        s_reasm_kind = WCMD_FRAME_RX;
         uint16_t done = wire_reasm_first(&s_reasm, hdr->port, hdr->len,
                                          payload, in_msg);
         if (done) {
@@ -139,10 +149,25 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
         }
         break;
     }
+    case WCMD_PUB: {
+        // Same reassembly path as WCMD_FRAME_RX; completion publishes on
+        // CAMERA_STREAM_TOPIC instead of injecting into L2.
+        s_reasm_kind = WCMD_PUB;
+        uint16_t done = wire_reasm_first(&s_reasm, hdr->port, hdr->len,
+                                         payload, in_msg);
+        if (done) {
+            camera_svc_publish(s_reasm.buf, done);
+        }
+        break;
+    }
     case WCMD_FRAG: {
         uint16_t done = wire_reasm_frag(&s_reasm, payload, in_msg);
         if (done) {
-            bm_net_wire_inject(s_reasm.port, s_reasm.buf, done);
+            if (s_reasm_kind == WCMD_PUB) {
+                camera_svc_publish(s_reasm.buf, done);
+            } else {
+                bm_net_wire_inject(s_reasm.port, s_reasm.buf, done);
+            }
         }
         break;
     }
@@ -222,6 +247,31 @@ static void wire_pump_tx(void) {
         }
         bm_free(frame.data);
     }
+}
+
+// Forward a pending camera/control command (service handler mailbox) to
+// the HP bridge, which owns capture/encode/chunking.
+static void wire_pump_capture(void) {
+    wire_capture_t cap;
+    if (!camera_svc_take_pending(&cap)) {
+        return;
+    }
+    struct {
+        wire_hdr_t hdr;
+        wire_capture_t cap;
+    } __attribute__((packed)) msg;
+    msg.hdr = (wire_hdr_t){.cmd = WREP_CAPTURE,
+                           .port = 0,
+                           .len = sizeof(wire_capture_t)};
+    msg.cap = cap;
+    for (int tries = 0; tries < 100; tries++) {
+        if (rr_send(&s_rr, s_rr.peer_addr, &msg, sizeof(msg))) {
+            he_dbg_printf("camera: cmd mode %u -> bridge\n", cap.mode);
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    he_dbg_printf("camera: cmd mode %u DROPPED (rpmsg busy)\n", cap.mode);
 }
 
 // ---- stream publisher (WCMD_STREAM) --------------------------------------
@@ -339,6 +389,20 @@ static void bm_init_ladder(NetworkDevice device) {
     }
     sys_info_service_init();
 
+    // S17 BUILD-4: power service against the simulated HAL backend
+    // (power_hal_sim.c; regulator driver swaps in on hardware day), then
+    // the camera/control service (camera_svc.c).
+    if ((err = power_hal_init()) != BmOK ||
+        (err = power_info_service_init(power_hal_power_info_cb, NULL)) !=
+            BmOK) {
+        bm_set_err(err);
+        return;
+    }
+    if ((err = camera_svc_init()) != BmOK) {
+        bm_set_err(err);
+        return;
+    }
+
     // Stream publisher: waits on WCMD_STREAM configs.
     s_stream_q = bm_queue_create(1, sizeof(wire_stream_t));
     if (!s_stream_q ||
@@ -400,6 +464,7 @@ static void wire_task(void *param) {
 
         uint32_t got = rr_poll(&s_rr);
         wire_pump_tx();
+        wire_pump_capture();
 
         if (got == 0) {
             // Idle: wake on doorbell, 1 ms safety net (kick can race the

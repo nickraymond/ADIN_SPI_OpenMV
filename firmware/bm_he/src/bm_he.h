@@ -50,7 +50,17 @@ typedef struct {
                               //         preceding WCMD_FRAME_* message
 #define WCMD_STREAM    0x17u  // HP->HE: start/stop the pub/sub stream
                               //         publisher; payload = wire_stream_t
+#define WCMD_PUB       0x18u  // HP->HE: publish this payload on
+                              //         CAMERA_STREAM_TOPIC. hdr.len =
+                              //         TOTAL payload length; payloads
+                              //         > the message budget continue in
+                              //         WCMD_FRAG msgs (same reassembly
+                              //         path as WCMD_FRAME_RX -- the
+                              //         in-order vring never interleaves)
 #define WREP_STATUS    0x94u  // HE->HP: wire_status_t payload
+#define WREP_CAPTURE   0x95u  // HE->HP: camera capture/stream command
+                              //         from the camera/control service;
+                              //         payload = wire_capture_t
 
 // WCMD_STREAM payload. rate_bps == 0 stops a running stream. Payloads are
 // seq-stamped (u32 LE at offset 0) and published on STREAM_TOPIC, which
@@ -62,6 +72,30 @@ typedef struct {
     uint16_t payload_len; // bytes per publish, <= STREAM_MAX_PAYLOAD
     uint16_t secs;        // publish duration
 } __attribute__((packed)) wire_stream_t;
+
+// ---- camera service wire types (S17 BUILD-4) ---------------------------
+// The camera/control service handler (camera_svc.c) turns accepted
+// requests into a wire_capture_t which the wire task forwards to the HP
+// bridge as WREP_CAPTURE; the bridge captures/encodes/chunks and sends
+// the chunks back down as WCMD_PUB payloads for bm_pub on
+// CAMERA_STREAM_TOPIC. Chunk payloads (incl. the 10 B chunk header the
+// bridge prepends, see camera_svc.h) are capped at CAMERA_MAX_PAYLOAD
+// per REV-28.
+#define CAMERA_STREAM_TOPIC "camera/stream"
+#define CAMERA_MAX_PAYLOAD  1400u    // == STREAM_MAX_PAYLOAD (REV-28)
+
+#define CAMERA_MODE_STOP    0u
+#define CAMERA_MODE_SINGLE  1u
+#define CAMERA_MODE_STREAM  2u
+
+typedef struct {
+    uint8_t  mode;        // CAMERA_MODE_*
+    uint8_t  quality;     // JPEG quality (0 -> bridge default, 50/D20)
+    uint16_t fps_x10;     // stream pacing, frames/s x10 (0 -> default)
+    uint32_t rate_bps;    // payload-rate cap, 0 = fps-paced only
+    uint16_t secs;        // stream duration (0 -> default)
+    uint16_t payload_max; // chunk ceiling, <= CAMERA_MAX_PAYLOAD
+} __attribute__((packed)) wire_capture_t;   // 12 B, HP unpacks "<BBHIHH"
 
 // WCMD_PING payload: target node id + optional echo payload. echo length
 // = wire_hdr_t.len - 8 (ping.c copies it into EXPECTED_PAYLOAD and
