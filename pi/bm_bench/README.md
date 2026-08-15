@@ -399,3 +399,15 @@ cd ~/bm_sbc_s15/clients/python && BM_SBC_GATEWAY_IPC=/tmp/s17_ipc.sock python3 -
   sensor publish (`sensor/<node>/s17/demo`) is pcap-visible crossing to
   Light. Client → gateway → BM network: the shipped uplink door, end to
   end.
+
+## Demo day, one command
+
+The AE3 always ends a session restored to the S6 fixture, so every demo
+day starts by re-staging the bridge:
+
+```bash
+ssh pi@nereus000 '~/ADIN_SPI_OpenMV/pi/bm_bench/demo_up.sh'
+```
+
+Prints READY when the bridge is booted and waiting; then start Light,
+then Telemetry (commands in the script header / §S17 start order).
