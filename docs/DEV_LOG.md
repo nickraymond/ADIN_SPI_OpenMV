@@ -99,9 +99,49 @@ FULL CHAIN REHEARSED:**
   stopped), demo cfg armed (stream 2.0/1400/600 s delay 15; ping
   target …01 delay 30). ELF on board = 45a9615d… (global-addr ping).
 
-**Next:** nibble 3 — Nick runs README §S16 demos 1–3 → nibble 4 PR
-(repo + fork). Session end after demos: fixture restore + sha-verify +
-S6 USB baseline re-run.
+**Same-session continuation 2 (2026-08-15) — Nick's demo hit a real
+crash; root-caused, fixed, ALL demos re-run by Claude (Nick's request)
+and PASS:**
+- **V5 find #3 (the big one): upstream heap corruption on the L2
+  TX-overflow path.** Nick's demo run (stream_bench TX 15 Mbps on Light
+  while forwarding the Camera stream + carrying the uart leg) hit the
+  FIRST real `bm_l2_tx` queue overflow on a Pi → glibc "corrupted
+  double-linked list" abort within ms. Cause: bm_l2_tx frees the L2
+  reference itself on enqueue failure (the contract lwIP forces), but
+  BOTH bm_linux TX paths freed again on the error return (bm_udp_tx
+  even documented "must free twice") — one over-free. Can never fire
+  from a lone publisher (S15 measurement), which is why it survived all
+  prior testing. Fix: bm_core fork +1 commit (`eec6e82`, error-path
+  frees deleted with the ownership contract documented), bm_sbc
+  submodule bump (`1a806c7`), deploy.sh pins moved, both Pis rebuilt
+  green. AE3 unaffected (compiles bm_lwip.c). Upstream-PR-worthy.
+- **Crash repro on the fixed build: PASS** — same overload hit the same
+  `evt queue full, dropped frame` line and ran to completion: TX_STAT
+  `ok=3792 enomem=2 l2_drops=2`, drops counted + surfaced (`Unable to
+  publish, err 12`), no abort. The D27 observability told the story.
+- **Full demo re-run (fixed pins): d1 topology PASS (Light neighbors
+  01+03, Telemetry only 02, 2-hop 🏓 10–11 ms both ways) · d2 PASS
+  (both hops steady 1.99–2.00, 23.6/24.7 MB, all-zero ledgers) ·
+  d3 PASS — 600 s @ 2.00 Mbps, Camera sent 107,142 = Telemetry
+  received 107,142, ZERO loss/CRC/drops at every hop, ledger
+  consistent end-to-end (bridge 107,215 frames / 158.25 MB,
+  frag_errors 0).**
+- En-route ops finds (now in the ae3-usb-unstick SKILL + READMEs):
+  (a) the AE3 fell OFF the USB bus (error -71) after mpremote was
+  pointed at a phase-1 bridge concurrently with a reset — uhubctl
+  could NOT recover it because **the Pi 5 root hub's ppps never
+  actually cuts VBUS** (measured: the bridge session survived a Pi
+  reboot still blocked mid-write); **`sudo reboot` on the Pi = the
+  fix** (fresh xhci re-enumerates; Nick's call). (b) by-id
+  lingers→drops→reappears bit the start ladder once more — the full
+  absent→present→settle dance is mandatory, and demo-to-demo
+  transitions must wait out the bridge's 30 s quiet-exit before any
+  mpremote contact.
+
+**Next:** Nick's call — bless Claude's re-run as the S16 demo or run
+README §S16 demos 1–3 himself (board staged + armed either way) →
+nibble 4 PR (repo + both fork branches). Session end: fixture restore
++ sha-verify + S6 USB baseline re-run.
 
 ---
 

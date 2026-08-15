@@ -1369,3 +1369,22 @@ demo 2 forwarded pub/sub labeled vs BCMP re-tx per REV-6/V10; demo 3
 600 s @ 2 Mbps with the per-hop drop ledger). Expected margin: S14
 measured 5.4 Mbps through this exact relay shape = 2.7× the gate.
 **V5 stands:** first-ever hardware run of bm_sbc's serial path.
+
+**S16 addendum (2026-08-15) — live bring-up results.** Chain rehearsed
+and (after fixes) all three demos re-run end-to-end: 600 s @ 2.00 Mbps,
+Camera sent 107,142 = Telemetry received 107,142, zero loss/CRC at
+every hop. Three V5-class finds, all fixed same-session: (1) MicroPython
+console kbd-interrupt scan kills the bridge on 0x03-bearing COBS bytes →
+`kbd_intr(-1)` + quiet-exit stop model (bridge exits 30 s after VCP
+silence; one lifetime per demo). (2) Camera-sourced ping to ff02::1
+stops at Light (REV-6 measured live) → WCMD_PING targets ff03::1.
+(3) **Upstream bm_core heap corruption**: bm_l2_tx frees the L2
+reference on enqueue failure (lwIP contract) but both bm_linux TX paths
+freed again on error → over-free → glibc abort on the FIRST real
+TX-queue overflow (impossible from a lone publisher, S15; fired under
+publish+forward+uart contention). Fixed in fork commit eec6e82; pins
+moved (bm_sbc 1a806c7); verified by repro (drops counted, no abort).
+Bench facts earned: Pi 5 root-hub ppps does NOT cut VBUS (uhubctl
+cannot power-cycle the AE3; `sudo reboot` on the Pi re-inits xhci and
+recovers an off-bus board — ae3-usb-unstick skill); a bridge session
+survives Pi reboots blocked mid-write.
