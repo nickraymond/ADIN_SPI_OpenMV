@@ -78,6 +78,28 @@ CAP_DEFAULT_SECS = 60
 CAMERA_MODE_STOP = 0
 CAMERA_MODE_SINGLE = 1
 CAMERA_MODE_STREAM = 2
+
+# S18 capture geometry (bm_he.h CAMERA_RES_* / CAMERA_PF_*). The sensor
+# LETTERBOXES to 16:10 -- QVGA is 320x200, not 320x240 -- and
+# QQVGA/SVGA/WXGA are unsupported on sensor 0x7936 (DESIGN §S0). The
+# geometry table is documentation + trace text; the sensor derives the
+# real thing from the framesize constant.
+CAMERA_RES_QVGA = 1
+CAMERA_RES_VGA = 2
+CAMERA_RES_HD = 3
+CAMERA_PF_COLOR = 1
+CAMERA_PF_MONO = 2
+CAP_DEFAULT_RES = CAMERA_RES_QVGA    # the T1 shape (D9)
+CAP_DEFAULT_PF = CAMERA_PF_COLOR
+RES_GEOM = {CAMERA_RES_QVGA: (320, 200),
+            CAMERA_RES_VGA: (640, 400),
+            CAMERA_RES_HD: (1280, 800)}
+PF_NAME = {CAMERA_PF_COLOR: "RGB565", CAMERA_PF_MONO: "GRAYSCALE"}
+# bridge_cfg.json spells these as words; unknown spellings fall back to
+# the defaults rather than failing the whole one-shot.
+CFG_RES = {"qvga": CAMERA_RES_QVGA, "vga": CAMERA_RES_VGA, "hd": CAMERA_RES_HD}
+CFG_PF = {"color": CAMERA_PF_COLOR, "mono": CAMERA_PF_MONO,
+          "grayscale": CAMERA_PF_MONO, "greyscale": CAMERA_PF_MONO}
 STATUS_FMT = "<Q16s16sIIIIIIIIIIII"   # wire_status_t (88 B)
 STATUS_KEYS = ("node_id", "ip_ll", "ip_ucast", "stage", "err",
                "tx_frames", "rx_frames", "tx_oversize", "link_up",
@@ -160,11 +182,13 @@ class BridgeCore:
                 self.status = dict(zip(STATUS_KEYS, vals))
             return []
         if cmd == WREP_CAPTURE:
-            if ln >= 12 and len(b) - 4 >= 12:
-                mode, q, fps_x10, rate_bps, secs, payload_max = \
-                    struct.unpack_from("<BBHIHH", b, 4)
+            if ln >= 14 and len(b) - 4 >= 14:
+                (mode, q, fps_x10, rate_bps, secs, payload_max,
+                 res, pf) = struct.unpack_from("<BBHIHHBB", b, 4)
                 # Zeros mean "bridge default" (camera_svc.c passes them
                 # through untouched -- the defaults live here only).
+                # Out-of-range res/pf never reach us: the HE service
+                # refuses them outright (camera_svc.h).
                 self.capture_cmd = {
                     "mode": mode,
                     "q": q or CAP_DEFAULT_Q,
@@ -173,6 +197,8 @@ class BridgeCore:
                     "secs": secs or CAP_DEFAULT_SECS,
                     "payload_max": min(payload_max or CAMERA_MAX_PAYLOAD,
                                        CAMERA_MAX_PAYLOAD),
+                    "res": res or CAP_DEFAULT_RES,
+                    "pf": pf or CAP_DEFAULT_PF,
                 }
             return []
         self.stats["unknown_cmds"] += 1
@@ -421,6 +447,42 @@ class HeWire:
         self.ept.send(msg, timeout=1000)
 
 
+def sensor_steps(cur_res, cur_pf, want_res, want_pf):
+    """Sensor calls needed to reach (want_res, want_pf), in apply order.
+
+    Pure -- host-tested without a sensor. Returns () when nothing
+    changed, and that emptiness is the point: every set_pixformat /
+    set_framesize is a sensor RE-INIT, which is the D15 crash class
+    (firmware/ae3_usb/README.md). S18 lets the operator flip geometry
+    from a web page, so the cheap guard against hammering the sensor is
+    to touch it only on an actual delta.
+
+    Pixel format is applied before framesize (OpenMV's own ordering in
+    every example: set_pixformat -> set_framesize -> skip_frames), and a
+    settle always follows a change -- the first frames after a re-init
+    are garbage.
+
+    VGA and above get an explicit set_framebuffers(1): the S0 bench
+    measured that this sensor "needs set_framebuffers(1) for VGA+", and
+    HD fits only one buffer at all (DESIGN §S0). It is re-applied after
+    ANY geometry change at those sizes, because a pixformat change
+    reallocates the buffer too (RGB565 -> GRAYSCALE halves it). Whether
+    the single-buffer requirement is strictly necessary at VGA in THIS
+    firmware is a hardware question -- nibble 3 answers it; until then
+    the measured fact wins.
+    """
+    steps = []
+    if cur_pf != want_pf:
+        steps.append("pixformat")
+    if cur_res != want_res:
+        steps.append("framesize")
+    if steps and want_res in (CAMERA_RES_VGA, CAMERA_RES_HD):
+        steps.append("framebuffers")
+    if steps:
+        steps.append("settle")
+    return tuple(steps)
+
+
 class CaptureEngine:
     """Camera capture/encode for the S17 camera service (HP side).
 
@@ -439,6 +501,8 @@ class CaptureEngine:
     def __init__(self):
         self.mode = CAMERA_MODE_STOP
         self.sensor_ok = None       # None = not tried yet
+        self.cur_res = None         # geometry the sensor is actually holding
+        self.cur_pf = None          # (None = unknown -> next cmd re-applies)
         self.q = CAP_DEFAULT_Q
         self.interval_ms = 100
         self.rate_bps = 0
@@ -449,20 +513,56 @@ class CaptureEngine:
         self.caps = 0               # total frames captured (lifetime)
         self.sent_bytes = 0         # JPEG bytes this stream (rate cap)
 
-    def _ensure_sensor(self):
-        if self.sensor_ok is None:
-            try:
-                import sensor
+    def _framesize(self, sensor, res):
+        if res == CAMERA_RES_VGA:
+            return sensor.VGA
+        if res == CAMERA_RES_HD:
+            return sensor.HD
+        return sensor.QVGA
+
+    def _ensure_sensor(self, res, pf):
+        """Bring the sensor to (res, pf); no-op when already there.
+
+        Failure is never fatal to the bridge -- the relay keeps running,
+        the refusal is traced, and the HE service ledger shows zero
+        publishes. A failure MID-SWITCH leaves the real geometry unknown,
+        so we forget it and let the next command re-apply from scratch
+        rather than trusting a half-applied state. Only a sensor that
+        never came up at all latches off.
+        """
+        if self.sensor_ok is False:
+            return False
+        try:
+            import sensor
+            if self.sensor_ok is None:
                 sensor.reset()
-                sensor.set_pixformat(sensor.RGB565)
-                sensor.set_framesize(sensor.QVGA)   # the T1 shape
-                sensor.skip_frames(time=300)
-                self.sensor_ok = True
-                _trace("camera: sensor up (QVGA RGB565)")
-            except Exception as e:
-                self.sensor_ok = False
-                _trace("camera: sensor init FAILED: %r" % e)
-        return self.sensor_ok
+                self.cur_res = self.cur_pf = None
+            steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
+            for step in steps:
+                if step == "pixformat":
+                    sensor.set_pixformat(sensor.GRAYSCALE
+                                         if pf == CAMERA_PF_MONO
+                                         else sensor.RGB565)
+                elif step == "framesize":
+                    sensor.set_framesize(self._framesize(sensor, res))
+                elif step == "framebuffers":
+                    sensor.set_framebuffers(1)   # S0: required at VGA+
+                elif step == "settle":
+                    sensor.skip_frames(time=300)
+            self.cur_res, self.cur_pf = res, pf
+            self.sensor_ok = True
+            if steps:
+                w, h = RES_GEOM.get(res, (0, 0))
+                _trace("camera: sensor -> %dx%d %s (%s)"
+                       % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
+            return True
+        except Exception as e:
+            self.cur_res = self.cur_pf = None    # geometry now unknown
+            if self.sensor_ok is None:
+                self.sensor_ok = False           # never came up: latch off
+            _trace("camera: sensor setup FAILED res=%d pf=%d: %r"
+                   % (res, pf, e))
+            return False
 
     def command(self, cmd):
         if cmd["mode"] == CAMERA_MODE_STOP:
@@ -471,7 +571,9 @@ class CaptureEngine:
                        % (self.slots, self.sent_bytes))
             self.mode = CAMERA_MODE_STOP
             return
-        if not self._ensure_sensor():
+        res = cmd.get("res", CAP_DEFAULT_RES)
+        pf = cmd.get("pf", CAP_DEFAULT_PF)
+        if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
         self.q = cmd["q"]
@@ -483,9 +585,11 @@ class CaptureEngine:
         self.until = time.ticks_add(self.t_start, cmd["secs"] * 1000)
         self.slots = 0
         self.sent_bytes = 0
-        _trace("camera: mode %d q=%d %dms/frame rate=%d secs=%d pmax=%d"
-               % (self.mode, self.q, self.interval_ms, self.rate_bps,
-                  cmd["secs"], self.payload_max))
+        w, h = RES_GEOM.get(res, (0, 0))
+        _trace("camera: mode %d %dx%d %s q=%d %dms/frame rate=%d secs=%d pmax=%d"
+               % (self.mode, w, h, PF_NAME.get(pf, "?"), self.q,
+                  self.interval_ms, self.rate_bps, cmd["secs"],
+                  self.payload_max))
 
     def poll(self, now):
         """Capture+encode one frame if due; returns JPEG bytes or None."""
@@ -633,6 +737,10 @@ def main():
                     "payload_max": min(int(camera_cfg.get("payload",
                                                           CAMERA_MAX_PAYLOAD)),
                                        CAMERA_MAX_PAYLOAD),
+                    "res": CFG_RES.get(str(camera_cfg.get("res", "qvga")).lower(),
+                                       CAP_DEFAULT_RES),
+                    "pf": CFG_PF.get(str(camera_cfg.get("pf", "color")).lower(),
+                                     CAP_DEFAULT_PF),
                 })
                 camera_sent = True
                 _trace("camera cfg armed: %s" % json.dumps(camera_cfg))

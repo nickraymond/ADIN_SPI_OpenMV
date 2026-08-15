@@ -88,6 +88,22 @@ typedef struct {
 #define CAMERA_MODE_SINGLE  1u
 #define CAMERA_MODE_STREAM  2u
 
+// Capture geometry (S18). The AE3's sensor (id 0x7936) LETTERBOXES to
+// 16:10 -- QVGA is 320x200, not 320x240 -- and QQVGA/SVGA/WXGA return
+// "Sensor control failed" on it. Nothing above HD has ever been tested,
+// so nothing above HD is offered. Measured facts: DESIGN.md §S0 video
+// encode table + reference-scene table.
+#define CAMERA_RES_DEFAULT  0u   // -> bridge default (QVGA)
+#define CAMERA_RES_QVGA     1u   // 320x200
+#define CAMERA_RES_VGA      2u   // 640x400
+#define CAMERA_RES_HD       3u   // 1280x800 (one framebuffer only, S0)
+#define CAMERA_RES_MAX      CAMERA_RES_HD
+
+#define CAMERA_PF_DEFAULT   0u   // -> bridge default (color)
+#define CAMERA_PF_COLOR     1u   // sensor.RGB565
+#define CAMERA_PF_MONO      2u   // sensor.GRAYSCALE
+#define CAMERA_PF_MAX       CAMERA_PF_MONO
+
 typedef struct {
     uint8_t  mode;        // CAMERA_MODE_*
     uint8_t  quality;     // JPEG quality (0 -> bridge default, 50/D20)
@@ -95,7 +111,9 @@ typedef struct {
     uint32_t rate_bps;    // payload-rate cap, 0 = fps-paced only
     uint16_t secs;        // stream duration (0 -> default)
     uint16_t payload_max; // chunk ceiling, <= CAMERA_MAX_PAYLOAD
-} __attribute__((packed)) wire_capture_t;   // 12 B, HP unpacks "<BBHIHH"
+    uint8_t  resolution;  // CAMERA_RES_* (S18)
+    uint8_t  pixformat;   // CAMERA_PF_*  (S18)
+} __attribute__((packed)) wire_capture_t;   // 14 B, HP unpacks "<BBHIHHBB"
 
 // WCMD_PING payload: target node id + optional echo payload. echo length
 // = wire_hdr_t.len - 8 (ping.c copies it into EXPECTED_PAYLOAD and

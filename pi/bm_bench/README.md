@@ -411,3 +411,57 @@ ssh pi@nereus000 '~/ADIN_SPI_OpenMV/pi/bm_bench/demo_up.sh'
 
 Prints READY when the bridge is booted and waiting; then start Light,
 then Telemetry (commands in the script header / §S17 start order).
+
+---
+
+## S18 bite A — capture geometry (nibble-3 checks)
+
+Adds resolution + pixel format to the camera service. Geometry is
+**measured, not chosen** (DESIGN §S0, sensor 0x7936): the sensor
+letterboxes to 16:10, so QVGA is **320×200**, VGA **640×400**, HD
+**1280×800**; QQVGA/SVGA/WXGA are unsupported (there is no 720 mode)
+and nothing above HD has been tested.
+
+CLI (Telemetry stdin): `capture [q] [res] [pf]` ·
+`stream <mbps> <fps> <secs> [q] [res] [pf]`, where `res` = `qvga|vga|hd`
+and `pf` = `color|mono`. Omit either for the bridge default (QVGA
+colour). CAM_REPLY echoes `res=` / `pf=`.
+
+**Preconditions:** fork pushed (bite-A commit), `deploy.sh` PASS on both
+Pis, fresh `bm_he.elf` on the board, `demo_up.sh` READY, Light then
+Telemetry started (§S17 start order).
+
+Host tests first — no hardware, no docker:
+
+```bash
+firmware/bm_he/host_test/run_tests.sh
+```
+
+```bash
+python3 firmware/bm_bridge/host_test/test_bridge_core.py
+```
+
+Then, at the Telemetry prompt, in order:
+
+1. `capture 50 qvga color` → `CAM_REPLY ok=1 res=qvga pf=color`; a valid
+   JPEG at `http://nereus001:8080/frame.jpg`.
+2. `capture 50 vga color` then `capture 50 hd mono` → each returns
+   ok=1 with the echoed pair, and each still opens. **This is the first
+   time VGA and HD have been captured with the HE stack, rpmsg and the
+   VCP all live** — an allocation failure here is a real finding, and
+   the bridge traces it instead of dying (`/flash/bridge_trace.txt`).
+3. **D15 probe** — `capture 50 qvga color`, `capture 50 hd mono`,
+   repeated 3–4 times, alternating. Every switch is a sensor re-init;
+   the bridge only re-inits on a genuine delta, and the run must survive
+   without a hard fault or a wedged REPL.
+4. `capture 50 720p` → **expect `ok=0` + `CAM_REPLY REFUSED`**. Refusing
+   an unknown geometry rather than quietly substituting QVGA is the
+   point (D31): a silently wrong resolution corrupts a comparison.
+5. `stream 2.0 10 30 50 vga color` → note the delivered fps.
+6. `stream 2.0 3 30 50 hd mono` → the HD-greyscale live view.
+7. `cam-status` → `res=`/`pf=` still report the last commanded pair.
+
+**Record the delivered fps from 5 and 6.** In-bridge fps at VGA and HD
+is currently EXTRAPOLATED from the one measured point (QVGA colour reef
+held 15.00 fps, S17 bite 0); these two numbers replace the guesses and
+feed bite C's feasibility warnings.

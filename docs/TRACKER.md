@@ -528,12 +528,28 @@ merges)*
 **Goal:** a web control panel on the Telemetry Pi that drives the
 camera/light over the BM chain — the standing instrument for image-
 quality comparisons.
-- [ ] Bite A — stack plumbing: **resolution field (QVGA|VGA)** through
-      camera_req_t → wire_capture_t → bridge CaptureEngine
-      (`sensor.set_framesize` per command; watch the D15 re-init crash
-      class), **q exposed on the stream command**; lockstep ABI update
-      (camera_svc.h + fork structs + BridgeCore), host tests, size
-      audit (REV-25 standing).
+- [~] Bite A — stack plumbing: **resolution (QVGA|VGA|HD) + pixel
+      format (color|mono)** through camera_req_t → wire_capture_t →
+      bridge CaptureEngine, **q exposed on the stream command**;
+      lockstep ABI update (camera_svc.h + fork structs + BridgeCore),
+      host tests, size audit (REV-25 standing).
+      → CODE + TESTS DONE 2026-08-15 (nibbles 1–2; plan + 5 decision
+      points approved by Nick — **D31**). Front end mocked and reviewed
+      BEFORE the ABI was cut, which is what surfaced HD greyscale in
+      time to land it in the reserved byte instead of forcing a second
+      lockstep break. `camera_req_t` 16→18 B, `wire_capture_t` 12→14 B
+      (`"<BBHIHHBB"`), `camera_rep_t` unchanged at 24 B (rsvd u16 →
+      res_active/pf_active). Out-of-range geometry **REFUSED (ok=0)**,
+      not clamped. Bridge switches the sensor **only on a delta** via a
+      pure host-tested `sensor_steps()` planner (D15 guard); VGA+ gets
+      `set_framebuffers(1)` per the S0 measurement. Host tests HE
+      170→191, bridge 61→73, all green; fork ABI offsets verified to
+      match byte-for-byte. **Size: 246,096/262,144 = 93.88%, 16,048 B
+      headroom (+64 B).** ELF `4be541ae…`.
+      **NEXT: fork push (Nick) → nibble-3 geometry ladder.** The
+      open numbers are in-bridge fps at VGA and HD — today
+      EXTRAPOLATED from the single measured QVGA point (15.00 fps,
+      S17 bite 0) and feeding bite C's warnings.
 - [ ] Bite B — fork app: **loopback-only control socket** on the
       telemetry role (JSON command in / JSON status out: last replies,
       current params, live receiver ledger) + **still-save** to
@@ -554,9 +570,17 @@ quality comparisons.
 **Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
 q90 stills → compare view shows both + histograms → start a VGA stream
 → the warning predicts and the pill confirms the fps drop.
-**Scope calls (Nick may override):** resolutions QVGA+VGA only (HD-mono
-later); warnings client-side from measured constants, not camera-
-queried.
+**Scope calls (Nick may override):** ~~resolutions QVGA+VGA only
+(HD-mono later)~~ — **OVERRIDDEN by Nick 2026-08-15 at the mockup
+review: HD 1280×800 is in now**, offered for stills in colour and for
+**video in greyscale** (HD colour ≈1 fps in-bridge vs HD mono ≈2.5 —
+low, and useful to watch live). The tool switches pixel format rather
+than dropping resolution when you start a stream on HD. Measured limits
+that set this ladder (DESIGN §S0): the sensor letterboxes to 16:10
+(QVGA = **320×200**, not 320×240), QQVGA/SVGA/WXGA are unsupported on
+sensor 0x7936 — so there is **no 720 mode** — and nothing above HD has
+been tested, so nothing above HD is offered. Warnings stay client-side
+from measured constants, not camera-queried.
 
 ### S19 — Light intelligence (stub — flesh out at kickoff)
 Camera self-detects dark scenes (HP luma stats) → camera node issues

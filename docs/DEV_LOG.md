@@ -17,6 +17,70 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-15 — Sprint S18 (camera bench web tool) — bite A: resolution + pixel format plumbed end to end; front end designed against a working mockup first
+
+**Branch:** `sprint/18-web-bench` (repo) + bm_sbc fork `feature/udp-transport`
+(bite-A commit local, NOT pushed — Nick pushes)
+
+**Done:**
+- Nibble-1 plan approved by Nick with 5 decision points: struct grows by
+  an appended pair (even sizes, one spare byte); out-of-range geometry
+  **REFUSED, not clamped** (deliberate break from payload_max's clamp —
+  a silently substituted resolution corrupts an image comparison
+  invisibly); switch only on a delta, never `sensor.reset()`;
+  `res_active`/`pf_active` reported in the reply's old `rsvd` u16 (zero
+  size change); CLI args positional.
+- **Front end mocked and reviewed BEFORE the ABI was cut** — which paid
+  for itself twice: reviewing the mockup is what surfaced HD greyscale
+  as a requirement, and that landed in the reserved byte instead of
+  forcing a second lockstep break.
+- Bite A (HE): `wire_capture_t` 12 → 14 B (+resolution +pixformat),
+  `camera_req_t` 16 → 18 B, `camera_rep_t` **stays 24 B** (rsvd u16 →
+  res_active/pf_active). Service validates geometry before the command
+  switch; refusal answers ok=0 without touching the mailbox, the command
+  counter, or the previously commanded geometry. Host tests 170 → 191.
+- Bite A (bridge): `WREP_CAPTURE` → `"<BBHIHHBB"`, len gate 12 → 14 (a
+  stale 12 B S17 body is now rejected outright, asserted by test — a
+  half-upgraded bench is a real state). New pure `sensor_steps()` plans
+  the sensor calls and returns **()** when geometry is unchanged: every
+  set_framesize/set_pixformat is a re-init = the D15 crash class, and
+  S18 hands that trigger to a web page. Host tests 61 → 73.
+- Bite A (fork): structs + static_asserts in lockstep, `capture [q]
+  [res] [pf]` / `stream <mbps> <fps> <secs> [q] [res] [pf]`, res/pf
+  echoed in CAM_REPLY with an explicit REFUSED hint. Unrecognised
+  spellings are passed through as out-of-range **on purpose** so the
+  service refuses them loudly rather than the CLI guessing.
+- **Size audit (REV-25): 246,096 / 262,144 = 93.88%, 16,048 B headroom
+  — bite A cost +64 B.** Clean build (S17 lesson: no header deps in the
+  bm_he Makefile, and this bite is all headers). ELF `4be541ae…`.
+
+**Broke/surprised us:**
+- **Two facts in DESIGN §S0 contradicted what I had already built.** The
+  sensor LETTERBOXES to 16:10 — QVGA is 320×200, not 320×240 — and
+  QQVGA/SVGA/WXGA are unsupported on sensor 0x7936, so Nick's "720"
+  does not exist; HD 1280×800 is the top of the proven ladder. The
+  mockup had generic 4:3 geometries until the tables were read properly.
+  Same pass caught that VGA+ needs `set_framebuffers(1)`, which the
+  first cut of `sensor_steps()` had omitted.
+- The mockup was **invisible to Nick for two rounds**: it displayed
+  every image through `data:` URIs into `<img>` tags, which the render
+  sandbox blocks, and the histograms are computed from those images —
+  so one cause blanked four features. The rebuild displays nothing
+  through a URL (Blob + `createImageBitmap`), paints synchronously
+  first and treats the JPEG decode as a refinement, so a decode that
+  never resolves degrades instead of blanking. Then the viewer turned
+  out not to run JS at all for files outside the project folder — the
+  preview pane says so and I missed it; it needs a real browser.
+
+**Next:** nibble 3 — Nick pushes the fork, then the geometry ladder in
+`pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated
+format+resolution cycling as the D15 probe, a deliberate refusal, and
+HD-mono stream). **The numbers that matter: in-bridge fps at VGA and HD,
+which are currently EXTRAPOLATIONS from the single measured QVGA point
+(15.00 fps, S17 bite 0) and feed bite C's feasibility warnings.**
+
+---
+
 ## 2026-08-15 — Sprint S17 (BUILD-4) — application services: code complete across all four surfaces; bite-0 measurement + demos wait at the VCP gate
 
 **Branch:** `sprint/17-build4-apps` (repo) + bm_sbc fork

@@ -43,15 +43,23 @@ _Static_assert(sizeof(wire_ping_t) == 8, "wire_ping_t hdr must be 8 B");
 _Static_assert(offsetof(wire_ping_t, echo) == 8, "echo bytes @ 8");
 // WCMD_STREAM payload: bridge packs "<IHH" (bridge_cfg stream trigger).
 _Static_assert(sizeof(wire_stream_t) == 8, "wire_stream_t must be 8 B");
-// S17 camera service ABI: bridge unpacks wire_capture_t "<BBHIHH"; the
-// bm_sbc fork app (apps/bench_apps) replicates camera_req_t /
+// S17/S18 camera service ABI: bridge unpacks wire_capture_t "<BBHIHHBB";
+// the bm_sbc fork app (apps/bench_apps) replicates camera_req_t /
 // camera_rep_t byte-for-byte -- lockstep or not at all (camera_svc.h).
-_Static_assert(sizeof(wire_capture_t) == 12, "wire_capture_t must be 12 B");
+_Static_assert(sizeof(wire_capture_t) == 14, "wire_capture_t must be 14 B");
 _Static_assert(offsetof(wire_capture_t, rate_bps) == 4, "rate_bps @ 4");
-_Static_assert(sizeof(camera_req_t) == 16, "camera_req_t must be 16 B");
+_Static_assert(offsetof(wire_capture_t, resolution) == 12, "resolution @ 12");
+_Static_assert(offsetof(wire_capture_t, pixformat) == 13, "pixformat @ 13");
+_Static_assert(sizeof(camera_req_t) == 18, "camera_req_t must be 18 B");
 _Static_assert(offsetof(camera_req_t, cmd) == 4, "cmd @ 4");
 _Static_assert(offsetof(camera_req_t, rate_bps) == 8, "req rate_bps @ 8");
+_Static_assert(offsetof(camera_req_t, resolution) == 16, "req resolution @ 16");
+_Static_assert(offsetof(camera_req_t, pixformat) == 17, "req pixformat @ 17");
+// S18 reused camera_rep_t's rsvd u16 -- the reply must NOT change size,
+// and cmds/pub_bytes must not move (the fork parses by offset).
 _Static_assert(sizeof(camera_rep_t) == 24, "camera_rep_t must be 24 B");
+_Static_assert(offsetof(camera_rep_t, res_active) == 6, "res_active @ 6");
+_Static_assert(offsetof(camera_rep_t, pf_active) == 7, "pf_active @ 7");
 _Static_assert(offsetof(camera_rep_t, cmds) == 8, "rep cmds @ 8");
 _Static_assert(offsetof(camera_rep_t, pub_bytes) == 20, "pub_bytes @ 20");
 
@@ -463,9 +471,51 @@ static void test_camera_svc(void) {
     CHECK(camera_svc_take_pending(&cap));
     CHECK(cap.mode == CAMERA_MODE_SINGLE && cap.quality == 60 &&
           cap.payload_max == 1000);
+    // Unset geometry stays 0 = "bridge default" (the bridge owns them).
+    CHECK(cap.resolution == CAMERA_RES_DEFAULT &&
+          cap.pixformat == CAMERA_PF_DEFAULT);
     CHECK(!camera_svc_take_pending(&cap));   // mailbox is fetch-and-clear
 
+    // S18: resolution + pixformat ride through to the bridge and are
+    // echoed back as the commanded pair.
+    req = (camera_req_t){.magic = CAMERA_REQ_MAGIC,
+                         .cmd = CAMERA_CMD_CAPTURE,
+                         .resolution = CAMERA_RES_HD,
+                         .pixformat = CAMERA_PF_MONO};
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 1);
+    CHECK(rep.res_active == CAMERA_RES_HD && rep.pf_active == CAMERA_PF_MONO);
+    CHECK(camera_svc_take_pending(&cap));
+    CHECK(cap.resolution == CAMERA_RES_HD && cap.pixformat == CAMERA_PF_MONO);
+
+    // Out-of-range geometry is REFUSED, not clamped (camera_svc.h): no
+    // reply.ok, no mailbox entry, no command counted.
+    uint32_t cmds_ok = rep.cmds;
+    req.resolution = CAMERA_RES_MAX + 1;
+    req.pixformat = CAMERA_PF_COLOR;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 0 && rep.cmds == cmds_ok);
+    CHECK(!camera_svc_take_pending(&cap));
+    req.resolution = CAMERA_RES_VGA;
+    req.pixformat = CAMERA_PF_MAX + 1;
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.ok == 0 && rep.cmds == cmds_ok);
+    CHECK(!camera_svc_take_pending(&cap));
+    // A refusal must not disturb the previously commanded geometry.
+    CHECK(rep.res_active == CAMERA_RES_HD && rep.pf_active == CAMERA_PF_MONO);
+
+    // Stop keeps the geometry (the sensor is still holding it); only the
+    // mode goes idle.
+    req = (camera_req_t){.magic = CAMERA_REQ_MAGIC, .cmd = CAMERA_CMD_STOP};
+    CHECK(svc_call(&req, sizeof(req), &rep));
+    CHECK(rep.mode_active == CAMERA_MODE_STOP);
+    CHECK(rep.res_active == CAMERA_RES_HD && rep.pf_active == CAMERA_PF_MONO);
+    CHECK(camera_svc_take_pending(&cap) && cap.mode == CAMERA_MODE_STOP);
+
     // Stream: fields through, payload_max clamped to REV-28's ceiling.
+    // (Counter is checked as a delta -- an absolute here would have to be
+    // rebased every time a case is inserted above.)
+    cmds_ok = rep.cmds;
     req = (camera_req_t){.magic = CAMERA_REQ_MAGIC,
                          .cmd = CAMERA_CMD_STREAM,
                          .fps_x10 = 150,
@@ -474,7 +524,7 @@ static void test_camera_svc(void) {
                          .payload_max = 1500};
     CHECK(svc_call(&req, sizeof(req), &rep));
     CHECK(rep.ok == 1 && rep.mode_active == CAMERA_MODE_STREAM &&
-          rep.cmds == 2);
+          rep.cmds == cmds_ok + 1);
     CHECK(camera_svc_take_pending(&cap));
     CHECK(cap.mode == CAMERA_MODE_STREAM && cap.fps_x10 == 150 &&
           cap.rate_bps == 2000000 && cap.secs == 600);

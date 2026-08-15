@@ -19,6 +19,8 @@ from bm_bridge import (            # noqa: E402
     WREP_CAPTURE, CHUNK_HDR_FMT, CHUNK_HDR_LEN, CAMERA_MAX_PAYLOAD,
     CAP_DEFAULT_Q, CAP_DEFAULT_FPS_X10, CAP_DEFAULT_SECS,
     CAMERA_MODE_SINGLE, CAMERA_MODE_STREAM,
+    CAP_DEFAULT_RES, CAP_DEFAULT_PF, CAMERA_RES_HD, CAMERA_PF_MONO,
+    CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_PF_COLOR, sensor_steps,
 )
 
 checks = 0
@@ -196,29 +198,66 @@ core = BridgeCore()
 
 # WREP_CAPTURE: explicit values pass through; the reply produces no VCP
 # output; take_capture is fetch-and-clear.
-cap_body = struct.pack("<BBHIHH", CAMERA_MODE_STREAM, 60, 150, 2000000,
-                       600, 1000)
+cap_body = struct.pack("<BBHIHHBB", CAMERA_MODE_STREAM, 60, 150, 2000000,
+                       600, 1000, CAMERA_RES_HD, CAMERA_PF_MONO)
 out = core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) +
                   cap_body)
 check(out == [], "capture: no wire output")
 cmd = core.take_capture()
 check(cmd == {"mode": CAMERA_MODE_STREAM, "q": 60, "fps_x10": 150,
-              "rate_bps": 2000000, "secs": 600, "payload_max": 1000},
+              "rate_bps": 2000000, "secs": 600, "payload_max": 1000,
+              "res": CAMERA_RES_HD, "pf": CAMERA_PF_MONO},
       "capture: explicit fields pass through")
 check(core.take_capture() is None, "capture: fetch-and-clear")
 
 # Zeros -> bridge defaults; oversize payload_max clamped to REV-28.
-cap_body = struct.pack("<BBHIHH", CAMERA_MODE_SINGLE, 0, 0, 0, 0, 1500)
+cap_body = struct.pack("<BBHIHHBB", CAMERA_MODE_SINGLE, 0, 0, 0, 0, 1500, 0, 0)
 core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) + cap_body)
 cmd = core.take_capture()
 check(cmd["q"] == CAP_DEFAULT_Q and cmd["fps_x10"] == CAP_DEFAULT_FPS_X10
       and cmd["secs"] == CAP_DEFAULT_SECS, "capture: zeros -> defaults")
 check(cmd["rate_bps"] == 0, "capture: rate 0 stays 0 (fps-paced)")
 check(cmd["payload_max"] == CAMERA_MAX_PAYLOAD, "capture: pmax clamped")
+check(cmd["res"] == CAP_DEFAULT_RES and cmd["pf"] == CAP_DEFAULT_PF,
+      "capture: geometry zeros -> bridge defaults")
+
+# An S17-length (12 B) body must NOT be parsed as if geometry were there:
+# the ABI moved in lockstep, and a stale HE image is a real bench state.
+cap_body = struct.pack("<BBHIHH", CAMERA_MODE_SINGLE, 60, 100, 0, 60, 1000)
+core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) + cap_body)
+check(core.take_capture() is None, "capture: 12 B S17 body rejected")
 
 # Truncated capture msg ignored, no crash, nothing pending.
 core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, 4) + b"\x01\x00\x00\x00")
 check(core.take_capture() is None, "capture: truncated body ignored")
+
+# ---- S18: sensor step planning (the D15 re-init guard) -------------------
+# Every step here is a sensor re-init, so the planner must emit none at
+# all when the geometry already matches.
+check(sensor_steps(None, None, CAMERA_RES_QVGA, CAMERA_PF_COLOR)
+      == ("pixformat", "framesize", "settle"), "steps: cold start = full init")
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_QVGA, CAMERA_PF_COLOR) == (),
+      "steps: unchanged geometry touches nothing")
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_COLOR)
+      == ("framesize", "framebuffers", "settle"), "steps: resolution only")
+check(sensor_steps(CAMERA_RES_HD, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_MONO)
+      == ("pixformat", "framebuffers", "settle"), "steps: pixel format only")
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_MONO)
+      == ("pixformat", "framesize", "framebuffers", "settle"),
+      "steps: both, pf first")
+# S0 measured that VGA+ needs set_framebuffers(1); QVGA must NOT get it.
+check("framebuffers" not in sensor_steps(None, None, CAMERA_RES_QVGA,
+                                         CAMERA_PF_COLOR),
+      "steps: QVGA keeps default buffering")
+for res in (CAMERA_RES_VGA, CAMERA_RES_HD):
+    check("framebuffers" in sensor_steps(None, None, res, CAMERA_PF_COLOR),
+          "steps: VGA+ forces single-buffer")
+for steps in (sensor_steps(1, 1, 3, 2), sensor_steps(None, None, 2, 1)):
+    check(steps[-1] == "settle", "steps: a change always settles")
 
 
 def reassemble_pubs(msgs):
