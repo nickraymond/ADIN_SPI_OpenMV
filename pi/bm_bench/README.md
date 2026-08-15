@@ -370,9 +370,12 @@ commands):
 - `capture` → `CAM_REPLY … ok=1`; one TEL_STAT frame; then open
   `http://nereus001:8080/frame.jpg` — the still that crossed
   AE3→rpmsg→CDC→Light→UDP→Telemetry.
-- `stream 2.0 10 60` (rate from the bite-0 verdict; 10 fps, 60 s) →
-  **browser: `http://nereus001:8080/stream` over the tailnet — live
-  video**. `TEL_STAT fps=…` ≈ commanded; `/stats.json` gaps=0.
+- `stream 2.0 15 60` (rate cap 2.0 Mbps, 15 fps — the measured encode
+  ceiling; 60 s) → **browser: `http://nereus001:8080/stream` over the
+  tailnet — live video**. `TEL_STAT fps≈15`; `/stats.json` gaps=0.
+  Delivered kBps is SCENE-bound (dim room ≈ 1.9 KB/frame ≈ 0.23 Mbps;
+  reef-q50 would be ≈ 1.1 Mbps) — capacity was proven separately
+  (bite 0: relay 5.26 Mbps sustained with capture live).
 - Ledger at every hop (S16 demo-3 table applies): bridge trace
   (`cap_frames/cap_chunks`, frag_errors), HE camera service counters
   (`cam-status` → pub_ok/pub_errs), Light `tx_drops` (transit), TEL_STAT

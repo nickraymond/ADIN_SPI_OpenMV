@@ -468,10 +468,18 @@ USB/MicroPython baseline stays intact as the regression reference
    nereus001:8080, operator CLI, spotter_tx_data uplink + gateway_ipc
    listener; ctest 21 checks; pin move +2 → c1d0df9). RTC = O1 (RAM
    stub + BCMP time-set from Telemetry, zero new code). Demo ladder =
-   `pi/bm_bench/README.md` §S17. **NEXT: Nick pushes the fork branch
-   (session perms blocked it) → both-Pi deploy.sh → VCP gate (Nick's
-   go) → bite-0 measurement → rate target committed → demos 1–3 →
-   PR. Session end: fixture restore + sha + S6 baseline.**
+   `pi/bm_bench/README.md` §S17.
+   → LIVE 2026-08-15 (fork pushed by Nick; VCP gate opened): both-Pi
+   deploy PASS @ c1d0df9 · bite 0 measured (relay-with-capture
+   5.262 Mbps/600 s, 15.00 fps held; encoder = the ceiling; D29.6 →
+   `stream 2.0 15 60`) · **V5 find #4: upstream bm_core L2
+   ingress-nibble vs UDP checksum bug — root-caused via injection
+   probe, worked around config-only (CHECKSUM_CHECK_UDP=0), upstream
+   item 10 below** · **FULL Stage-4 rehearsal PASS** (LED, 2-hop
+   power, capture→browser JPEG, 15 fps stream into the frozen S3 web
+   server, uplinks; ledger exact, one known startup-race frame).
+   **NEXT: Nick runs README §S17 demos 1–3 → nibble-4 PR. After the
+   demo: fixture restore (incl. S16's pending one) + S6 baseline.**
    **Demo (Nick):** capture triggered → stream at Telemetry (browser,
    through Light) → light commanded (LED) → uplink out via
    gateway_ipc — with the drop ledger + the bite-0 number in the
@@ -491,6 +499,17 @@ USB/MicroPython baseline stays intact as the regression reference
    session per boot hard-faults the AE3 (repro:
    `firmware/ae3_usb/README.md`; re-validate on current build first;
    USB-only, restore fixture after)
+10. `[ ]` Upstream report/PR to Bristlemouth: **bm_core L2
+   ingress-nibble mutation invalidates inbound UDP checksums on lwIP
+   receivers** (found S17 2026-08-15, first-ever inbound pub/sub into
+   a bm_core lwIP node): `l2_policy.c bm_l2_policy_rx_apply` mutates
+   the IPv6 src addr with no checksum fix-up → udp_input drops every
+   pub/sub datagram; TX-side `network_add_egress_port` UDP branch also
+   does byte-wise arithmetic on half the 16-bit checksum. Proper fix =
+   RFC 1624 incremental update at both mutation sites. Bench
+   workaround = CHECKSUM_CHECK_UDP=0 (firmware/bm_he lwipopts.h,
+   documented). Repro = the S17 injection probe (DESIGN §S17
+   addendum). Pairs with the S16 over-free report.
 
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
 demo — rebuild a link fixture (new hats / SG-shield-as-OA reshuffle /

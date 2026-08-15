@@ -45,6 +45,21 @@
 #define LWIP_NETIF_LOOPBACK             0
 #define LWIP_STATS                      0
 #define LWIP_CHECKSUM_CTRL_PER_NETIF    0
+// UDP RX checksum verification OFF -- required, not an optimization
+// (S17 find, 2026-08-15): bm_core's L2 writes the ingress-port nibble
+// into the IPv6 SOURCE ADDRESS of every inbound frame
+// (l2_policy.c bm_l2_policy_rx_apply / set_ingress_nibble) WITHOUT
+// adjusting the upper-layer checksum, so every inbound pub/sub
+// datagram fails lwIP's UDP verify and is silently dropped (probed on
+// hardware: service replies appear the instant this is 0; udp chkerr
+// path otherwise). BCMP is unaffected only because BM validates its
+// own checksum with the ports-byte convention in hand. bm_linux
+// receivers don't verify inbound UDP, which is why Pi-side pub/sub
+// never showed it. Upstream fix = RFC 1624 incremental checksum
+// update at the mutation site (candidate bm_core report/PR); until
+// that lands, integrity on this bench rides uart_l2's CRC-32C and the
+// outer-UDP/Ethernet checksums per hop. TX generation stays ON.
+#define CHECKSUM_CHECK_UDP              0
 
 // --- memory (RAM is the scarce resource: 256 KB total for everything) ---
 #define MEM_LIBC_MALLOC                 0

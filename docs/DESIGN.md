@@ -1457,3 +1457,64 @@ trigger-controllable on both Pis.
 demos; (2) fork push `feature/udp-transport` (c094f66+c1d0df9) blocked
 by session permissions — Nick pushes, then both-Pi `deploy.sh`;
 (3) rate-target number pending bite 0.
+
+**S17 addendum (2026-08-15) — bite-0 numbers, an upstream find, full
+rehearsal PASS.**
+
+**Bite 0 (VCP gate opened by Nick):** rung C regression 5.424 Mbps
+(=S14). Rung F (relay + reef capture/encode @15 fps): 60 s = 5.265,
+**600 s = 5.262 Mbps sustained, 15.00 fps held, 279,512/279,512 frames
+delivered, 0 gaps/CRC; enc 19.94 ms/frame, reef-q50 = 9,198 B; sensor+
+openamp+VCP coexist (ref=heap)**. The counter's printed verdict says
+FAIL solely because the UNBOUNDED bench pump dropped 18,661 msgs at its
+own 64-deep queue during 20 ms encode stalls — source throttling, not
+delivery loss (receiver ledger perfect); gate-term semantics noted for
+the next revision. Rung G (adds the 1.1 Mbps sink leg): relay collapsed
+to 0.52 Mbps under the unbounded flood + blocking down-sends (sink
+itself clean: 8.44 MB, 0 CRC) — contention overstated vs the
+rate-bounded real path, which the live rehearsal then proved. **D29.6
+resolution: stream = fps-bounded (encoder ceiling ~15 fps QVGA q50),
+demo command `stream 2.0 15 60`; delivered rate is scene-bound (reef
+≈1.1 Mbps, dim bench ≈0.23); transport capacity 5.26 Mbps = 2.6× the
+2.0 gate.**
+
+**UPSTREAM FIND (the S17 V5 bug): bm_core L2 invalidates inbound UDP
+checksums on lwIP receivers.** First-ever inbound pub/sub INTO the HE
+(service requests) timed out while everything else worked. Isolated
+with a no-Pi rpmsg injection probe (BCMP echo fine; UDP to ff03::1,
+ff02::1 AND own-unicast all dead; instrumented build: replies appear
+the moment CHECKSUM_CHECK_UDP=0). Root cause read from source:
+`l2_policy.c bm_l2_policy_rx_apply()` writes the ingress-port nibble
+into the IPv6 SOURCE ADDRESS of every inbound frame with NO checksum
+adjustment; lwIP's udp_input then rejects the datagram. BCMP survives
+only because BM validates its own checksum with the ports-byte
+convention in hand; bm_linux receivers never verify inbound UDP —
+which is why Sofar's own CI and our S15/S16 (outbound-only) never saw
+it. The TX-side helper (`network_add_egress_port`) even tries to
+adjust — with byte-wise arithmetic on half of the 16-bit checksum
+(second defect, same family as the S16 over-free). Bench fix:
+`CHECKSUM_CHECK_UDP=0` in firmware/bm_he lwipopts.h (config-only, no
+vendored drift, integrity rides uart_l2 CRC-32C + outer-UDP/Ethernet
+per hop); proper fix = RFC 1624 incremental update at the mutation
+site — TRACKER upstream-report item. En-route lesson: the bm_he
+Makefile has no header dependency tracking — an lwipopts.h-only change
+does NOT rebuild (two phantom diagnostic builds shipped byte-identical
+ELFs, caught by sha; use --clean for config changes). S17 ELF =
+3cdd1f66… (MANIFEST).
+
+**Full-chain rehearsal (fixed ELF) — every Stage-4 acceptance leg
+PASS:** chain topology correct (never-a-star); `time-sync` err 0;
+`light 100` lit nereus000's ACT LED + state artifact; `strobe` blinked
+it (strobing=1); `power` → 2-hop POWER_REPLY from the AE3 sim
+(total_on=50s remaining=3250s upcoming=300s); `capture` → CAM_REPLY
+ok=1 → **valid QVGA JPEG at http://nereus001:8080/frame.jpg** (1,861 B
+dark-room frame, opens); `stream 2.0 15 30`+ → **15.0 fps steady into
+the frozen S3 web server** (stats.json 455 frames, 15.15 fps, gaps 0,
+ingest_connected). Ledger consistent END TO END: camera pub_ok=912
+chunks / 857,736 B, 0 errs = Telemetry 455 frames × 2 chunks + 2
+orphans of exactly one startup-race frame (chunk_gaps=1, first capture
+issued seconds after subscribe — known, accounted); dropped=0,
+q_drops=0, ingest 455/455, 8 UPLINK_TX reports out via
+spotter_tx_data, gateway_ipc up. Board left staged for Nick's demo
+run; fixture restore + S6 baseline = after the demo (S16's pending
+restore folded in — /flash main.py had remained the S16 bridge).

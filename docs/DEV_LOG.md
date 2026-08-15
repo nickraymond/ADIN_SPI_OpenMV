@@ -80,6 +80,48 @@ bite-0 rungs C/F/G + 600 s gate → rate target committed → restage
 bridge → README §S17 demos 1–3 → nibble-4 PR. Session end: fixture
 restore + sha-verify + S6 USB baseline re-run.
 
+**Same-session continuation (Nick pushed the fork; "move forward" =
+VCP-gate go) — bite 0 measured, a THIRD V5-class upstream bug found +
+root-caused + worked around, FULL rehearsal PASS:**
+- Deploys: both Pis PASS at pin c1d0df9 (nereus000's checkout was
+  detached — pull was a silent no-op, caught by deploy.sh's pin check).
+  Found + killed a stale S16-era stream_bench still running on
+  nereus001 with telemetry.toml.
+- S16 leftover surfaced: /flash/main.py was STILL the S16 bridge
+  (sha 170e637c…) — the fixture restore in S16's "Next" never ran.
+  Folded into this session's end-of-demo restore.
+- Bite 0: rung C 5.424 (=S14) · rung F 600 s **5.262 Mbps sustained
+  with capture live, 15.00 fps, 279,512/279,512, 0 gaps/CRC** (printed
+  FAIL = unbounded-pump q_drops only, semantics documented) · rung G
+  duplex flood = 0.52 Mbps (bench artifact; real path rate-bounded).
+  Reef q50 = 9,198 B / enc 19.94 ms → encoder is the ceiling (~15 fps
+  ≈ 1.1 Mbps reef) — D29.6 resolved: demo = `stream 2.0 15 60`.
+- **V5 find #4 (upstream, the biggest of the arc): bm_core L2 writes
+  the ingress-port nibble into the IPv6 src address of every inbound
+  frame with NO checksum adjustment → lwIP receivers silently drop ALL
+  inbound pub/sub UDP.** First inbound-to-HE service request ever sent
+  = first hit. Isolated via a no-Pi rpmsg injection probe; fix for the
+  bench = CHECKSUM_CHECK_UDP=0 (lwipopts, config-only, documented);
+  proper fix = RFC 1624 incremental update in l2_policy.c (upstream
+  report item added; TX-side helper has a second byte-arithmetic bug).
+  En route: bm_he Makefile has no header deps — lwipopts-only changes
+  need --clean (two phantom builds shipped identical ELFs; sha caught
+  it). S17 ELF now 3cdd1f66….
+- **Rehearsal (all Stage-4 legs): PASS** — topology ✓, time-sync ✓,
+  LED light/strobe ✓, 2-hop power query ✓ (total_on=50s/3250s/300s),
+  capture → valid JPEG at :8080/frame.jpg ✓ (1,861 B dark-room),
+  stream 15.0 fps steady / 455 frames / gaps 0 into the frozen S3 web
+  server ✓, 8 spotter_tx uplinks + gateway_ipc up ✓. Ledger exact at
+  every hop: 912 pub chunks = 455×2 + 2 orphans of one startup-race
+  frame (first capture raced subscribe propagation; only loss all
+  session). Board staged for Nick's demo; LED trigger restored between
+  sessions.
+
+**Next:** Nick runs README §S17 demos 1–3 (chain start fresh) →
+nibble-4 PR (repo + fork). AFTER the demo: fixture main.py restore
+(55fa6ccf…) + sha-verify + S6 USB baseline re-run + python-client
+uplink injection (needs an interactive second shell).
+
 ---
 
 ## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
