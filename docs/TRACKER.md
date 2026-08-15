@@ -454,7 +454,11 @@ USB/MicroPython baseline stays intact as the regression reference
    + live chain rehearsal → nibble 3 demos → PR.**
    **Demo (Nick):** chain topology + forwarded pub/sub + sustained-rate
    verdict. = `pi/bm_bench/README.md` §S16 demos 1–3.
-6. `[~]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) — light/camera
+6. `[x]` **S17 — BUILD-4 apps** (BENCHSPEC Stage 4) *(demo run by Nick
+   2026-08-15 — PASS: interactive stream 15 fps to the browser +
+   services live; fixture restored + S6 baseline 33.0 fps PASS after;
+   PR open. BENCHSPEC Stages 0–4 ALL COMPLETE — stage 5 = ADIN swap-in
+   on hardware day)* — light/camera
    services on bm_service/pubsub, gateway_ipc uplink, power HAL sim;
    time sync gated on RTC-backend decision (BENCHSPEC §9.5).
    → CODE COMPLETE 2026-08-15 (nibbles 1–2; plan + 6 decision points

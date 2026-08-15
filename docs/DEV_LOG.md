@@ -122,6 +122,21 @@ nibble-4 PR (repo + fork). AFTER the demo: fixture main.py restore
 (55fa6ccf…) + sha-verify + S6 USB baseline re-run + python-client
 uplink injection (needs an interactive second shell).
 
+**DEMO RUN BY NICK 2026-08-15 — PASS ("this is fantastic"):** live
+interactive session from his own terminals — `stream 2.0 15 60` from
+the Telemetry CLI → CAM_REPLY ok=1 → 15.0 fps steady, dropped=0,
+ingest 191+ frames while he watched, browser stream live at
+nereus001:8080 (daylight frames ~5 KB vs the rehearsal's 1.9 KB night
+frames — scene-bound rate demonstrated in the wild). Close-out:
+apps stopped, LED trigger restored (mmc0), bridge quiet-exited
+(ops-rule refresher en route: a polling mpremote loop feeds the quiet
+timer and deadlocks the exit — true zero-contact silence required),
+**fixture restored + sha-verified 55fa6ccf… (clears S16's pending
+restore too) + S6 USB baseline re-run PASS (QVGA q90: 33.0 fps,
+0 gaps, 0 bad JPEGs)**. Board state: S6 fixture service standing; S17
+stack staged inert on /flash (bm_he.elf 3cdd1f66…, bridge, pumps,
+reef bmp). PR opened (nibble 4).
+
 ---
 
 ## 2026-08-14 — Sprint S16 (BUILD-2) — AE3 joins the chain: code complete, both Pis deployed; live bring-up waits at the VCP gate
