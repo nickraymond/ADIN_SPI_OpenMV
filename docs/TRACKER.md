@@ -1,13 +1,14 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**S18 bite C2 CODE + TESTS DONE, awaiting
-Nick's demo (nibble 3).** Branch `sprint/18-bench-gallery` from `main` @
+*Last updated: 2026-08-16 (**S18 bite C2 DEMO RUN AND PASSED BY NICK — the
+gallery, compare view, histograms and the failure banner all work in a real
+browser; PR open (nibble 4).** Branch `sprint/18-bench-gallery` from `main` @
 `db82181`: gallery from bite B's **sidecars**, side-by-side compare,
 RGB+luma histograms, and the C1 follow-up banner for a non-`ok`
 `cam_reply.state`. Pi-side only, **zero board contact**; host tests
-42 → **67**. The page is UNVERIFIED IN A REAL BROWSER (both agent browsers
-were unavailable) — first item of the demo. **The AE3 fixture restore is
+42 → **67**. **NEXT = bite B2** (the sensor re-init race) and **bite D2**
+(demo ladder + docs); after those S18 can close. **The AE3 fixture restore is
 deliberately NOT done: it is folded into bite B2's single board window
 AFTER this demo**, because `demo_up.sh` re-stages the bridge launcher
 anyway. **Corrected from an artifact: `capture 50 hd mono` HAS run once**
@@ -829,12 +830,14 @@ the nodes are systemd units. Do the harness before the features.)*
       the HTTP status line, fails latin-1, and **drops the connection
       instead of answering 404**. Fixed (reason moved to the body) and
       regression-tested.
-      **NOT verified: the page in a real browser.** The sandboxed browser
-      pane refuses `localhost` and the Chrome extension is not connected,
-      so the canvas/histogram/compare paths have host-side structural tests
-      (every `getElementById` target exists, braces/backticks balance) but
-      no live render. That is nibble 3's first item.
-      **Remaining: nibble 3 (Nick runs the demo) → nibble 4 PR.**
+      ~~**NOT verified: the page in a real browser.**~~ The agent could not
+      render it (the sandboxed pane refuses `localhost`, the Chrome
+      extension was not connected), so it shipped with host-side structural
+      tests only — every `getElementById` target exists, braces/backticks
+      balance. **Closed by the demo below**, which is a real browser.
+      → **DEMO RUN AND PASSED BY NICK 2026-08-16 → nibble 4 (PR).** The
+      page renders, the gallery lists the stored captures, the compare view
+      and the histograms work, and the banner fires on a dead camera node.
 - [ ] Bite C (original scope, for reference) — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual

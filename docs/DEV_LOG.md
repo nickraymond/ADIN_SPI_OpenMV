@@ -99,7 +99,17 @@ after this demo: stage the neutral `main.py`, run
 discharges the standing session-end restore. Written into the TRACKER under
 B2 so it is not re-derived.
 
-**Next:** nibble 3 — Nick runs the demo (browser render first), then the PR.
+**Nibble 3 — DEMO RUN AND PASSED BY NICK (2026-08-16).** The page renders in
+a real browser, the gallery lists the stored captures, the compare view and
+the histograms work, and the banner fires on a dead camera node. That also
+closes the one thing this bite shipped unverified: no agent browser could
+reach the page, so the canvas paths had structural tests and no live render
+until Nick's run. Nibble 4 (PR) follows.
+
+**Next:** **bite B2** — the sensor re-init race, whose nibble 1 is the probe.
+Run it as **one board window**: stage the neutral `main.py`, run
+`bench/probes/s18_reinit_probe.py`, leave the fixture in place. Then bite D2
+(demo ladder + docs), and S18 can close.
 
 ---
 
