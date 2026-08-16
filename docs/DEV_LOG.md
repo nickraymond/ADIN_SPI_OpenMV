@@ -101,8 +101,18 @@ harness classifier blocks the agent from pushing to the fork, same as S17)
 **Bench state:** both units stopped; repo checkouts on
 `sprint/18-bench-control` at `e05b653`; fork at `8c0ff7a` on both Pis;
 `~/bench_captures/` on nereus001 holds the verified stills + sidecars.
-AE3 fixture restore attempted this session (repo `main.py` =
-`55fa6ccfdd3f7f65`) — **verify before trusting it**.
+**AE3 fixture NOT restored — three attempts, all failed on port
+contention**, and the board's `/flash/main.py` was never read back
+successfully, so its state is **unverified** (most likely still the
+bridge launcher `170e637c…`, which `demo_up.sh` stages anyway). The
+deadlock: writing flash needs the raw REPL; `mpremote` entering the raw
+REPL soft-resets the board; the soft reset runs `main.py` = the bridge
+launcher; the bridge then holds the VCP for ≥30 s. Windows do open
+between quiet-exits, and one `mpremote cat` did succeed mid-session, so
+this is a serialisation problem rather than a hard block: **one command,
+after ≥60 s of genuinely zero port contact, with nothing else touching
+the port.** Restore for Nick (repo `main.py` = `55fa6ccfdd3f7f65`):
+`mpremote connect $P cp firmware/ae3_usb/main.py :/flash/main.py`.
 
 **Next:** the sensor re-init fix in `firmware/bm_bridge/bm_bridge.py`
 (bridge-only — no fork push, no HE rebuild), then re-run the full matrix,
