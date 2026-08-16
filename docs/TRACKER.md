@@ -687,8 +687,10 @@ the nodes are systemd units. Do the harness before the features.)*
       **the UI disables its capture/stream controls until the previous
       capture completes, plus a settle**, which is what an operator would
       want anyway. Bite B2 then removes the hazard underneath.
-      Constants: build against the **approved mockup** (Nick approved it
-      2026-08-16; preserved copy carries the reviewed layout, `RES`/`MEAS`
+      Constants: build against the **approved mockup, now in the repo at
+      `docs/mockups/s18_bench_mockup.html`** (Nick approved it
+      2026-08-16; `docs/mockups/README.md` lists what carries over and
+      what must change). It carries the reviewed layout, `RES`/`MEAS`
       tables, `BRIDGE_DERATE`, histogram panel, warning box, pill and
       compare view). Its fps model is EXTRAPOLATED from one measured
       point — label it as such in the UI until B2's matrix replaces it
