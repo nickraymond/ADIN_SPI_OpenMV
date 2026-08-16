@@ -632,8 +632,11 @@ the nodes are systemd units. Do the harness before the features.)*
       **gallery + side-by-side compare view**, **RGB+luma histograms**
       (canvas, client-side, live + per-still — the OpenMV-IDE-style
       levels view).
-- [~] **Bite D — DO THIS FIRST (promoted 2026-08-16, Nick). systemd
-      units for the bench nodes — no longer optional.** Plan below was
+- [x] **Bite D — DO THIS FIRST (promoted 2026-08-16, Nick). systemd
+      units for the bench nodes — no longer optional.** *(acceptance run
+      on the live chain 2026-08-16 by Claude at Nick's "follow all these
+      steps yourself and verify" — all three items PASS; PR pending.)*
+      Plan below was
       written at the end of the S19 session and reviewed by Nick; the
       fresh agent should re-derive rather than trust it blindly, but it
       is a starting point, not a blank page.
@@ -706,11 +709,41 @@ the nodes are systemd units. Do the harness before the features.)*
       does not spin) · `systemctl stop` = 1.06 s, **zero processes**,
       `/run/bm` removed. Bench restored to exactly as found (unit
       uninstalled, no processes, stream server active).
-      **NOT yet proven, stated rather than skipped:** anything needing
-      the chain — `bm-light` start, the `ExecStop`-pushes-`stop` path
-      (the FIFO write succeeded in 1.06 s, but with no camera there is
-      nothing to observe acting on it), and the 600 s run under units.
-      That is nibble 3.
+      → **NIBBLE 3 DONE 2026-08-16 on the live chain — ALL THREE
+      ACCEPTANCE ITEMS PASS.** Units installed on both Pis from
+      `c0b57b0`; installed-file sha verified identical to the repo on
+      both, `NeedDaemonReload=no`.
+      **(1) Double start = no-op.** `systemctl start` twice on each unit:
+      MainPID unchanged (telemetry 95020, light 4289), **one process
+      each, `NRestarts=0`.** The wedge cannot be re-created by hand.
+      **(2) 600 s stream under units: `stream 2.0 15 600` → 9,092 frames,
+      15.15 fps avg, 643 TEL_STAT lines and NOT ONE with a nonzero
+      `dropped/gaps/hdr_errs/q_drops/ingest_fail`**, one producer on
+      `:8081` throughout, zero restarts. Same frame count as S19's
+      bridge ledger for the equivalent run.
+      **(3) Stop is real, and it stops the camera.** With **585 s of
+      stream still commanded**, `systemctl stop` took 1.06 s and left
+      **zero processes, no `/run/bm`, ingest released**; on restart
+      `cam-status` twice 8 s apart returned **identical `pub_ok=19594
+      pub_bytes=18561473` with `mode=0`** — the AE3 had stopped, which is
+      S19's second contaminator eliminated. (This was the one path with
+      no rehearsal behind it.)
+      Also proven live en route: the FIFO CLI carries real camera work —
+      `capture 50 qvga color` then **`capture 50 hd color` → 1280×800,
+      20,669 B, valid SOI→EOI at `:8080/frame.jpg`, `pub_errs=0
+      gaps=0`** (20 KB not 42 KB because the room is dark, matching the
+      S19 record; it cannot be a stale frame — the only earlier frame
+      this session was QVGA). `chain_status.sh` PASS on both hosts before
+      and after. `SyslogIdentifier` confirmed live (`bm-telemetry[95020]`,
+      not `sh[...]`); the LED `ExecStartPre` confirmed by
+      `LIGHT_STAT … led=sysfs`.
+      **Teardown:** both units stopped (zero processes both hosts), ACT
+      LED trigger restored to `[mmc0]` and permissions tightened.
+      **AE3 NOT restored — `/flash/main.py` is still the bridge launcher
+      (`170e637c…`), not the S6 fixture (`55fa6ccf…`).** Board flash
+      writes were blocked for the agent this session; the restore is one
+      command for Nick (README §S18 bite D / DEV_LOG). **Remaining:
+      nibble 4 (PR).**
 - [ ] Bite D2 — demo ladder + docs (the remainder of the old bite D).
 **Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
 q90 stills → compare view shows both + histograms → start a VGA stream
