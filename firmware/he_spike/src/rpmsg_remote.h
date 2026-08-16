@@ -59,6 +59,18 @@ bool rr_announce(rpmsg_remote_t *rr, const char *name);
 // Returns number of messages consumed.
 uint32_t rr_poll(rpmsg_remote_t *rr);
 
+// Same, but consume at most max_msgs (0 = unbounded, i.e. rr_poll).
+//
+// S19 bite 2: rr_poll drains the WHOLE avail ring before returning, so a
+// caller whose loop is "poll, then service TX" never services TX while a
+// burst is arriving. Measured consequence on bm_he (DESIGN §S19): every
+// published chunk's 1,488 B L2 frame copy stayed on the FreeRTOS heap
+// until the burst ended, and the 14th chunk of an HD frame could not
+// allocate -- `freertos: malloc failed`. A budget lets the caller
+// interleave. Unbounded remains the default so he_spike (the other
+// caller, and the S10 bite-1 artifact) is byte-identical.
+uint32_t rr_poll_n(rpmsg_remote_t *rr, uint32_t max_msgs);
+
 // Send one message to dst (usually rr->peer_addr). Returns false if no
 // free tx buffer (caller retries; the host recycles buffers as it reads).
 bool rr_send(rpmsg_remote_t *rr, uint32_t dst, const void *data,

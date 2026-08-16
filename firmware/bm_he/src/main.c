@@ -48,6 +48,16 @@
 #include "wire_frag.h"
 
 #define VDEV_DRIVER_OK 0x04u
+// S19 bite 2: rpmsg messages consumed per wire-task loop iteration.
+// Unbounded polling (the S16 behaviour) drains the whole inbound ring
+// before wire_pump_tx() ever runs, so a back-to-back WCMD_PUB burst
+// publishes every chunk with nothing draining and each chunk's 1,488 B
+// frame copy stays on the heap -- the 14th kills the core (measured,
+// DESIGN §S19). A 1,400 B chunk is 3 messages, so a budget of 4 caps
+// outstanding publishes at ~2 (~3 KB) against the 20,712 B free heap.
+// Raise it if relay throughput regresses: bigger budget = more batching
+// and a lower heap floor, and the probe measures that trade directly.
+#define WIRE_POLL_BUDGET 4u
 // Per-message payload budget after the wire header (492 B); full L2
 // frames up to 1514 B span ceil(1514/492) = 4 messages (wire_frag.h).
 #define WIRE_MSG_PAYLOAD (RPMSG_BUF_SIZE - 16u /*rpmsg hdr*/ - sizeof(wire_hdr_t))
@@ -228,39 +238,56 @@ static void wire_rx(void *arg, uint32_t src, const uint8_t *data,
 
 // ---- HE -> host: forward stack TX frames ---------------------------------
 
+// NEVER BLOCKS (S19 bite 2, rehearsal finding). The old body retried
+// rr_send 100 x 1 ms per message, which parks the wire task -- and this
+// is the same task that consumes inbound rpmsg. Parked, it stops
+// draining WCMD_PUB, so the HP->HE ring fills, so the bridge blocks
+// inside a single ept.send, so it never reaches its next drain point and
+// cannot recycle the HE->HP buffers this pump is waiting for. Measured:
+// a deadlock broken only by the HP's 1 s send timeout, after exactly one
+// chunk published.
+//
+// So: send what we can, keep our exact place, and go back to the loop.
+// The frame and its fragment iterator persist across calls, so nothing
+// is lost or reordered; congestion now shows up as the byte-bounded TX
+// queue filling (a counted drop), which is where a bounded system should
+// feel it.
 static void wire_pump_tx(void) {
-    netwire_tx_frame_t frame;
     static uint8_t msg[RPMSG_BUF_SIZE];   // wire task only
+    static netwire_tx_frame_t cur;
+    static wire_frag_iter_t it;
+    static uint16_t pending;    // bytes in msg[] not yet accepted, 0 = none
+    static bool have_frame;
 
-    while (bm_net_wire_pop_tx(&frame, 0)) {
-        wire_frag_iter_t it;
-        wire_frag_start(&it, WCMD_FRAME_TX, frame.port, frame.data,
-                        frame.len);
-        uint16_t n;
-        while ((n = wire_frag_next(&it, msg, WIRE_MSG_PAYLOAD)) != 0) {
-            // Retry briefly: the host recycles buffers as it reads.
-            bool sent = false;
-            for (int tries = 0; tries < 100; tries++) {
-                if (rr_send(&s_rr, s_rr.peer_addr, msg, n)) {
-                    sent = true;
-                    break;
+    for (;;) {
+        if (pending) {
+            if (!rr_send(&s_rr, s_rr.peer_addr, msg, pending)) {
+                // Ring full: the host has not recycled yet. Keep the
+                // message exactly as it is and let the caller breathe --
+                // the next loop iteration retries it before anything else.
+                he_sample_note_tx_stall();
+                if (he_sample_tx_stalls() <= 4u) {
+                    he_dbg_printf("wire: tx ring full, stall #%lu (%u B)\n",
+                                  (unsigned long)he_sample_tx_stalls(),
+                                  (unsigned)pending);
                 }
-                vTaskDelay(pdMS_TO_TICKS(1));
+                return;
             }
-            if (!sent) {
-                // S19 bite 1: this drop was SILENT -- no counter, no log,
-                // and it is exactly what a host that stops draining the
-                // vring mid-burst produces. Count it always; narrate the
-                // first few (the ring must not be flooded during a burst).
-                he_sample_note_rpmsg_drop();
-                if (he_sample_rpmsg_drops() <= 4u) {
-                    he_dbg_printf("wire: rpmsg tx drop #%lu (%u B)\n",
-                                  (unsigned long)he_sample_rpmsg_drops(),
-                                  (unsigned)n);
-                }
-            }
+            pending = 0;
         }
-        bm_free(frame.data);
+        if (have_frame) {
+            pending = wire_frag_next(&it, msg, WIRE_MSG_PAYLOAD);
+            if (pending == 0) {
+                bm_free(cur.data);
+                have_frame = false;
+            }
+            continue;
+        }
+        if (!bm_net_wire_pop_tx(&cur, 0)) {
+            return;
+        }
+        wire_frag_start(&it, WCMD_FRAME_TX, cur.port, cur.data, cur.len);
+        have_frame = true;
     }
 }
 
@@ -477,7 +504,9 @@ static void wire_task(void *param) {
         SP->rx_count = s_rr.stat_rx;
         SP->tx_count = s_rr.stat_tx;
 
-        uint32_t got = rr_poll(&s_rr);
+        // Bounded poll: TX must get a turn between inbound messages, or
+        // the publisher starves its own drain (S19 bite 2).
+        uint32_t got = rr_poll_n(&s_rr, WIRE_POLL_BUDGET);
         wire_pump_tx();
         wire_pump_capture();
 

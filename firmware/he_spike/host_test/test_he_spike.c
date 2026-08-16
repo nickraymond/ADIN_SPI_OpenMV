@@ -304,6 +304,43 @@ int main(void) {
     CHECK(bad == 0, "%u bad pump frames", bad);
     CHECK(rr.stat_tx_stall > 0, "expected tx back-pressure across 3 wraps");
 
+    // [6b] S19 bite 2: rr_poll_n's budget. The bm_he wire task services
+    // TX only after the poll returns, so an unbounded poll starves its
+    // own drain during a burst (DESIGN §S19: HD died at chunk 14).
+    // Budget semantics have to hold exactly: consume at most N, leave
+    // the rest queued, and 0 means "as before".
+    while (host_recv(&src, &dst, buf, sizeof(buf)) >= 0) {
+        ;                          // drain leftovers from [6]
+    }
+    for (int i = 0; i < 10; i++) {
+        buf[0] = BCMD_ECHO;
+        buf[1] = (uint8_t)i;
+        host_send(BENCH_EPT_ADDR, buf, 2);
+    }
+    CHECK(rr_poll_n(&rr, 4) == 4, "budget 4 consumed != 4");
+    CHECK(rr_poll_n(&rr, 4) == 4, "second budget 4 consumed != 4");
+    CHECK(rr_poll_n(&rr, 4) == 2, "remainder consumed != 2");
+    CHECK(rr_poll_n(&rr, 4) == 0, "empty ring consumed != 0");
+    int echoes = 0;
+    while ((n = host_recv(&src, &dst, buf, sizeof(buf))) >= 0) {
+        if (n == 2 && buf[0] == BREP(BCMD_ECHO)) {
+            CHECK(buf[1] == (uint8_t)echoes, "budgeted polls reordered");
+            echoes++;
+        }
+    }
+    CHECK(echoes == 10, "budgeted polls delivered %d != 10", echoes);
+    // 0 = unbounded, which is what rr_poll() itself passes -- he_spike's
+    // own loop must be byte-identical in behaviour to before this bite.
+    for (int i = 0; i < 6; i++) {
+        buf[0] = BCMD_ECHO;
+        buf[1] = (uint8_t)i;
+        host_send(BENCH_EPT_ADDR, buf, 2);
+    }
+    CHECK(rr_poll_n(&rr, 0) == 6, "budget 0 must drain the ring");
+    while (host_recv(&src, &dst, buf, sizeof(buf)) >= 0) {
+        ;
+    }
+
     // [7] remote restart mid-session: cursors resume from used->idx
     rpmsg_remote_t rr2;
     CHECK(rr_init(&rr2, (uintptr_t)shm, OFF, BENCH_EPT_ADDR,

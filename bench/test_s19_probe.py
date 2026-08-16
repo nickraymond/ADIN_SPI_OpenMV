@@ -95,6 +95,19 @@ def test_plan_holds_one_variable():
     check(all(c == 26 and s == 1400 for (c, s, _, _) in pace),
           "pace phase holds the burst shape fixed")
     check(p.plan("nope") == [], "unknown phase plans nothing")
+    v = p.plan("verify")
+    shapes = set((c, s) for (c, s, _, _) in v)
+    check((26, 1400) in shapes and (16, 1400) in shapes,
+          "verify phase re-runs both bursts that killed the HE")
+    check(all(pace == 0 for (_, _, pace, _) in v),
+          "verify runs UNPACED -- pacing is not the fix being tested")
+    check(any(not drain for (_, _, _, drain) in v),
+          "verify keeps a non-draining row: backpressure must be "
+          "sender-visible, not a dead core")
+    check(any(drain for (_, _, _, drain) in v),
+          "verify also models the fixed bridge, which drains as it pushes")
+    check(max(c * s for (c, s, _, _) in v) > 36400,
+          "verify pushes past the HD burst to find the new limit")
 
 
 # ---- 2. the decoder matches he_sample.c -----------------------------------

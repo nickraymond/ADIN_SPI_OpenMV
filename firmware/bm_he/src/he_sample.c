@@ -16,11 +16,11 @@ uint32_t he_plat_heap_min(void);
 uint32_t he_plat_tick_ms(void);
 
 static he_sample_page_t *s_page;
-static uint32_t s_rpmsg_drops;
+static uint32_t s_tx_stalls;
 
 void he_sample_init(void *page) {
     s_page = (he_sample_page_t *)page;
-    s_rpmsg_drops = 0;
+    s_tx_stalls = 0;
     if (!s_page) {
         return;
     }
@@ -52,16 +52,16 @@ void he_sample_pub(uint16_t idx, uint16_t count, uint16_t len, int err) {
     r->heap_min = he_plat_heap_min();
     r->tx_dropped = st.tx_dropped > 0xFFFFu ? 0xFFFFu
                                             : (uint16_t)st.tx_dropped;
-    r->rpmsg_drops = s_rpmsg_drops > 0xFFFFu ? 0xFFFFu
-                                             : (uint16_t)s_rpmsg_drops;
+    r->tx_stalls = s_tx_stalls > 0xFFFFu ? 0xFFFFu
+                                         : (uint16_t)s_tx_stalls;
     r->tick_ms = he_plat_tick_ms();
 
     // Record complete -> publish it (see he_sample.h, torn-record rule).
     s_page->count = s_page->count + 1;
 }
 
-void he_sample_note_rpmsg_drop(void) { s_rpmsg_drops++; }
+void he_sample_note_tx_stall(void) { s_tx_stalls++; }
 
-uint32_t he_sample_rpmsg_drops(void) { return s_rpmsg_drops; }
+uint32_t he_sample_tx_stalls(void) { return s_tx_stalls; }
 
 const he_sample_page_t *he_sample_get_page(void) { return s_page; }

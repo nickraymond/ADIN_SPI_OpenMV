@@ -144,6 +144,27 @@ def plan(phase):
                 (13, 1400, 0, False),    # C
                 (52, 700, 0, False),     # B
                 (104, 350, 0, False)]    # D
+    if phase == "verify":
+        # S19 bite 2 acceptance: every row that killed the HE in bite 1,
+        # unpaced and with the HP deliberately not draining, plus two the
+        # old build could not reach. Predicted with the bounded poll in
+        # place: all survive, heap floor ~19,184 (about one chunk
+        # outstanding), tx_dropped 0. A materially lower floor falsifies
+        # the model and puts bite 3 (bigger heap) back on the table.
+        # drain=True mirrors the FIXED bridge, which now services the
+        # HE->HP direction every chunk (send_chunk_msgs). The last row
+        # keeps drain=False on purpose: with the bounded poll the HE
+        # stops swallowing what it cannot drain, so a non-draining sender
+        # now hits an ept.send timeout -- backpressure reported to the
+        # sender instead of a dead core. That is the behaviour change,
+        # and it deserves a row of its own rather than a footnote.
+        return [(26, 1400, 0, True),     # the HD burst -- died at 13
+                (16, 1400, 0, True),     # the first killer row
+                (52, 700, 0, True),      # survived before, by DROPPING 36
+                (104, 350, 0, True),     # never reached in bite 1
+                (60, 1400, 0, True),     # 84 KB -- past HD, finds the new
+                                         #   limit rather than assuming
+                (26, 1400, 0, False)]    # backpressure, sender-visible
     if phase == "pace":
         # Does time-between-chunks buy drain, and does draining during
         # the burst do what pacing does? (bite 2's premise, as a knob)
@@ -179,7 +200,7 @@ def decode_page(buf):
         f = struct.unpack_from(SAMPLE_REC_FMT, buf, off)
         recs.append({"idx": f[0], "count": f[1], "len": f[2], "err": f[3],
                      "txq": f[4], "heap_free": f[5], "heap_min": f[6],
-                     "tx_dropped": f[7], "rpmsg_drops": f[8],
+                     "tx_dropped": f[7], "tx_stalls": f[8],
                      "tick_ms": f[9]})
     return {"ok": True, "version": version, "capacity": capacity,
             "count": count, "recs": recs}
@@ -199,10 +220,10 @@ def recs_since(page, mark):
 
 def fmt_rec(r):
     return ("    chunk %3d/%-3d len=%4d err=%d txq=%2d heap=%6d min=%6d "
-            "txdrop=%d rpdrop=%d t=%d"
+            "txdrop=%d stall=%d t=%d"
             % (r["idx"], r["count"], r["len"], r["err"], r["txq"],
                r["heap_free"], r["heap_min"], r["tx_dropped"],
-               r["rpmsg_drops"], r["tick_ms"]))
+               r["tx_stalls"], r["tick_ms"]))
 
 
 def verdict(rows):
@@ -271,7 +292,7 @@ def he_alive(wire=None):
         return True, "ticking"
     if wire is None:
         return False, "tick frozen, no wire to ask"
-    if wire.query(timeout_ms=5000) is not None:
+    if wire.try_query(timeout_ms=5000) is not None:
         return True, "TICK FROZEN but answered a query -- TX drain stall"
     return False, "tick frozen AND no reply"
 
@@ -309,6 +330,7 @@ class Wire:
         self.status = None
         self.rx_msgs = 0
         self.rx_bytes = 0
+        self.send_timeouts = 0
 
     def _ns(self, src, name):
         if name == "bm-wire":
@@ -349,6 +371,13 @@ class Wire:
         t0 = time.ticks_ms()
         n = 0
         while True:
+            # YIELD FIRST. The _rx callback is what returns the rpmsg
+            # buffer to the vring, and MicroPython only runs it when the
+            # VM yields -- popping our own list recycles nothing. Without
+            # this sleep, drain() looked like draining and did nothing
+            # (found live, S19 bite 2: it silently invalidated the
+            # drain=True rows of bite 1's sweep).
+            time.sleep_ms(1)
             while self.queue:
                 m = self.queue.pop(0)
                 n += 1
@@ -378,6 +407,18 @@ class Wire:
                 break
         return total, time.ticks_diff(time.ticks_ms(), t0)
 
+    def try_query(self, timeout_ms=2000):
+        """query() that tolerates a blocked send. With the bounded poll
+        (S19 bite 2) the HE stops consuming inbound while its TX is
+        backed up, so even a status request can time out in ept.send --
+        that is backpressure working, not a failure to report."""
+        try:
+            return self.query(timeout_ms)
+        except Exception as e:
+            self.send_timeouts += 1
+            log("  (query send blocked: %r)" % (e,))
+            return None
+
     def query(self, timeout_ms=2000):
         self.status = None
         self.send(struct.pack("<BBH", WCMD_QUERY, 0, 0))
@@ -395,7 +436,7 @@ def run_row(wire, seq, count, size, pace, drain, mark):
            "published": 0, "lost": 0, "alive": True, "heap_min_end": None,
            "sent_ms": 0, "rpmsg_send_errs": 0}
 
-    st = wire.query()
+    st = wire.try_query()
     row["heap_before"] = st["heap_free"] if st else None
     log("ROW count=%d size=%d pace=%d drain=%s | heap_before=%s"
         % (count, size, pace, drain, row["heap_before"]))
@@ -412,7 +453,11 @@ def run_row(wire, seq, count, size, pace, drain, mark):
             wire.send(m)
         except Exception as e:
             row["rpmsg_send_errs"] += 1
-            log("  send failed at msg %d: %r" % (i, e))
+            # With the bounded poll this is the HE telling the sender to
+            # wait (it stopped consuming what it could not drain), not a
+            # fault. The real bridge drains as it pushes, so it recycles
+            # the vring instead of blocking here.
+            log("  send blocked at msg %d of %d: %r" % (i, len(msgs), e))
             break
         if per_chunk and (i + 1) % per_chunk == 0:
             if drain:
@@ -442,7 +487,7 @@ def run_row(wire, seq, count, size, pace, drain, mark):
         log(fmt_rec(r))
     if row["alive"]:
         # The recovery number: did the heap the burst consumed come back?
-        st = wire.query()
+        st = wire.try_query()
         if st:
             row["heap_after"] = st["heap_free"]
             log("  AFTER heap_free=%d (before %s, recovered %s) heap_min=%d "

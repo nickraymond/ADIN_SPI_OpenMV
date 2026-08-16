@@ -28,6 +28,17 @@
 
 #define NETWIRE_NUM_PORTS 1
 #define NETWIRE_TXQ_LEN   16
+// S19 bite 2: the queue is bounded by BYTES as well as frames, because
+// the frame bound alone sits on the wrong side of the heap. Each queued
+// frame is a bm_malloc copy; 16 x 1,488 B (a 1,400 B camera chunk) =
+// 23.8 KB against 20,712 B of free FreeRTOS heap at RUNNING (measured,
+// DESIGN §S19), so at the production chunk size the fatal allocation
+// failure beats the survivable queue-full drop. At 700 B frames the
+// queue filled first and the node lived -- lossy, but counted and alive.
+// 12 KB is ~8 HD chunks and leaves ~8.7 KB for lwIP and everything else.
+// With the bounded poll in place this should never trigger; it exists so
+// that if it ever does, the result is a counted drop and not a dead core.
+#define NETWIRE_TXQ_MAX_BYTES 12288u
 #define NETWIRE_MAX_FRAME 1514u  // BENCHSPEC REV-14: network-wide max L2
                                  // frame, enforced HERE at the sender (the
                                  // Light node's logged drop is the
@@ -54,6 +65,9 @@ typedef struct {
     // one task is race-free by construction. Depth = pushed - popped.
     uint32_t txq_pushed;     // frames enqueued (writer: wire_send)
     uint32_t txq_popped;     // frames dequeued (writer: pop_tx/wire task)
+    uint32_t txq_bytes_in;   // bytes enqueued (writer: wire_send)
+    uint32_t txq_bytes_out;  // bytes dequeued (writer: pop_tx/wire task)
+    uint32_t tx_dropped_bytes;   // drops attributed to the byte bound
     bool link_up;            // as reported to l2 (via retry_negotiation)
     bool bridge_link;        // as last announced by the HP bridge
     bool enabled;

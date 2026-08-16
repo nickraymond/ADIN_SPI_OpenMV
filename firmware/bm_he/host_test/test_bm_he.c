@@ -640,7 +640,7 @@ static void test_he_sample(void) {
     CHECK(he_sample_get_page() == &page);
     CHECK(page.magic == HE_SAMPLE_MAGIC && page.version == HE_SAMPLE_VERSION);
     CHECK(page.capacity == HE_SAMPLE_CAP && page.count == 0);
-    CHECK(he_sample_rpmsg_drops() == 0);
+    CHECK(he_sample_tx_stalls() == 0);
 
     // A published chunk carries its own position; the record must show
     // the frame's idx/count, not a sample serial.
@@ -706,13 +706,13 @@ static void test_he_sample(void) {
     camera_svc_publish(chunk, 1400);
     CHECK(page.rec[6].txq_depth == depth0);
 
-    // Silent rpmsg drops (main.c wire_pump_tx) surface in the next record.
-    he_sample_note_rpmsg_drop();
-    he_sample_note_rpmsg_drop();
-    CHECK(he_sample_rpmsg_drops() == 2);
+    // TX ring stalls (main.c wire_pump_tx) surface in the next record.
+    he_sample_note_tx_stall();
+    he_sample_note_tx_stall();
+    CHECK(he_sample_tx_stalls() == 2);
     chunk_fill(chunk, 7, 9, 26, 1390);
     camera_svc_publish(chunk, 1400);
-    CHECK(page.rec[7].rpmsg_drops == 2);
+    CHECK(page.rec[7].tx_stalls == 2);
 
     // Wrap: count is the total ever written, slot is count % capacity, so
     // a long run overwrites oldest-first and the reader can still order it.
@@ -731,8 +731,65 @@ static void test_he_sample(void) {
     CHECK(he_sample_get_page() == NULL);
     chunk_fill(chunk, 9, 0, 1, 100);
     camera_svc_publish(chunk, 110);
-    he_sample_note_rpmsg_drop();
-    CHECK(he_sample_rpmsg_drops() == 1);
+    he_sample_note_tx_stall();
+    CHECK(he_sample_tx_stalls() == 1);
+}
+
+// S19 bite 2: the TX queue is bounded by BYTES as well as frames,
+// because 16 x 1,488 B exceeds the 20,712 B free heap (DESIGN §S19) --
+// at the production chunk size the fatal allocation beat the survivable
+// queue-full drop. The bound must bite BEFORE the frame count does.
+static void test_txq_byte_bound(void) {
+    NetworkDevice dev = bm_net_wire_device();
+    netwire_tx_frame_t f;
+    static uint8_t frame[1500];
+    memset(frame, 0x77, sizeof(frame));
+
+    while (bm_net_wire_pop_tx(&f, 0)) {       // start from empty
+        bm_free(f.data);
+    }
+    netwire_stats_t before = bm_net_wire_stats();
+    CHECK(before.txq_pushed == before.txq_popped);
+    CHECK(before.txq_bytes_in == before.txq_bytes_out);
+
+    // 1,400 B camera chunks: 8 fit under 12 KB, the 9th must be refused
+    // with the queue only half full by frame count.
+    int accepted = 0;
+    for (int i = 0; i < NETWIRE_TXQ_LEN; i++) {
+        if (dev.trait->send(dev.self, frame, 1400, 1) == BmOK) {
+            accepted++;
+        } else {
+            break;
+        }
+    }
+    netwire_stats_t after = bm_net_wire_stats();
+    CHECK(accepted == 8);
+    CHECK(accepted < NETWIRE_TXQ_LEN);
+    CHECK(after.txq_bytes_in - after.txq_bytes_out == 8u * 1400u);
+    CHECK(after.tx_dropped == before.tx_dropped + 1);
+    CHECK(after.tx_dropped_bytes == before.tx_dropped_bytes + 1);
+    // The refused frame must not be counted as sent (S16 ledger honesty).
+    CHECK(after.tx_frames == before.tx_frames + 8);
+
+    // Under the bound there is still room for a small frame -- the bound
+    // refuses what does not fit, not everything after the first refusal.
+    CHECK(dev.trait->send(dev.self, frame, 800, 1) == BmOK);
+
+    // Draining returns the bytes, and the queue accepts full frames again.
+    int popped = 0;
+    uint32_t bytes = 0;
+    while (bm_net_wire_pop_tx(&f, 0)) {
+        bytes += f.len;
+        bm_free(f.data);
+        popped++;
+    }
+    CHECK(popped == 9 && bytes == 8u * 1400u + 800u);
+    netwire_stats_t end = bm_net_wire_stats();
+    CHECK(end.txq_bytes_in == end.txq_bytes_out);
+    CHECK(dev.trait->send(dev.self, frame, 1400, 1) == BmOK);
+    while (bm_net_wire_pop_tx(&f, 0)) {
+        bm_free(f.data);
+    }
 }
 
 int main(void) {
@@ -743,6 +800,7 @@ int main(void) {
     test_device_identity();
     test_camera_svc();
     test_he_sample();
+    test_txq_byte_bound();
     test_power_hal();
     printf("bm_he host tests: %d checks, %d failures\n", s_checks, s_fails);
     return s_fails ? 1 : 0;

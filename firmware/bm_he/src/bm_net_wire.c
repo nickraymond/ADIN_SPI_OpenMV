@@ -59,6 +59,20 @@ static BmErr wire_send(void *self, uint8_t *data, size_t length,
         return BmEINVAL;
     }
 
+    // Byte bound checked BEFORE the allocation: the whole point is to
+    // refuse cheaply rather than discover the heap is gone (S19 bite 2).
+    // Drop-when-full is the queue's existing contract -- this only makes
+    // it trigger on the resource that actually runs out first.
+    uint32_t queued = WIRE.stats.txq_bytes_in - WIRE.stats.txq_bytes_out;
+    if (queued + length > NETWIRE_TXQ_MAX_BYTES) {
+        WIRE.stats.tx_dropped++;
+        WIRE.stats.tx_dropped_bytes++;
+        bm_debug("netwire: txq byte bound (%u + %u > %u), frame dropped\n",
+                 (unsigned)queued, (unsigned)length,
+                 (unsigned)NETWIRE_TXQ_MAX_BYTES);
+        return BmENOMEM;
+    }
+
     netwire_tx_frame_t frame = {
         .data = bm_malloc(length),
         .len = (uint16_t)length,
@@ -78,6 +92,7 @@ static BmErr wire_send(void *self, uint8_t *data, size_t length,
 
     WIRE.stats.tx_frames++;
     WIRE.stats.txq_pushed++;
+    WIRE.stats.txq_bytes_in += (uint32_t)length;
     if (frame_is_bcmp_heartbeat(data, (uint16_t)length)) {
         WIRE.stats.hb_seen++;
     }
@@ -189,6 +204,7 @@ bool bm_net_wire_pop_tx(netwire_tx_frame_t *frame, uint32_t timeout_ms) {
         return false;
     }
     WIRE.stats.txq_popped++;
+    WIRE.stats.txq_bytes_out += frame->len;
     return true;
 }
 

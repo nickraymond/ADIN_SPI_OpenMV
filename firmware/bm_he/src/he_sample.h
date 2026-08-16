@@ -46,7 +46,7 @@ typedef struct {
     uint32_t heap_free;    // xPortGetFreeHeapSize() AFTER the publish
     uint32_t heap_min;     // xPortGetMinimumEverFreeHeapSize()
     uint16_t tx_dropped;   // netwire txq-full drops, cumulative
-    uint16_t rpmsg_drops;  // wire_pump_tx retry exhaustion, cumulative
+    uint16_t tx_stalls;    // outbound rpmsg ring found full, cumulative
     uint32_t tick_ms;      // scheduler tick at the sample
 } __attribute__((packed)) he_sample_rec_t;
 
@@ -68,12 +68,13 @@ void he_sample_init(void *page);
 // rather than a sample serial number.
 void he_sample_pub(uint16_t idx, uint16_t count, uint16_t len, int err);
 
-// wire_pump_tx exhausted its rpmsg send retries and dropped a message
-// (main.c). Counted here because the sampler is the only place that
-// reports it -- wire_status_t is a frozen 88 B ABI and this bite does not
-// touch it.
-void he_sample_note_rpmsg_drop(void);
-uint32_t he_sample_rpmsg_drops(void);
+// wire_pump_tx found the outbound rpmsg ring full and returned with
+// the message still pending (main.c). Counted here because the sampler
+// is the only place that reports it -- wire_status_t is a frozen 88 B
+// ABI and this bite does not touch it. A stall is normal backpressure,
+// not a loss: nothing is dropped at this layer any more.
+void he_sample_note_tx_stall(void);
+uint32_t he_sample_tx_stalls(void);
 
 // Host tests read the page back through this (NULL until initialized).
 const he_sample_page_t *he_sample_get_page(void);
