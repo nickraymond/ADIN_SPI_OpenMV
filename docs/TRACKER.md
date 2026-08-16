@@ -1,16 +1,19 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**S19 bite 1 rung B DONE — the HD publish
-wall is measured**: bytes in flight, not chunk count. Free HE heap at
-RUNNING 20,712 B, one 1,400 B chunk costs exactly 1,488 B, 13 fit and
-the 14th dies with `freertos: malloc failed`; 26 × 350 B is fine.
-Mechanism: the wire task both receives WCMD_PUB and drains the TX
-queue, and `rr_poll` starves the drain. **This falsifies bite 2 as
-written — HP-side pacing is not the fix** (re-specified in place).
-Branch `sprint/19-hd-transport`, repo-only, no ABI/fork change, ELF
-9f40650c… at 94.05%. Remaining in bite 1: rung C, one real HD capture
-on the live chain. Previous:*
+*Last updated: 2026-08-16 (**S19 bites 1 AND 2 DONE (code+rehearsal) —
+HD DELIVERS END TO END**: `capture 50 hd color` lands a valid
+1280×800 / 42,574 B JPEG at the Telemetry browser, 31 chunks,
+pub_errs=0, gaps=0. Bite 1 measured the wall (bytes in flight, not
+chunk count: 20,712 B free heap, 1,488 B per chunk, 13 fit and the
+14th died). Bite 2 fixed it in FOUR parts — bounded `rr_poll_n`,
+bridge drains while pushing, byte-bounded TX queue, and a
+**non-blocking `wire_pump_tx`** that the rehearsal forced after parts
+1–3 turned the heap death into a deadlock. Off-chain acceptance 6/6
+incl. 84,000 B (2.3× HD); regression `stream 2.0 15 600` held 15.0 fps
+with zero gaps/drops over 604 s. Branch `sprint/19-hd-transport`, repo-only, no ABI/fork change, ELF
+4c509d24… at 94.14%. **Remaining: Nick runs README §S19 demos 1–3
+(nibble 3), then the PR**; then bites 3–4. Previous:*
 *2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
 geometry + pixel format plumbed end to end and demoed on the live chain;
 branch `sprint/18-web-bench`, PR open. Two hardware facts bought with
@@ -667,10 +670,15 @@ S18 allocator fault.
       inbound vring is empty, publishing inline, and `wire_pump_tx()`
       only runs after it returns — a back-to-back burst starves the
       drain.** Full table + arithmetic: DESIGN §S19 detail.
-      **Remaining: rung C** — one real `capture 50 hd color` on the live
-      chain with this ELF, to explain S18's 8 chunks vs our 13
-      (prediction: floor(free_heap/1488) with a subscriber live).
-- [ ] Bite 2 — ~~**flow control on the WCMD_PUB burst** (first candidate,
+      **Rung C folded into bite 2** (Nick, 2026-08-16) and run there.
+      **Correction to this bite's mechanism claim:** the `drain=True`
+      rows were invalid — the probe popped its own list without yielding
+      to MicroPython, so no vring buffer was recycled and "HP draining"
+      never happened. The heap arithmetic, the 1,488 B/chunk, the
+      13-chunk wall and bytes-not-count all stand; the pacing rows were
+      confounded (they gave the HP time to recycle AND starved the poll).
+      Resolved in bite 2, which delivers 26/26 with the HP not draining.
+- [~] Bite 2 — ~~**flow control on the WCMD_PUB burst** (first candidate,
       cheapest): the bridge emits a frame's chunks back-to-back with no
       backpressure. Pace them, or have the HE acknowledge drain, so
       bm_pub keeps up.~~ **RE-SPECIFIED by bite 1's measurement — HP-side
@@ -686,6 +694,25 @@ S18 allocator fault.
       so at the production chunk size the fatal malloc beats the
       survivable queue-full drop (at 700 B the queue fills first and the
       node lives, lossy but counted).
+      → **CODE + REHEARSAL DONE 2026-08-16 (nibbles 1–2; plan + 5
+      decision points approved by Nick). HD DELIVERS END TO END:**
+      `capture 50 hd color` → **1280×800, 42,574 B, valid SOI→EOI at
+      nereus001:8080/frame.jpg, 31 chunks, pub_ok=34 pub_errs=0
+      gaps=0** (rung C, folded in here). Four parts, not three —
+      **the rehearsal found that parts 1–3 alone DEADLOCK**: the old
+      `wire_pump_tx` retried `rr_send` 100 × 1 ms and parked the wire
+      task, which is also the task that consumes inbound rpmsg, so the
+      HP blocked inside a single `ept.send` and never reached its next
+      drain point (measured: exactly one chunk published, no
+      `malloc failed`, stack RUNNING). Part 4 = a non-blocking pump that
+      keeps its place across calls. Off-chain acceptance 6/6 including
+      **60 × 1400 B = 84,000 B, 2.3× an HD frame**, zero drops, heap
+      floor 17,704 of 20,680. Sustained regression `stream 2.0 15 600`
+      held 15.0 fps, 0 gaps/drops. Size 246,784 (94.14%), ELF
+      `4c509d24…`, bridge `1524f6c2…`; no ABI change, no fork pin move.
+      Host tests: he_spike 29→45, bm_he 232, bridge 252→262, probe 47.
+      Detail: DESIGN §S19 bite 2. **Remaining: nibble 3 (Nick runs the
+      demo) → nibble 4 PR.**
 - [ ] Bite 3 — only if bite 2 is not enough: raise
       `configTOTAL_HEAP_SIZE` on the HE (RAM, distinct from the ~16 KB
       flash headroom; ELF is at 94.05% of its 256 KB region after bite

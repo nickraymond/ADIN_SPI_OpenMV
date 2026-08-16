@@ -17,6 +17,82 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 2: HD delivers end to end; the first three parts deadlocked and the rehearsal caught it
+
+**Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
+move, `wire_status_t` untouched)
+
+**Done:**
+- Nibble-1 plan approved by Nick with 5 decision points; rung C folded
+  in here as bite 2's verification.
+- **Part 1 — bounded poll.** `rr_poll_n(rr, max_msgs)`; `rr_poll()` stays
+  an unbounded wrapper so he_spike (the other caller, and the S10 bite-1
+  artifact) is untouched. bm_he's wire task uses `WIRE_POLL_BUDGET 4`.
+- **Part 2 — the bridge drains while it pushes** (`send_chunk_msgs`,
+  every 3 messages = every chunk). Not pacing.
+- **Part 3 — byte-bounded TX queue** (`NETWIRE_TXQ_MAX_BYTES 12288`), the
+  net that turns a board-killing allocation into a counted drop.
+- **Part 4 — `wire_pump_tx` never blocks** (see below). Sends what it
+  can, keeps its exact place across calls, returns.
+- **RUNG C — `capture 50 hd color` → 1280×800, 42,574 B, valid
+  SOI→EOI at `nereus001:8080/frame.jpg`, 31 chunks, `pub_ok=34
+  pub_errs=0 gaps=0`.** Ledger exact to the byte: 31 × 10 B headers +
+  42,574 = 42,884 = the `pub_bytes` delta. Checked the S18 stale-frame
+  trap deliberately: no session before this one ever delivered an HD
+  frame, so a 1280×800 frame at that URL cannot be stale.
+- **Off-chain acceptance 6/6, zero drops, zero stalls** — including
+  60 × 1400 B = **84,000 B, 2.3× an HD frame**, and the 26 × 1400 row
+  with the HP deliberately not draining. Heap floor 17,704 of 20,680.
+- **Regression: `stream 2.0 15 600` → 604 s, 8,916 frames, 15.0 fps
+  steady, and not one line in the whole run with a nonzero
+  gaps/dropped/hdr_errs/q_drops/ingest_fail.** This was the real gate:
+  the bounded poll carries all relay traffic. Bridge ledger on exit:
+  `cap_frames=9092 cap_chunks=18992 frag_errors=0 qdrops=0`.
+- Size 246,784 (94.14%, +232 B over bite 1). ELF `4c509d2464412cee`,
+  bridge `1524f6c203f232a0`. Host tests: he_spike 29→**45**, bm_he
+  **232**, bridge 252→**262**, probe **47**. README §S19 demo ladder
+  added; the S18 "DO NOT USE hd" warning retired with a pointer.
+
+**Broke/surprised us:**
+- **Parts 1–3 alone DEADLOCKED, and only the rehearsal found it.** The
+  old pump retried `rr_send` 100 × 1 ms per message, parking the wire
+  task — the same task that consumes inbound rpmsg. Parked, it stopped
+  draining WCMD_PUB, the HP→HE ring filled, and the bridge blocked
+  *inside a single* `ept.send`, so it never reached its next drain point
+  to recycle the buffers the pump was waiting for. Measured: exactly one
+  chunk published (heap 19,192, no `malloc failed`, stack RUNNING), then
+  a 1 s stalemate. Part 2 cannot help — the block happens within one
+  send. Hence Part 4.
+- **A bite-1 claim was wrong and I corrected it.** "HP-side draining
+  alone changes nothing" came from a row whose `drain=True` was a no-op:
+  the probe popped its own Python list, which recycles no vring buffer —
+  only a VM yield lets MicroPython run the callback that does. The heap
+  arithmetic, 1,488 B/chunk, the 13-chunk wall and bytes-not-count all
+  stand; the pacing rows were **confounded** (they gave the HP time to
+  recycle AND starved the poll). Bite 2 separates them: the HE-side fix
+  delivers 26/26 with the HP not draining at all.
+- **Three `ae3-usb-unstick` Pi reboots**, all from contacting the board
+  shortly after a probe run that ended with the HE backpressured — twice
+  on `mpremote reset`, once on a plain `cp`, so my first attribution
+  ("reset racing") was wrong. Part 4 removes the state that provoked it;
+  the ops note is in README §S19 either way.
+- Benign-looking but unexplained: `Error processing parsed cb: 19 of
+  message 5` on the HE ring next to camera/control replies. Not new
+  behaviour that I can attribute to this bite, not investigated —
+  flagged for the next chain session.
+
+**Board state:** fixture restored and sha-verified (`main.py`
+`55fa6ccfdd3f7f65`), board on the bus running the S6 service, apps
+stopped on both Pis, `/flash` carrying the S19 ELF + bridge. **S6 USB
+baseline NOT re-run** (no firmware flash and no sensor contact beyond
+the demo captures; called out rather than skipped silently).
+
+**Next:** nibble 3 — Nick runs README §S19 demos 1–3 → nibble 4 PR.
+Then bites 3 (heap — looking unnecessary) and 4 (HD mono + sustained
+multi-frame HD).
+
+---
+
 ## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 1: the wall measured off-chain — bytes in flight, not chunk count, and the fix is not where the TRACKER put it
 
 **Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin

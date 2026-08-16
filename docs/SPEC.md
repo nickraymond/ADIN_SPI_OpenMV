@@ -262,6 +262,25 @@ pair, USB carrying no video.
     queue fills first and the node survives (lossy, counted). Bounding
     the queue by BYTES rather than frames converts a board-killing
     allocation failure into a counted drop.
+  **CLOSED 2026-08-16 (S19 bite 2 — HD delivers end to end).** Fix:
+  bound the poll (`rr_poll_n`, budget 4) so `wire_pump_tx` gets a turn;
+  make that pump **non-blocking** (it used to retry `rr_send` 100 × 1 ms
+  and park the wire task, which merely converted the heap death into a
+  deadlock — measured: exactly one chunk published); drain the HE→HP
+  direction on the HP while pushing a frame's chunks; bound the netwire
+  TX queue by bytes as a net. Measured on the live chain:
+  **`capture 50 hd color` → 1280×800, 42,574 B, valid SOI→EOI at
+  `nereus001:8080/frame.jpg`, 31 chunks, `pub_ok=34 pub_errs=0
+  gaps=0`.** Off-chain the probe now carries 60 × 1400 B = 84,000 B
+  (2.3× an HD frame) with zero drops; heap floor 17,704 of 20,680.
+  Sustained regression `stream 2.0 15 600` held 15.0 fps with zero
+  gaps/drops. Detail: DESIGN §S19 bite 2.
+  **Caveat on the bite-1 record:** the "HP-side draining alone changes
+  nothing" row was invalid — the probe's drain popped its own list
+  without yielding to MicroPython, so it recycled no vring buffer. The
+  heap arithmetic and the bytes-not-count result are unaffected; the
+  mechanism attribution was confounded and is resolved properly in
+  bite 2 (the HE-side fix delivers 26/26 even with the HP not draining).
 
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA

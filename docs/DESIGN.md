@@ -1614,3 +1614,91 @@ retry reads as dead. Liveness now means "the stack answers a query";
 ticking is only the fast path. The first probe run reported a false
 death from this and the HE ring — `RUNNING`, no `malloc failed` — is
 what caught it.
+
+### S19 detail (2026-08-16) — bite 2: the HD burst delivers, and why the
+### first three parts were not enough
+
+**Result: `capture 50 hd color` lands a complete 1280×800 JPEG at the
+Telemetry node over two BM hops — 42,574 B, valid SOI→EOI, 31 chunks,
+`pub_ok=34 pub_errs=0`, `gaps=0`.** The ledger is exact to the byte:
+31 × 10 B chunk headers + 42,574 JPEG bytes = 42,884 = `pub_bytes`
+delta. No earlier session ever delivered an HD frame, so a 1280×800
+frame at `:8080/frame.jpg` cannot be a stale artifact (the S18
+stale-frame trap, checked deliberately).
+
+**Part 1 — bounded poll (the fix).** `rr_poll_n(rr, max_msgs)` caps how
+many rpmsg messages a poll consumes; `rr_poll()` remains an unbounded
+wrapper so he_spike — the other caller and the S10 bite-1 artifact — is
+untouched. bm_he's wire task uses `WIRE_POLL_BUDGET 4`: a 1,400 B chunk
+is 3 messages, so at most ~2 publishes complete before `wire_pump_tx()`
+runs.
+
+**Part 2 — the bridge drains while it pushes** (`send_chunk_msgs`,
+every 3 messages = every chunk). Not pacing; pacing was measured in bite
+1 and does not fix the heap wall.
+
+**Part 3 — byte-bounded TX queue.** `NETWIRE_TXQ_MAX_BYTES 12288`
+alongside the 16-frame bound, because 16 × 1,488 B = 23.8 KB exceeds the
+20,712 B free heap: at the production chunk size the fatal allocation
+beat the survivable queue-full drop. In every acceptance run it never
+triggered (`tx_dropped=0`), which is the point — it is the net, not the
+mechanism.
+
+**Part 4 — wire_pump_tx never blocks (found by rehearsal, not design).**
+Parts 1–3 alone turned the heap death into a **deadlock**: the old pump
+retried `rr_send` 100 × 1 ms per message, parking the wire task — the
+same task that consumes inbound rpmsg. Parked, it stopped draining
+WCMD_PUB, so the HP→HE ring filled, so the bridge blocked *inside a
+single* `ept.send`, so it never reached its next drain point to recycle
+the HE→HP buffers the pump was waiting for. Measured: **exactly one
+chunk published** (heap 19,192, `tx_stalls=0`, no `malloc failed`, stack
+`RUNNING`), then a stalemate broken only by the HP's 1 s send timeout.
+Part 2 cannot help here — the block happens *within* one send, before
+the next drain point. The pump now sends what it can, keeps its exact
+place (frame + fragment iterator persist across calls) and returns;
+congestion surfaces as the byte-bounded queue filling. The formerly
+silent retry-exhaustion drop is now a counted **stall**
+(`he_sample tx_stalls`, renamed from `rpmsg_drops` — nothing is dropped
+at that layer any more).
+
+**Off-chain acceptance (`s19_pub_probe.py`, phase `verify`) — 6/6, zero
+drops, zero stalls:**
+
+| row | burst | bite 1 | bite 2 |
+|---|---|---|---|
+| 26 × 1400 | 36.4 K | died at chunk 13 | **26/26** |
+| 16 × 1400 | 22.4 K | died at chunk 13 | **16/16** |
+| 52 × 700 | 36.4 K | survived by dropping 36 | **52/52, 0 drops** |
+| 104 × 350 | 36.4 K | never reached | **104/104** |
+| 60 × 1400 | **84.0 K** | never reached | **60/60** (2.3× HD) |
+| 26 × 1400, HP not draining | 36.4 K | died at 13 / deadlocked | **26/26** |
+
+Heap floor 17,704 B against 20,680 idle — about two chunks outstanding,
+which is what a 4-message budget predicts. Predicted 19,184 (one chunk);
+measured slightly lower, consistent with a budget that can span two
+chunk boundaries. The model holds, so bite 3 (raising
+`configTOTAL_HEAP_SIZE`) stays unnecessary.
+
+**Regression:** sustained `stream 2.0 15 600` through the full chain —
+**15.0 fps steady, 0 gaps, 0 dropped, 0 hdr_errs, 0 q_drops**, matching
+S17's demoed number. The bounded poll carries all relay traffic, so this
+was the gate on the whole approach.
+
+**Size:** 246,784 B = 94.14% (bite 1 246,552; bite 2 +232 B). ELF
+`4c509d2464412cee`, bridge `1524f6c203f232a0`. No ABI change, no fork
+pin move.
+
+**Correction to bite 1's mechanism claim.** Bite 1 concluded that
+"HP-side draining alone changes nothing" from a row whose `drain=True`
+was a **no-op**: the probe popped its own Python list, which recycles no
+vring buffer — only letting MicroPython service openamp does, and that
+needs a VM yield the drain loop never took. Found live in bite 2 and
+fixed (`Wire.drain` now yields first). What still stands unchanged: the
+heap arithmetic, the 1,488 B per chunk, the 13-chunk wall, and
+count-vs-bytes (row E). What was **confounded** and should not have been
+stated so flatly: the ≥5 ms pacing rows gave the HP time to recycle
+buffers *as well as* starving `rr_poll`, so bite 1's data could not
+separate those two effects. Bite 2 separates them properly — the last
+acceptance row above has the HP deliberately not draining and still
+delivers 26/26, which is the evidence that the HE-side fix is the load-
+bearing one.
