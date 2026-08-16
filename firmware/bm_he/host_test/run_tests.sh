@@ -27,6 +27,7 @@ cc -std=gnu11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
     "${SRC}/wire_frag.c" \
     "${SRC}/bm_stubs.c" \
     "${SRC}/camera_svc.c" \
+    "${SRC}/he_sample.c" \
     "${SRC}/power_hal_sim.c" \
     "${BM}/common/device.c" \
     -o "${OUT}/test_bm_he"

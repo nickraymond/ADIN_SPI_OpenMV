@@ -18,6 +18,7 @@
 #include "camera_svc.h"
 #include "configuration.h"
 #include "device.h"
+#include "he_sample.h"
 #include "power_hal.h"
 #include "pubsub.h"
 #include "bm_service.h"
@@ -62,10 +63,30 @@ _Static_assert(offsetof(camera_rep_t, res_active) == 6, "res_active @ 6");
 _Static_assert(offsetof(camera_rep_t, pf_active) == 7, "pf_active @ 7");
 _Static_assert(offsetof(camera_rep_t, cmds) == 8, "rep cmds @ 8");
 _Static_assert(offsetof(camera_rep_t, pub_bytes) == 20, "pub_bytes @ 20");
+// S19 bite 1: the probe reads the sample page out of raw RAM and unpacks
+// "<HHHBBIIHHI" per record -- no struct definition travels with it.
+_Static_assert(sizeof(he_sample_rec_t) == 24, "he_sample_rec_t must be 24 B");
+_Static_assert(offsetof(he_sample_rec_t, heap_free) == 8, "heap_free @ 8");
+_Static_assert(offsetof(he_sample_rec_t, heap_min) == 12, "heap_min @ 12");
+_Static_assert(offsetof(he_sample_rec_t, tick_ms) == 20, "tick_ms @ 20");
+_Static_assert(offsetof(he_sample_page_t, count) == 12, "page count @ 12");
+_Static_assert(offsetof(he_sample_page_t, rec) == 16, "records @ 16");
+_Static_assert(sizeof(he_sample_page_t) == 16 + 24 * HE_SAMPLE_CAP,
+               "page = header + capacity records");
+_Static_assert(sizeof(he_sample_page_t) <= 1024,
+               "page must fit the 1 KB carved out of bm_he.ld");
 
 // ---- host glue ------------------------------------------------------------
 
 void he_dbg_printf(const char *fmt, ...) { (void)fmt; }   // bm_debug sink
+
+// he_sample.c's platform glue (he_dbg.c owns these on target). Scripted
+// here so a record's contents are predictable byte-for-byte.
+static uint32_t s_fake_heap_free = 40000, s_fake_heap_min = 30000;
+static uint32_t s_fake_tick_ms = 1000;
+uint32_t he_plat_heap_free(void) { return s_fake_heap_free; }
+uint32_t he_plat_heap_min(void) { return s_fake_heap_min; }
+uint32_t he_plat_tick_ms(void) { return s_fake_tick_ms; }
 void fake_os_advance_ms(uint32_t ms);                     // fake_bm_os.c
 BmErr bm_stubs_device_init(void);                         // bm_stubs.c
 
@@ -597,6 +618,180 @@ static void test_power_hal(void) {
     CHECK(d.upcoming_off_s == c.upcoming_off_s);
 }
 
+// ---- S19 bite 1: the publish-path sampler --------------------------------
+
+// Build a chunk payload the way the HP bridge does (camera_svc.h: 10 B
+// LE header, then JPEG bytes) so the sampler is fed real frame positions.
+static void chunk_fill(uint8_t *buf, uint32_t seq, uint16_t idx,
+                       uint16_t count, uint16_t data_len) {
+    memcpy(buf + 0, &seq, 4);
+    memcpy(buf + 4, &idx, 2);
+    memcpy(buf + 6, &count, 2);
+    memcpy(buf + 8, &data_len, 2);
+    memset(buf + 10, 0xC3, data_len);
+}
+
+static void test_he_sample(void) {
+    static he_sample_page_t page;
+    uint8_t chunk[CAMERA_MAX_PAYLOAD + 1];
+
+    memset(&page, 0xEE, sizeof(page));   // init must clear, not append
+    he_sample_init(&page);
+    CHECK(he_sample_get_page() == &page);
+    CHECK(page.magic == HE_SAMPLE_MAGIC && page.version == HE_SAMPLE_VERSION);
+    CHECK(page.capacity == HE_SAMPLE_CAP && page.count == 0);
+    CHECK(he_sample_tx_stalls() == 0);
+
+    // A published chunk carries its own position; the record must show
+    // the frame's idx/count, not a sample serial.
+    netwire_stats_t before = bm_net_wire_stats();
+    uint32_t depth0 = before.txq_pushed - before.txq_popped;
+    s_pub_ret = BmOK;
+    s_fake_heap_free = 40000;
+    s_fake_heap_min = 30000;
+    s_fake_tick_ms = 1111;
+    chunk_fill(chunk, 7, 3, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.count == 1);
+    CHECK(page.rec[0].idx == 3 && page.rec[0].count == 26);
+    CHECK(page.rec[0].len == 1400 && page.rec[0].err == 0);
+    CHECK(page.rec[0].heap_free == 40000 && page.rec[0].heap_min == 30000);
+    CHECK(page.rec[0].tick_ms == 1111);
+    CHECK(page.rec[0].txq_depth == depth0);
+
+    // Heap moves between chunks -- that motion IS the drain curve.
+    s_fake_heap_free = 22000;
+    s_fake_heap_min = 21000;
+    s_fake_tick_ms = 1123;
+    chunk_fill(chunk, 7, 4, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.count == 2);
+    CHECK(page.rec[1].idx == 4 && page.rec[1].heap_free == 22000);
+    CHECK(page.rec[1].heap_min == 21000 && page.rec[1].tick_ms == 1123);
+
+    // A failed bm_pub records the BmErr rather than vanishing.
+    s_pub_ret = BmENOMEM;
+    chunk_fill(chunk, 7, 5, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.count == 3 && page.rec[2].err == (uint8_t)BmENOMEM);
+    s_pub_ret = BmOK;
+
+    // Guard rejections never reach bm_pub but are still sampled -- a
+    // malformed chunk must be distinguishable from a publish failure.
+    int calls = s_pub_calls;
+    chunk_fill(chunk, 7, 6, 26, 1390);
+    camera_svc_publish(chunk, CAMERA_MAX_PAYLOAD + 1);
+    CHECK(s_pub_calls == calls);
+    CHECK(page.count == 4 && page.rec[3].err == (uint8_t)BmEINVAL);
+    CHECK(page.rec[3].idx == 6 && page.rec[3].len == CAMERA_MAX_PAYLOAD + 1);
+
+    // A payload too short to hold a chunk header reports position 0/0
+    // instead of reading past it (ASan would catch the alternative).
+    camera_svc_publish(chunk, 4);
+    CHECK(page.count == 5 && page.rec[4].idx == 0 && page.rec[4].count == 0);
+
+    // Undrained TX frames are the suspected heap sink, so depth has to
+    // track the queue, not the publish count.
+    NetworkDevice dev = bm_net_wire_device();
+    uint8_t frame[256];
+    memset(frame, 0x11, sizeof(frame));
+    CHECK(dev.trait->send(dev.self, frame, sizeof(frame), 1) == BmOK);
+    chunk_fill(chunk, 7, 7, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.rec[5].txq_depth == depth0 + 1);
+    netwire_tx_frame_t popped;
+    CHECK(bm_net_wire_pop_tx(&popped, 0));
+    bm_free(popped.data);
+    chunk_fill(chunk, 7, 8, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.rec[6].txq_depth == depth0);
+
+    // TX ring stalls (main.c wire_pump_tx) surface in the next record.
+    he_sample_note_tx_stall();
+    he_sample_note_tx_stall();
+    CHECK(he_sample_tx_stalls() == 2);
+    chunk_fill(chunk, 7, 9, 26, 1390);
+    camera_svc_publish(chunk, 1400);
+    CHECK(page.rec[7].tx_stalls == 2);
+
+    // Wrap: count is the total ever written, slot is count % capacity, so
+    // a long run overwrites oldest-first and the reader can still order it.
+    uint32_t base = page.count;
+    for (uint32_t i = 0; i < HE_SAMPLE_CAP; i++) {
+        chunk_fill(chunk, 8, (uint16_t)i, (uint16_t)HE_SAMPLE_CAP, 100);
+        camera_svc_publish(chunk, 110);
+    }
+    CHECK(page.count == base + HE_SAMPLE_CAP);
+    CHECK(page.rec[(base + HE_SAMPLE_CAP - 1) % HE_SAMPLE_CAP].idx ==
+          HE_SAMPLE_CAP - 1);
+    CHECK(page.rec[base % HE_SAMPLE_CAP].idx == 0);
+
+    // Disabled sampler = silent no-op; the publish path must not care.
+    he_sample_init(NULL);
+    CHECK(he_sample_get_page() == NULL);
+    chunk_fill(chunk, 9, 0, 1, 100);
+    camera_svc_publish(chunk, 110);
+    he_sample_note_tx_stall();
+    CHECK(he_sample_tx_stalls() == 1);
+}
+
+// S19 bite 2: the TX queue is bounded by BYTES as well as frames,
+// because 16 x 1,488 B exceeds the 20,712 B free heap (DESIGN §S19) --
+// at the production chunk size the fatal allocation beat the survivable
+// queue-full drop. The bound must bite BEFORE the frame count does.
+static void test_txq_byte_bound(void) {
+    NetworkDevice dev = bm_net_wire_device();
+    netwire_tx_frame_t f;
+    static uint8_t frame[1500];
+    memset(frame, 0x77, sizeof(frame));
+
+    while (bm_net_wire_pop_tx(&f, 0)) {       // start from empty
+        bm_free(f.data);
+    }
+    netwire_stats_t before = bm_net_wire_stats();
+    CHECK(before.txq_pushed == before.txq_popped);
+    CHECK(before.txq_bytes_in == before.txq_bytes_out);
+
+    // 1,400 B camera chunks: 8 fit under 12 KB, the 9th must be refused
+    // with the queue only half full by frame count.
+    int accepted = 0;
+    for (int i = 0; i < NETWIRE_TXQ_LEN; i++) {
+        if (dev.trait->send(dev.self, frame, 1400, 1) == BmOK) {
+            accepted++;
+        } else {
+            break;
+        }
+    }
+    netwire_stats_t after = bm_net_wire_stats();
+    CHECK(accepted == 8);
+    CHECK(accepted < NETWIRE_TXQ_LEN);
+    CHECK(after.txq_bytes_in - after.txq_bytes_out == 8u * 1400u);
+    CHECK(after.tx_dropped == before.tx_dropped + 1);
+    CHECK(after.tx_dropped_bytes == before.tx_dropped_bytes + 1);
+    // The refused frame must not be counted as sent (S16 ledger honesty).
+    CHECK(after.tx_frames == before.tx_frames + 8);
+
+    // Under the bound there is still room for a small frame -- the bound
+    // refuses what does not fit, not everything after the first refusal.
+    CHECK(dev.trait->send(dev.self, frame, 800, 1) == BmOK);
+
+    // Draining returns the bytes, and the queue accepts full frames again.
+    int popped = 0;
+    uint32_t bytes = 0;
+    while (bm_net_wire_pop_tx(&f, 0)) {
+        bytes += f.len;
+        bm_free(f.data);
+        popped++;
+    }
+    CHECK(popped == 9 && bytes == 8u * 1400u + 800u);
+    netwire_stats_t end = bm_net_wire_stats();
+    CHECK(end.txq_bytes_in == end.txq_bytes_out);
+    CHECK(dev.trait->send(dev.self, frame, 1400, 1) == BmOK);
+    while (bm_net_wire_pop_tx(&f, 0)) {
+        bm_free(f.data);
+    }
+}
+
 int main(void) {
     test_wire_device();
     test_wire_frag();
@@ -604,6 +799,8 @@ int main(void) {
     test_rtc_stub();
     test_device_identity();
     test_camera_svc();
+    test_he_sample();
+    test_txq_byte_bound();
     test_power_hal();
     printf("bm_he host tests: %d checks, %d failures\n", s_checks, s_fails);
     return s_fails ? 1 : 0;

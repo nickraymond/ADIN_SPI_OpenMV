@@ -422,13 +422,12 @@ letterboxes to 16:10, so QVGA is **320×200**, VGA **640×400**, HD
 **1280×800**; QQVGA/SVGA/WXGA are unsupported (there is no 720 mode)
 and nothing above HD has been tested.
 
-> ### ⚠ DO NOT USE `hd` — it ends the camera for the session
-> HD *captures* correctly, but publishing it exhausts the HE core's
-> FreeRTOS heap partway through the chunk burst (`freertos: malloc
-> failed` after 8 of 26 chunks). The camera service stops answering and
-> only a bridge restart recovers it. The board stays on the USB bus and
-> nothing is damaged — you just lose the run. **QVGA and VGA only until
-> S19 lands.** Full evidence: SPEC §Open questions.
+> ### ~~⚠ DO NOT USE `hd`~~ — fixed by S19 bite 2 (2026-08-16)
+> HD used to exhaust the HE core's FreeRTOS heap partway through the
+> chunk burst (`freertos: malloc failed` after 8 of 26 chunks). It now
+> delivers: `capture 50 hd color` → 1280×800, ~42 KB, `gaps=0`. Needs
+> the S19 ELF (`4c509d24…`) and bridge (`1524f6c2…`) staged — with the
+> S18 build the warning above still applies. See §S19 below.
 
 CLI (Telemetry stdin): `capture [q] [res] [pf]` ·
 `stream <mbps> <fps> <secs> [q] [res] [pf]`, where `res` = `qvga|vga`
@@ -473,3 +472,113 @@ Then, at the Telemetry prompt, in order:
 **Record the delivered fps from 6.** In-bridge fps at VGA is currently
 EXTRAPOLATED from the one measured point (QVGA colour reef held
 15.00 fps, S17 bite 0), and it feeds bite C's feasibility warnings.
+
+# S19 — HD stills over pub/sub
+
+HD capture always worked; **publishing** it did not. The HE core's wire
+task both receives chunk messages and drains the TX queue, and an
+unbounded `rr_poll` let a back-to-back burst starve its own drain —
+every published chunk's 1,488 B frame copy stayed on the 64 KB FreeRTOS
+heap (20,712 B free at RUNNING) until the burst ended, so the 14th chunk
+could not allocate. Bite 1 measured that; bite 2 fixed it. Full story:
+DESIGN §S19.
+
+## S19 deploy (AE3 only — no fork change, no pin move)
+
+Build on the Mac, then from the repo checkout:
+
+```bash
+scp firmware/bm_he/build/bm_he.elf firmware/bm_bridge/bm_bridge.py pi@nereus000:/tmp/
+```
+
+The off-chain probe (demo 3) lives on the Pi, not on the board, and
+**must not live in `/tmp`** — this bench reboots the Pi to recover the
+AE3's USB (`ae3-usb-unstick`), which wipes it. Put it beside the TOMLs:
+
+```bash
+scp bench/probes/s19_pub_probe.py pi@nereus000:~/bm_bench/
+```
+
+```bash
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; mpremote connect $P cp /tmp/bm_he.elf :/flash/bm_he.elf + cp /tmp/bm_bridge.py :/flash/bm_bridge.py'
+```
+
+Expected on-board shas: `bm_he.elf` `4c509d2464412cee`, `bm_bridge.py`
+`1524f6c203f232a0`. Then `demo_up.sh` and the §S17 start order.
+
+## S19 demo 1 — HD colour, the whole path (THE demo)
+
+At the Telemetry prompt, in order:
+
+1. `capture 50 qvga color` — warm-up; the first capture after startup
+   races the receiver's subscribe (known S17 startup race).
+2. `capture 50 hd color` → `CAM_REPLY ok=1 res=hd pf=color`.
+3. Open `http://nereus001:8080/frame.jpg` → **a 1280×800 JPEG that
+   opens**, ~42 KB on a lit scene.
+4. `cam-status` → `pub_errs=0`, and `pub_bytes` should advance by
+   `chunks × 10 + jpeg_bytes` exactly (31 × 10 + 42,574 = 42,884 in the
+   rehearsal — the ledger is exact, not approximate).
+
+`TEL_STAT` must show `gaps=0 dropped=0 hdr_errs=0`.
+
+## S19 demo 2 — the regression that matters
+
+The bounded poll carries **all** relay traffic, not just camera chunks:
+
+```
+stream 2.0 15 600
+```
+
+Expect 15.0 fps steady for 600 s with `gaps=0 dropped=0 q_drops=0`,
+matching the S17 demoed number. Measured 2026-08-16: 602 s, 8,886
+frames, zero on every loss counter across all 602 stat lines.
+
+> ### ⚠ Preflight: exactly ONE producer on the ingest
+> The frozen S3 stream server is **single-producer**. Two Telemetry
+> instances both connect to `:8081`; the server reads one and never
+> reads the other, so the loser's socket buffer fills at 2,592,256 B —
+> about 1,416 frames — and the app wedges. Deterministic: it froze at
+> exactly `t=109 frames_ok=1416` on both occasions, and killing the
+> stale instance unwedged the live one instantly (t 109 → 274). The app
+> stays alive and the chain stays up, which makes it look like a product
+> fault. It is not.
+>
+> Before every run, expect exactly two lines (one producer, two socket
+> ends):
+>
+> ```bash
+> ssh pi@nereus001 'ss -tn | grep -c :8081'
+> ```
+>
+> Also let the previous `stream` command finish, or cycle the bridge:
+> the AE3 keeps streaming its 600 s command even after the Telemetry app
+> that asked for it dies, and a second overlapping stream shows up as
+> impossible frame counts and gaps (measured: 26,141 frames / 1,676 gaps
+> in 607 s — two streams interleaved, not a transport fault).
+>
+> Both hazards disappear once the nodes run as systemd units.
+
+## S19 demo 3 — off-chain acceptance (no Pis, no camera, ~90 s)
+
+Proves the wall is gone at bursts far past HD, and needs nothing but the
+AE3:
+
+```bash
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; printf "{\"phases\": [\"verify\"]}" > /tmp/c.json; mpremote connect $P cp /tmp/c.json :/flash/s19_probe_cfg.json; mpremote connect $P run ~/bm_bench/s19_pub_probe.py'
+```
+
+`mpremote run` resolves its path **on the Pi**, not on your Mac — a
+repo-relative path only works if you are sitting in a checkout that has
+the branch, which the Pi's is not (it tracks whatever the last deploy
+left). Hence the absolute path and the scp above.
+
+Expect `VERDICT: SURVIVED all 6 rows`, including 60 × 1400 B = 84,000 B
+(2.3× an HD frame), with `txdrop=0 stall=0` and a heap floor around
+17,704 B.
+
+> **Ops note (bench-earned, S19):** contacting the board shortly after a
+> probe run that ended with the HE backpressured took the AE3 off the
+> USB bus three times (`error -71`), each costing a Pi reboot via the
+> `ae3-usb-unstick` ladder. Let a run finish and settle before the next
+> `mpremote` command. The non-blocking pump removes the backpressured
+> state that provoked it, but the habit is cheap.

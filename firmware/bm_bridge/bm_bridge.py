@@ -120,6 +120,10 @@ TRACE_PREV_PATH = "/flash/bridge_trace.prev.txt"   # last run, kept for crashes
 ELF_PATH = "/flash/bm_he.elf"
 BM_STATUS_PAGE = 0x600BFE00
 RPMSG_QUEUE_CAP = 256       # HE->bridge backlog cap (drops counted)
+# Service the HE->HP direction every N messages while pushing a frame's
+# chunks. A 1400 B chunk is 3 rpmsg messages, so 3 = "drain after every
+# chunk" (S19 bite 2 -- see send_chunk_msgs).
+CHUNK_DRAIN_EVERY = 3
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
@@ -315,6 +319,30 @@ class BridgeCore:
     def ping_msg(target_node_id, payload=b"S16 camera 2-hop"):
         body = struct.pack("<Q", target_node_id) + payload
         return struct.pack("<BBH", WCMD_PING, 0, len(body)) + body
+
+
+def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY):
+    """Push one frame's WCMD_PUB messages, servicing the HE->HP direction
+    every `every` messages. Returns the number of drain calls made.
+
+    S19 bite 2 -- NOT pacing (pacing was measured and does not fix the
+    heap wall, DESIGN §S19). This exists because the HE-side fix makes
+    the HE stop consuming inbound rpmsg when its own TX backs up: the
+    HP->HE vring then fills and `ept.send` blocks, and a send loop that
+    is not draining `he.queue` meanwhile would stall both directions
+    until the 1 s send timeout expires -- costing rpmsg drops and a
+    broken frame. Draining as we push removes that.
+    """
+    drains = 0
+    for i, m in enumerate(msgs):
+        send(m)
+        if every and (i + 1) % every == 0:
+            drain()
+            drains += 1
+    if not every or not msgs or len(msgs) % every:
+        drain()          # always finish on a drain
+        drains += 1
+    return drains
 
 
 # --------------------------------------------------------------------------
@@ -759,14 +787,23 @@ def main():
         last_stat = time.ticks_ms()
         last_rx = time.ticks_ms()
 
+        def pump_he_to_pi():
+            """Drain the HE->HP queue into the VCP. Hoisted out of the
+            loop so the chunk sender can call it too (S19 bite 2)."""
+            n = 0
+            while he.queue:
+                for wire in core.he_msg(he.queue.pop(0)):
+                    usb.write(wire)
+                n += 1
+            return n
+
         while True:
             idle = True
 
             # HE -> Pi
             if he.queue:
                 idle = False
-                for wire in core.he_msg(he.queue.pop(0)):
-                    usb.write(wire)
+                pump_he_to_pi()
 
             # Pi -> HE
             if usb.any():
@@ -832,9 +869,9 @@ def main():
             jpeg = engine.poll(now)
             if jpeg is not None:
                 idle = False
-                for msg in core.capture_pub_msgs(jpeg, engine.caps - 1,
-                                                 engine.payload_max):
-                    he.send(msg)
+                send_chunk_msgs(core.capture_pub_msgs(jpeg, engine.caps - 1,
+                                                      engine.payload_max),
+                                he.send, pump_he_to_pi)
 
             # periodic stats snapshot (flash only -- the VCP is a data pipe)
             if time.ticks_diff(now, last_stat) >= 30000:

@@ -285,12 +285,17 @@ bool rr_announce(rpmsg_remote_t *rr, const char *name) {
     return rr_send(rr, RPMSG_NS_EPT_ADDR, &ns, sizeof(ns));
 }
 
-uint32_t rr_poll(rpmsg_remote_t *rr) {
+uint32_t rr_poll(rpmsg_remote_t *rr) { return rr_poll_n(rr, 0); }
+
+uint32_t rr_poll_n(rpmsg_remote_t *rr, uint32_t max_msgs) {
     vr_avail_t *a = AVAIL(rr, 0);
     uint32_t n = 0;
 
     rr_dmb();
     while (rr->consumed[0] != a->idx) {
+        if (max_msgs && n >= max_msgs) {
+            break;   // budget spent -- caller gets a turn (S19 bite 2)
+        }
         uint16_t head = a->ring[rr->consumed[0] % rr->vr[0].num];
         uint32_t written = 0;
         if (head < rr->vr[0].num) {

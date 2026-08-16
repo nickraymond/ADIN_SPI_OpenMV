@@ -358,5 +358,61 @@ check(core.capture_pub_msgs(b"", 0, CAMERA_MAX_PAYLOAD) == [],
 check(core.capture_pub_msgs(bytes(10), 0, CHUNK_HDR_LEN) == [],
       "chunker: degenerate payload_max -> nothing")
 
+# ---- S19 bite 2: drain while pushing a frame's chunks --------------------
+# The HE-side fix makes the HE stop consuming inbound rpmsg once its own
+# TX backs up, so the HP->HE vring fills and ept.send blocks. A send loop
+# that is not draining he.queue meanwhile stalls both directions until the
+# 1 s send timeout -- rpmsg drops and a broken frame. This is NOT pacing:
+# pacing was measured and does not fix the heap wall (DESIGN §S19).
+
+trace = []
+
+
+def fake_send(m):
+    trace.append("s%d" % m[0])
+
+
+def fake_drain():
+    trace.append("D")
+
+
+del trace[:]
+n = bm_bridge.send_chunk_msgs([bytes([i]) for i in range(9)],
+                              fake_send, fake_drain, every=3)
+check(trace == ["s0", "s1", "s2", "D", "s3", "s4", "s5", "D",
+                "s6", "s7", "s8", "D"],
+      "sender drains after every chunk (9 msgs, every=3)")
+check(n == 3, "9 msgs / every 3 = 3 drains")
+
+del trace[:]
+n = bm_bridge.send_chunk_msgs([bytes([i]) for i in range(7)],
+                              fake_send, fake_drain, every=3)
+check(trace[-1] == "D" and trace.count("D") == 3,
+      "a partial trailing group still ends on a drain")
+check(len([t for t in trace if t != "D"]) == 7, "every message is sent")
+check(n == 3, "7 msgs / every 3 = 2 + final drain")
+
+del trace[:]
+bm_bridge.send_chunk_msgs([], fake_send, fake_drain, every=3)
+check(trace == ["D"], "empty frame still services the other direction")
+
+del trace[:]
+bm_bridge.send_chunk_msgs([bytes([i]) for i in range(4)],
+                          fake_send, fake_drain, every=0)
+check(trace == ["s0", "s1", "s2", "s3", "D"],
+      "every=0 disables interleaving but keeps the final drain")
+
+# A real HD frame is 26 chunks x 3 messages; the sender must service the
+# other direction 26 times, not once at the end.
+del trace[:]
+core = BridgeCore()
+msgs = core.capture_pub_msgs(bytes(26 * (CAMERA_MAX_PAYLOAD - CHUNK_HDR_LEN)),
+                             0, CAMERA_MAX_PAYLOAD)
+n = bm_bridge.send_chunk_msgs(msgs, fake_send, fake_drain)
+check(len(msgs) == 78, "HD frame = 26 chunks x 3 rpmsg messages")
+check(n == 26, "HD frame drains 26 times, once per chunk")
+check(bm_bridge.CHUNK_DRAIN_EVERY == 3,
+      "default every matches the messages-per-chunk at 1400 B")
+
 print("bm_bridge host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)

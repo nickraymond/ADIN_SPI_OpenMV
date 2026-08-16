@@ -1,7 +1,19 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
+*Last updated: 2026-08-16 (**PRIORITY CHANGE — D32: S18 is NEXT, with a
+FRESH AGENT ON ITS OWN BRANCH, and S18's systemd units (bite D) are
+promoted to first and made mandatory.** S19 bites 1–2 delivered: HD
+stills work end to end — `capture 50 hd color` lands a valid 1280×800
+JPEG at the browser, pub_errs=0, gaps=0 — after the wall was measured
+(bytes in flight, not chunk count: 20,712 B free heap, 1,488 B per
+chunk, the 14th died) and fixed in four parts, the fourth forced by a
+rehearsal deadlock. **S19 is NOT closed**: no PR, branch unpushed, Nick
+has not run the demo, `capture 50 hd mono` never run, and HD as a
+*stream* never measured. ⚠ **The AE3 is running artifacts that exist
+only on the unmerged `sprint/19-hd-transport`** — cut the S18 branch
+from it or merge S19 first. Previous:*
+*2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
 geometry + pixel format plumbed end to end and demoed on the live chain;
 branch `sprint/18-web-bench`, PR open. Two hardware facts bought with
 three board lock-ups: the sensor letterboxes to 16:10 (QVGA = 320×200)
@@ -540,7 +552,7 @@ intelligence and CV. The old S19/S20 stubs are renumbered S20/S21;
 D30's text still says S19/S20 and is not being rewritten — history
 stays as written (DESIGN rule).*
 
-### S18 — Camera bench web tool  `[ ]`  *(plan approved by Nick
+### S18 — Camera bench web tool  `[~]`  ← **NEXT (D32, fresh agent, own branch)**  *(plan approved by Nick
 2026-08-15 — D30; branch `sprint/18-web-bench` from main AFTER PR #24
 merges)*
 **Goal:** a web control panel on the Telemetry Pi that drives the
@@ -582,10 +594,28 @@ quality comparisons.
       **HD then hit a SECOND, unrelated wall** — it captures fine but
       the HE core's heap dies mid-publish (`freertos: malloc failed`
       after 8 of 26 chunks). That is now all of S19.
-*(Bites B–D below are PAUSED behind S19 — Nick, 2026-08-15. The tool is
-for judging image quality before locking the hardware spec, so shipping
-it without the top of the resolution ladder would answer the wrong
-question.)*
+*(Bites B–D were PAUSED behind S19 — Nick, 2026-08-15. **UNPAUSED
+2026-08-16 (Nick): S18 is now NEXT**, ahead of S19's remaining bites,
+and it goes to a **fresh agent on its own branch**. The pause existed
+because a bench tool that cannot show the top of the resolution ladder
+answers the wrong question — HD now works (S19 bites 1–2), so the
+reason is gone.*
+
+***Bite D is promoted to FIRST and is no longer optional*** *— see the
+plan recorded under it. S19's session lost hours to hand-run processes:
+two Telemetry instances wedged the single-producer ingest twice, and a
+leftover 600 s stream corrupted a third run. Both are impossible once
+the nodes are systemd units. Do the harness before the features.)*
+
+> **⚠ BRANCH HAZARD FOR THE NEXT AGENT.** `sprint/19-hd-transport` is
+> **not merged and not pushed**, but the bench hardware is already
+> running its artifacts: `/flash/bm_he.elf` = `4c509d2464412cee` and
+> `/flash/bm_bridge.py` = `1524f6c203f232a0` on the AE3. A branch cut
+> from `main` will NOT contain the source for what the board is running.
+> Cut the S18 branch from **`sprint/19-hd-transport`**, or merge S19
+> first (it is code-complete and rehearsed; it needs Nick's demo run and
+> a PR). The Pi checkouts are also stale — nereus000 is on
+> `sprint/18-web-bench`.
 - [ ] Bite B — fork app: **loopback-only control socket** on the
       telemetry role (JSON command in / JSON status out: last replies,
       current params, live receiver ledger) + **still-save** to
@@ -601,8 +631,43 @@ question.)*
       **gallery + side-by-side compare view**, **RGB+luma histograms**
       (canvas, client-side, live + per-still — the OpenMV-IDE-style
       levels view).
-- [ ] Bite D — demo ladder + docs; optional systemd units (chain +
-      web tool at boot — retires the manual start commands).
+- [ ] **Bite D — DO THIS FIRST (promoted 2026-08-16, Nick). systemd
+      units for the bench nodes — no longer optional.** Plan below was
+      written at the end of the S19 session and reviewed by Nick; the
+      fresh agent should re-derive rather than trust it blindly, but it
+      is a starting point, not a blank page.
+      **Why it is first:** the S19 session lost hours to hand-run
+      processes. A systemd unit is a **singleton by construction**, and
+      that alone removes the failure that wedged demo 2 twice (two
+      Telemetry instances on the single-producer S3 ingest; the loser's
+      socket buffer fills at 2,592,256 B ≈ 1,416 frames and it hangs at
+      exactly `t=109` — DEV_LOG 2026-08-16). It also kills `pkill -f`
+      pattern games (the pattern kept matching the driving SSH command
+      line), `nohup`/stdout-buffering workarounds, and manual start
+      ordering.
+      Shape (≈150 LoC): `pi/services/bm-{light,telemetry}.service` on the
+      `t1l-stream-server.service` pattern, `Restart=on-failure`
+      (absorbs the fork app's occasional startup segfault, below);
+      **stdin problem** — the apps take `capture`/`stream` on stdin and
+      a service has none, so `ExecStart=/bin/sh -c 'tail -f
+      /run/bm/telemetry.cmd | exec …bench_apps …'` plus a
+      `bm-cmd.sh` helper that appends (**verify the app tolerates that
+      stdin before writing the units** — untested); extend the existing
+      role-dispatching `pi/install_stream_service.sh` rather than adding
+      an installer; **`chain_status.sh` preflight** (unit states,
+      instance counts, `ss -tn | grep -c :8081` = one producer, AE3
+      by-id present); README start order rewritten to `systemctl start`
+      + `journalctl -u bm-telemetry -f`.
+      Decisions Nick has NOT ruled on: install **disabled** (auto-start
+      would open the AE3's CDC port at boot and fight the fixture/dev
+      loop) vs enabled; whether AE3 staging stays the manual
+      `demo_up.sh` (recommended — starting a service should not rewrite
+      board flash) or becomes a oneshot unit.
+      **Acceptance = the bug that caused it:** `systemctl start
+      bm-telemetry` twice leaves ONE process and ONE ingest producer;
+      then a 600 s demo-2 run under units; `systemctl stop` provably
+      leaves zero processes.
+- [ ] Bite D2 — demo ladder + docs (the remainder of the old bite D).
 **Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
 q90 stills → compare view shows both + histograms → start a VGA stream
 → the warning predicts and the pill confirms the fps drop.
@@ -618,7 +683,7 @@ sensor 0x7936 — so there is **no 720 mode** — and nothing above HD has
 been tested, so nothing above HD is offered. Warnings stay client-side
 from measured constants, not camera-queried.
 
-### S19 — HD stills over pub/sub  `[ ]`  *(scope set by Nick
+### S19 — HD stills over pub/sub  `[~]`  *(PARKED 2026-08-16 behind S18 — D32. Bites 1–2 done (code+rehearsal), bites 3–4 wait. Scope set by Nick
 2026-08-15 after the S18 bite-A rehearsal. **This is the WHOLE sprint** —
 no web-tool work, no new features: just make HD capture and transport.
 S18 bites B–D wait behind it, because a bench tool for comparing image
@@ -635,28 +700,100 @@ answering until the bridge restarts. QVGA (3 chunks) and VGA (8) drain
 fine. The board stays on the USB bus: ordinary heap exhaustion, not the
 S18 allocator fault.
 
-- [ ] Bite 1 — **measure before fixing** (S0 discipline): instrument the
+- [~] Bite 1 — **measure before fixing** (S0 discipline): instrument the
       HE heap (`xPortGetFreeHeapSize` / minimum-ever) and log it per
       published chunk, so the drain curve is a number rather than a
       theory. Find the actual chunk count / rate where it falls over,
       at QVGA and VGA too — is 26 the wall, or is it bytes-in-flight?
-- [ ] Bite 2 — **flow control on the WCMD_PUB burst** (first candidate,
+      → **RUNG B DONE 2026-08-16 (Claude drove it; nibbles 1–2 approved
+      by Nick). ANSWER: BYTES IN FLIGHT, not chunk count.** Instrument =
+      `he_sample.{c,h}`, a 1 KB fixed page at 0x600BFA00 written one
+      record per published chunk (+456 B → **94.05%, 14,056 B
+      headroom**; no ABI change, no fork pin move). Probe =
+      `bench/probes/s19_pub_probe.py`, synthetic bursts with **no Pi and
+      no camera**, framing asserted byte-identical to the production
+      chunker. Measured: free heap at RUNNING **20,712 B**, one 1,400 B
+      chunk costs **exactly 1,488 B**, → **13 chunks fit, the 14th dies**
+      (three independent rows, `freertos: malloc failed` in the ring =
+      S18's signature reproduced off-chain). **26 × 350 B is fine**, so
+      count is not the wall. No leak — the heap recovers fully after
+      every surviving burst. **Mechanism: the wire task both receives
+      WCMD_PUB and drains the TX queue; `rr_poll()` loops until the
+      inbound vring is empty, publishing inline, and `wire_pump_tx()`
+      only runs after it returns — a back-to-back burst starves the
+      drain.** Full table + arithmetic: DESIGN §S19 detail.
+      **Rung C folded into bite 2** (Nick, 2026-08-16) and run there.
+      **Correction to this bite's mechanism claim:** the `drain=True`
+      rows were invalid — the probe popped its own list without yielding
+      to MicroPython, so no vring buffer was recycled and "HP draining"
+      never happened. The heap arithmetic, the 1,488 B/chunk, the
+      13-chunk wall and bytes-not-count all stand; the pacing rows were
+      confounded (they gave the HP time to recycle AND starved the poll).
+      Resolved in bite 2, which delivers 26/26 with the HP not draining.
+- [~] Bite 2 — ~~**flow control on the WCMD_PUB burst** (first candidate,
       cheapest): the bridge emits a frame's chunks back-to-back with no
       backpressure. Pace them, or have the HE acknowledge drain, so
-      bm_pub keeps up. Watch the REV-28 1400 B ceiling and the ≤492 B
-      rpmsg budget — chunk COUNT, not size, is the suspected driver.
+      bm_pub keeps up.~~ **RE-SPECIFIED by bite 1's measurement — HP-side
+      pacing is NOT the fix:** draining on the HP alone died identically,
+      2 ms pacing died identically (the HE spends ~2.5 ms/chunk, so 2 ms
+      never starves the poll loop), and ≥5 ms survives only by accident,
+      at 130–260 ms per HD frame. The fix belongs on the **HE**: pump TX
+      from inside the `rr_poll` loop, or publish from a task other than
+      the one that drains. Watch the REV-28 1400 B ceiling and the
+      ≤492 B rpmsg budget. **Plus a cheap, independent robustness fix:**
+      bound the netwire TX queue by BYTES rather than frames —
+      `NETWIRE_TXQ_LEN` (16) × 1,488 B = 23.8 KB exceeds the free heap,
+      so at the production chunk size the fatal malloc beats the
+      survivable queue-full drop (at 700 B the queue fills first and the
+      node lives, lossy but counted).
+      → **CODE + REHEARSAL DONE 2026-08-16 (nibbles 1–2; plan + 5
+      decision points approved by Nick). HD DELIVERS END TO END:**
+      `capture 50 hd color` → **1280×800, 42,574 B, valid SOI→EOI at
+      nereus001:8080/frame.jpg, 31 chunks, pub_ok=34 pub_errs=0
+      gaps=0** (rung C, folded in here). Four parts, not three —
+      **the rehearsal found that parts 1–3 alone DEADLOCK**: the old
+      `wire_pump_tx` retried `rr_send` 100 × 1 ms and parked the wire
+      task, which is also the task that consumes inbound rpmsg, so the
+      HP blocked inside a single `ept.send` and never reached its next
+      drain point (measured: exactly one chunk published, no
+      `malloc failed`, stack RUNNING). Part 4 = a non-blocking pump that
+      keeps its place across calls. Off-chain acceptance 6/6 including
+      **60 × 1400 B = 84,000 B, 2.3× an HD frame**, zero drops, heap
+      floor 17,704 of 20,680. Sustained regression `stream 2.0 15 600`
+      held 15.0 fps, 0 gaps/drops. Size 246,784 (94.14%), ELF
+      `4c509d24…`, bridge `1524f6c2…`; no ABI change, no fork pin move.
+      Host tests: he_spike 29→45, bm_he 232, bridge 252→262, probe 47.
+      Detail: DESIGN §S19 bite 2. **Remaining: nibble 3 (Nick runs the
+      demo) → nibble 4 PR.**
 - [ ] Bite 3 — only if bite 2 is not enough: raise
       `configTOTAL_HEAP_SIZE` on the HE (RAM, distinct from the ~16 KB
-      flash headroom; ELF is at 93.88% of its 256 KB region — check
-      both budgets) and/or trim pbuf/queue pools. Re-run the REV-25
-      size audit.
+      flash headroom; ELF is at 94.05% of its 256 KB region after bite
+      1 — check both budgets) and/or trim pbuf/queue pools. Re-run the
+      REV-25 size audit. Bite 1 measured the input this bite needs:
+      20,712 B free of the 64 KB heap at RUNNING, ≈43 KB held by task
+      stacks and queues.
 - [ ] Bite 4 — HD **mono** as well as colour (~25 KB, ~18 chunks — never
       reached in S18), then a sustained multi-frame HD run with the
       ledger exact end to end.
+      **Sequenced AFTER S18 bite D (Nick, 2026-08-16)** — run it on a
+      systemd harness so it cannot repeat S19's operator failures. Two
+      concrete asks: `capture 50 hd mono` (completes the S19 demo line)
+      and `stream 2.0 1 60 50 hd mono` (the first HD *video* number this
+      project will have — predicted ~2.5 fps, encoder-bound).
 **Demo (Nick):** `capture 50 hd color` then `capture 50 hd mono` from
 the Telemetry CLI → both open as valid 1280×800 JPEGs at
 `http://nereus001:8080/frame.jpg`, `gaps=0`, `pub_errs=0`, and the HE
 heap floor reported alongside.
+**Status 2026-08-16: HALF DEMONSTRATED.** `capture 50 hd color` passes
+(1280×800, 42,574 B lit / 20,665 B dark, `pub_errs=0 gaps=0`, ledger
+exact). **`capture 50 hd mono` has never been run** — it is bite 4, and
+the demo is not satisfied without it.
+**Also never measured: HD as a STREAM.** Every sustained run this sprint
+was QVGA 15 fps (the relay regression). From S18's encode table the
+expectation is **~1 fps HD colour / ~2.5 fps HD mono, encoder-bound**
+(299.2 / 117.6 ms per frame) at ~0.3 / 0.15 Mbps — i.e. ~5% of the
+5.26 Mbps relay ceiling, so the transport is not the constraint. That
+prediction is UNVERIFIED; bite 4 turns it into a number.
 **Do NOT skip the measurement bite.** S18 lost a day to a probe that
 covered capture but never published a frame over BM, and cleared HD on
 that basis. Prove the whole path or claim nothing.
@@ -933,6 +1070,25 @@ summary arrives; evidence stills viewable. *(Flesh out when reached.)*
 **Needs:** S13 (was: S6). Do not start before — Nick's sequencing decision.
 
 ---
+
+## Flagged during S19, not owned by any bite yet (2026-08-16)
+
+- **`bench_apps` (fork) segfaults occasionally at startup.** Once in
+  four starts this session, on the Light role, immediately after opening
+  the AE3's CDC port: `Network Device Port 15: up` → `Failed to start
+  renegotiating check, reason: 0x7D` → SIGSEGV. Clean on an immediate
+  retry. Pre-existing (fork at `ba594ec`, untouched by S19). `Restart=`
+  in S18 bite D's units masks it operationally; the underlying race in
+  the uart/renegotiation path is still unexplained. Worth a core dump
+  next time it happens.
+- **`Error processing parsed cb: 19 of message 5`** on the HE debug ring,
+  next to camera/control replies. Seen throughout the S19 chain runs
+  with no observable ill effect. Not attributed, not investigated —
+  do not assume it is benign just because it is old.
+- **The frozen S3 ingest is single-producer and fails silently under a
+  second writer** (S19 root cause, DEV_LOG 2026-08-16). S18 bite D's
+  preflight covers the bench; if the web tool ever adds a second
+  consumer path, this is a real design constraint, not a bench quirk.
 
 ## Icebox (captured, not scheduled)
 

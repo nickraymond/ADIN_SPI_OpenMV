@@ -89,6 +89,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D30 | 2026-08-15 | **S18 camera bench web tool** (Nick approved plan 2026-08-15; sequence: web tool → light intelligence (S19) → CV (S20); upstream reports HELD). Architecture: browser → new `pi/bench_web/` stdlib-python server on nereus001 → **loopback-only JSON control socket** on the bench_apps telemetry role → existing BM chain to the camera; live video/stills keep riding the FROZEN S3 stream server. Stack grows exactly two parameters end-to-end: **resolution (QVGA\|VGA)** and **q on the stream command** — lockstep ABI change across camera_svc.h / wire_capture_t / BridgeCore / fork structs. Stills saved on nereus001 with JSON sidecars (params + measured stats); gallery + side-by-side compare with **client-side RGB/luma histograms** (canvas); **commanded-vs-actual pill** fed by the receiver-side ledger (D21); **feasibility warnings** computed client-side from measured constants (encode ms per resolution, 5.26 Mbps relay ceiling). | Control socket is node-local IPC on one Pi — not a second uplink/messaging mechanism (§6.2/§6.5 untouched; gateway_ipc stays what it is). Client-side histograms/warnings cost the embedded side nothing (HE at 93.9%). Receiver-ledger truth for the pill keeps the tool honest when commanded ≠ delivered (encoder-bound reality, bite-0 numbers). QVGA+VGA only: VGA already drops to ~6–8 fps (encoder), HD adds little for bench comparisons now. The parameter plumbing is production work, not tool scaffolding — the same fields drive the deployed camera later. |
 
 | D31 | 2026-08-15 | **S18 bite A capture-geometry ABI** (Nick approved plan + 5 decision points; HD greyscale added after the mockup review). The camera command grows exactly two bytes — `resolution` (CAMERA_RES_QVGA\|VGA\|HD) and `pixformat` (COLOR\|MONO) — appended to `camera_req_t` (16 → 18 B) and `wire_capture_t` (12 → 14 B, HP unpacks `"<BBHIHHBB"`). `camera_rep_t` **does not change size**: its `rsvd` u16 becomes `res_active`/`pf_active`, reporting the last COMMANDED pair (same semantics as `mode_active`, NOT sensor confirmation). Out-of-range geometry is **REFUSED** (reply ok=0, mailbox/counters/geometry untouched), unlike `payload_max`, which still clamps. The bridge owns the defaults (QVGA colour) and applies sensor changes **only on a delta**, via a pure `sensor_steps()` planner: pixformat → framesize → `set_framebuffers(1)` at VGA+ → settle. Geometry is offered ONLY as QVGA 320×200 / VGA 640×400 / HD 1280×800. | Refusal beats clamping here because the service now drives an image-quality comparison bench: a silently substituted resolution invalidates a comparison with no visible symptom, whereas `payload_max` is a transport ceiling nobody is comparing. Reusing `rsvd` keeps the reply's `cmds`/`pub_bytes` offsets fixed, so the fork's parser is untouched. Delta-only switching is the D15 guard — every `set_framesize`/`set_pixformat` is a sensor re-init, the documented crash class, and S18 hands that trigger to a web page; the planner is pure so the rule is host-tested without a sensor. Geometry list is measured, not chosen: DESIGN §S0 records that this sensor (0x7936) **letterboxes to 16:10** (QVGA = 320×200, not 320×240), that QQVGA/SVGA/WXGA return "Sensor control failed", and that VGA+ needs `set_framebuffers(1)` with HD fitting one buffer at all — nothing above HD has ever been tested, so nothing above HD is offered. HD is stills-first because HD colour measures 299.2 ms/frame (≈1 fps in-bridge); **HD greyscale (117.6 ms, ≈2.5 fps) is offered for video at Nick's call** — the tool switches pixel format rather than dropping resolution. Cost: **+64 B, 246,096/262,144 = 93.88%, 16,048 B headroom** (REV-25). |
+| D32 | 2026-08-16 | **S18 is re-sequenced ahead of S19's remaining bites, goes to a fresh agent on its own branch, and S18's optional "systemd units" (old bite D) is promoted to FIRST and made mandatory.** S19 bites 1–2 stay as delivered (HD stills work); bites 3–4 wait behind S18 bite D. (Nick, 2026-08-16.) | The S19 session spent more hours on the hand-run harness than on the code, and every one of those hours traced to a process-management failure rather than a product one: two Telemetry instances silently wedged the single-producer S3 ingest twice (deterministically, at 2,592,256 B of socket buffer ≈ 1,416 frames), a leftover 600 s stream command corrupted a third run, `pkill -f` patterns matched the driving SSH command line and killed sessions while leaving apps alive, and stdout buffering hid a live log. A systemd unit is a singleton by construction and stops its whole cgroup, which removes that entire class — so the harness is worth more than the next feature, and it must land before bite 4 measures anything. Fresh eyes on a separate branch because the S19 author (this one) now has strong priors about a bench whose failures were all self-inflicted; the S18 mockup lesson (D31 — reviewing the front end early is what surfaced HD greyscale) argues for someone re-deriving the plan rather than inheriting it. The S18 pause condition is also genuinely satisfied: it existed so the tool would not ship without the top of the resolution ladder, and HD now delivers.
 
 ## Verified-facts ledger
 
@@ -1521,3 +1522,184 @@ q_drops=0, ingest 455/455, 8 UPLINK_TX reports out via
 spotter_tx_data, gateway_ipc up. Board left staged for Nick's demo
 run; fixture restore + S6 baseline = after the demo (S16's pending
 restore folded in — /flash main.py had remained the S16 bridge).
+
+### S19 detail (2026-08-16) — bite 1: the HD publish wall, measured
+
+**Verdict up front: the wall is BYTES IN FLIGHT, not chunk count, and
+the mechanism is inside the HE — the wire task both receives WCMD_PUB
+messages and drains the netwire TX queue, and it cannot do the second
+while it is doing the first.** Every published chunk parks its L2 frame
+copy on the FreeRTOS heap until the burst *ends*; the 14th 1,400 B chunk
+has nowhere to live. Measured with no Pi and no camera.
+
+**Instrument (`firmware/bm_he/src/he_sample.{c,h}`).** A 1 KB fixed page
+at 0x600BFA00 (carved out of `bm_he.ld`'s region, magic `HSMP`,
+self-describing header, 40 × 24 B records) written one record per
+published chunk: frame position from the chunk header, `bm_pub` result,
+netwire txq depth, `heap_free`, `heap_min`, `tx_dropped`, rpmsg drops,
+tick. A page rather than the debug ring because the failure ends in
+`vApplicationMallocFailedHook` — interrupts off, spinning, no WCMD_QUERY
+reply ever again — so only RAM read from the other core survives, and 26
+`he_dbg_printf` lines would wrap the 4 KB ring inside two frames while
+adding `vsnprintf` to the path under measurement. Cost: **+456 B image
+(246,552 / 262,144 = 94.05%) and 1 KB of region**, headroom to the
+linker limit 14,056 B (was 15,536). `wire_status_t` is untouched — no
+ABI, no fork pin move. `bm_he.elf` = `9f40650cd83d9784`.
+Also fixed en route: `wire_pump_tx`'s retry exhaustion was a **silent**
+drop (no counter, no log) — now counted and narrated (first four).
+
+**Probe (`bench/probes/s19_pub_probe.py`).** Synthetic chunk bursts over
+rpmsg with the link forced up, no Pi (vendored `pubsub.c bm_pub_wl`
+transmits unconditionally — there is no remote-subscriber gate, read
+from source) and no sensor (S18's fault is framebuffer GROWTH, so it is
+structurally absent here). Burst framing is asserted byte-identical to
+`BridgeCore.capture_pub_msgs` in `bench/test_s19_probe.py` — a probe that
+sends traffic the product never sends measures nothing (S18's probe 4).
+
+| row | chunks × B | payload | result | heap floor | tx_dropped |
+|---|---|---|---|---|---|
+| count 3 | 3 × 1400 | 4.2 K | OK | 16,208 | 0 |
+| count 8 | 8 × 1400 | 11.2 K | OK | 8,768 | 0 |
+| count 12 | 12 × 1400 | 16.8 K | OK (tick frozen) | 2,816 | 0 |
+| count 16 | 16 × 1400 | 22.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| A | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| E | 26 × 350 | 9.1 K | **OK — 26 chunks fine** | 13,192 | 10 |
+| C | 13 × 1400 | 18.2 K | OK (the exact limit) | 1,328 | 0 |
+| B | 52 × 700 | 36.4 K | OK — survived by DROPPING | 1,328 | 36 |
+| pace 2 ms | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| pace 5 ms | 26 × 1400 | 36.4 K | **OK** | 19,184 | 0 |
+| pace 10 ms | 26 × 1400 | 36.4 K | **OK** | 19,184 | 0 |
+| HP drains, pace 0 | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+
+**The arithmetic, all measured.** Free FreeRTOS heap at RUNNING =
+**20,712 B** of `configTOTAL_HEAP_SIZE` 64 KB (≈43 KB is task stacks and
+queues). One published 1,400 B chunk costs **exactly 1,488 B** — the
+`bm_malloc` frame copy in `bm_net_wire.c wire_send`, plus heap_4 block
+overhead — and the txq depth climbs 1, 2, 3 … in lockstep with the heap
+falling, i.e. **nothing is popped during the burst**. 20,712 / 1,488 =
+13.9, so 13 chunks fit and the 14th dies. Observed at exactly 13 on
+three independent rows. The heap recovers fully (20,672) after every
+surviving burst — no leak.
+
+**Why count is not the wall (row E).** 26 chunks of 350 B publish fine.
+Same count, quarter of the bytes.
+
+**Why 700 B survives where 1400 B kills (row B).** `NETWIRE_TXQ_LEN` is
+16, and `wire_send` frees the copy when the queue is full (counting
+`tx_dropped`). At 700 B, 16 × ~788 B = 12.6 K fits under the free heap,
+so the QUEUE fills first — survivable, lossy. At 1400 B, 16 × 1,488 =
+23.8 K **exceeds** the 20.7 K free heap, so the HEAP fails first —
+fatal. The fatal-vs-survivable line is `NETWIRE_TXQ_LEN × (chunk + 88)`
+vs free heap, and today it falls on the wrong side at the production
+chunk size.
+
+**Mechanism, and what it falsifies.** `rr_poll()` loops until the
+inbound vring is empty and publishes each completed chunk inline from
+`wire_rx`; `wire_pump_tx()` runs only after `rr_poll` returns
+(`main.c` wire task). Back-to-back delivery keeps `rr_poll` fed, so the
+pump never runs and the queue never drains. This is why **HP-side
+draining alone changes nothing** (it died identically) and why **2 ms
+pacing does not help** — the HE spends ~2.5 ms per chunk, so 2 ms gaps
+never starve `rr_poll` into returning. At **≥5 ms** the poll loop drains,
+the pump runs between chunks, and the heap floor is 19,184 = exactly ONE
+chunk outstanding, 0 drops, all 104 messages delivered.
+**TRACKER bite 2 as written ("pace the burst / backpressure on the HP
+side") is therefore NOT the fix**: ≥5 ms pacing only works by accident,
+costs 130–260 ms per HD frame, and leaves the coupling in place. The fix
+belongs on the HE: pump TX from inside the poll loop, or publish from a
+task other than the one that drains.
+
+**Secondary finding.** `BP->tick` is written at the TOP of the wire
+task's loop, so a task parked in `wire_pump_tx`'s 100 ms-per-message
+retry reads as dead. Liveness now means "the stack answers a query";
+ticking is only the fast path. The first probe run reported a false
+death from this and the HE ring — `RUNNING`, no `malloc failed` — is
+what caught it.
+
+### S19 detail (2026-08-16) — bite 2: the HD burst delivers, and why the
+### first three parts were not enough
+
+**Result: `capture 50 hd color` lands a complete 1280×800 JPEG at the
+Telemetry node over two BM hops — 42,574 B, valid SOI→EOI, 31 chunks,
+`pub_ok=34 pub_errs=0`, `gaps=0`.** The ledger is exact to the byte:
+31 × 10 B chunk headers + 42,574 JPEG bytes = 42,884 = `pub_bytes`
+delta. No earlier session ever delivered an HD frame, so a 1280×800
+frame at `:8080/frame.jpg` cannot be a stale artifact (the S18
+stale-frame trap, checked deliberately).
+
+**Part 1 — bounded poll (the fix).** `rr_poll_n(rr, max_msgs)` caps how
+many rpmsg messages a poll consumes; `rr_poll()` remains an unbounded
+wrapper so he_spike — the other caller and the S10 bite-1 artifact — is
+untouched. bm_he's wire task uses `WIRE_POLL_BUDGET 4`: a 1,400 B chunk
+is 3 messages, so at most ~2 publishes complete before `wire_pump_tx()`
+runs.
+
+**Part 2 — the bridge drains while it pushes** (`send_chunk_msgs`,
+every 3 messages = every chunk). Not pacing; pacing was measured in bite
+1 and does not fix the heap wall.
+
+**Part 3 — byte-bounded TX queue.** `NETWIRE_TXQ_MAX_BYTES 12288`
+alongside the 16-frame bound, because 16 × 1,488 B = 23.8 KB exceeds the
+20,712 B free heap: at the production chunk size the fatal allocation
+beat the survivable queue-full drop. In every acceptance run it never
+triggered (`tx_dropped=0`), which is the point — it is the net, not the
+mechanism.
+
+**Part 4 — wire_pump_tx never blocks (found by rehearsal, not design).**
+Parts 1–3 alone turned the heap death into a **deadlock**: the old pump
+retried `rr_send` 100 × 1 ms per message, parking the wire task — the
+same task that consumes inbound rpmsg. Parked, it stopped draining
+WCMD_PUB, so the HP→HE ring filled, so the bridge blocked *inside a
+single* `ept.send`, so it never reached its next drain point to recycle
+the HE→HP buffers the pump was waiting for. Measured: **exactly one
+chunk published** (heap 19,192, `tx_stalls=0`, no `malloc failed`, stack
+`RUNNING`), then a stalemate broken only by the HP's 1 s send timeout.
+Part 2 cannot help here — the block happens *within* one send, before
+the next drain point. The pump now sends what it can, keeps its exact
+place (frame + fragment iterator persist across calls) and returns;
+congestion surfaces as the byte-bounded queue filling. The formerly
+silent retry-exhaustion drop is now a counted **stall**
+(`he_sample tx_stalls`, renamed from `rpmsg_drops` — nothing is dropped
+at that layer any more).
+
+**Off-chain acceptance (`s19_pub_probe.py`, phase `verify`) — 6/6, zero
+drops, zero stalls:**
+
+| row | burst | bite 1 | bite 2 |
+|---|---|---|---|
+| 26 × 1400 | 36.4 K | died at chunk 13 | **26/26** |
+| 16 × 1400 | 22.4 K | died at chunk 13 | **16/16** |
+| 52 × 700 | 36.4 K | survived by dropping 36 | **52/52, 0 drops** |
+| 104 × 350 | 36.4 K | never reached | **104/104** |
+| 60 × 1400 | **84.0 K** | never reached | **60/60** (2.3× HD) |
+| 26 × 1400, HP not draining | 36.4 K | died at 13 / deadlocked | **26/26** |
+
+Heap floor 17,704 B against 20,680 idle — about two chunks outstanding,
+which is what a 4-message budget predicts. Predicted 19,184 (one chunk);
+measured slightly lower, consistent with a budget that can span two
+chunk boundaries. The model holds, so bite 3 (raising
+`configTOTAL_HEAP_SIZE`) stays unnecessary.
+
+**Regression:** sustained `stream 2.0 15 600` through the full chain —
+**15.0 fps steady, 0 gaps, 0 dropped, 0 hdr_errs, 0 q_drops**, matching
+S17's demoed number. The bounded poll carries all relay traffic, so this
+was the gate on the whole approach.
+
+**Size:** 246,784 B = 94.14% (bite 1 246,552; bite 2 +232 B). ELF
+`4c509d2464412cee`, bridge `1524f6c203f232a0`. No ABI change, no fork
+pin move.
+
+**Correction to bite 1's mechanism claim.** Bite 1 concluded that
+"HP-side draining alone changes nothing" from a row whose `drain=True`
+was a **no-op**: the probe popped its own Python list, which recycles no
+vring buffer — only letting MicroPython service openamp does, and that
+needs a VM yield the drain loop never took. Found live in bite 2 and
+fixed (`Wire.drain` now yields first). What still stands unchanged: the
+heap arithmetic, the 1,488 B per chunk, the 13-chunk wall, and
+count-vs-bytes (row E). What was **confounded** and should not have been
+stated so flatly: the ≥5 ms pacing rows gave the HP time to recycle
+buffers *as well as* starving `rr_poll`, so bite 1's data could not
+separate those two effects. Bite 2 separates them properly — the last
+acceptance row above has the HP deliberately not draining and still
+delivers 26/26, which is the evidence that the HE-side fix is the load-
+bearing one.

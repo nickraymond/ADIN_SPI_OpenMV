@@ -17,6 +17,255 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 2: HD delivers end to end; the first three parts deadlocked and the rehearsal caught it
+
+**Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
+move, `wire_status_t` untouched)
+
+**Done:**
+- Nibble-1 plan approved by Nick with 5 decision points; rung C folded
+  in here as bite 2's verification.
+- **Part 1 — bounded poll.** `rr_poll_n(rr, max_msgs)`; `rr_poll()` stays
+  an unbounded wrapper so he_spike (the other caller, and the S10 bite-1
+  artifact) is untouched. bm_he's wire task uses `WIRE_POLL_BUDGET 4`.
+- **Part 2 — the bridge drains while it pushes** (`send_chunk_msgs`,
+  every 3 messages = every chunk). Not pacing.
+- **Part 3 — byte-bounded TX queue** (`NETWIRE_TXQ_MAX_BYTES 12288`), the
+  net that turns a board-killing allocation into a counted drop.
+- **Part 4 — `wire_pump_tx` never blocks** (see below). Sends what it
+  can, keeps its exact place across calls, returns.
+- **RUNG C — `capture 50 hd color` → 1280×800, 42,574 B, valid
+  SOI→EOI at `nereus001:8080/frame.jpg`, 31 chunks, `pub_ok=34
+  pub_errs=0 gaps=0`.** Ledger exact to the byte: 31 × 10 B headers +
+  42,574 = 42,884 = the `pub_bytes` delta. Checked the S18 stale-frame
+  trap deliberately: no session before this one ever delivered an HD
+  frame, so a 1280×800 frame at that URL cannot be stale.
+- **Off-chain acceptance 6/6, zero drops, zero stalls** — including
+  60 × 1400 B = **84,000 B, 2.3× an HD frame**, and the 26 × 1400 row
+  with the HP deliberately not draining. Heap floor 17,704 of 20,680.
+- **Regression: `stream 2.0 15 600` → 604 s, 8,916 frames, 15.0 fps
+  steady, and not one line in the whole run with a nonzero
+  gaps/dropped/hdr_errs/q_drops/ingest_fail.** This was the real gate:
+  the bounded poll carries all relay traffic. Bridge ledger on exit:
+  `cap_frames=9092 cap_chunks=18992 frag_errors=0 qdrops=0`.
+- Size 246,784 (94.14%, +232 B over bite 1). ELF `4c509d2464412cee`,
+  bridge `1524f6c203f232a0`. Host tests: he_spike 29→**45**, bm_he
+  **232**, bridge 252→**262**, probe **47**. README §S19 demo ladder
+  added; the S18 "DO NOT USE hd" warning retired with a pointer.
+
+**Broke/surprised us:**
+- **Parts 1–3 alone DEADLOCKED, and only the rehearsal found it.** The
+  old pump retried `rr_send` 100 × 1 ms per message, parking the wire
+  task — the same task that consumes inbound rpmsg. Parked, it stopped
+  draining WCMD_PUB, the HP→HE ring filled, and the bridge blocked
+  *inside a single* `ept.send`, so it never reached its next drain point
+  to recycle the buffers the pump was waiting for. Measured: exactly one
+  chunk published (heap 19,192, no `malloc failed`, stack RUNNING), then
+  a 1 s stalemate. Part 2 cannot help — the block happens within one
+  send. Hence Part 4.
+- **A bite-1 claim was wrong and I corrected it.** "HP-side draining
+  alone changes nothing" came from a row whose `drain=True` was a no-op:
+  the probe popped its own Python list, which recycles no vring buffer —
+  only a VM yield lets MicroPython run the callback that does. The heap
+  arithmetic, 1,488 B/chunk, the 13-chunk wall and bytes-not-count all
+  stand; the pacing rows were **confounded** (they gave the HP time to
+  recycle AND starved the poll). Bite 2 separates them: the HE-side fix
+  delivers 26/26 with the HP not draining at all.
+- **Three `ae3-usb-unstick` Pi reboots**, all from contacting the board
+  shortly after a probe run that ended with the HE backpressured — twice
+  on `mpremote reset`, once on a plain `cp`, so my first attribution
+  ("reset racing") was wrong. Part 4 removes the state that provoked it;
+  the ops note is in README §S19 either way.
+- Benign-looking but unexplained: `Error processing parsed cb: 19 of
+  message 5` on the HE ring next to camera/control replies. Not new
+  behaviour that I can attribute to this bite, not investigated —
+  flagged for the next chain session.
+- **Light node SEGFAULTED once at startup** during the confirmation run
+  (2026-08-16 03:34), immediately after opening the AE3's CDC port:
+  `Network Device Port 15: up` → `Failed to start renegotiating check,
+  reason: 0x7D` → `Segmentation fault`. Started cleanly on an immediate
+  retry with the identical command, and had started cleanly twice
+  earlier in the session. This is the **fork app** (`bench_apps` at
+  ba594ec, unchanged by S19 — all S19 changes are AE3-side), so it is a
+  pre-existing startup race in the uart/renegotiation path, not a
+  regression from this bite. Recorded because a demo that segfaults 1
+  run in 3 will bite someone: if Light dies at startup, just start it
+  again.
+
+**Board state:** fixture restored and sha-verified (`main.py`
+`55fa6ccfdd3f7f65`), board on the bus running the S6 service, apps
+stopped on both Pis, `/flash` carrying the S19 ELF + bridge. **S6 USB
+baseline NOT re-run** (no firmware flash and no sensor contact beyond
+the demo captures; called out rather than skipped silently).
+
+**Confirmation run of the full README §S19 ladder (Claude, at Nick's
+"run the demo to confirm it all works"):**
+- **Demo 3 (off-chain, no Pis): PASS**, 6/6 rows, heap floor 17,704,
+  `tx_dropped=0 stall=0` — numbers identical to the rehearsal.
+- **Demo 1 (HD on the chain): PASS** — `res=hd pf=color ok=1`,
+  **1280×800 / 20,665 B valid JPEG** at `:8080/frame.jpg`,
+  `pub_ok=17 pub_errs=0`, `gaps=0`. Ledger exact again: 15 chunks ×
+  10 B + 20,665 = 20,815 = the `pub_bytes` delta. Smaller than the
+  rehearsal's 42,574 B because the room was dark at 03:40 — scene-bound,
+  as S17/S18 both recorded.
+- **Demo 2 (600 s stream): FAILED first attempt, PASSED on a clean
+  re-run.** First attempt died ~94 s in (t=109, 1,416 frames, all
+  counters still zero): the **Telemetry app stopped emitting TEL_STAT
+  and stopped feeding the ingest**, while staying alive — gdb showed the
+  main thread in its normal `bm_sbc_app_run` → `nanosleep` loop, 26
+  threads idle on queue receives, ~4% CPU. The chain was fine
+  throughout: Light logged no offline, no decode errors, both neighbours
+  still present. Re-run from a **fresh bridge** (per the README's
+  "each demo gets a fresh bridge" rule, which I had violated by running
+  demos 1 and 2 in one bridge lifetime): **602 s, 8,886 frames, 15.0 fps
+  steady, zero on every loss counter across all 602 stat lines, no gap
+  in the stat stream.**
+- **ROOT-CAUSED on the repeat run (Nick: "run demo 2 three more times").
+  Not a flake, not a product bug — MY operator error.** The wedge
+  reproduced at *exactly* `t=109 frames_ok=1416`, identical to the first
+  occurrence, which is the signature of a fixed-size limit rather than a
+  race. `ss -tnp` while wedged showed **two Telemetry instances** both
+  connected to the frozen S3 ingest on `:8081`: one with Send-Q 0 (being
+  read by the server, `python3 pid=1103`) and the wedged one with
+  **Send-Q 2,592,256 B** and no reader attached. The ingest is
+  **single-producer**; 2.59 MB is the wmem ceiling, and at ~1.87 KB per
+  QVGA frame that is 1,416 frames — hence the exact repeat. **Causality
+  proven directly:** killing the stale instance made the server accept
+  the blocked connection and the wedged app resumed instantly (t 109 →
+  274, frames 1,416 → 1,853, back to 15.0 fps, `q_drops=4118` for what
+  piled up). My driver left demo 1's Telemetry instance running when it
+  started demo 2. The hazard is already in the S17/S18 record ("would
+  race the single-producer ingest"; "nereus001 had two racing telemetry
+  instances") and I walked into it anyway.
+- **A follow-up run was contaminated the same way, at a different
+  layer:** 607 s reporting 26,141 frames (~43 fps, not 15) with 1,676
+  gaps, because the AE3 bridge was still executing the previous run's
+  600 s `stream` command when the next one was issued — two overlapping
+  streams into one reassembler. Also procedure, not product. The board
+  keeps streaming after the app that asked for it dies.
+- **Mitigations:** README demo 2 now carries a preflight
+  (`ss -tn | grep -c :8081` must be 2) and the let-the-stream-finish
+  rule; my earlier "start from a fresh bridge" warning was a guess and
+  has been removed. Real fix agreed with Nick: **run the nodes as
+  systemd units** (singleton by construction, clean stop, journald) —
+  promoted ahead of bite 4.
+
+**Session wind-down (Nick, 2026-08-16) — S19 parked, S18 promoted, fresh
+agent takes it (D32).**
+- **S19 bites 1–2 are code-complete and rehearsed but NOT closed:** no
+  PR, branch unpushed, and Nick has not run the demo himself. The demo
+  line is also only half satisfied — `capture 50 hd color` passes,
+  `capture 50 hd mono` has never been run (bite 4).
+- **Never measured, and worth saying plainly:** HD as a *stream*. Every
+  sustained run this sprint was QVGA 15 fps. The S18 encode table
+  predicts ~1 fps HD colour / ~2.5 fps HD mono, encoder-bound, at ~5% of
+  the relay ceiling — unverified.
+- **Systemd bite planned, not started.** Plan is recorded in TRACKER
+  S18 bite D (units, the stdin/`tail -f` command channel and its
+  untested risk, the `chain_status.sh` preflight, install-disabled
+  recommendation, and an acceptance test that is literally tonight's
+  bug). The next agent should re-derive it rather than trust it.
+- **Branch hazard flagged in TRACKER:** the AE3 is running S19 artifacts
+  (`bm_he.elf` `4c509d24…`, `bm_bridge.py` `1524f6c2…`) that exist only
+  on this unmerged branch. An S18 branch cut from `main` will not
+  contain the source for what the hardware is executing. Cut from
+  `sprint/19-hd-transport`, or merge S19 first.
+- Three items flagged in TRACKER as owned by nobody: the fork app's
+  occasional startup segfault, the unexplained `Error processing parsed
+  cb: 19` ring line, and the single-producer ingest as a design
+  constraint rather than a bench quirk.
+- **Honest read on the session:** roughly 200 LoC of product code, and
+  the majority of the hours went to a hand-run harness — three AE3 USB
+  wedges costing a Pi reboot each, two self-inflicted ingest wedges, one
+  contaminated run, and a `pkill` pattern that kept killing my own SSH
+  session. The product findings held up (the wall was measured, the fix
+  works, HD delivers); the process around them did not, which is what
+  D32 is a response to.
+
+**Next:** S18 with fresh eyes on its own branch, bite D (systemd) first.
+S19 remainder afterwards: Nick's demo run + PR for bites 1–2, then
+bite 3 (heap — looking unnecessary) and bite 4 (HD mono + HD stream).
+
+---
+
+## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 1: the wall measured off-chain — bytes in flight, not chunk count, and the fix is not where the TRACKER put it
+
+**Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
+move, `wire_status_t` untouched)
+
+**Done:**
+- Nibble-1 plan approved by Nick (sample page over debug ring; docker up;
+  Claude drives rung B).
+- **Instrument:** `he_sample.{c,h}` — 1 KB fixed page at 0x600BFA00
+  (carved from `bm_he.ld`, magic `HSMP`, 40 × 24 B records), one record
+  per published chunk: frame position, `bm_pub` result, txq depth,
+  `heap_free`, `heap_min`, `tx_dropped`, rpmsg drops, tick. A page, not
+  the ring: the failure ends in `vApplicationMallocFailedHook` with
+  interrupts off, so nothing answers a query again and only cross-core
+  RAM reads survive. Cost **+456 B (94.05%, 14,056 B headroom)**; ELF
+  `9f40650cd83d9784`. Netwire gained two single-writer counters
+  (`txq_pushed`/`txq_popped`) instead of one racy depth field.
+- **Probe:** `bench/probes/s19_pub_probe.py` — synthetic bursts, no Pi
+  (checked in vendored `pubsub.c`: `bm_pub_wl` has no remote-subscriber
+  gate, so it transmits regardless) and no camera (S18's fault is
+  framebuffer growth, structurally absent). Host tests assert the probe's
+  framing is **byte-identical to `BridgeCore.capture_pub_msgs`** — the
+  S18 probe-4 lesson made mechanical. HE host tests 191 → **220**, new
+  `bench/test_s19_probe.py` **42 checks**.
+- **RUNG B RESULTS (12 rows, full table in DESIGN §S19):** free heap at
+  RUNNING **20,712 B**; one 1,400 B chunk costs **exactly 1,488 B**;
+  20,712/1,488 = 13.9 → **13 chunks fit, the 14th kills it**, observed at
+  exactly 13 on three independent rows, with `freertos: malloc failed`
+  in the ring — S18's signature reproduced with no Pi and no camera.
+  **26 × 350 B publishes fine → the wall is BYTES, not COUNT.**
+  Heap recovers fully after every surviving burst (no leak).
+- **Mechanism:** the wire task both receives WCMD_PUB and drains the TX
+  queue; `rr_poll()` loops until the inbound vring is empty (publishing
+  inline) and `wire_pump_tx()` only runs after it returns, so a
+  back-to-back burst starves the drain. txq depth climbs 1,2,3… in
+  lockstep with the heap falling.
+
+**Broke/surprised us:**
+- **The TRACKER's bite 2 as written is not the fix.** HP-side draining
+  alone died identically; 2 ms pacing died identically (the HE spends
+  ~2.5 ms/chunk, so 2 ms never starves the poll loop); ≥5 ms pacing
+  survives with a heap floor of 19,184 = exactly ONE chunk outstanding,
+  but only by accident and at 130–260 ms per HD frame. The fix belongs on
+  the HE: pump TX inside the poll loop, or publish off the wire task.
+- **A row survived by DROPPING and it explains S18's asymmetry.**
+  52 × 700 B lived through the same 36.4 KB that kills 26 × 1400 B,
+  losing 36 frames to `tx_dropped`: `NETWIRE_TXQ_LEN` (16) × 788 B fits
+  under the free heap so the QUEUE fills first, while 16 × 1,488 B =
+  23.8 KB exceeds it so the HEAP fails first. Bounding the queue by bytes
+  turns a board-killer into a counted drop — a cheap robustness fix that
+  is independent of the throughput fix.
+- **My first liveness check was wrong and reported a false death.**
+  `BP->tick` is written at the top of the wire task's loop, so a task
+  parked in `wire_pump_tx`'s 100 ms-per-message retry reads as dead —
+  the probe declared the HE dead after 3 chunks. The HE ring
+  (`RUNNING`, no `malloc failed`) is what caught it; liveness now means
+  "answers a query", with ticking as the fast path. Same class of error
+  as S18's stale-frame reading: the first artifact I trusted was not
+  measuring what I thought.
+- `wire_pump_tx`'s retry exhaustion had been a **silent** drop since S16
+  — no counter, no log. Now counted and narrated.
+
+**Board state:** fixture intact and re-verified (`main.py`
+`55fa6ccfdd3f7f65`), board back on the bus running the S6 service,
+`/flash/bm_he.elf` now the S19 instrumented build `9f40650cd83d9784`
+(was the S17 `3cdd1f66…` staged inert). Four Pi reboots not needed —
+zero USB incidents this session, because nothing touched the sensor.
+S6 USB baseline NOT re-run (no firmware flash, no `main.py` change, no
+sensor contact this session).
+
+**Next:** Nick's call on rung C — a real `capture 50 hd color` on the
+live chain with this ELF. It is the only thing that explains S18's 8
+chunks vs our 13 (predicted: less free heap with a subscriber and
+neighbour traffic live, floor(free/1488) ≈ 8), and bite 2 has to bring
+the chain up anyway. Then bite 2, re-specified by the measurement above.
+
+---
+
 ## 2026-08-15 — Sprint S18 (camera bench web tool) — bite A: resolution + pixel format plumbed end to end; front end designed against a working mockup first
 
 **Branch:** `sprint/18-web-bench` (repo) + bm_sbc fork `feature/udp-transport`
