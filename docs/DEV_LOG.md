@@ -150,9 +150,41 @@ the demo captures; called out rather than skipped silently).
   systemd units** (singleton by construction, clean stop, journald) —
   promoted ahead of bite 4.
 
-**Next:** nibble 3 — Nick runs README §S19 demos 1–3 → nibble 4 PR.
-Then bites 3 (heap — looking unnecessary) and 4 (HD mono + sustained
-multi-frame HD).
+**Session wind-down (Nick, 2026-08-16) — S19 parked, S18 promoted, fresh
+agent takes it (D32).**
+- **S19 bites 1–2 are code-complete and rehearsed but NOT closed:** no
+  PR, branch unpushed, and Nick has not run the demo himself. The demo
+  line is also only half satisfied — `capture 50 hd color` passes,
+  `capture 50 hd mono` has never been run (bite 4).
+- **Never measured, and worth saying plainly:** HD as a *stream*. Every
+  sustained run this sprint was QVGA 15 fps. The S18 encode table
+  predicts ~1 fps HD colour / ~2.5 fps HD mono, encoder-bound, at ~5% of
+  the relay ceiling — unverified.
+- **Systemd bite planned, not started.** Plan is recorded in TRACKER
+  S18 bite D (units, the stdin/`tail -f` command channel and its
+  untested risk, the `chain_status.sh` preflight, install-disabled
+  recommendation, and an acceptance test that is literally tonight's
+  bug). The next agent should re-derive it rather than trust it.
+- **Branch hazard flagged in TRACKER:** the AE3 is running S19 artifacts
+  (`bm_he.elf` `4c509d24…`, `bm_bridge.py` `1524f6c2…`) that exist only
+  on this unmerged branch. An S18 branch cut from `main` will not
+  contain the source for what the hardware is executing. Cut from
+  `sprint/19-hd-transport`, or merge S19 first.
+- Three items flagged in TRACKER as owned by nobody: the fork app's
+  occasional startup segfault, the unexplained `Error processing parsed
+  cb: 19` ring line, and the single-producer ingest as a design
+  constraint rather than a bench quirk.
+- **Honest read on the session:** roughly 200 LoC of product code, and
+  the majority of the hours went to a hand-run harness — three AE3 USB
+  wedges costing a Pi reboot each, two self-inflicted ingest wedges, one
+  contaminated run, and a `pkill` pattern that kept killing my own SSH
+  session. The product findings held up (the wall was measured, the fix
+  works, HD delivers); the process around them did not, which is what
+  D32 is a response to.
+
+**Next:** S18 with fresh eyes on its own branch, bite D (systemd) first.
+S19 remainder afterwards: Nick's demo run + PR for bites 1–2, then
+bite 3 (heap — looking unnecessary) and bite 4 (HD mono + HD stream).
 
 ---
 
