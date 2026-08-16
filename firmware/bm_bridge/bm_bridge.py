@@ -91,6 +91,13 @@ CAMERA_PF_COLOR = 1
 CAMERA_PF_MONO = 2
 CAP_DEFAULT_RES = CAMERA_RES_QVGA    # the T1 shape (D9)
 CAP_DEFAULT_PF = CAMERA_PF_COLOR
+# Framebuffer ceiling claimed at bridge start, BEFORE the HE ELF loads.
+# Anything at or below it can be switched to freely for the rest of the
+# run; anything above is refused. HD by default so the bench tool can
+# offer the whole ladder -- the buffer is not on the MicroPython heap
+# (measured: heap stayed ~3.8 MB with HD allocated), so claiming the
+# ceiling costs nothing the rest of the bridge needs.
+CAP_DEFAULT_CEILING = CAMERA_RES_HD
 RES_GEOM = {CAMERA_RES_QVGA: (320, 200),
             CAMERA_RES_VGA: (640, 400),
             CAMERA_RES_HD: (1280, 800)}
@@ -452,35 +459,38 @@ def sensor_steps(cur_res, cur_pf, want_res, want_pf):
     """Sensor calls needed to reach (want_res, want_pf), in apply order.
 
     Pure -- host-tested without a sensor. Returns () when nothing
-    changed, and that emptiness is the point: every set_pixformat /
-    set_framesize is a sensor RE-INIT, which is the D15 crash class
-    (firmware/ae3_usb/README.md). S18 lets the operator flip geometry
-    from a web page, so the cheap guard against hammering the sensor is
-    to touch it only on an actual delta.
+    changed: every call here is a sensor re-init (the D15 crash class),
+    and S18 hands that trigger to a web page.
 
-    Pixel format is applied before framesize (OpenMV's own ordering in
-    every example: set_pixformat -> set_framesize -> skip_frames), and a
-    settle always follows a change -- the first frames after a re-init
-    are garbage.
+    The order is not stylistic, it is the only one that survives.
+    MEASURED on the bench 2026-08-15 (S18 probes 1-4, bench/probes/):
 
-    VGA and above get an explicit set_framebuffers(1): the S0 bench
-    measured that this sensor "needs set_framebuffers(1) for VGA+", and
-    HD fits only one buffer at all (DESIGN §S0). It is re-applied after
-    ANY geometry change at those sizes, because a pixformat change
-    reallocates the buffer too (RGB565 -> GRAYSCALE halves it). Whether
-    the single-buffer requirement is strictly necessary at VGA in THIS
-    firmware is a hardware question -- nibble 3 answers it; until then
-    the measured fact wins.
+    * With the HE core loaded, GROWING the framebuffer kills the board
+      outright -- USB off the bus, no Python exception, nothing to catch.
+      The HE ELF lives at 0x60080000 (SRAM9_B upper half) and OpenMV's
+      allocator grows into it. QVGA (128,000 B) stays clear; VGA
+      (512,000 B) does not.
+    * The trigger is the framebuffer COUNT reflowing: OpenMV sizes the
+      count to fit the pool, so an unpinned shrink quietly re-allocates
+      several buffers and the next grow has to expand the pool. Pinning
+      set_framebuffers(1) IMMEDIATELY BEFORE every set_framesize stops
+      the reflow -- proven repeatably across the full ladder incl. HD.
+    * A pixel-format change reallocates too (RGB565 -> GRAYSCALE halves
+      the buffer), so it takes the same pinned path and re-applies
+      set_framesize even when the resolution is unchanged.
+
+    Everything above the ceiling claimed before the HE loaded is
+    off-limits; CaptureEngine enforces that, not this function.
     """
+    if cur_res == want_res and cur_pf == want_pf:
+        return ()
     steps = []
     if cur_pf != want_pf:
         steps.append("pixformat")
-    if cur_res != want_res:
-        steps.append("framesize")
-    if steps and want_res in (CAMERA_RES_VGA, CAMERA_RES_HD):
-        steps.append("framebuffers")
-    if steps:
-        steps.append("settle")
+    # pin the count, THEN resize -- never the other way round
+    steps.append("framebuffers")
+    steps.append("framesize")
+    steps.append("settle")      # first frames after a re-init are garbage
     return tuple(steps)
 
 
@@ -494,14 +504,24 @@ class CaptureEngine:
     (bite 0), a dim scene runs lighter than target, and that is stated
     in the demo, not hidden.
 
-    Sensor bring-up is lazy (first command) and its failure is not
-    fatal to the bridge: the relay keeps running, the refusal is
-    traced, and the HE-side service ledger shows zero publishes.
+    Sensor bring-up is EAGER (bootstrap(), before the HE ELF loads) and
+    its failure is not fatal to the bridge: the relay keeps running, the
+    refusal is traced, and the HE-side service ledger shows zero
+    publishes.
+
+    Eager, not lazy (changed from S17 after the S18 probes): the
+    framebuffer ceiling has to be claimed while the SRAM9_B region the
+    HE core will occupy is still free. Once the HE is loaded, the
+    allocator can only be asked for the same size or smaller -- asking
+    for more takes the whole board off the USB bus with no catchable
+    error. So the ceiling is claimed up front and enforced thereafter.
     """
 
-    def __init__(self):
+    def __init__(self, ceiling=None):
         self.mode = CAMERA_MODE_STOP
         self.sensor_ok = None       # None = not tried yet
+        self.booted = False         # bootstrap() ran and claimed a ceiling
+        self.ceiling = ceiling or CAP_DEFAULT_CEILING
         self.cur_res = None         # geometry the sensor is actually holding
         self.cur_pf = None          # (None = unknown -> next cmd re-applies)
         self.q = CAP_DEFAULT_Q
@@ -521,6 +541,43 @@ class CaptureEngine:
             return sensor.HD
         return sensor.QVGA
 
+    def bootstrap(self):
+        """Claim the framebuffer CEILING. MUST run before the HE loads.
+
+        The call order is forced by the driver and was learned live
+        (S18 probes, bench/probes/): set_framebuffers() refuses until
+        BOTH a pixel format and a frame size exist -- but calling
+        set_framesize(HD) while the count is still unpinned is exactly
+        the unpinned allocation that later kills the board. So: come up
+        at QVGA (128,000 B, always safe), pin the count there, and only
+        then grow to the ceiling.
+
+        Failure is non-fatal and LATCHES the camera off: if the ceiling
+        was never claimed, no later command may touch the allocator,
+        because growing it post-HE-load is unrecoverable.
+        """
+        try:
+            import sensor
+            sensor.reset()
+            sensor.set_pixformat(sensor.RGB565)
+            sensor.set_framesize(sensor.QVGA)    # small: legalises the pin
+            sensor.set_framebuffers(1)           # pin BEFORE the big alloc
+            sensor.set_framesize(self._framesize(sensor, self.ceiling))
+            sensor.skip_frames(time=300)
+            self.cur_res, self.cur_pf = self.ceiling, CAMERA_PF_COLOR
+            self.sensor_ok = True
+            self.booted = True
+            w, h = RES_GEOM.get(self.ceiling, (0, 0))
+            _trace("camera: ceiling claimed %dx%d RGB565 (pre-HE)" % (w, h))
+            return True
+        except Exception as e:
+            self.sensor_ok = False
+            self.booted = False
+            self.cur_res = self.cur_pf = None
+            _trace("camera: bootstrap FAILED: %r -- camera disabled for this "
+                   "run, relay unaffected" % e)
+            return False
+
     def _ensure_sensor(self, res, pf):
         """Bring the sensor to (res, pf); no-op when already there.
 
@@ -528,30 +585,33 @@ class CaptureEngine:
         the refusal is traced, and the HE service ledger shows zero
         publishes. A failure MID-SWITCH leaves the real geometry unknown,
         so we forget it and let the next command re-apply from scratch
-        rather than trusting a half-applied state. Only a sensor that
-        never came up at all latches off.
+        rather than trusting a half-applied state.
         """
-        if self.sensor_ok is False:
+        if not self.booted or self.sensor_ok is not True:
+            return False
+        # THE guard. Above the claimed ceiling the allocator would grow
+        # into the loaded HE core and take the board off the USB bus with
+        # no catchable error, so this refusal is the only thing standing
+        # between a web-page click and a bricked bench.
+        if res > self.ceiling:
+            _trace("camera: res %d REFUSED -- above the %d ceiling claimed "
+                   "before the HE loaded" % (res, self.ceiling))
             return False
         try:
             import sensor
-            if self.sensor_ok is None:
-                sensor.reset()
-                self.cur_res = self.cur_pf = None
             steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
             for step in steps:
                 if step == "pixformat":
                     sensor.set_pixformat(sensor.GRAYSCALE
                                          if pf == CAMERA_PF_MONO
                                          else sensor.RGB565)
+                elif step == "framebuffers":
+                    sensor.set_framebuffers(1)   # pin: stops the pool reflow
                 elif step == "framesize":
                     sensor.set_framesize(self._framesize(sensor, res))
-                elif step == "framebuffers":
-                    sensor.set_framebuffers(1)   # S0: required at VGA+
                 elif step == "settle":
                     sensor.skip_frames(time=300)
             self.cur_res, self.cur_pf = res, pf
-            self.sensor_ok = True
             if steps:
                 w, h = RES_GEOM.get(res, (0, 0))
                 _trace("camera: sensor -> %dx%d %s (%s)"
@@ -559,8 +619,6 @@ class CaptureEngine:
             return True
         except Exception as e:
             self.cur_res = self.cur_pf = None    # geometry now unknown
-            if self.sensor_ok is None:
-                self.sensor_ok = False           # never came up: latch off
             _trace("camera: sensor setup FAILED res=%d pf=%d: %r"
                    % (res, pf, e))
             return False
@@ -623,8 +681,10 @@ def main():
     core = BridgeCore()
     usb = UsbVcp()
     he = HeWire()
-    engine = CaptureEngine()
     cfg = _load_cfg()
+    engine = CaptureEngine(
+        ceiling=CFG_RES.get(str(cfg.get("ceiling", "hd")).lower(),
+                            CAP_DEFAULT_CEILING))
 
     # Keep ONE generation of the previous trace instead of deleting it.
     # Bench-earned (S18 bite A): a capture hard-faulted the board below
@@ -658,6 +718,13 @@ def main():
     except Exception:
         pass
     _trace("kbd_intr %s" % ("disabled" if kbd_off else "UNAVAILABLE"))
+
+    # ORDER IS LOad-BEARING: claim the framebuffer ceiling while SRAM9_B
+    # is still free. After he.start() the allocator can only be asked for
+    # the ceiling or less -- asking for more takes the board off the USB
+    # bus with nothing to catch (S18 probes 1-2). Non-fatal: a failed
+    # bootstrap disables the camera and leaves the relay untouched.
+    engine.bootstrap()
 
     rp = he.start()
     _trace("he loaded, bm-wire announced")

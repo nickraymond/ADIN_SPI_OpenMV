@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import uart_codec as uc            # noqa: E402
+import bm_bridge                   # noqa: E402
 from bm_bridge import (            # noqa: E402
     BridgeCore, MSG_PAYLOAD, MAX_L2, STATUS_FMT,
     WCMD_FRAME_TX, WCMD_FRAME_RX, WCMD_FRAG, WCMD_LINK, WCMD_LINK_UP,
@@ -231,33 +232,56 @@ check(core.take_capture() is None, "capture: 12 B S17 body rejected")
 core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, 4) + b"\x01\x00\x00\x00")
 check(core.take_capture() is None, "capture: truncated body ignored")
 
-# ---- S18: sensor step planning (the D15 re-init guard) -------------------
-# Every step here is a sensor re-init, so the planner must emit none at
-# all when the geometry already matches.
-check(sensor_steps(None, None, CAMERA_RES_QVGA, CAMERA_PF_COLOR)
-      == ("pixformat", "framesize", "settle"), "steps: cold start = full init")
+# ---- S18: sensor step planning -------------------------------------------
+# These assertions encode a hardware fact measured the expensive way
+# (bench/probes/, three board lock-ups): with the HE core loaded, the
+# framebuffer COUNT must be pinned immediately before every set_framesize,
+# or a grow expands the pool into SRAM9_B and the board leaves the USB bus
+# with no catchable error. Order here is not style -- it is the fix.
 check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
                    CAMERA_RES_QVGA, CAMERA_PF_COLOR) == (),
       "steps: unchanged geometry touches nothing")
 check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
                    CAMERA_RES_HD, CAMERA_PF_COLOR)
-      == ("framesize", "framebuffers", "settle"), "steps: resolution only")
+      == ("framebuffers", "framesize", "settle"), "steps: resolution only")
 check(sensor_steps(CAMERA_RES_HD, CAMERA_PF_COLOR,
                    CAMERA_RES_HD, CAMERA_PF_MONO)
-      == ("pixformat", "framebuffers", "settle"), "steps: pixel format only")
+      == ("pixformat", "framebuffers", "framesize", "settle"),
+      "steps: pixformat change still re-applies framesize (realloc)")
 check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
                    CAMERA_RES_HD, CAMERA_PF_MONO)
-      == ("pixformat", "framesize", "framebuffers", "settle"),
-      "steps: both, pf first")
-# S0 measured that VGA+ needs set_framebuffers(1); QVGA must NOT get it.
-check("framebuffers" not in sensor_steps(None, None, CAMERA_RES_QVGA,
-                                         CAMERA_PF_COLOR),
-      "steps: QVGA keeps default buffering")
-for res in (CAMERA_RES_VGA, CAMERA_RES_HD):
-    check("framebuffers" in sensor_steps(None, None, res, CAMERA_PF_COLOR),
-          "steps: VGA+ forces single-buffer")
-for steps in (sensor_steps(1, 1, 3, 2), sensor_steps(None, None, 2, 1)):
-    check(steps[-1] == "settle", "steps: a change always settles")
+      == ("pixformat", "framebuffers", "framesize", "settle"),
+      "steps: both change, pixformat first")
+# The invariant that keeps the board alive, asserted over the whole ladder.
+for cr in (None, CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+    for wr in (CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+        for cp in (None, CAMERA_PF_COLOR, CAMERA_PF_MONO):
+            for wp in (CAMERA_PF_COLOR, CAMERA_PF_MONO):
+                st = sensor_steps(cr, cp, wr, wp)
+                if not st:
+                    continue
+                check(st.index("framebuffers") == st.index("framesize") - 1,
+                      "steps: count pinned immediately before every resize")
+                check(st[-1] == "settle", "steps: a change always settles")
+                if "pixformat" in st:
+                    check(st[0] == "pixformat", "steps: pixformat leads")
+
+# ---- S18: the ceiling guard ----------------------------------------------
+# Growing past the ceiling claimed before the HE loaded is unrecoverable,
+# so CaptureEngine must refuse it rather than ask the allocator.
+eng = bm_bridge.CaptureEngine(ceiling=CAMERA_RES_VGA)
+check(eng.ceiling == CAMERA_RES_VGA, "ceiling: honoured from constructor")
+check(not eng.booted and eng._ensure_sensor(CAMERA_RES_QVGA, CAMERA_PF_COLOR)
+      is False, "ceiling: no sensor work before bootstrap()")
+eng.booted = True                     # simulate a successful bootstrap
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_VGA, CAMERA_PF_COLOR
+check(eng._ensure_sensor(CAMERA_RES_HD, CAMERA_PF_COLOR) is False,
+      "ceiling: HD refused under a VGA ceiling")
+check(eng.cur_res == CAMERA_RES_VGA,
+      "ceiling: a refusal leaves the live geometry untouched")
+check(bm_bridge.CaptureEngine().ceiling == bm_bridge.CAP_DEFAULT_CEILING,
+      "ceiling: defaults to HD so the full ladder is offerable")
 
 
 def reassemble_pubs(msgs):

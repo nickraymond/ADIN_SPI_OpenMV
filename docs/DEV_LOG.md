@@ -162,12 +162,38 @@ Scene note: HD colour q50 measured 36.5–36.8 KB on the dim bench vs the
 93,253 B reef figure in DESIGN §S0 — scene-bound as expected, not a
 contradiction.
 
-**Next:** the bite-A code change this implies, which is a SUBSTANTIAL
-departure from the approved plan and needs Nick's nod: sensor bring-up
-stops being lazy and becomes an eager bootstrap that claims the HD
-ceiling BEFORE the HE ELF loads, plus a hard refusal of any grow beyond
-that ceiling so a click on the web page can never brick the board.
-Nothing above the pre-HE ceiling has been proven reachable.
+**Recipe implemented + rehearsed (Nick approved option A).** CaptureEngine
+gained `bootstrap()` (eager, runs BEFORE `he.start()`: reset → RGB565 →
+QVGA → pin `set_framebuffers(1)` → grow to the HD ceiling), `sensor_steps()`
+now emits pixformat → framebuffers → framesize → settle with the count
+pinned immediately before every resize, and `_ensure_sensor` hard-refuses
+anything above the claimed ceiling. Ceiling configurable via
+`bridge_cfg.json` `"ceiling"`, default HD. Bridge host tests 73 → **252**
+(the new invariant is asserted across the whole res × pf ladder). HE
+untouched, so no rebuild and no size change.
+
+**Rehearsal on the live chain — QVGA and VGA PASS, HD hits a SECOND,
+unrelated wall:**
+- QVGA: `ok=1 res=qvga pf=color`, **frames_ok=2 gaps=0 ingest_ok=2**,
+  fresh 3,991 B frame at the browser. (The earlier `gaps=2` was the
+  known S17 startup race — a warm-up capture clears it.)
+- **VGA: `ok=1 res=vga pf=color`, 640×400 / 11,030 B delivered, gaps=0,
+  board alive.** This is the exact command that took the board off the
+  USB bus twice before the fix. The framebuffer fix holds.
+- HD: capture succeeded on the HP side — ledger `cap_frames=4
+  cap_bytes=54,232 cap_chunks=40` — but the HE ring ends `freertos:
+  malloc failed` after publishing 8 of 26 chunks. **The HE core's heap
+  cannot carry an HD frame through pub/sub.** Board stayed on the bus,
+  bridge quiet-exited cleanly; ordinary exhaustion, not the allocator
+  fault. My probes never covered this: probe 4 tested capture+encode on
+  HP and never published over BM.
+- Board restored to the S6 fixture, sha 55fa6ccf…, apps stopped.
+
+**Next:** Nick's call on HD. QVGA+VGA are demo-ready now. HD needs
+chunk pacing/backpressure (the bridge emits a frame's chunks
+back-to-back with no flow control — 3 drains fine, 8 fine, 26 does not),
+or a bigger HE heap, or HD-stills-at-low-q only. Detail + candidate
+fixes in SPEC §Open questions.
 
 **Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
 `pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated

@@ -215,6 +215,29 @@ pair, USB carrying no video.
   report — it should refuse to grow into a loaded remoteproc image
   rather than corrupting it. Pairs with D15.
 
+- **SECOND, INDEPENDENT HD LIMIT: the HE core's FreeRTOS heap cannot
+  carry an HD frame through pub/sub (measured 2026-08-15, S18 bite A
+  rehearsal).** With the framebuffer recipe above in place, HD capture
+  on the HP core works perfectly over the live chain — bridge ledger
+  `cap_frames=4 cap_bytes=54,232 cap_chunks=40`, i.e. the HD frame was
+  captured at ~36 KB and chunked into 26 payloads — but the HE debug
+  ring ends: `camera: cmd mode 1 -> bridge` ×4 then **`freertos: malloc
+  failed`**, after publishing only 8 of those 26 chunks (`pub_ok` 6→14).
+  The board stayed on the USB bus and the bridge quiet-exited cleanly,
+  so this is an ordinary resource exhaustion, not the allocator fault.
+  Note the S18 probes did NOT cover this: probe 4 exercised capture and
+  encode on the HP core and never published a frame over BM.
+  **Measured ladder as it now stands: QVGA and VGA work end to end
+  (640×400 / 11,030 B delivered to the browser, gaps=0); HD captures
+  but cannot be delivered.**
+  Untested candidate fixes, in rough order of cost: pace/backpressure
+  the WCMD_PUB chunk burst so bm_pub can drain (the bridge currently
+  emits a frame's chunks back-to-back with no flow control — 3 chunks
+  at QVGA and 8 at VGA drain fine, 26 does not); raise
+  configTOTAL_HEAP_SIZE on the HE (RAM, not the 16 KB flash headroom);
+  or accept HD stills at low q only. HD greyscale (~25 KB, ~18 chunks)
+  is likely to hit the same wall and was not reached.
+
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
   mode with PROTE=0 and the bit does NOT accept a write (tried plain and
