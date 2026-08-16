@@ -1,7 +1,18 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-15 (S17 BUILD-4 code complete on
+*Last updated: 2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
+geometry + pixel format plumbed end to end and demoed on the live chain;
+branch `sprint/18-web-bench`, PR open. Two hardware facts bought with
+three board lock-ups: the sensor letterboxes to 16:10 (QVGA = 320×200)
+and, with the HE ELF loaded at 0x60080000, GROWING the framebuffer takes
+the board off the USB bus — fixed by an eager ceiling claim + pinned
+`set_framebuffers(1)`. **HD captures but cannot be published — the HE
+heap dies at 8 of 26 chunks — and that is now the ENTIRE scope of S19**,
+with S18 bites B–D paused behind it. Previous: S17 BUILD-4 demoed, all
+BENCHSPEC stages 0–4 complete.)*
+*(older header retained below)*
+*2026-08-15 (S17 BUILD-4 code complete on
 `sprint/17-build4-apps` + fork `feature/udp-transport` @ c1d0df9;
 bite-0 measurement + demos wait at the VCP gate; fork push = Nick.
 Previous: S16 BUILD-2 demoed end-to-end — three-node chain, 600 s @
@@ -522,6 +533,13 @@ transport-independent (survives the ADIN swap unchanged). Sequence set
 by Nick: web bench tool → light intelligence → CV. Upstream bug
 reports (items 8–10 above) explicitly HELD for now (Nick).*
 
+**RESEQUENCED 2026-08-15 (Nick), after S18 bite A found HD undeliverable:
+S18 bite A is done for QVGA+VGA, then **S19 = HD over pub/sub (whole
+sprint)**, then back to S18 bites B–D (the web tool), then light
+intelligence and CV. The old S19/S20 stubs are renumbered S20/S21;
+D30's text still says S19/S20 and is not being rewritten — history
+stays as written (DESIGN rule).*
+
 ### S18 — Camera bench web tool  `[ ]`  *(plan approved by Nick
 2026-08-15 — D30; branch `sprint/18-web-bench` from main AFTER PR #24
 merges)*
@@ -546,10 +564,28 @@ quality comparisons.
       170→191, bridge 61→73, all green; fork ABI offsets verified to
       match byte-for-byte. **Size: 246,096/262,144 = 93.88%, 16,048 B
       headroom (+64 B).** ELF `4be541ae…`.
-      **NEXT: fork push (Nick) → nibble-3 geometry ladder.** The
-      open numbers are in-bridge fps at VGA and HD — today
-      EXTRAPOLATED from the single measured QVGA point (15.00 fps,
-      S17 bite 0) and feeding bite C's warnings.
+      → **DONE 2026-08-15 for QVGA + VGA; HD deferred to S19.**
+      Nibble 3 run by Claude on the live chain (Nick: "run the
+      checks"): QVGA `frames_ok=2 gaps=0` fresh frame at the browser ·
+      **VGA 640×400 / 11,030 B delivered, gaps=0** — the command that
+      took the board off the USB bus twice before the fix · refusal
+      path returns ok=0 as designed. Fork pushed `ba594ec`; both Pis
+      deployed; board restored to the S6 fixture 55fa6ccf… .
+      **Three board lock-ups en route bought the sprint's biggest
+      fact** (SPEC §Open questions): with the HE ELF loaded at
+      0x60080000 (SRAM9_B upper half), GROWING the framebuffer takes
+      the board off the USB bus with no catchable error. Fixed by an
+      eager `bootstrap()` that claims the ceiling before `he.start()`
+      plus a pin of `set_framebuffers(1)` immediately before every
+      resize; a hard ceiling guard means a web click can never brick
+      the bench. Bridge host tests 61 → **252**.
+      **HD then hit a SECOND, unrelated wall** — it captures fine but
+      the HE core's heap dies mid-publish (`freertos: malloc failed`
+      after 8 of 26 chunks). That is now all of S19.
+*(Bites B–D below are PAUSED behind S19 — Nick, 2026-08-15. The tool is
+for judging image quality before locking the hardware spec, so shipping
+it without the top of the resolution ladder would answer the wrong
+question.)*
 - [ ] Bite B — fork app: **loopback-only control socket** on the
       telemetry role (JSON command in / JSON status out: last replies,
       current params, live receiver ledger) + **still-save** to
@@ -582,12 +618,55 @@ sensor 0x7936 — so there is **no 720 mode** — and nothing above HD has
 been tested, so nothing above HD is offered. Warnings stay client-side
 from measured constants, not camera-queried.
 
-### S19 — Light intelligence (stub — flesh out at kickoff)
+### S19 — HD stills over pub/sub  `[ ]`  *(scope set by Nick
+2026-08-15 after the S18 bite-A rehearsal. **This is the WHOLE sprint** —
+no web-tool work, no new features: just make HD capture and transport.
+S18 bites B–D wait behind it, because a bench tool for comparing image
+quality is not worth much if it cannot show the top of the ladder.)*
+**Goal:** `capture <q> hd color` and `capture <q> hd mono` land a
+complete, valid HD JPEG at the Telemetry node over BM pub/sub, with an
+exact chunk ledger and no `malloc failed`.
+
+**The known failure, measured (SPEC §Open questions, S18 rehearsal):**
+HD *capture* already works — the HP ledger shows `cap_bytes=54,232`,
+26 chunks — but the HE core dies publishing them: **`freertos: malloc
+failed` after 8 of 26 chunks**, then the camera service stops
+answering until the bridge restarts. QVGA (3 chunks) and VGA (8) drain
+fine. The board stays on the USB bus: ordinary heap exhaustion, not the
+S18 allocator fault.
+
+- [ ] Bite 1 — **measure before fixing** (S0 discipline): instrument the
+      HE heap (`xPortGetFreeHeapSize` / minimum-ever) and log it per
+      published chunk, so the drain curve is a number rather than a
+      theory. Find the actual chunk count / rate where it falls over,
+      at QVGA and VGA too — is 26 the wall, or is it bytes-in-flight?
+- [ ] Bite 2 — **flow control on the WCMD_PUB burst** (first candidate,
+      cheapest): the bridge emits a frame's chunks back-to-back with no
+      backpressure. Pace them, or have the HE acknowledge drain, so
+      bm_pub keeps up. Watch the REV-28 1400 B ceiling and the ≤492 B
+      rpmsg budget — chunk COUNT, not size, is the suspected driver.
+- [ ] Bite 3 — only if bite 2 is not enough: raise
+      `configTOTAL_HEAP_SIZE` on the HE (RAM, distinct from the ~16 KB
+      flash headroom; ELF is at 93.88% of its 256 KB region — check
+      both budgets) and/or trim pbuf/queue pools. Re-run the REV-25
+      size audit.
+- [ ] Bite 4 — HD **mono** as well as colour (~25 KB, ~18 chunks — never
+      reached in S18), then a sustained multi-frame HD run with the
+      ledger exact end to end.
+**Demo (Nick):** `capture 50 hd color` then `capture 50 hd mono` from
+the Telemetry CLI → both open as valid 1280×800 JPEGs at
+`http://nereus001:8080/frame.jpg`, `gaps=0`, `pub_errs=0`, and the HE
+heap floor reported alongside.
+**Do NOT skip the measurement bite.** S18 lost a day to a probe that
+covered capture but never published a frame over BM, and cleared HD on
+that basis. Prove the whole path or claim nothing.
+
+### S20 — Light intelligence (stub — was S19 in D30)
 Camera self-detects dark scenes (HP luma stats) → camera node issues
 `light/control` requests (HE `bm_service_request`) → light auto-on;
 customer never thinks about it. All on bm_service (§6.2).
 
-### S20 — CV: count-and-report (stub — flesh out at kickoff)
+### S21 — CV: count-and-report (stub — was S20 in D30)
 Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
 D29 context). Requires a custom Vela-compiled detector (S8 finding:
 ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
