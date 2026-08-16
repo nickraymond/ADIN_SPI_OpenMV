@@ -101,16 +101,28 @@ harness classifier blocks the agent from pushing to the fork, same as S17)
 **Bench state:** both units stopped; repo checkouts on
 `sprint/18-bench-control` at `e05b653`; fork at `8c0ff7a` on both Pis;
 `~/bench_captures/` on nereus001 holds the verified stills + sidecars.
-**AE3 fixture: the write REPORTED success on the sixth attempt
-(`mpremote cp` → `rc=0`) but the read-back could never be obtained, so
-by this repo's own rule — trust artifacts, not exit codes — treat it as
-PROBABLY restored, NOT verified.** Two read-back attempts afterwards
-both lost the REPL race. Either way this is hygiene, not a blocker:
-`demo_up.sh` stages the launcher at the start of every demo day.
-**What finally worked is the recipe worth keeping:** ≥60 s of genuinely
-zero port contact, then ONE `mpremote` operation, no `+` chaining. Every
-earlier failure was a chained command or a second command racing the
-first.
+**AE3 fixture RESTORED and VERIFIED against an artifact.** The board's
+`/flash/main.py` reads back as the S6 capture service (`"""OpenMV AE3
+capture service entry point — Spec §7, §8`), not the 1,358 B bridge
+launcher, and it is **byte-identical to `firmware/ae3_usb/main.py` once
+line endings are normalised**.
+**Two gotchas worth keeping, both of which nearly produced a wrong
+record here:**
+1. **`mpremote cat` CRLF-translates.** The read-back was 5,715 B against
+   the file's 5,581 B and a naive `cmp` said NO MATCH — but the file has
+   exactly **134 lines**, the difference is exactly **134 bytes**, and
+   `d.replace(b"\r\n", b"\n") == f` is True. **Normalise before comparing
+   any `mpremote cat` read-back**, and never sha256 the stream against
+   the file's own hash (an earlier attempt here did exactly that and got
+   a meaningless mismatch).
+2. **The write's `rc=0` was not the proof — the read-back was.** Five
+   earlier attempts failed and the sixth returned rc=0; only reading the
+   bytes back settled it, and in between the record twice said something
+   the evidence did not support.
+**The recipe that works:** ≥60 s of genuinely zero port contact, then
+ONE `mpremote` operation, no `+` chaining. Every earlier failure was a
+chained command, a second command racing the first, or the AE3 simply
+absent from the bus while mpremote reported "may be in use".
 
 **My first attribution was wrong and the later attempts disproved it.**
 I recorded "port contention" because `mpremote` says *"failed to access
