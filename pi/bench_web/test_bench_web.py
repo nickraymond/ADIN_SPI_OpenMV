@@ -1,18 +1,24 @@
-# test_bench_web.py -- host tests for the S18 bite C1 bench page. No Pi, no
-# hardware, no socket, no browser.
+# test_bench_web.py -- host tests for the S18 bench page (bites C1 + C2).
+# No Pi, no hardware, no socket, no browser.
 #
-# The interesting logic in this bite is the CLICK GUARD, and it is worth
-# testing on a laptop because the thing it prevents costs a bench session:
-# a sensor re-init too soon after a capture wedges the camera until the
-# bridge restarts (SPEC section "Open questions", S18 bite B).
+# C1's interesting logic is the CLICK GUARD, worth testing on a laptop
+# because the thing it prevents costs a bench session: a sensor re-init too
+# soon after a capture wedges the camera until the bridge restarts (SPEC
+# section "Open questions", S18 bite B). The gate takes an injected clock, so
+# every timing property below is asserted deterministically, not by sleeping.
 #
-# The gate takes an injected clock, so every timing property below is
-# asserted deterministically rather than by sleeping.
+# C2's interesting logic is CONFINEMENT: the gallery gave this server a
+# file-reading route, and the tests below try to walk out of the capture
+# directory by every route the browser can express.
 #
 # Run:  python3 pi/bench_web/test_bench_web.py
 
+import json
 import os
+import re
+import shutil
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -324,6 +330,187 @@ class TestRequestValidation(unittest.TestCase):
                              "count": 5})
 
 
+class CaptureDir(unittest.TestCase):
+    """A throwaway ~/bench_captures, written the way bite B writes one."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="s18caps")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = bench_web.CaptureStore(self.tmp)
+
+    def write(self, stem, jpeg=True, side=True, **over):
+        if jpeg:
+            with open(os.path.join(self.tmp, stem + ".jpg"), "wb") as fh:
+                fh.write(b"\xff\xd8" + b"\x00" * 40 + b"\xff\xd9")
+        if side:
+            doc = {"schema": 1, "file": stem + ".jpg", "utc": stem[4:20],
+                   "source": "socket", "req": {"q": 50, "res": "qvga", "pf": "color"},
+                   "reply": {"seen": True, "ok": 1, "pub_errs": 0},
+                   "frame": {"seq": 1, "size_bytes": 3936, "chunks": 3},
+                   "ledger": {"gaps_delta": 0, "dropped_delta": 0}}
+            doc.update(over)
+            with open(os.path.join(self.tmp, stem + ".json"), "w") as fh:
+                json.dump(doc, fh)
+        return stem
+
+
+A = "cap_20260816T223049Z_seq000004"
+B = "cap_20260816T223136Z_seq000007"
+
+
+class TestCaptureListing(CaptureDir):
+    """The gallery enumerates SIDECARS: the JPEG is renamed first, so the
+    sidecar is the commit record and a bare .jpg may be half-written."""
+
+    def test_newest_first_and_only_captures(self):
+        self.write(A)
+        self.write(B)
+        open(os.path.join(self.tmp, "notes.json"), "w").write("{}")
+        open(os.path.join(self.tmp, "holiday.jpg"), "wb").write(b"x")
+        out = self.store.listing()
+        self.assertTrue(out["ok"])
+        self.assertEqual([i["stem"] for i in out["items"]], [B, A])
+
+    def test_a_jpeg_with_no_sidecar_is_not_listed(self):
+        # It may still be mid-write. The sidecar is what commits it.
+        self.write(A, side=False)
+        self.assertEqual(self.store.listing()["items"], [])
+
+    def test_a_sidecar_with_no_jpeg_is_listed_and_marked(self):
+        # Evidence, not clutter: bite B writes the image first, so this means
+        # something removed it.
+        self.write(A, jpeg=False)
+        item = self.store.listing()["items"][0]
+        self.assertIsNone(item["on_disk"])
+        self.assertEqual(item["frame"]["size_bytes"], 3936)
+
+    def test_a_malformed_sidecar_is_skipped_and_counted(self):
+        self.write(A)
+        with open(os.path.join(self.tmp, B + ".json"), "w") as fh:
+            fh.write("{not json")
+        out = self.store.listing()
+        self.assertEqual([i["stem"] for i in out["items"]], [A])
+        self.assertEqual(out["skipped"], 1)
+        self.assertEqual(out["total"], 2)
+
+    def test_the_file_field_is_reported_but_never_followed(self):
+        # Path construction must not come from file CONTENTS.
+        self.write(A, file="../../etc/passwd")
+        item = self.store.listing()["items"][0]
+        self.assertEqual(item["jpeg"], A + ".jpg")
+        self.assertTrue(item["name_mismatch"])
+        self.assertEqual(item["file_field"], "../../etc/passwd")
+
+    def test_limit_is_applied_but_the_total_is_still_reported(self):
+        self.write(A)
+        self.write(B)
+        out = self.store.listing(limit=1)
+        self.assertEqual(len(out["items"]), 1)
+        self.assertEqual(out["total"], 2)
+
+    def test_a_missing_directory_is_an_honest_error(self):
+        store = bench_web.CaptureStore(os.path.join(self.tmp, "nope"))
+        out = store.listing()
+        self.assertFalse(out["ok"])
+        self.assertIn("cannot read", out["err"])
+        self.assertEqual(out["items"], [])
+
+
+class TestCaptureConfinement(CaptureDir):
+    """Nothing an operator types becomes a path. Three fences, tested apart."""
+
+    def test_a_committed_capture_resolves(self):
+        self.write(A)
+        self.assertEqual(self.store.resolve(A + ".jpg"),
+                         os.path.join(self.store.root, A + ".jpg"))
+        self.assertTrue(self.store.read(A + ".jpg").startswith(b"\xff\xd8"))
+
+    def test_traversal_is_refused(self):
+        self.write(A)
+        for bad in ("../../etc/passwd",
+                    "..%2f..%2fetc%2fpasswd",          # decoded before matching
+                    "%2e%2e/%2e%2e/etc/passwd",
+                    "/etc/passwd",
+                    "..\\..\\windows\\win.ini",
+                    A + ".jpg\x00.txt",
+                    "sub/" + A + ".jpg",
+                    A + ".json",                        # sidecars are not images
+                    "cap_2026_seq1.jpg",                # wrong shape
+                    ""):
+            with self.assertRaises(KeyError, msg=bad):
+                self.store.resolve(bad)
+
+    def test_an_image_without_a_sidecar_is_unreachable(self):
+        # Fence 2: the reachable set is exactly the set of committed captures.
+        self.write(A, side=False)
+        with self.assertRaises(KeyError):
+            self.store.resolve(A + ".jpg")
+
+    def test_a_symlink_planted_inside_the_directory_is_refused(self):
+        # Fence 3, and the only fence that catches this one: the name is
+        # perfectly well-formed and the sidecar exists.
+        secret = os.path.join(self.tmp, "secret.txt")
+        with open(secret, "w") as fh:
+            fh.write("not yours")
+        self.write(A, jpeg=False)
+        os.symlink(secret, os.path.join(self.tmp, A + ".jpg"))
+        with self.assertRaises(KeyError):
+            self.store.resolve(A + ".jpg")
+
+    def test_every_refusal_reason_is_ascii(self):
+        # Measured, not theoretical: the reason was going into the HTTP status
+        # line, which encodes as latin-1, so a single em dash dropped the
+        # connection and the client saw no response at all instead of a 404.
+        # The reason now travels in the body, and this keeps it safe anyway.
+        for bad in ("../etc/passwd", "nope.jpg", A + ".jpg", A + ".json"):
+            try:
+                self.store.resolve(bad)
+            except KeyError as e:
+                str(e.args[0]).encode("ascii")
+
+    def test_an_implausibly_large_image_is_refused(self):
+        self.write(A)
+        self.store.JPEG_MAX = 8
+        with self.assertRaises(KeyError):
+            self.store.resolve(A + ".jpg")
+
+
+class TestLiveFrameProxy(unittest.TestCase):
+    """Same-origin copy of the frozen S3 server's cached frame. It exists
+    because a canvas fed from :8080 is tainted and getImageData throws."""
+
+    def patch(self, fn):
+        real = bench_web.urllib.request.urlopen
+        bench_web.urllib.request.urlopen = fn
+        self.addCleanup(setattr, bench_web.urllib.request, "urlopen", real)
+
+    def test_it_returns_the_jpeg(self):
+        class R:
+            def read(self, n): return b"\xff\xd8body"
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        self.patch(lambda url, timeout=None: R())
+        code, body = bench_web.fetch_live_frame("127.0.0.1", 8080)
+        self.assertEqual((code, body), (200, b"\xff\xd8body"))
+
+    def test_no_frame_yet_is_passed_through_not_invented(self):
+        def boom(url, timeout=None):
+            raise bench_web.urllib.error.HTTPError(
+                url, 503, "no frame received yet", None, None)
+        self.patch(boom)
+        code, body = bench_web.fetch_live_frame("127.0.0.1", 8080)
+        self.assertEqual(code, 503)
+        self.assertIn(b"no frame received yet", body)
+
+    def test_a_dead_stream_server_names_the_unit(self):
+        def boom(url, timeout=None):
+            raise bench_web.urllib.error.URLError("connection refused")
+        self.patch(boom)
+        code, body = bench_web.fetch_live_frame("127.0.0.1", 8080)
+        self.assertEqual(code, 503)
+        self.assertIn(b"t1l-stream-server", body)
+
+
 class TestPage(unittest.TestCase):
     """The page is carried from the approved mockup; these assert that what
     had to CHANGE actually changed (docs/mockups/README.md)."""
@@ -363,6 +550,70 @@ class TestPage(unittest.TestCase):
         self.assertIn("GATE.settle_in", self.html)
         self.assertIn("GATE.busy", self.html)
 
+    # -- bite C2 -----------------------------------------------------------
+    def test_the_histograms_are_computed_from_pixels(self):
+        for fn in ("histogramOf", "renderHistPanel", "plotChannel", "binStats",
+                   "getImageData", "0.299*r + 0.587*g + 0.114*b"):
+            self.assertIn(fn, self.html, fn)
+
+    def test_the_gallery_reads_sidecars_through_this_server(self):
+        # Same-origin, or the canvas is tainted and there is no histogram.
+        for path in ("/api/captures", "/captures/", "/api/frame.jpg"):
+            self.assertIn(path, self.html, path)
+
+    def test_greyscale_is_decided_by_the_pixels_not_the_command(self):
+        # H.colored comes from the decoded image, so a mono JPEG that arrived
+        # as colour would show up rather than be described away.
+        self.assertIn("H.colored", self.html)
+        self.assertNotIn('S.pf === "mono" ? CH', self.html)
+
+    def test_compare_drops_the_right_column(self):
+        self.assertIn('getElementById("rightCol").classList.toggle("hidden", cmp)',
+                      self.html)
+        self.assertIn('classList.toggle("cmp", cmp)', self.html)
+
+    def test_a_bad_camera_reply_raises_a_banner_keyed_on_state(self):
+        # The C1 demo's failure: state=timeout while the socket answered 200,
+        # with cam_seen TRUE and every other field stale from the last good
+        # reply -- so seen/ok are the wrong things to key on.
+        self.assertIn("renderBanner", self.html)
+        self.assertIn('cam.state !== "ok"', self.html)
+        self.assertIn("STALE", self.html)
+        self.assertIn("save.state", self.html.replace("sv.state", "save.state"))
+
+
+class TestPageWiring(unittest.TestCase):
+    """There is no JS runtime on this bench and the sandboxed browsers cannot
+    reach the page, so the cheap structural faults are caught here instead:
+    a getElementById for an element that does not exist throws on the null,
+    and takes the whole poll loop with it."""
+
+    def setUp(self):
+        self.html = read(PAGE)
+
+    def test_every_element_the_script_reaches_for_exists(self):
+        wanted = set(re.findall(r'getElementById\("([^"]+)"\)', self.html))
+        have = set(re.findall(r'\bid="([^"]+)"', self.html))
+        self.assertTrue(wanted, "no ids found -- the regex is wrong")
+        self.assertEqual(wanted - have, set())
+
+    def test_the_ids_bite_c2_added_are_all_present(self):
+        for i in ("banner", "bannerTxt", "histPanel", "histRes", "histsrc",
+                  "strip", "galHint", "galDir", "btnCompare", "btnRefresh",
+                  "compareView", "compareGrid", "btnBackLive", "cmpNote"):
+            self.assertIn('id="%s"' % i, self.html, i)
+
+    def test_html_and_script_tags_are_balanced(self):
+        for tag in ("script", "style", "table", "div"):
+            self.assertEqual(self.html.count("<%s" % tag) - self.html.count("</%s>" % tag),
+                             0, tag)
+
+    def test_braces_and_backticks_balance_in_the_script(self):
+        js = self.html.split("<script>")[1].split("</script>")[0]
+        self.assertEqual(js.count("{") - js.count("}"), 0)
+        self.assertEqual(js.count("`") % 2, 0)
+        self.assertEqual(js.count("(") - js.count(")"), 0)
+
 
 class TestUnitAndInstaller(unittest.TestCase):
     def setUp(self):
@@ -389,8 +640,8 @@ class TestUnitAndInstaller(unittest.TestCase):
 
     def test_server_is_stdlib_only(self):
         # Same rule as the frozen S3 stream server: nothing to install.
-        allowed = ("__future__", "argparse", "json", "os", "sys", "threading",
-                   "time", "http", "bench_ctl")
+        allowed = ("__future__", "argparse", "json", "os", "re", "sys",
+                   "threading", "time", "urllib", "http", "bench_ctl")
         for line in read(os.path.join(HERE, "bench_web.py")).splitlines():
             if line.startswith("import ") or line.startswith("from "):
                 self.assertIn(line.split()[1].split(".")[0], allowed, line)

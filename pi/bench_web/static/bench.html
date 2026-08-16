@@ -12,8 +12,9 @@
   comes from the control socket, and the live view is the frozen S3 stream
   server's own /stream.
 
-  Gallery, compare view and the RGB+luma histograms are S18 bite C2; their
-  CSS is kept below so that bite is pure addition.
+  Bite C2 adds the gallery (built from bite B's JSON sidecars), the
+  side-by-side compare view, the RGB+luma histograms, and the banner that
+  makes a bad camera reply impossible to miss.
 -->
 <style>
   :root {
@@ -180,12 +181,26 @@
   .thumb { flex:none; width:158px; border:2px solid var(--line); border-radius:5px;
            overflow:hidden; cursor:pointer; background:#000; position:relative; }
   .thumb.sel { border-color:var(--accent); }
-  .thumb canvas { display:block; width:100%; height:100px; object-fit:cover; }
+  .thumb canvas, .thumb img { display:block; width:100%; height:100px; object-fit:cover; }
   .thumb .meta { font:10px var(--mono); color:var(--fg-dim); padding:5px 6px;
                  background:var(--panel-2); display:flex; justify-content:space-between; }
   .thumb .badge { position:absolute; top:5px; left:5px; font:9px var(--mono);
                   background:rgba(0,0,0,.72); padding:2px 5px; border-radius:3px; color:var(--fg); }
 
+  /* The bite C1 demo lost seven captures into a dead camera node, because the
+     socket ACCEPTED every one of them (200 ok) and the camera's real answer
+     — state=timeout — sat in a stats row. A bad reply gets the top of the
+     page now, and stays there until a good one arrives. */
+  .banner { display:flex; gap:12px; align-items:flex-start; padding:11px 16px;
+            background:#2d1817; border-bottom:1px solid #5c2c29; }
+  .banner .icon { flex:none; font:13px var(--mono); font-weight:700; color:var(--danger); }
+  .banner .txt { font-size:13px; }
+  .banner .txt b { color:var(--danger); }
+  .banner .why { display:block; margin-top:3px; font:11px var(--mono); color:var(--fg-dim); }
+
+  .cmpbar { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  .cmpbar h2 { margin:0; font-size:11px; font-weight:600; text-transform:uppercase;
+               letter-spacing:.08em; color:var(--fg-dim); }
   .compare { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
   .cmp-card { border:1px solid var(--line); border-radius:6px; background:var(--panel); overflow:hidden; }
   .cmp-card canvas.shot { display:block; width:100%; background:#000; }
@@ -212,6 +227,11 @@
   <div class="spacer"></div>
   <div class="heartbeat" id="beat"><span class="dot"></span>connecting&hellip;</div>
 </header>
+
+<div class="banner hidden" id="banner">
+  <span class="icon">&#9888;</span>
+  <span class="txt" id="bannerTxt"></span>
+</div>
 
 <div class="grid" id="mainGrid">
   <div class="col">
@@ -304,18 +324,40 @@
       </div>
       <div class="warn-box" id="warnBox"></div>
     </div>
+
+    <div id="compareView" class="hidden">
+      <div class="cmpbar">
+        <h2>Compare</h2>
+        <button class="act" id="btnBackLive">&larr; back to live</button>
+        <span class="galhead hint" id="cmpNote"></span>
+      </div>
+      <div class="compare" id="compareGrid"></div>
+    </div>
   </div>
 
   <div class="col" id="rightCol">
     <div class="panel">
-      <h2>Levels</h2>
-      <div class="body stats">
-        <div><span class="k">RGB + luma histograms</span><span>S18 bite C2</span></div>
+      <h2>Levels <span style="text-transform:none;color:var(--fg-faint)" id="histsrc">&middot; live</span></h2>
+      <div class="body">
+        <div class="res-line" id="histRes">waiting for a frame&hellip;</div>
+        <div id="histPanel"></div>
       </div>
     </div>
     <div class="panel"><h2>Receiver ledger</h2><div class="body stats" id="ledger"></div></div>
     <div class="panel"><h2>Model constants</h2><div class="body stats" id="consts"></div></div>
   </div>
+</div>
+
+<div class="gallery">
+  <div class="galhead">
+    <h2>Captures</h2>
+    <span class="hint" id="galHint">click two to compare</span>
+    <div class="spacer"></div>
+    <span class="hint" id="galDir"></span>
+    <button class="act" id="btnCompare" disabled>Compare selected</button>
+    <button class="act" id="btnRefresh">Refresh</button>
+  </div>
+  <div class="strip" id="strip"></div>
 </div>
 
 <div class="foot" id="foot"></div>
@@ -508,6 +550,274 @@ function renderGate() {
   }
 }
 
+// ---- histograms (bite C2) --------------------------------------------
+// Carried from the approved mockup unchanged: it already ran on real pixel
+// data there. Only the SOURCE changes — decoded JPEGs off the chain instead
+// of a synthesised scene.
+const CH_ALL = [
+  { key: "R", label: "R", color: "#f0605a" },
+  { key: "G", label: "G", color: "#45d483" },
+  { key: "B", label: "B", color: "#4a9eff" },
+  { key: "L", label: "Luma", color: "#e7eaee" },
+];
+
+function binStats(bins) {
+  let n = 0, sum = 0, mode = 0, modeN = -1, min = -1, max = 0;
+  for (let i = 0; i < 256; i++) {
+    const c = bins[i]; if (!c) continue;
+    n += c; sum += i*c;
+    if (c > modeN) { modeN = c; mode = i; }
+    if (min < 0) min = i;
+    max = i;
+  }
+  if (!n) return { mean:0, median:0, mode:0, stdev:0, min:0, max:0, lq:0, uq:0 };
+  const mean = sum/n;
+  let v = 0;
+  for (let i = 0; i < 256; i++) v += bins[i]*(i-mean)*(i-mean);
+  const pct = p => { let a = 0; const want = n*p;
+    for (let i = 0; i < 256; i++) { a += bins[i]; if (a >= want) return i; } return 255; };
+  return { mean, median: pct(.5), mode, stdev: Math.sqrt(v/n),
+           min: min < 0 ? 0 : min, max, lq: pct(.25), uq: pct(.75) };
+}
+
+function histogramOf(cv) {
+  const d = cv.getContext("2d", { willReadFrequently: true })
+              .getImageData(0, 0, cv.width, cv.height).data;
+  const bins = { R:new Uint32Array(256), G:new Uint32Array(256),
+                 B:new Uint32Array(256), L:new Uint32Array(256) };
+  let colored = false;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i+1], b = d[i+2];
+    if (!colored && (r !== g || g !== b)) colored = true;
+    bins.R[r]++; bins.G[g]++; bins.B[b]++;
+    bins.L[(0.299*r + 0.587*g + 0.114*b) | 0]++;
+  }
+  const stats = {};
+  for (const c of CH_ALL) stats[c.key] = binStats(bins[c.key]);
+  return { bins, stats, w: cv.width, h: cv.height, colored };
+}
+
+function plotChannel(cv, bins, color) {
+  const ctx = cv.getContext("2d"), w = cv.width, h = cv.height;
+  ctx.fillStyle = "#0d0f12"; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#2b313a"; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
+  for (let i = 1; i < 6; i++) { const x = Math.round(w*i/6)+.5;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+  for (let i = 1; i < 3; i++) { const y = Math.round(h*i/3)+.5;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+  ctx.setLineDash([]);
+  // Scaled off the interior bins: a clipped frame piles counts at 0 and 255
+  // and would flatten everything else into the noise floor.
+  let max = 1;
+  for (let i = 1; i < 255; i++) if (bins[i] > max) max = bins[i];
+  ctx.beginPath(); ctx.moveTo(0, h);
+  for (let i = 0; i < 256; i++) ctx.lineTo(i*w/255, h - Math.min(1, bins[i]/max)*(h-3));
+  ctx.lineTo(w, h); ctx.closePath();
+  ctx.fillStyle = color; ctx.globalAlpha = .3; ctx.fill(); ctx.globalAlpha = 1;
+  ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.stroke();
+}
+
+function renderHistPanel(container, H) {
+  // A greyscale frame carries R=G=B, so three identical plots would be noise.
+  // This is read off the PIXELS, not off the commanded pixel format — which
+  // is what makes it evidence.
+  const chans = H.colored ? CH_ALL : CH_ALL.filter(c => c.key === "L");
+  container.innerHTML =
+    (H.colored ? "" : `<div class="res-line" style="padding:0 0 6px">greyscale — R=G=B, luma only</div>`) +
+    chans.map(c => `
+      <div class="ch">
+        <div class="plotrow"><div class="chlab">${c.label}</div>
+          <canvas width="512" height="120"></canvas></div>
+        <div class="axis"><span>0</span><span>64</span><span>128</span><span>192</span><span>255</span></div>
+        <div class="st"></div>
+      </div>`).join("");
+  container.querySelectorAll(".ch").forEach((row, i) => {
+    const c = chans[i], s = H.stats[c.key];
+    plotChannel(row.querySelector("canvas"), H.bins[c.key], c.color);
+    row.querySelector(".st").innerHTML = `
+      <span>Mean <b>${s.mean.toFixed(0)}</b></span><span>Median <b>${s.median}</b></span>
+      <span>Mode <b>${s.mode}</b></span><span>StDev <b>${s.stdev.toFixed(0)}</b></span>
+      <span>Min <b>${s.min}</b></span><span>Max <b>${s.max}</b></span>
+      <span>LQ <b>${s.lq}</b></span><span>UQ <b>${s.uq}</b></span>`;
+  });
+}
+
+function showHist(cv, label) {
+  const H = histogramOf(cv);
+  renderHistPanel(document.getElementById("histPanel"), H);
+  document.getElementById("histsrc").textContent = "· " + label;
+  document.getElementById("histRes").innerHTML =
+    `Res (w:<b>${H.w}</b>, h:<b>${H.h}</b>) · <b>${(H.w*H.h/1000).toFixed(0)}k</b> px`
+    + ` · ${H.colored ? "3 components" : "1 component"}`;
+  return H;
+}
+
+// Same-origin decode. /api/frame.jpg and /captures/* are both served by THIS
+// server for exactly this reason: an <img> from :8080 taints the canvas and
+// getImageData throws, so there would be no histogram at all.
+async function loadCanvas(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) {
+    let why = "HTTP " + r.status;
+    try { why = (await r.json()).err || why; } catch (e) { /* not JSON */ }
+    throw new Error(why);
+  }
+  const bm = await createImageBitmap(await r.blob());
+  const cv = document.createElement("canvas");
+  cv.width = bm.width; cv.height = bm.height;
+  cv.getContext("2d", { willReadFrequently: true }).drawImage(bm, 0, 0);
+  bm.close && bm.close();
+  return cv;
+}
+
+// ---- the live levels view --------------------------------------------
+// Driven off the receiver ledger's frames_ok: no new frame means no refetch,
+// and the label says so rather than implying the picture is current. The
+// frozen server holds the LAST DELIVERED frame indefinitely, so calling this
+// "live" without qualification would be a small lie the operator pays for.
+let liveAt = -1, liveBusy = false;
+
+async function refreshLevels(framesOk) {
+  if (VIEW === "compare" || liveBusy) return;
+  if (framesOk === liveAt) {
+    document.getElementById("histsrc").textContent = "· last delivered frame";
+    return;
+  }
+  liveBusy = true;
+  try {
+    showHist(await loadCanvas("/api/frame.jpg"), "frame " + framesOk);
+    liveAt = framesOk;
+  } catch (e) {
+    document.getElementById("histsrc").textContent = "· no frame";
+    document.getElementById("histRes").textContent = String(e.message);
+    document.getElementById("histPanel").innerHTML = "";
+    liveAt = framesOk;      // do not hammer the endpoint once it has failed
+  } finally {
+    liveBusy = false;
+  }
+}
+
+// ---- gallery + compare ------------------------------------------------
+let VIEW = "live";
+const GAL = { items: [], sel: [], dir: null, saves: -1 };
+
+async function loadGallery() {
+  let j;
+  try {
+    j = await (await fetch("/api/captures", { cache: "no-store" })).json();
+  } catch (e) {
+    document.getElementById("galHint").textContent = "gallery: " + e.message;
+    return;
+  }
+  GAL.items = j.items || [];
+  GAL.dir = j.dir;
+  GAL.sel = GAL.sel.filter(s => GAL.items.some(i => i.stem === s));
+  const hint = [];
+  if (!j.ok) hint.push(j.err);
+  else if (!GAL.items.length) hint.push("no captures yet — take one");
+  else hint.push(`${GAL.items.length} of ${j.total} · click two to compare`);
+  if (j.skipped) hint.push(`${j.skipped} sidecar(s) unreadable — skipped`);
+  document.getElementById("galHint").textContent = hint.join(" · ");
+  document.getElementById("galDir").textContent = j.dir || "";
+  renderStrip();
+}
+
+function renderStrip() {
+  const strip = document.getElementById("strip");
+  strip.innerHTML = "";
+  for (const it of GAL.items) {
+    const el = document.createElement("div");
+    el.className = "thumb" + (GAL.sel.includes(it.stem) ? " sel" : "");
+    const t = it.utc.slice(9, 11) + ":" + it.utc.slice(11, 13) + ":" + it.utc.slice(13, 15);
+    const badge = `${(it.req.res || "?").toUpperCase()} ${it.req.pf === "mono" ? "M" : "C"} q${it.req.q}`;
+    if (it.on_disk === null) {
+      // A sidecar with no image is EVIDENCE, not clutter: bite B writes the
+      // JPEG first, so this means someone removed it. Show it, say so, and
+      // do not offer it for compare.
+      el.innerHTML = `<span class="badge">${badge}</span>
+        <div style="height:100px;display:flex;align-items:center;justify-content:center;
+                    font:10px var(--mono);color:var(--danger);text-align:center;padding:6px">
+          sidecar with<br>no image</div>
+        <div class="meta"><span>${t}</span><span>—</span></div>`;
+      el.style.cursor = "default";
+      el.title = "the sidecar is committed but " + it.jpeg + " is not on disk";
+    } else {
+      el.innerHTML = `<span class="badge">${badge}</span>
+        <img src="/captures/${it.jpeg}" alt="${it.stem}" loading="lazy">
+        <div class="meta"><span>${t}</span><span>${(it.frame.size_bytes/1024).toFixed(1)}K</span></div>`;
+      el.onclick = () => {
+        const i = GAL.sel.indexOf(it.stem);
+        if (i >= 0) GAL.sel.splice(i, 1);
+        else { GAL.sel.push(it.stem); if (GAL.sel.length > 2) GAL.sel.shift(); }
+        renderStrip();
+      };
+    }
+    if (it.name_mismatch) el.title = "sidecar names " + it.file_field + " — not followed";
+    strip.appendChild(el);
+  }
+  document.getElementById("btnCompare").disabled = GAL.sel.length !== 2;
+}
+
+function setView(view) {
+  VIEW = view;
+  const cmp = view === "compare";
+  document.getElementById("liveView").classList.toggle("hidden", cmp);
+  document.getElementById("compareView").classList.toggle("hidden", !cmp);
+  // The right column (levels / ledger / constants) all describes the LIVE
+  // frame, so it is stale next to two stored captures. Drop it and give the
+  // width to the comparison — the mockup's call, and it still holds.
+  document.getElementById("rightCol").classList.toggle("hidden", cmp);
+  document.getElementById("mainGrid").classList.toggle("cmp", cmp);
+}
+
+async function showCompare() {
+  const picked = GAL.sel.map(s => GAL.items.find(i => i.stem === s));
+  if (picked.length !== 2 || picked.some(p => !p)) return;
+  setView("compare");
+  document.getElementById("cmpNote").textContent =
+    "each card's histogram is computed from that stored JPEG's own pixels";
+  const grid = document.getElementById("compareGrid");
+  grid.innerHTML = "";
+  const cards = picked.map(it => {
+    const card = document.createElement("div");
+    card.className = "cmp-card";
+    grid.appendChild(card);
+    return card;
+  });
+  for (let i = 0; i < 2; i++) {
+    const it = picked[i], other = picked[1 - i], card = cards[i];
+    let cv = null, err = null;
+    try { cv = await loadCanvas("/captures/" + it.jpeg); }
+    catch (e) { err = e.message; }
+    // Differences are marked against the OTHER card, so the eye goes straight
+    // to what actually changed between the two captures.
+    const d = (a, b) => a !== b ? ' class="diff"' : "";
+    const kb = n => (n / 1024).toFixed(1) + " KB";
+    const bad = n => Number(n) ? ' class="diff" style="color:var(--danger)"' : "";
+    card.innerHTML =
+      (cv ? "" : `<div class="diag" style="position:static;min-height:90px">
+                    cannot read ${it.jpeg}: ${err}</div>`)
+      + `<canvas class="shot" width="${cv ? cv.width : 1}" height="${cv ? cv.height : 1}"></canvas>
+      <table>
+        <tr><td>captured</td><td>${it.utc} · seq ${it.frame.seq}</td></tr>
+        <tr><td>commanded</td><td${d(it.req.res + it.req.pf, other.req.res + other.req.pf)}>${(it.req.res||"?").toUpperCase()} ${it.req.pf}</td></tr>
+        <tr><td>quality</td><td${d(it.req.q, other.req.q)}>q${it.req.q}</td></tr>
+        <tr><td>decoded</td><td>${cv ? `w:${cv.width} h:${cv.height}` : "—"}</td></tr>
+        <tr><td>size</td><td${d(it.frame.size_bytes, other.frame.size_bytes)}>${kb(it.frame.size_bytes)} · ${it.frame.chunks} chunks</td></tr>
+        <tr><td>bits/pixel</td><td>${cv ? (it.frame.size_bytes*8/(cv.width*cv.height)).toFixed(3) : "—"}</td></tr>
+        <tr><td>delivery</td><td${bad(it.ledger.gaps_delta || it.ledger.dropped_delta)}>gaps ${it.ledger.gaps_delta} · dropped ${it.ledger.dropped_delta}</td></tr>
+        <tr><td>pub_errs</td><td${bad(it.reply.pub_errs)}>${it.reply.pub_errs}</td></tr>
+        <tr><td>source</td><td>${it.source || "—"}</td></tr>
+      </table>
+      <div class="cmp-hist"></div>`;
+    if (cv) {
+      card.querySelector("canvas.shot")
+          .getContext("2d", { willReadFrequently: true }).drawImage(cv, 0, 0);
+      renderHistPanel(card.querySelector(".cmp-hist"), histogramOf(cv));
+    }
+  }
+}
+
 // ---- live data -------------------------------------------------------
 const lastReplies = { CAM_REPLY: "—", LIGHT_REPLY: "—", SAVE: "—" };
 function renderReplies() {
@@ -521,11 +831,53 @@ function beat(up, text) {
   el.innerHTML = `<span class="dot"></span>${text}`;
 }
 
+// A camera reply that is not `ok` gets the top of the page (bite C1 demo:
+// seven captures went into a dead node while the page said "200 ok" every
+// time, because the SOCKET accepted them). It clears only when a good reply
+// arrives — the node is dead until proven otherwise, and a banner that times
+// itself out would re-create the exact failure it exists to prevent.
+function renderBanner(st) {
+  const cam = st.cam_reply || {}, sv = st.save || {}, p = st.params || {};
+  const el = document.getElementById("banner");
+  let txt = null;
+  if (cam.state && cam.state !== "ok" && cam.state !== "none") {
+    txt = `<b>The camera node is not answering — cam_reply.state = ${cam.state}.</b>
+           Commands are still being accepted by the control socket and going nowhere.
+           <span class="why">last command ${p.last_cmd || "—"} · the other cam_reply
+           fields below are from the last GOOD reply, not from this one ·
+           check <b>bm-light</b> on nereus000 and re-stage the AE3, then command the
+           camera within ~30 s or the bridge quiet-exits in phase 1</span>`;
+  } else if (cam.state === "ok" && Number(cam.ok) === 0) {
+    txt = `<b>The camera service REFUSED the last command (ok=0).</b>
+           It answered, and said no — geometry out of range, or no sensor.
+           <span class="why">last command ${p.last_cmd || "—"} · a wedged sensor
+           refuses every later command too, including ones that worked a minute
+           ago (SPEC §Open questions — bite B2)</span>`;
+  } else if (sv.state === "timeout" || sv.state === "error") {
+    txt = `<b>The last still was not saved — save.state = ${sv.state}.</b>
+           ${sv.state === "timeout"
+             ? "The capture was accepted but no frame arrived inside the save window."
+             : "The write itself failed."}
+           <span class="why">${sv.errors} save error(s) · ${sv.free_mb} MB free ·
+           saves below a 200 MB floor are refused</span>`;
+  }
+  el.classList.toggle("hidden", !txt);
+  if (txt) document.getElementById("bannerTxt").innerHTML = txt;
+}
+
 function renderStatus(st) {
   const cam = st.cam_reply || {}, li = st.light_reply || {},
         led = st.ledger || {}, sv = st.save || {};
-  lastReplies.CAM_REPLY = cam.seen
-    ? `ok=${cam.ok} mode=${cam.mode} ${cam.res} ${cam.pf} pub_ok=${cam.pub_ok} pub_errs=${cam.pub_errs}`
+  const camBad = cam.state && cam.state !== "ok" && cam.state !== "none";
+  // On a timeout the fork sets cam_seen=true and cam_state="timeout" but does
+  // NOT update the reply struct (app_main.cpp ctl_note_cam(nullptr, ...)), so
+  // every other field here is the last GOOD reply. Say that, rather than
+  // printing stale numbers as if they were this command's answer.
+  lastReplies.CAM_REPLY = camBad
+    ? `state=${cam.state} — no answer; fields below are STALE: `
+      + `ok=${cam.ok} ${cam.res} ${cam.pf} pub_ok=${cam.pub_ok}`
+    : cam.seen
+    ? `state=${cam.state} ok=${cam.ok} mode=${cam.mode} ${cam.res} ${cam.pf} pub_ok=${cam.pub_ok} pub_errs=${cam.pub_errs}`
     : "none yet";
   lastReplies.LIGHT_REPLY = li.seen
     ? `ok=${li.ok} level=${li.level} strobing=${li.strobing}` : "none yet";
@@ -578,9 +930,22 @@ async function poll() {
     if (!r.ok || !j.ok) throw new Error(j.err || ("HTTP " + r.status));
     GATE = j.gate;
     renderStatus(j.status);
+    renderBanner(j.status);
     renderGate();
     beat(true, `control socket up · node ${j.status.node} · ledger 1 Hz`);
     if (GATE.busy || GATE.settle_in > 0) next = 500;
+
+    // The gallery is re-read when the node's save counter moves, not on a
+    // timer: the sidecar is written last, so a save that has been counted is
+    // a capture that is complete on disk.
+    const sv = j.status.save || {}, saves = Number(sv.saved) || 0;
+    if (GAL.saves >= 0 && saves !== GAL.saves) loadGallery();
+    GAL.saves = saves;
+    if (GAL.dir && sv.dir && sv.dir !== GAL.dir) {
+      document.getElementById("galHint").textContent =
+        `capture dir mismatch — this page reads ${GAL.dir}, the node writes ${sv.dir}`;
+    }
+    refreshLevels(Number((j.status.ledger || {}).frames_ok) || 0);
   } catch (e) {
     beat(false, "control socket: " + e.message);
     document.getElementById("gate").className = "gate hold";
@@ -663,6 +1028,13 @@ document.getElementById("btnStop").onclick = async () => {
   applyVideoGating(false); renderWarnings();
 };
 
+document.getElementById("btnCompare").onclick = showCompare;
+document.getElementById("btnRefresh").onclick = loadGallery;
+document.getElementById("btnBackLive").onclick = () => {
+  setView("live");
+  liveAt = -1;              // repaint the levels panel from the current frame
+};
+
 // ---- boot ------------------------------------------------------------
 (async function boot() {
   try { CFG = await (await fetch("/api/config")).json(); } catch (e) { /* defaults */ }
@@ -682,10 +1054,11 @@ document.getElementById("btnStop").onclick = async () => {
   applyVideoGating(false);
   renderWarnings(); renderReplies(); renderGate();
   document.getElementById("foot").innerHTML =
-    `S18 bite C1 · controls drive <b>/run/bm/bench.sock</b> (bite B) · live view is the frozen S3 server on :${CFG.stream_port}
+    `S18 bites C1 + C2 · controls drive <b>/run/bm/bench.sock</b> (bite B) · live view is the frozen S3 server on :${CFG.stream_port}
      <br>fps and bandwidth predictions are <b>EXTRAPOLATED</b> from one measured point (QVGA colour reef q50 = 15.00 fps, S17 bite 0) — S18 bite B2 replaces them with a measured matrix
      <br>capture/stream are held for <b>${CFG.settle} s</b> after a capture when the next command changes resolution or pixel format: a sensor re-init too soon wedges the camera until the bridge restarts (SPEC §Open questions, bite B2 fixes it underneath)
-     <br>gallery, side-by-side compare and RGB+luma histograms are bite C2`;
+     <br>the gallery lists <b>sidecars</b> from <b>${CFG.capture_dir || "~/bench_captures"}</b> — the JSON is written after the JPEG, so it is the commit record; histograms are computed in the browser from the decoded pixels, and are measurement, not model`;
+  loadGallery();
   poll();
 })();
 </script>
