@@ -607,15 +607,16 @@ two Telemetry instances wedged the single-producer ingest twice, and a
 leftover 600 s stream corrupted a third run. Both are impossible once
 the nodes are systemd units. Do the harness before the features.)*
 
-> **⚠ BRANCH HAZARD FOR THE NEXT AGENT.** `sprint/19-hd-transport` is
-> **not merged and not pushed**, but the bench hardware is already
-> running its artifacts: `/flash/bm_he.elf` = `4c509d2464412cee` and
-> `/flash/bm_bridge.py` = `1524f6c203f232a0` on the AE3. A branch cut
-> from `main` will NOT contain the source for what the board is running.
-> Cut the S18 branch from **`sprint/19-hd-transport`**, or merge S19
-> first (it is code-complete and rehearsed; it needs Nick's demo run and
-> a PR). The Pi checkouts are also stale — nereus000 is on
-> `sprint/18-web-bench`.
+> **~~⚠ BRANCH HAZARD~~ — RESOLVED 2026-08-16, before S18 resumed.** It
+> read: `sprint/19-hd-transport` is unmerged, so a branch cut from `main`
+> would not contain the source for the artifacts the AE3 is running. That
+> is no longer true — **PR #26 (S18 bite A) and PR #27 (S19) are both
+> merged; `main` is at `438f35d`** and `git log main..sprint/19-hd-transport`
+> is empty. Verified rather than assumed: `firmware/bm_bridge/bm_bridge.py`
+> on `main` hashes to **`1524f6c203f232a0`**, byte-identical to what the
+> board is running. The S18 branch (`sprint/18-bench-tool`) is cut from
+> `main`. **The Pi checkouts are still stale** — both are on
+> `sprint/18-web-bench` and need moving to the S18 branch before a demo.
 - [ ] Bite B — fork app: **loopback-only control socket** on the
       telemetry role (JSON command in / JSON status out: last replies,
       current params, live receiver ledger) + **still-save** to
@@ -631,7 +632,7 @@ the nodes are systemd units. Do the harness before the features.)*
       **gallery + side-by-side compare view**, **RGB+luma histograms**
       (canvas, client-side, live + per-still — the OpenMV-IDE-style
       levels view).
-- [ ] **Bite D — DO THIS FIRST (promoted 2026-08-16, Nick). systemd
+- [~] **Bite D — DO THIS FIRST (promoted 2026-08-16, Nick). systemd
       units for the bench nodes — no longer optional.** Plan below was
       written at the end of the S19 session and reviewed by Nick; the
       fresh agent should re-derive rather than trust it blindly, but it
@@ -667,6 +668,49 @@ the nodes are systemd units. Do the harness before the features.)*
       bm-telemetry` twice leaves ONE process and ONE ingest producer;
       then a 600 s demo-2 run under units; `systemctl stop` provably
       leaves zero processes.
+      → **CODE + PARTIAL REHEARSAL DONE 2026-08-16** (nibbles 1–2; plan
+      + 5 decision points approved by Nick — **D33**). Branch
+      `sprint/18-bench-tool`, cut from `main` (hazard above resolved).
+      **The plan was re-derived and the TRACKER's sketch changed on two
+      points, both from reading the fork's source rather than trusting
+      the note:** (1) **only the telemetry role has a CLI** —
+      `bench_apps loop()` calls `cli_poll()` only in the non-light
+      branch, so `bm-light` needs no command channel at all; (2)
+      **`tail -f` is the wrong mechanism** — `cli_poll()` is already
+      non-blocking (`poll(fd 0, timeout 0)`, guarded on POLLIN,
+      returning on EOF rather than exiting), so the app can open a FIFO
+      **read-write itself** (`sh -c 'exec … 0<>/run/bm/telemetry.cmd'`):
+      POSIX `<>` never blocks on open and never reaches EOF, and `exec`
+      keeps **one process in the cgroup** where a pipeline would put a
+      second one back. Also measured, retiring a planned mitigation:
+      bm_sbc already does `setvbuf(stdout, _IOLBF)` and `bm_log`
+      fflushes, so **the S19 "stdout buffering" was on the driving side,
+      not the app** — no `stdbuf` wrapper needed.
+      Shipped: `pi/services/bm-{light,telemetry}.service` ·
+      `pi/bm_bench/bm-cmd.sh` (refuses to write when the unit is down —
+      a command into an unread FIFO looks exactly like one that worked) ·
+      `pi/bm_bench/chain_status.sh` (finds processes by
+      `/proc/<pid>/exe`, **never** by command-line pattern — the S19
+      `pkill -f` trap made structurally impossible) ·
+      `install_stream_service.sh` extended with `light|telemetry`
+      installed **disabled** · `pi/services/test_bm_units.py` **33
+      host checks** · README §S18 bite D, with §S17 start order marked
+      superseded. Two additions beyond the approved list, both one-line:
+      `ExecStartPre=+/bin/chmod` on the ACT LED sysfs (retires the manual
+      per-boot chmod in §S17 deploy) and `SyslogIdentifier=` (the journal
+      tagged lines `sh[pid]` without it — found in rehearsal).
+      **REHEARSED on nereus001, Telemetry only, ZERO camera contact**
+      (that role never opens the CDC leg): double `systemctl start` →
+      **one PID, `NRestarts=0`** · `bm-cmd.sh status`/`help` answered
+      live in the journal · **0 s CPU over 10 s elapsed** (the FIFO poll
+      does not spin) · `systemctl stop` = 1.06 s, **zero processes**,
+      `/run/bm` removed. Bench restored to exactly as found (unit
+      uninstalled, no processes, stream server active).
+      **NOT yet proven, stated rather than skipped:** anything needing
+      the chain — `bm-light` start, the `ExecStop`-pushes-`stop` path
+      (the FIFO write succeeded in 1.06 s, but with no camera there is
+      nothing to observe acting on it), and the 600 s run under units.
+      That is nibble 3.
 - [ ] Bite D2 — demo ladder + docs (the remainder of the old bite D).
 **Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
 q90 stills → compare view shows both + histograms → start a VGA stream

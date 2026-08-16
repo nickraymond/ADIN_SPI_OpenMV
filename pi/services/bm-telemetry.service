@@ -1,0 +1,66 @@
+# bm-telemetry.service — bench Telemetry node on nereus001 (S18 bite D).
+#
+# Runs the bm_sbc fork's bench_apps in the `telemetry` role: head of the
+# chain, subscribes to the camera topic, reassembles chunks and feeds the
+# FROZEN S3 stream server's ingest on 127.0.0.1:8081.
+#
+# Install: sudo pi/install_stream_service.sh telemetry
+# Start:   sudo systemctl start bm-telemetry     (NOT enabled at boot)
+# Command: pi/bm_bench/bm-cmd.sh capture 50 hd color
+# Watch:   journalctl -u bm-telemetry -f
+#
+# WHY THIS UNIT EXISTS (D32): the S3 ingest is single-producer, and two
+# hand-run telemetry instances wedge it silently at 2,592,256 B of socket
+# buffer. A systemd unit is a singleton by construction — a second
+# `systemctl start` is a no-op, not a race.
+#
+# THE STDIN PROBLEM AND ITS ANSWER. This role has an operator CLI on
+# stdin (`capture`, `stream`, `light`, ...) and a service has no
+# terminal. bench_apps' cli_poll() is non-blocking — poll(fd 0, timeout
+# 0) guarded on POLLIN, one byte at a time, returning on EOF — so the
+# answer is a FIFO that the app opens READ-WRITE itself: `0<>`. POSIX
+# <> never blocks on open and never reaches EOF (the process holds its
+# own writer), so poll never reports POLLHUP and the CLI stays live for
+# the life of the unit. `exec` means sh replaces itself: ONE process in
+# the cgroup, which is the whole point. A `tail -f | app` pipeline would
+# put a second process back.
+[Unit]
+Description=BM bench Telemetry node (bench_apps telemetry role, S3 ingest producer)
+After=network.target t1l-stream-server.service
+Wants=t1l-stream-server.service
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/bm_bench/README.md
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/bm_bench
+# Without this the journal tags every line `sh[<pid>]` (measured), because
+# systemd names the identifier after the binary it launched, not the one
+# `exec` replaced it with.
+SyslogIdentifier=bm-telemetry
+Environment=S17_ROLE=telemetry
+Environment=BM_SBC_GATEWAY_IPC=/tmp/s17_ipc.sock
+
+# /run/bm, owned by User=, removed when the unit stops — so a stale FIFO
+# can never outlive the app that reads it.
+RuntimeDirectory=bm
+RuntimeDirectoryMode=0755
+
+ExecStartPre=/bin/sh -c 'test -p /run/bm/telemetry.cmd || mkfifo -m 0660 /run/bm/telemetry.cmd'
+ExecStart=/bin/sh -c 'exec /home/pi/bm_sbc_s15/build/all/bm_sbc_bench_apps --init /home/pi/bm_bench/telemetry.toml 0<>/run/bm/telemetry.cmd'
+
+# The AE3 keeps executing a `stream <secs>` command after the app that
+# asked for it dies — that is what corrupted an S19 run (two overlapping
+# streams into one reassembler, 26,141 frames / 1,676 gaps). Tell the
+# camera to stop while the app is still alive to relay it. Best-effort:
+# '-' ignores failure and timeout bounds the FIFO write in case the app
+# is already gone.
+ExecStop=-/usr/bin/timeout 3 /bin/sh -c 'echo stop > /run/bm/telemetry.cmd'
+ExecStop=-/bin/sleep 1
+TimeoutStopSec=15
+
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -17,6 +17,77 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 (camera bench web tool) — bite D: the bench nodes become systemd units; the sketched stdin design was wrong and the fork's source said so
+
+**Branch:** `sprint/18-bench-tool`, cut from `main` (repo only — no fork
+change, no pin move, no AE3 firmware or bridge change)
+
+**Done:**
+- **Entry ritual, and the TRACKER's ⚠ branch hazard is stale.** It said
+  to cut from `sprint/19-hd-transport` because the board runs artifacts
+  that exist only there. PR #26 and #27 are both merged; `main` is
+  `438f35d` and `git log main..sprint/19-hd-transport` is empty.
+  Verified rather than assumed: `firmware/bm_bridge/bm_bridge.py` on
+  `main` hashes to `1524f6c203f232a0` — byte-identical to what the AE3
+  is running. Hazard block struck through in the TRACKER.
+- Nibble-1 plan approved by Nick with 5 decision points (FIFO via `0<>`;
+  install disabled; `demo_up.sh` stays manual; `Restart=on-failure`;
+  `ExecStop` pushes `stop`). D33.
+- Shipped: `pi/services/bm-{light,telemetry}.service`,
+  `pi/bm_bench/bm-cmd.sh`, `pi/bm_bench/chain_status.sh`,
+  `install_stream_service.sh` extended with `light|telemetry`,
+  `pi/services/test_bm_units.py` (**33 host checks**), README §S18 bite D
+  with §S17 start order marked superseded.
+- **Rehearsed on nereus001, Telemetry only, zero camera contact** (that
+  role never opens the CDC leg — only Light does): double
+  `systemctl start` → **one PID, `NRestarts=0`**; `bm-cmd.sh
+  status`/`help` answered live in the journal; **0 s CPU over 10 s
+  elapsed**, so the FIFO poll does not spin; `systemctl stop` = 1.06 s,
+  zero processes, `/run/bm` removed. Bench restored to exactly as found.
+
+**Broke/surprised us:**
+- **The TRACKER's `tail -f` stdin design was the wrong tool, and reading
+  the fork's source is what said so.** `cli_poll()` (app_main.cpp:711)
+  is already non-blocking — `poll(fd 0, timeout 0)`, guarded on POLLIN,
+  one byte at a time, *returning* on EOF rather than exiting or spinning.
+  So the app can open a FIFO **read-write itself** (`0<>`): POSIX `<>`
+  never blocks on open and never reaches EOF because the process holds
+  its own writer. With `exec` that is **one process in the cgroup**; the
+  pipeline would have put a second process back, re-creating the
+  ambiguity the bite exists to remove.
+- **Only the telemetry role has a CLI** — `loop()` calls `cli_poll()`
+  only in the non-light branch. Half the risky surface the plan worried
+  about did not exist.
+- **A planned mitigation was unnecessary and I dropped it.** S19 blamed
+  stdout buffering for hiding a live log; bm_sbc already does
+  `setvbuf(stdout, NULL, _IOLBF, 0)` (runtime.cpp:291) and `bm_log`
+  fflushes. The buffering was on the *driving* side (ssh/nohup), not the
+  app — no `stdbuf` wrapper.
+- Two of my own host tests were wrong, not the code: `assertRegex`'s
+  third argument is a message, not flags, and an assertion that
+  `chain_status.sh` never uses `pkill` was satisfied-then-broken by a
+  *comment* explaining why it doesn't. Tests now strip comments before
+  asserting on behaviour.
+- Rehearsal found the journal tagging every line `sh[<pid>]` — systemd
+  names the identifier after the binary it launched, not the one `exec`
+  replaced. Fixed with `SyslogIdentifier=`.
+
+**Not proven, stated rather than skipped:** everything needing the
+chain — `bm-light` start, the `ExecStop`-pushes-`stop` path (the FIFO
+write completed in 1.06 s, but with no camera there is nothing to watch
+act on it), and the 600 s run under units. That is nibble 3.
+
+**Board state:** untouched this session. No mpremote, no flash, no
+sensor contact; AE3 on the bus at its by-id path carrying the S6 fixture
+and the S19 artifacts. Pi checkouts still stale on `sprint/18-web-bench`
+— they move to this branch at the start of nibble 3.
+
+**Next:** nibble 3 — Nick installs the units on both Pis and runs the
+§S18 bite D acceptance (double start, 600 s stream, clean stop). Then
+nibble 4 (PR), then S18 bite B.
+
+---
+
 ## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 2: HD delivers end to end; the first three parts deadlocked and the rehearsal caught it
 
 **Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
