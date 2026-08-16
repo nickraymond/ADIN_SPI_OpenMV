@@ -530,7 +530,18 @@ stream 2.0 15 600
 ```
 
 Expect 15.0 fps steady for 600 s with `gaps=0 dropped=0 q_drops=0`,
-matching the S17 demoed number.
+matching the S17 demoed number. Measured 2026-08-16: 602 s, 8,886
+frames, zero on every loss counter across all 602 stat lines.
+
+> **Start this one from a FRESH bridge** (`demo_up.sh` again after
+> demo 1) — the standing "one bridge lifetime per demo" rule. Running it
+> against the bridge that already served demo 1 wedged the Telemetry app
+> once at ~94 s: it stayed alive (main thread in its normal sleep loop,
+> chain up, Light logging no errors) but stopped emitting TEL_STAT and
+> stopped feeding the ingest. Not root-caused, and not proven to be
+> caused by the rule violation — two other 600 s runs passed, one of
+> them also sharing a bridge lifetime. If demo 2 goes quiet, restart it
+> from a fresh bridge and note it.
 
 ## S19 demo 3 — off-chain acceptance (no Pis, no camera, ~90 s)
 

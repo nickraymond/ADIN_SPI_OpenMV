@@ -80,12 +80,54 @@ move, `wire_status_t` untouched)
   message 5` on the HE ring next to camera/control replies. Not new
   behaviour that I can attribute to this bite, not investigated —
   flagged for the next chain session.
+- **Light node SEGFAULTED once at startup** during the confirmation run
+  (2026-08-16 03:34), immediately after opening the AE3's CDC port:
+  `Network Device Port 15: up` → `Failed to start renegotiating check,
+  reason: 0x7D` → `Segmentation fault`. Started cleanly on an immediate
+  retry with the identical command, and had started cleanly twice
+  earlier in the session. This is the **fork app** (`bench_apps` at
+  ba594ec, unchanged by S19 — all S19 changes are AE3-side), so it is a
+  pre-existing startup race in the uart/renegotiation path, not a
+  regression from this bite. Recorded because a demo that segfaults 1
+  run in 3 will bite someone: if Light dies at startup, just start it
+  again.
 
 **Board state:** fixture restored and sha-verified (`main.py`
 `55fa6ccfdd3f7f65`), board on the bus running the S6 service, apps
 stopped on both Pis, `/flash` carrying the S19 ELF + bridge. **S6 USB
 baseline NOT re-run** (no firmware flash and no sensor contact beyond
 the demo captures; called out rather than skipped silently).
+
+**Confirmation run of the full README §S19 ladder (Claude, at Nick's
+"run the demo to confirm it all works"):**
+- **Demo 3 (off-chain, no Pis): PASS**, 6/6 rows, heap floor 17,704,
+  `tx_dropped=0 stall=0` — numbers identical to the rehearsal.
+- **Demo 1 (HD on the chain): PASS** — `res=hd pf=color ok=1`,
+  **1280×800 / 20,665 B valid JPEG** at `:8080/frame.jpg`,
+  `pub_ok=17 pub_errs=0`, `gaps=0`. Ledger exact again: 15 chunks ×
+  10 B + 20,665 = 20,815 = the `pub_bytes` delta. Smaller than the
+  rehearsal's 42,574 B because the room was dark at 03:40 — scene-bound,
+  as S17/S18 both recorded.
+- **Demo 2 (600 s stream): FAILED first attempt, PASSED on a clean
+  re-run.** First attempt died ~94 s in (t=109, 1,416 frames, all
+  counters still zero): the **Telemetry app stopped emitting TEL_STAT
+  and stopped feeding the ingest**, while staying alive — gdb showed the
+  main thread in its normal `bm_sbc_app_run` → `nanosleep` loop, 26
+  threads idle on queue receives, ~4% CPU. The chain was fine
+  throughout: Light logged no offline, no decode errors, both neighbours
+  still present. Re-run from a **fresh bridge** (per the README's
+  "each demo gets a fresh bridge" rule, which I had violated by running
+  demos 1 and 2 in one bridge lifetime): **602 s, 8,886 frames, 15.0 fps
+  steady, zero on every loss counter across all 602 stat lines, no gap
+  in the stat stream.**
+- **Not attributed.** Two clean 600 s runs and one wedge, so it is
+  intermittent. The rule violation is the obvious suspect but is NOT
+  established as causal: the earlier 604 s soak also followed an HD
+  capture in the same bridge lifetime and passed. Telemetry is the fork
+  app at ba594ec, unchanged by S19 — but this bite changes chunk
+  *delivery timing*, so I cannot exonerate it either. Next step if it
+  recurs: read the telemetry role's stat/ingest loop in the fork and
+  run demo 2 three times back to back for a repeat rate.
 
 **Next:** nibble 3 — Nick runs README §S19 demos 1–3 → nibble 4 PR.
 Then bites 3 (heap — looking unnecessary) and 4 (HD mono + sustained
