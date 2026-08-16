@@ -1,7 +1,17 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
+*Last updated: 2026-08-16 (**S19 bite 1 rung B DONE — the HD publish
+wall is measured**: bytes in flight, not chunk count. Free HE heap at
+RUNNING 20,712 B, one 1,400 B chunk costs exactly 1,488 B, 13 fit and
+the 14th dies with `freertos: malloc failed`; 26 × 350 B is fine.
+Mechanism: the wire task both receives WCMD_PUB and drains the TX
+queue, and `rr_poll` starves the drain. **This falsifies bite 2 as
+written — HP-side pacing is not the fix** (re-specified in place).
+Branch `sprint/19-hd-transport`, repo-only, no ABI/fork change, ELF
+9f40650c… at 94.05%. Remaining in bite 1: rung C, one real HD capture
+on the live chain. Previous:*
+*2026-08-15 (**S18 bite A DONE for QVGA + VGA** — capture
 geometry + pixel format plumbed end to end and demoed on the live chain;
 branch `sprint/18-web-bench`, PR open. Two hardware facts bought with
 three board lock-ups: the sensor letterboxes to 16:10 (QVGA = 320×200)
@@ -618,7 +628,7 @@ sensor 0x7936 — so there is **no 720 mode** — and nothing above HD has
 been tested, so nothing above HD is offered. Warnings stay client-side
 from measured constants, not camera-queried.
 
-### S19 — HD stills over pub/sub  `[ ]`  *(scope set by Nick
+### S19 — HD stills over pub/sub  `[~]`  *(scope set by Nick
 2026-08-15 after the S18 bite-A rehearsal. **This is the WHOLE sprint** —
 no web-tool work, no new features: just make HD capture and transport.
 S18 bites B–D wait behind it, because a bench tool for comparing image
@@ -635,21 +645,54 @@ answering until the bridge restarts. QVGA (3 chunks) and VGA (8) drain
 fine. The board stays on the USB bus: ordinary heap exhaustion, not the
 S18 allocator fault.
 
-- [ ] Bite 1 — **measure before fixing** (S0 discipline): instrument the
+- [~] Bite 1 — **measure before fixing** (S0 discipline): instrument the
       HE heap (`xPortGetFreeHeapSize` / minimum-ever) and log it per
       published chunk, so the drain curve is a number rather than a
       theory. Find the actual chunk count / rate where it falls over,
       at QVGA and VGA too — is 26 the wall, or is it bytes-in-flight?
-- [ ] Bite 2 — **flow control on the WCMD_PUB burst** (first candidate,
+      → **RUNG B DONE 2026-08-16 (Claude drove it; nibbles 1–2 approved
+      by Nick). ANSWER: BYTES IN FLIGHT, not chunk count.** Instrument =
+      `he_sample.{c,h}`, a 1 KB fixed page at 0x600BFA00 written one
+      record per published chunk (+456 B → **94.05%, 14,056 B
+      headroom**; no ABI change, no fork pin move). Probe =
+      `bench/probes/s19_pub_probe.py`, synthetic bursts with **no Pi and
+      no camera**, framing asserted byte-identical to the production
+      chunker. Measured: free heap at RUNNING **20,712 B**, one 1,400 B
+      chunk costs **exactly 1,488 B**, → **13 chunks fit, the 14th dies**
+      (three independent rows, `freertos: malloc failed` in the ring =
+      S18's signature reproduced off-chain). **26 × 350 B is fine**, so
+      count is not the wall. No leak — the heap recovers fully after
+      every surviving burst. **Mechanism: the wire task both receives
+      WCMD_PUB and drains the TX queue; `rr_poll()` loops until the
+      inbound vring is empty, publishing inline, and `wire_pump_tx()`
+      only runs after it returns — a back-to-back burst starves the
+      drain.** Full table + arithmetic: DESIGN §S19 detail.
+      **Remaining: rung C** — one real `capture 50 hd color` on the live
+      chain with this ELF, to explain S18's 8 chunks vs our 13
+      (prediction: floor(free_heap/1488) with a subscriber live).
+- [ ] Bite 2 — ~~**flow control on the WCMD_PUB burst** (first candidate,
       cheapest): the bridge emits a frame's chunks back-to-back with no
       backpressure. Pace them, or have the HE acknowledge drain, so
-      bm_pub keeps up. Watch the REV-28 1400 B ceiling and the ≤492 B
-      rpmsg budget — chunk COUNT, not size, is the suspected driver.
+      bm_pub keeps up.~~ **RE-SPECIFIED by bite 1's measurement — HP-side
+      pacing is NOT the fix:** draining on the HP alone died identically,
+      2 ms pacing died identically (the HE spends ~2.5 ms/chunk, so 2 ms
+      never starves the poll loop), and ≥5 ms survives only by accident,
+      at 130–260 ms per HD frame. The fix belongs on the **HE**: pump TX
+      from inside the `rr_poll` loop, or publish from a task other than
+      the one that drains. Watch the REV-28 1400 B ceiling and the
+      ≤492 B rpmsg budget. **Plus a cheap, independent robustness fix:**
+      bound the netwire TX queue by BYTES rather than frames —
+      `NETWIRE_TXQ_LEN` (16) × 1,488 B = 23.8 KB exceeds the free heap,
+      so at the production chunk size the fatal malloc beats the
+      survivable queue-full drop (at 700 B the queue fills first and the
+      node lives, lossy but counted).
 - [ ] Bite 3 — only if bite 2 is not enough: raise
       `configTOTAL_HEAP_SIZE` on the HE (RAM, distinct from the ~16 KB
-      flash headroom; ELF is at 93.88% of its 256 KB region — check
-      both budgets) and/or trim pbuf/queue pools. Re-run the REV-25
-      size audit.
+      flash headroom; ELF is at 94.05% of its 256 KB region after bite
+      1 — check both budgets) and/or trim pbuf/queue pools. Re-run the
+      REV-25 size audit. Bite 1 measured the input this bite needs:
+      20,712 B free of the 64 KB heap at RUNNING, ≈43 KB held by task
+      stacks and queues.
 - [ ] Bite 4 — HD **mono** as well as colour (~25 KB, ~18 chunks — never
       reached in S18), then a sustained multi-frame HD run with the
       ledger exact end to end.

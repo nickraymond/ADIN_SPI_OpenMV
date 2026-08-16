@@ -47,6 +47,13 @@ typedef struct {
     uint32_t tx_oversize;    // send() rejects > NETWIRE_MAX_FRAME (REV-14)
     uint32_t rx_frames;      // injected into the stack
     uint32_t hb_seen;        // TX frames that parse as BCMP heartbeat
+    // S19 bite 1: queue occupancy as two single-writer counters rather
+    // than one depth field. send() runs in l2's TX task and pop_tx in the
+    // wire task, so a shared depth++/depth-- is a read-modify-write race
+    // between them; a difference of two counters each written by exactly
+    // one task is race-free by construction. Depth = pushed - popped.
+    uint32_t txq_pushed;     // frames enqueued (writer: wire_send)
+    uint32_t txq_popped;     // frames dequeued (writer: pop_tx/wire task)
     bool link_up;            // as reported to l2 (via retry_negotiation)
     bool bridge_link;        // as last announced by the HP bridge
     bool enabled;

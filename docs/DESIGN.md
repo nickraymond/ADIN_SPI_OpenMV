@@ -1521,3 +1521,96 @@ q_drops=0, ingest 455/455, 8 UPLINK_TX reports out via
 spotter_tx_data, gateway_ipc up. Board left staged for Nick's demo
 run; fixture restore + S6 baseline = after the demo (S16's pending
 restore folded in — /flash main.py had remained the S16 bridge).
+
+### S19 detail (2026-08-16) — bite 1: the HD publish wall, measured
+
+**Verdict up front: the wall is BYTES IN FLIGHT, not chunk count, and
+the mechanism is inside the HE — the wire task both receives WCMD_PUB
+messages and drains the netwire TX queue, and it cannot do the second
+while it is doing the first.** Every published chunk parks its L2 frame
+copy on the FreeRTOS heap until the burst *ends*; the 14th 1,400 B chunk
+has nowhere to live. Measured with no Pi and no camera.
+
+**Instrument (`firmware/bm_he/src/he_sample.{c,h}`).** A 1 KB fixed page
+at 0x600BFA00 (carved out of `bm_he.ld`'s region, magic `HSMP`,
+self-describing header, 40 × 24 B records) written one record per
+published chunk: frame position from the chunk header, `bm_pub` result,
+netwire txq depth, `heap_free`, `heap_min`, `tx_dropped`, rpmsg drops,
+tick. A page rather than the debug ring because the failure ends in
+`vApplicationMallocFailedHook` — interrupts off, spinning, no WCMD_QUERY
+reply ever again — so only RAM read from the other core survives, and 26
+`he_dbg_printf` lines would wrap the 4 KB ring inside two frames while
+adding `vsnprintf` to the path under measurement. Cost: **+456 B image
+(246,552 / 262,144 = 94.05%) and 1 KB of region**, headroom to the
+linker limit 14,056 B (was 15,536). `wire_status_t` is untouched — no
+ABI, no fork pin move. `bm_he.elf` = `9f40650cd83d9784`.
+Also fixed en route: `wire_pump_tx`'s retry exhaustion was a **silent**
+drop (no counter, no log) — now counted and narrated (first four).
+
+**Probe (`bench/probes/s19_pub_probe.py`).** Synthetic chunk bursts over
+rpmsg with the link forced up, no Pi (vendored `pubsub.c bm_pub_wl`
+transmits unconditionally — there is no remote-subscriber gate, read
+from source) and no sensor (S18's fault is framebuffer GROWTH, so it is
+structurally absent here). Burst framing is asserted byte-identical to
+`BridgeCore.capture_pub_msgs` in `bench/test_s19_probe.py` — a probe that
+sends traffic the product never sends measures nothing (S18's probe 4).
+
+| row | chunks × B | payload | result | heap floor | tx_dropped |
+|---|---|---|---|---|---|
+| count 3 | 3 × 1400 | 4.2 K | OK | 16,208 | 0 |
+| count 8 | 8 × 1400 | 11.2 K | OK | 8,768 | 0 |
+| count 12 | 12 × 1400 | 16.8 K | OK (tick frozen) | 2,816 | 0 |
+| count 16 | 16 × 1400 | 22.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| A | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| E | 26 × 350 | 9.1 K | **OK — 26 chunks fine** | 13,192 | 10 |
+| C | 13 × 1400 | 18.2 K | OK (the exact limit) | 1,328 | 0 |
+| B | 52 × 700 | 36.4 K | OK — survived by DROPPING | 1,328 | 36 |
+| pace 2 ms | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+| pace 5 ms | 26 × 1400 | 36.4 K | **OK** | 19,184 | 0 |
+| pace 10 ms | 26 × 1400 | 36.4 K | **OK** | 19,184 | 0 |
+| HP drains, pace 0 | 26 × 1400 | 36.4 K | **DIED at chunk 13** | 1,328 | 0 |
+
+**The arithmetic, all measured.** Free FreeRTOS heap at RUNNING =
+**20,712 B** of `configTOTAL_HEAP_SIZE` 64 KB (≈43 KB is task stacks and
+queues). One published 1,400 B chunk costs **exactly 1,488 B** — the
+`bm_malloc` frame copy in `bm_net_wire.c wire_send`, plus heap_4 block
+overhead — and the txq depth climbs 1, 2, 3 … in lockstep with the heap
+falling, i.e. **nothing is popped during the burst**. 20,712 / 1,488 =
+13.9, so 13 chunks fit and the 14th dies. Observed at exactly 13 on
+three independent rows. The heap recovers fully (20,672) after every
+surviving burst — no leak.
+
+**Why count is not the wall (row E).** 26 chunks of 350 B publish fine.
+Same count, quarter of the bytes.
+
+**Why 700 B survives where 1400 B kills (row B).** `NETWIRE_TXQ_LEN` is
+16, and `wire_send` frees the copy when the queue is full (counting
+`tx_dropped`). At 700 B, 16 × ~788 B = 12.6 K fits under the free heap,
+so the QUEUE fills first — survivable, lossy. At 1400 B, 16 × 1,488 =
+23.8 K **exceeds** the 20.7 K free heap, so the HEAP fails first —
+fatal. The fatal-vs-survivable line is `NETWIRE_TXQ_LEN × (chunk + 88)`
+vs free heap, and today it falls on the wrong side at the production
+chunk size.
+
+**Mechanism, and what it falsifies.** `rr_poll()` loops until the
+inbound vring is empty and publishes each completed chunk inline from
+`wire_rx`; `wire_pump_tx()` runs only after `rr_poll` returns
+(`main.c` wire task). Back-to-back delivery keeps `rr_poll` fed, so the
+pump never runs and the queue never drains. This is why **HP-side
+draining alone changes nothing** (it died identically) and why **2 ms
+pacing does not help** — the HE spends ~2.5 ms per chunk, so 2 ms gaps
+never starve `rr_poll` into returning. At **≥5 ms** the poll loop drains,
+the pump runs between chunks, and the heap floor is 19,184 = exactly ONE
+chunk outstanding, 0 drops, all 104 messages delivered.
+**TRACKER bite 2 as written ("pace the burst / backpressure on the HP
+side") is therefore NOT the fix**: ≥5 ms pacing only works by accident,
+costs 130–260 ms per HD frame, and leaves the coupling in place. The fix
+belongs on the HE: pump TX from inside the poll loop, or publish from a
+task other than the one that drains.
+
+**Secondary finding.** `BP->tick` is written at the TOP of the wire
+task's loop, so a task parked in `wire_pump_tx`'s 100 ms-per-message
+retry reads as dead. Liveness now means "the stack answers a query";
+ticking is only the fast path. The first probe run reported a false
+death from this and the HE ring — `RUNNING`, no `malloc failed` — is
+what caught it.

@@ -40,6 +40,7 @@
 #include "bm_he.h"
 #include "bm_net_wire.h"
 #include "camera_svc.h"
+#include "he_sample.h"
 #include "power_hal.h"
 #include "he_spike.h"     // rpmsg/MHU scaffold constants + he status page
 #include "mhu.h"
@@ -238,11 +239,25 @@ static void wire_pump_tx(void) {
         uint16_t n;
         while ((n = wire_frag_next(&it, msg, WIRE_MSG_PAYLOAD)) != 0) {
             // Retry briefly: the host recycles buffers as it reads.
+            bool sent = false;
             for (int tries = 0; tries < 100; tries++) {
                 if (rr_send(&s_rr, s_rr.peer_addr, msg, n)) {
+                    sent = true;
                     break;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1));
+            }
+            if (!sent) {
+                // S19 bite 1: this drop was SILENT -- no counter, no log,
+                // and it is exactly what a host that stops draining the
+                // vring mid-burst produces. Count it always; narrate the
+                // first few (the ring must not be flooded during a burst).
+                he_sample_note_rpmsg_drop();
+                if (he_sample_rpmsg_drops() <= 4u) {
+                    he_dbg_printf("wire: rpmsg tx drop #%lu (%u B)\n",
+                                  (unsigned long)he_sample_rpmsg_drops(),
+                                  (unsigned)n);
+                }
             }
         }
         bm_free(frame.data);
@@ -505,6 +520,7 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *name) {
 
 int main(void) {
     he_dbg_init();
+    he_sample_init((void *)HE_SAMPLE_PAGE_ADDR);   // S19 bite 1
     xTaskCreate(wire_task, "wire", 1024 /* words */, NULL,
                 tskIDLE_PRIORITY + 6, &s_wire_task);
     vTaskStartScheduler();

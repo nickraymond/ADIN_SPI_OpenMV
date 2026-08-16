@@ -77,6 +77,7 @@ static BmErr wire_send(void *self, uint8_t *data, size_t length,
     }
 
     WIRE.stats.tx_frames++;
+    WIRE.stats.txq_pushed++;
     if (frame_is_bcmp_heartbeat(data, (uint16_t)length)) {
         WIRE.stats.hb_seen++;
     }
@@ -184,7 +185,11 @@ bool bm_net_wire_pop_tx(netwire_tx_frame_t *frame, uint32_t timeout_ms) {
     if (!frame || !WIRE.txq) {
         return false;
     }
-    return bm_queue_receive(WIRE.txq, frame, timeout_ms) == BmOK;
+    if (bm_queue_receive(WIRE.txq, frame, timeout_ms) != BmOK) {
+        return false;
+    }
+    WIRE.stats.txq_popped++;
+    return true;
 }
 
 void bm_net_wire_inject(uint8_t port, uint8_t *data, uint16_t len) {

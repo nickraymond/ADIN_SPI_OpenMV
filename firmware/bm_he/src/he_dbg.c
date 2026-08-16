@@ -58,6 +58,23 @@ void he_dbg_printf(const char *fmt, ...) {
     }
 }
 
+// ---- platform glue for he_sample.c (S19 bite 1) --------------------------
+// The sampler stays free of FreeRTOS so the host harness compiles it
+// unchanged; these three are its only platform dependencies, and this is
+// already the file that owns "HE-side plumbing the rest of the app should
+// not have to know about".
+
+uint32_t he_plat_heap_free(void) { return (uint32_t)xPortGetFreeHeapSize(); }
+
+uint32_t he_plat_heap_min(void) {
+    return (uint32_t)xPortGetMinimumEverFreeHeapSize();
+}
+
+uint32_t he_plat_tick_ms(void) {
+    // configTICK_RATE_HZ is 1000 (FreeRTOSConfig.h), so ticks are ms.
+    return (uint32_t)xTaskGetTickCount();
+}
+
 // LWIP_RAND: xorshift32 seeded from the DWT cycle counter at first use.
 #define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004u)
 

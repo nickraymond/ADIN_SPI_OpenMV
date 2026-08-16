@@ -28,6 +28,7 @@ APP_SRCS = \
     src/startup.c \
     src/main.c \
     src/he_dbg.c \
+    src/he_sample.c \
     src/syscalls.c \
     src/bm_stubs.c \
     src/bm_net_wire.c \
@@ -157,7 +158,7 @@ OBJS = $(patsubst %.c,$(BUILD)/%.o,$(notdir $(SRCS)))
 VPATH = src $(sort $(dir $(filter-out src/%,$(SRCS))))
 
 # Vendor code (bm_core, lwIP, FreeRTOS, contrib) is not ours to -Werror.
-APP_OBJS = startup.o main.o he_dbg.o bm_stubs.o bm_net_wire.o \
+APP_OBJS = startup.o main.o he_dbg.o he_sample.o bm_stubs.o bm_net_wire.o \
            wire_frag.o mhu.o rpmsg_remote.o syscalls.o
 VENDOR_OBJS = $(filter-out $(APP_OBJS),$(notdir $(OBJS)))
 $(addprefix $(BUILD)/,$(VENDOR_OBJS)): CFLAGS := $(filter-out -Werror,$(CFLAGS))

@@ -17,6 +17,84 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 1: the wall measured off-chain — bytes in flight, not chunk count, and the fix is not where the TRACKER put it
+
+**Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
+move, `wire_status_t` untouched)
+
+**Done:**
+- Nibble-1 plan approved by Nick (sample page over debug ring; docker up;
+  Claude drives rung B).
+- **Instrument:** `he_sample.{c,h}` — 1 KB fixed page at 0x600BFA00
+  (carved from `bm_he.ld`, magic `HSMP`, 40 × 24 B records), one record
+  per published chunk: frame position, `bm_pub` result, txq depth,
+  `heap_free`, `heap_min`, `tx_dropped`, rpmsg drops, tick. A page, not
+  the ring: the failure ends in `vApplicationMallocFailedHook` with
+  interrupts off, so nothing answers a query again and only cross-core
+  RAM reads survive. Cost **+456 B (94.05%, 14,056 B headroom)**; ELF
+  `9f40650cd83d9784`. Netwire gained two single-writer counters
+  (`txq_pushed`/`txq_popped`) instead of one racy depth field.
+- **Probe:** `bench/probes/s19_pub_probe.py` — synthetic bursts, no Pi
+  (checked in vendored `pubsub.c`: `bm_pub_wl` has no remote-subscriber
+  gate, so it transmits regardless) and no camera (S18's fault is
+  framebuffer growth, structurally absent). Host tests assert the probe's
+  framing is **byte-identical to `BridgeCore.capture_pub_msgs`** — the
+  S18 probe-4 lesson made mechanical. HE host tests 191 → **220**, new
+  `bench/test_s19_probe.py` **42 checks**.
+- **RUNG B RESULTS (12 rows, full table in DESIGN §S19):** free heap at
+  RUNNING **20,712 B**; one 1,400 B chunk costs **exactly 1,488 B**;
+  20,712/1,488 = 13.9 → **13 chunks fit, the 14th kills it**, observed at
+  exactly 13 on three independent rows, with `freertos: malloc failed`
+  in the ring — S18's signature reproduced with no Pi and no camera.
+  **26 × 350 B publishes fine → the wall is BYTES, not COUNT.**
+  Heap recovers fully after every surviving burst (no leak).
+- **Mechanism:** the wire task both receives WCMD_PUB and drains the TX
+  queue; `rr_poll()` loops until the inbound vring is empty (publishing
+  inline) and `wire_pump_tx()` only runs after it returns, so a
+  back-to-back burst starves the drain. txq depth climbs 1,2,3… in
+  lockstep with the heap falling.
+
+**Broke/surprised us:**
+- **The TRACKER's bite 2 as written is not the fix.** HP-side draining
+  alone died identically; 2 ms pacing died identically (the HE spends
+  ~2.5 ms/chunk, so 2 ms never starves the poll loop); ≥5 ms pacing
+  survives with a heap floor of 19,184 = exactly ONE chunk outstanding,
+  but only by accident and at 130–260 ms per HD frame. The fix belongs on
+  the HE: pump TX inside the poll loop, or publish off the wire task.
+- **A row survived by DROPPING and it explains S18's asymmetry.**
+  52 × 700 B lived through the same 36.4 KB that kills 26 × 1400 B,
+  losing 36 frames to `tx_dropped`: `NETWIRE_TXQ_LEN` (16) × 788 B fits
+  under the free heap so the QUEUE fills first, while 16 × 1,488 B =
+  23.8 KB exceeds it so the HEAP fails first. Bounding the queue by bytes
+  turns a board-killer into a counted drop — a cheap robustness fix that
+  is independent of the throughput fix.
+- **My first liveness check was wrong and reported a false death.**
+  `BP->tick` is written at the top of the wire task's loop, so a task
+  parked in `wire_pump_tx`'s 100 ms-per-message retry reads as dead —
+  the probe declared the HE dead after 3 chunks. The HE ring
+  (`RUNNING`, no `malloc failed`) is what caught it; liveness now means
+  "answers a query", with ticking as the fast path. Same class of error
+  as S18's stale-frame reading: the first artifact I trusted was not
+  measuring what I thought.
+- `wire_pump_tx`'s retry exhaustion had been a **silent** drop since S16
+  — no counter, no log. Now counted and narrated.
+
+**Board state:** fixture intact and re-verified (`main.py`
+`55fa6ccfdd3f7f65`), board back on the bus running the S6 service,
+`/flash/bm_he.elf` now the S19 instrumented build `9f40650cd83d9784`
+(was the S17 `3cdd1f66…` staged inert). Four Pi reboots not needed —
+zero USB incidents this session, because nothing touched the sensor.
+S6 USB baseline NOT re-run (no firmware flash, no `main.py` change, no
+sensor contact this session).
+
+**Next:** Nick's call on rung C — a real `capture 50 hd color` on the
+live chain with this ELF. It is the only thing that explains S18's 8
+chunks vs our 13 (predicted: less free heap with a subscriber and
+neighbour traffic live, floor(free/1488) ≈ 8), and bite 2 has to bring
+the chain up anyway. Then bite 2, re-specified by the measurement above.
+
+---
+
 ## 2026-08-15 — Sprint S18 (camera bench web tool) — bite A: resolution + pixel format plumbed end to end; front end designed against a working mockup first
 
 **Branch:** `sprint/18-web-bench` (repo) + bm_sbc fork `feature/udp-transport`

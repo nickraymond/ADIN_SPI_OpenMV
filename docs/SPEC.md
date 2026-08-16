@@ -237,6 +237,31 @@ pair, USB carrying no video.
   configTOTAL_HEAP_SIZE on the HE (RAM, not the 16 KB flash headroom);
   or accept HD stills at low q only. HD greyscale (~25 KB, ~18 chunks)
   is likely to hit the same wall and was not reached.
+  **ANSWERED 2026-08-16 (S19 bite 1, measured off-chain with no Pi and
+  no camera — full table in DESIGN §S19 detail):**
+  - The wall is **bytes in flight, not chunk count**. 26 chunks of 350 B
+    publish fine; 13 × 1400 B is the exact limit; the 14th 1400 B chunk
+    dies. Reproduced at 13 on three independent rows.
+  - **Free FreeRTOS heap at RUNNING = 20,712 B** (of 64 KB) and one
+    1,400 B chunk costs **exactly 1,488 B** (the `bm_malloc` L2 frame
+    copy in `wire_send` + heap_4 overhead). 20,712 / 1,488 = 13.9.
+  - Nothing is drained *during* a burst: the netwire txq depth climbs in
+    lockstep with the heap falling, and the heap fully recovers after
+    every surviving burst (no leak).
+  - **Mechanism:** the HE wire task both receives WCMD_PUB and drains the
+    TX queue. `rr_poll()` loops until the inbound vring is empty,
+    publishing inline; `wire_pump_tx()` only runs after it returns. A
+    back-to-back burst keeps the poll loop fed, so the pump never runs.
+  - Consequently **HP-side pacing is not the fix**: draining on the HP
+    alone changed nothing, 2 ms pacing died identically (the HE spends
+    ~2.5 ms/chunk), and ≥5 ms only works by starving the poll loop —
+    at a cost of 130–260 ms per HD frame.
+  - Independent robustness gap: `NETWIRE_TXQ_LEN` (16) × 1,488 B =
+    23.8 KB **exceeds** the free heap, so at the production chunk size
+    the fatal malloc beats the survivable queue-full drop. At 700 B the
+    queue fills first and the node survives (lossy, counted). Bounding
+    the queue by BYTES rather than frames converts a board-killing
+    allocation failure into a counted drop.
 
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA

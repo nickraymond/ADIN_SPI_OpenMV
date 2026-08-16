@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "bm_service.h"
+#include "he_sample.h"
 #include "pubsub.h"
 
 static volatile bool s_pending_valid;
@@ -115,18 +116,43 @@ bool camera_svc_take_pending(wire_capture_t *out) {
     return true;
 }
 
+// Chunk header (camera_svc.h contract): frame_seq u32 | idx u16 |
+// count u16 | payload_len u16. The sampler wants the frame POSITION, and
+// it is already in the first bytes of every payload -- no extra plumbing.
+#define CHUNK_HDR_LEN 10u
+
+static void chunk_pos(const uint8_t *payload, uint16_t len, uint16_t *idx,
+                      uint16_t *count) {
+    *idx = 0;
+    *count = 0;
+    if (len >= CHUNK_HDR_LEN) {
+        memcpy(idx, payload + 4, sizeof(*idx));       // may be unaligned
+        memcpy(count, payload + 6, sizeof(*count));
+    }
+}
+
 void camera_svc_publish(const uint8_t *payload, uint16_t len) {
+    uint16_t idx, count;
+    chunk_pos(payload, len, &idx, &count);
+
     if (len == 0 || len > CAMERA_MAX_PAYLOAD) {
         s_pub_errs = s_pub_errs + 1;
+        // BmEINVAL is what this rejection means; recorded so a malformed
+        // chunk is distinguishable from a publish that reached bm_pub.
+        he_sample_pub(idx, count, len, BmEINVAL);
         return;
     }
-    if (bm_pub(CAMERA_STREAM_TOPIC, payload, len, 0,
-               BM_COMMON_PUB_SUB_VERSION) == BmOK) {
+    BmErr err = bm_pub(CAMERA_STREAM_TOPIC, payload, len, 0,
+                       BM_COMMON_PUB_SUB_VERSION);
+    if (err == BmOK) {
         s_pub_ok = s_pub_ok + 1;
         s_pub_bytes = s_pub_bytes + len;
     } else {
         s_pub_errs = s_pub_errs + 1;
     }
+    // S19 bite 1: one record per chunk, AFTER the publish, so heap_free
+    // is the state bm_pub left behind (the drain curve, TRACKER S19-1).
+    he_sample_pub(idx, count, len, (int)err);
 }
 
 // bm_service glue: reply buffer is bm_service's (MAX_BM_SERVICE_DATA_SIZE
