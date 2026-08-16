@@ -909,6 +909,85 @@ the footer. Bite B2's 9-row matrix replaces it with measurement.
 python3 pi/bench_web/test_bench_web.py
 ```
 
-42 checks, most of them on the guard: the stale-`save.state` trap, the
-grace release, repeats-not-held, mode-change-held, stop-never-gated, and
-that a refused command never reaches the socket.
+**67 checks** (42 from C1, 25 added by C2), most of them on the guard and on
+the capture route's confinement: the stale-`save.state` trap, the grace
+release, repeats-not-held, mode-change-held, stop-never-gated, that a refused
+command never reaches the socket, and the traversal matrix below.
+
+# S18 bite C2 — gallery, compare, histograms
+
+Three additions to the same page, plus the loud-failure banner the C1 demo
+asked for. Still **Pi-side only**: no fork change, no `camera_svc.h`, no wire
+change, no bridge or HE firmware, so no pin move and no size audit.
+
+## Gallery — it enumerates SIDECARS, not JPEGs
+
+`/api/captures` lists `cap_<UTC>_seq<N>.json` from `$S18_CAPTURE_DIR`
+(default `~/bench_captures`), newest first. Bite B renames the JPEG *before*
+writing the sidecar, so the sidecar is the commit record and a bare `.jpg`
+may still be half-written. A sidecar whose image is missing is **listed and
+marked**, not hidden — on a bench instrument that is evidence.
+
+Click any two thumbnails, then **Compare selected**. The compare view drops
+the right column: levels, ledger and constants all describe the *live* frame
+and are stale next to two stored captures (the mockup's call). Each card
+carries the image, its own histogram, and a table whose differing rows are
+highlighted against the other card.
+
+Two numbers on that table are worth the trip: **decoded w×h** comes from the
+JPEG itself (this is where you see the sensor's 16:10 letterboxing as
+measurement, not as model), and **delivery** is the sidecar's `gaps_delta` /
+`dropped_delta` — zero means that still crossed the chain intact.
+
+## Histograms
+
+RGB + luma, one plot per channel with mean/median/mode/stdev/min/max/LQ/UQ,
+drawn on a canvas in the browser from the decoded pixels. Greyscale frames
+collapse to luma alone, and **that is decided by the pixels** (R=G=B), not by
+the commanded pixel format — a mono capture that arrived as colour would show
+up rather than be described away.
+
+The live panel reads `/api/frame.jpg`, which this server fetches from the
+frozen S3 server and re-serves. That exists for one reason: the live `<img>`
+is on `:8080`, a different origin, and a canvas drawn from it is tainted —
+`getImageData` throws, so there is no live histogram without a same-origin
+copy. It is an on-demand GET of a frame that server already holds in memory,
+at most once per new frame; **the single-producer ingest on `:8081` is still
+never touched.** The panel refreshes when the ledger's `frames_ok` moves, and
+says "last delivered frame" when it has not — that server holds the last
+frame indefinitely, so calling it "live" unqualified would be a small lie.
+
+## The banner (the C1 demo's finding)
+
+A `cam_reply.state` that is not `ok` now gets the top of the page in red,
+and stays until a good reply arrives. In the C1 demo seven captures went into
+a dead camera node while the page logged `200 ok` for every one of them —
+the *socket* accepted them; the camera never answered. Three triggers, one
+banner: `cam_reply.state` not `ok`/`none`, an `ok=0` refusal, and a
+`save.state` of `timeout`/`error`.
+
+Related trap, now surfaced rather than hidden: on a timeout the fork sets
+`cam_seen = true` and `cam_state = "timeout"` but does **not** update the
+reply struct (`app_main.cpp`, `ctl_note_cam(nullptr, "timeout")`), so every
+other `cam_reply` field is the last GOOD reply. The page labels them STALE
+instead of printing them as this command's answer.
+
+## The file-reading route cannot leave the capture directory
+
+`/captures/<name>.jpg` is the only route that opens a file, and every name
+passes three independent fences (`CaptureStore` in `bench_web.py` carries the
+argument): the name is URL-decoded **first** then matched whole against
+`cap_\d{8}T\d{6}Z_seq\d{6}\.jpg`; it must have a sidecar, so the reachable
+set is exactly the committed captures; and `realpath` must land back where
+the path was assembled, which is what catches a symlink planted *inside* the
+directory. The sidecar's own `file` field is never used to build a path —
+reported on mismatch, never followed.
+
+Verified against a running server rather than only in unit tests:
+
+```bash
+for p in "../../../etc/passwd" "..%2f..%2fetc%2fpasswd" "/etc/passwd" "nope.jpg"; do curl -s -o /dev/null -w "$p -> %{http_code}\n" "http://nereus001:8090/captures/$p"; done
+```
+
+All four answer `404`, and a real capture answers `200` with bytes identical
+to the file on disk.

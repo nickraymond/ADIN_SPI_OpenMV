@@ -17,6 +17,92 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite C2: the gallery lists sidecars, the histograms read pixels, and a dead camera node can no longer be quiet
+
+**Branch:** `sprint/18-bench-gallery`, cut from `main` @ `db82181` (PR #31
+merged). **Pi-side only — no fork change, no firmware change, and zero board
+contact**, so no pin move, no ABI lockstep, no size audit.
+
+**Done:**
+- Nibble-1 plan approved with 5 decision points (**D36**).
+- **Gallery enumerates sidecars**, not JPEGs (`/api/captures`): bite B renames
+  the image before writing the sidecar, so the sidecar is the commit record.
+  A sidecar with no image is listed and marked — evidence, not clutter.
+- **Side-by-side compare**, dropping the right column (levels/ledger/constants
+  describe the *live* frame and are stale next to two stored captures). Each
+  card gets its own histogram; differing rows are highlighted against the
+  other card. Two rows earn their place: **decoded w×h read from the JPEG**
+  (the 16:10 letterboxing as measurement, not model) and the sidecar's
+  `gaps_delta`/`dropped_delta`.
+- **RGB + luma histograms**, canvas, client-side, carried from the approved
+  mockup — live frame and per-still. **Greyscale is decided by the pixels
+  (R=G=B), not by the commanded pixel format.**
+- **The banner** the C1 demo asked for: `cam_reply.state` not `ok`, an `ok=0`
+  refusal, or a `save.state` of `timeout`/`error` takes the top of the page
+  and stays until a good reply arrives.
+- Host tests **42 → 67**, including a traversal matrix run against the parser
+  *and* against a running server.
+- Docs: README §S18 bite C2, DESIGN **D36**, TRACKER.
+
+**Broke/surprised us:**
+- **A live histogram is impossible without a same-origin frame.** The live
+  view is an `<img>` on `:8080`; drawing it into a canvas taints the canvas
+  and `getImageData` throws. So `/api/frame.jpg` proxies the frozen S3
+  server's cached frame — on demand, at most once per new frame. It crosses a
+  C1 line ("no frame bytes through this server") deliberately and with Nick's
+  approval; `:8081` is still never touched.
+- **A non-ASCII character in a `send_error` message drops the connection.**
+  `send_error(404, "no such capture (no sidecar — not a committed capture)")`
+  puts that string in the **HTTP status line**, which must encode as latin-1;
+  the em dash raised `UnicodeEncodeError` inside the handler and the client
+  got **no response at all** (`curl` reported `000`), not a 404. Every unit
+  test passed while this was broken — it was found by curling the running
+  server, which is the whole reason that check exists. Reason moved to the
+  body; regression test asserts every refusal reason is ASCII.
+- **On a timeout, only `cam_reply.state` is fresh.** `ctl_note_cam(nullptr,
+  "timeout")` sets `cam_seen = true` and leaves the reply struct alone, so
+  `ok`, `res`, `pf`, `pub_ok` are all the last GOOD reply. That is precisely
+  why C1's failure looked normal: the page printed a cheerful stale row. The
+  banner keys on `state` alone, and the stale fields are labelled STALE.
+- **Neither agent browser could open the page.** The in-app pane refuses
+  `localhost` by policy; the Chrome extension is not connected. Capped at
+  three attempts per the yak-shave rule. Compensation: host tests that assert
+  every `getElementById` target exists in the markup and that braces,
+  backticks and tags balance — the faults that would otherwise take out the
+  poll loop silently. **A real browser render is nibble 3's first item**, and
+  it is Nick's, same as C1's `<img>`.
+- The page *was* driven end to end on the laptop against a throwaway fake
+  telemetry node + fake `/frame.jpg` (scratchpad only, not committed), which
+  is how the routes, the real `bench_ctl.py` client path and the 503s were
+  checked with real captures copied off nereus001.
+
+**Corrected from an artifact:** the TRACKER said `capture 50 hd mono` had
+never been run. `cap_20260816T223333Z_seq000395` on nereus001 says otherwise,
+and the JPEG was checked against **its own header** — `SOF0: 1280×800,
+1 components`, 24,207 B, `SOI…EOI` intact, `chunks:18`, `gaps_delta:0`. It
+ran during the C1 demo session. S19 bite 4 still owes the sustained
+multi-frame HD run and HD-as-a-stream, which remain unmeasured.
+
+**Bench state:** untouched by this session apart from three read-only ssh
+reads on nereus001 (`~/bench_captures/`, the fork's `bench_ctl.h` and
+`app_main.cpp`) and an `scp` of three stored captures to the laptop. Both
+Pis still on `sprint/18-bench-web` @ `8431690` — **they need moving to
+`sprint/18-bench-gallery` before the demo**. AE3 untouched: `/flash/main.py`
+is still the bridge launcher (`170e637c…`).
+
+**The fixture restore is deliberately NOT done, and that is a plan, not an
+omission.** `demo_up.sh` stages the bridge launcher, so restoring the S6
+fixture now would be overwritten before C2's demo and cost three port
+sessions instead of one. It is folded into **bite B2's single board window**,
+after this demo: stage the neutral `main.py`, run
+`bench/probes/s18_reinit_probe.py`, leave the fixture in place — which also
+discharges the standing session-end restore. Written into the TRACKER under
+B2 so it is not re-derived.
+
+**Next:** nibble 3 — Nick runs the demo (browser render first), then the PR.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite C1: the bench page is live, and its click guard is enforced on the server
 
 **Branch:** `sprint/18-bench-web` (`14e8446`, cut from `main` @ `18349ed`)

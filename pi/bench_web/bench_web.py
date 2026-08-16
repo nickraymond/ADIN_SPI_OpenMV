@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bench_web.py — S18 bite C1: the camera bench control page.
+"""bench_web.py — S18 bites C1 + C2: the camera bench control page.
 
 Serves the operator page on :8090 and turns its clicks into commands on the
 bite-B control socket (``/run/bm/bench.sock``). Stdlib only, same rule as the
@@ -27,6 +27,21 @@ Three things it does that a thin proxy would not:
 It never touches the frozen S3 ingest. The live view is an ``<img>`` pointed
 straight at that server's ``/stream`` — no bytes are copied through here.
 
+Bite C2 adds the gallery of stored captures, and with it the only two routes
+that move image bytes:
+
+  * ``/captures/<name>.jpg`` reads a stored still off the disk. Every path it
+    can be made to open is fenced three independent ways — see
+    ``CaptureStore``, which is where the whole argument lives.
+
+  * ``/api/frame.jpg`` fetches the frozen S3 server's cached latest frame and
+    hands it back **same-origin**, on demand only. This exists for one
+    concrete reason: the live view is an ``<img>`` on port 8080, a different
+    origin, so drawing it into a canvas taints the canvas and ``getImageData``
+    throws — there is no live histogram without a same-origin copy. It reads
+    that server's in-memory ``/frame.jpg`` like any browser would; the
+    single-producer ingest on ``:8081`` is still never touched.
+
 Run:  python3 pi/bench_web/bench_web.py        # page at http://<host>:8090/
 """
 
@@ -35,10 +50,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bm_bench")
@@ -53,6 +72,147 @@ BODY_MAX = 4096  # a command object is tens of bytes; anything larger is junk
 # bridge's (a wedged sensor is the alternative).
 RES_OK = ("qvga", "vga", "hd")
 PF_OK = ("color", "mono")
+
+# Bite B's own filename shape: cap_20260816T223333Z_seq000395. Nothing else is
+# a capture, and the character set has no separator, no dot and no NUL in it.
+CAPTURE_RE = re.compile(r"^cap_\d{8}T\d{6}Z_seq\d{6}$")
+
+
+class CaptureStore:
+    """Read-only view of ``~/bench_captures``. The gallery enumerates SIDECARS.
+
+    The sidecar is the commit record: bite B writes the JPEG and renames it
+    *before* the sidecar, so a sidecar can never name a half-written image,
+    while a stray ``.jpg`` may well be one. Listing the images instead would
+    be listing the thing that is allowed to be incomplete.
+
+    **Nothing an operator types ever becomes a path.** A request for a stored
+    still passes three independent fences, any one of which would do on its
+    own:
+
+      1. The name is URL-decoded *first*, then matched whole against
+         ``CAPTURE_RE``. ``../``, ``..%2f``, an absolute path, a backslash and
+         an embedded NUL all fail the character set, and decoding first is
+         what stops ``%2e%2e`` sneaking past a regex applied too early.
+      2. It must be a capture we would have listed — ``<stem>.json`` has to
+         exist in the root. So the reachable set is exactly the set of
+         committed captures.
+      3. ``realpath`` of the assembled path must land back on the path we
+         assembled. That is what catches a symlink planted *inside* the
+         directory, which the first two fences would happily accept.
+
+    Note what is deliberately NOT used: the sidecar's own ``file`` field. It
+    is our app's data, but it is data, and building a path out of it would
+    hand path construction to file contents. The JPEG name is derived from the
+    sidecar's *filename* (already regex-clean), and a disagreement with the
+    ``file`` field is reported rather than followed.
+
+    The root is fixed at startup. A status reply carries ``save.dir``, but a
+    remote-supplied directory must never be able to move the fence, so that
+    field is only ever compared against this root, never assigned to it.
+    """
+
+    LIST_MAX = 60          # a strip the operator can actually scan
+    JPEG_MAX = 8 << 20     # HD lands at ~42 KB; this only bounds a surprise
+
+    def __init__(self, root):
+        self.root = os.path.realpath(os.path.expanduser(root))
+
+    # -- listing -----------------------------------------------------------
+    def listing(self, limit=LIST_MAX):
+        try:
+            names = sorted((n for n in os.listdir(self.root)
+                            if n.endswith(".json") and CAPTURE_RE.match(n[:-5])),
+                           reverse=True)          # filenames sort as timestamps
+        except OSError as e:
+            return {"ok": False, "dir": self.root, "items": [], "skipped": 0,
+                    "err": "cannot read %s: %s" % (self.root, e.strerror or e)}
+        items, skipped = [], 0
+        for name in names[:limit]:
+            item = self._item(name)
+            if item is None:
+                skipped += 1
+            else:
+                items.append(item)
+        return {"ok": True, "dir": self.root, "items": items,
+                "skipped": skipped, "total": len(names)}
+
+    def _item(self, name):
+        """One sidecar → one gallery entry, or None if it will not parse."""
+        stem = name[:-5]
+        try:
+            with open(os.path.join(self.root, name), "rb") as fh:
+                side = json.loads(fh.read().decode("utf-8", "replace"))
+            if not isinstance(side, dict):
+                return None
+        except (OSError, ValueError):
+            return None
+        jpeg = stem + ".jpg"
+        try:
+            size = os.path.getsize(os.path.join(self.root, jpeg))
+        except OSError:
+            size = None      # sidecar without an image: shown, and marked
+        req, frame = side.get("req") or {}, side.get("frame") or {}
+        reply, ledger = side.get("reply") or {}, side.get("ledger") or {}
+        return {
+            "stem": stem,
+            "jpeg": jpeg,
+            "utc": side.get("utc") or stem[4:20],
+            "source": side.get("source"),
+            "on_disk": size,
+            # The sidecar named a different file than it is paired with. Never
+            # followed (see the class docstring) — reported, because it means
+            # something wrote this directory that bite B did not.
+            "file_field": side.get("file"),
+            "name_mismatch": bool(side.get("file")) and side.get("file") != jpeg,
+            "req": {"q": req.get("q"), "res": req.get("res"), "pf": req.get("pf")},
+            "reply": {"ok": reply.get("ok"), "res": reply.get("res"),
+                      "pf": reply.get("pf"), "pub_errs": reply.get("pub_errs"),
+                      "seen": reply.get("seen")},
+            "frame": {"seq": frame.get("seq"), "size_bytes": frame.get("size_bytes"),
+                      "chunks": frame.get("chunks")},
+            "ledger": {"gaps_delta": ledger.get("gaps_delta"),
+                       "dropped_delta": ledger.get("dropped_delta")},
+        }
+
+    # -- one stored still --------------------------------------------------
+    def resolve(self, name):
+        """URL name → an absolute path inside the root. Raises KeyError."""
+        name = unquote(name)
+        if not name.endswith(".jpg") or not CAPTURE_RE.match(name[:-4]):
+            raise KeyError("not a capture name")            # fence 1
+        path = os.path.join(self.root, name)
+        if not os.path.isfile(os.path.join(self.root, name[:-4] + ".json")):
+            raise KeyError("no sidecar: not a committed capture")    # fence 2
+        if os.path.realpath(path) != path or os.path.islink(path):
+            raise KeyError("resolves outside the capture directory")  # fence 3
+        if not os.path.isfile(path):
+            raise KeyError("image is missing")
+        if os.path.getsize(path) > self.JPEG_MAX:
+            raise KeyError("image is implausibly large")
+        return path
+
+    def read(self, name):
+        with open(self.resolve(name), "rb") as fh:
+            return fh.read(self.JPEG_MAX + 1)[:self.JPEG_MAX]
+
+
+def fetch_live_frame(host, port, timeout=2.0, cap=CaptureStore.JPEG_MAX):
+    """The frozen S3 server's cached latest frame → (code, bytes-or-message).
+
+    A plain GET of a frame it already holds in memory, which is what
+    ``/frame.jpg`` is for; it neither opens a stream nor touches the ingest.
+    """
+    url = "http://%s:%d/frame.jpg" % (host, port)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return 200, r.read(cap + 1)[:cap]
+    except urllib.error.HTTPError as e:
+        # 503 is the honest "no frame received yet" — pass it through as-is.
+        return e.code, ("stream server: %s" % e.reason).encode()
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return 503, ("no frame from %s: %s — is t1l-stream-server running?"
+                     % (url, e)).encode()
 
 
 class BenchGate:
@@ -303,7 +463,8 @@ def build_light_cmd(verb: str, body: dict):
             "count": _num(body, "count", 1, 200, int)}
 
 
-def make_handler(bench: Bench, cfg: dict):
+def make_handler(bench: Bench, cfg: dict, store: CaptureStore = None,
+                 stream_host="127.0.0.1"):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "S18BenchWeb/1"
@@ -353,7 +514,31 @@ def make_handler(bench: Bench, cfg: dict):
                 except BenchCtlError as e:
                     return self._json(503, {"ok": False, "err": str(e)})
                 return self._json(200, {"ok": True, "status": st, "gate": gate})
+            if path == "/api/captures":
+                return self._json(200, store.listing())
+            if path == "/api/frame.jpg":
+                code, body = fetch_live_frame(stream_host, cfg["stream_port"])
+                if code != 200:
+                    return self._json(503, {"ok": False,
+                                            "err": body.decode("utf-8", "replace")})
+                return self._send(200, body, "image/jpeg")
+            if path.startswith("/captures/"):
+                return self._capture(path[len("/captures/"):])
             self.send_error(404)
+
+        def _capture(self, name):
+            try:
+                body = store.read(name)
+            except KeyError as e:
+                # 404 for every refusal: a traversal attempt learns nothing
+                # about what does or does not exist on this disk. The reason
+                # goes in the BODY -- `message` lands in the status line,
+                # which must encode as latin-1, and a non-ASCII character
+                # there kills the connection instead of answering (measured).
+                return self.send_error(404, "no such capture", str(e.args[0]))
+            except OSError as e:
+                return self.send_error(500, "cannot read capture: %s" % e)
+            self._send(200, body, "image/jpeg")
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]
@@ -403,16 +588,24 @@ def main(argv=None):
                     help="control socket (default $S18_CTL_SOCK or /run/bm/bench.sock)")
     ap.add_argument("--stream-port", type=int, default=8080,
                     help="the frozen S3 stream server's HTTP port")
+    ap.add_argument("--stream-host", default="127.0.0.1",
+                    help="host to read the live frame from (same box by default)")
+    ap.add_argument("--captures",
+                    default=os.environ.get("S18_CAPTURE_DIR", "~/bench_captures"),
+                    help="bite B's capture directory (read-only; $S18_CAPTURE_DIR)")
     ap.add_argument("--settle", type=float, default=8.0,
                     help="seconds to hold a sensor re-init after a capture")
     args = ap.parse_args(argv)
 
     bench = Bench(BenchGate(settle=args.settle), path=args.sock)
-    cfg = {"stream_port": args.stream_port, "settle": args.settle}
+    store = CaptureStore(args.captures)
+    cfg = {"stream_port": args.stream_port, "settle": args.settle,
+           "capture_dir": store.root}
     httpd = ThreadingHTTPServer((args.bind, args.port),
-                                make_handler(bench, cfg))
-    print("bench-web: http://%s:%d/  (socket %s, settle %.1f s)"
-          % (args.bind, args.port, bench._ctl.path, args.settle), flush=True)
+                                make_handler(bench, cfg, store, args.stream_host))
+    print("bench-web: http://%s:%d/  (socket %s, settle %.1f s, captures %s)"
+          % (args.bind, args.port, bench._ctl.path, args.settle, store.root),
+          flush=True)
     httpd.serve_forever()
 
 

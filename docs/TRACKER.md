@@ -1,7 +1,18 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**S18 bite C1 DEMO RUN AND APPROVED BY NICK —
+*Last updated: 2026-08-16 (**S18 bite C2 CODE + TESTS DONE, awaiting
+Nick's demo (nibble 3).** Branch `sprint/18-bench-gallery` from `main` @
+`db82181`: gallery from bite B's **sidecars**, side-by-side compare,
+RGB+luma histograms, and the C1 follow-up banner for a non-`ok`
+`cam_reply.state`. Pi-side only, **zero board contact**; host tests
+42 → **67**. The page is UNVERIFIED IN A REAL BROWSER (both agent browsers
+were unavailable) — first item of the demo. **The AE3 fixture restore is
+deliberately NOT done: it is folded into bite B2's single board window
+AFTER this demo**, because `demo_up.sh` re-stages the bridge launcher
+anyway. **Corrected from an artifact: `capture 50 hd mono` HAS run once**
+(1280×800, 1 component, 24,207 B, `gaps_delta=0`) — S19 bite 4 still owes
+the sustained run and HD-as-a-stream. Previous: **S18 bite C1 DEMO RUN AND APPROVED BY NICK —
 the bench page works end to end and the PR is open.** Page at
 `http://nereus001:8090/` driving bite B's control socket, fast-click guard
 **enforced on the server** rather than in the browser; verified frame
@@ -682,6 +693,18 @@ the nodes are systemd units. Do the harness before the features.)*
       the HE core NOT loaded** (written this session, never executed —
       it needs a neutral `/flash/main.py`, because `mpremote run` soft-
       resets into the bridge launcher, which then holds the VCP).
+      **ONE BOARD WINDOW, and it belongs to this bite (planned 2026-08-16,
+      bite C2 nibble 1).** The AE3's `/flash/main.py` is still the bridge
+      launcher (`170e637c…`), not the S6 fixture (`55fa6ccf…`) — bite D's
+      outstanding restore. Do **not** restore it before C2's demo:
+      `demo_up.sh` stages the bridge launcher, so a restore now is
+      overwritten within the hour and costs three port sessions instead of
+      one. Correct order: C2's demo runs on the bench as staged → **then**
+      one window that stages the neutral `main.py`, runs the probe, and
+      **leaves the fixture in place**, which also discharges the standing
+      session-end restore. Per `ae3-board-access`: ≥60 s of zero port
+      contact, ONE `mpremote` operation per invocation, no `+` chaining,
+      no retry loops, and a normalised read-back is the proof, not `rc=0`.
       If the sensor pipeline is the cause the fix is local waiting or a
       flush; if the HE is the cause, the bridge already parses
       `wire_status_t.stream_sent` and can gate the re-init on it.
@@ -772,16 +795,46 @@ the nodes are systemd units. Do the harness before the features.)*
       starts at `demo_up.sh`. (An ssh to nereus000 hung past 120 s and was
       recorded here as "unreachable" — it was a **Tailscale SSH re-auth
       prompt**, invisible in a piped command. Corrected the same session.)
-- [ ] **Bite C2 — NEXT.** Gallery from `~/bench_captures/` sidecars,
-      side-by-side compare view, RGB+luma histograms (canvas,
-      client-side). CSS for all three is already in the page and bite B
-      already writes the sidecars, so C2 is close to pure addition.
-      **Carries one C1 follow-up:** surface a non-`ok` `cam_reply.state`
-      loudly (banner, not a stats row) — the bite C1 demo lost seven
-      captures to a dead camera node that the page reported only as a
-      quiet `timeout`. **On the critical path: the S18 demo line requires
-      the compare view and histograms, so the sprint cannot close without
-      this bite.**
+- [~] **Bite C2 — gallery, compare, histograms, banner.** Gallery from
+      `~/bench_captures/` sidecars, side-by-side compare view, RGB+luma
+      histograms (canvas, client-side), plus the C1 follow-up: a non-`ok`
+      `cam_reply.state` raises a banner instead of sitting in a stats row.
+      **On the critical path: the S18 demo line requires the compare view
+      and histograms, so the sprint cannot close without this bite.**
+      → **CODE + TESTS DONE 2026-08-16** (nibbles 1–2; plan + 5 decision
+      points approved by Nick — **D36**). Branch `sprint/18-bench-gallery`,
+      cut from `main` @ `db82181`. **Pi-side only — no fork change, no
+      `camera_svc.h`, no wire, no bridge or HE firmware, and NO BOARD
+      CONTACT**, so no pin move, no ABI lockstep, no size audit.
+      Shipped: `/api/captures` (enumerates **sidecars**, newest first) ·
+      `/captures/<name>.jpg`, this server's first file-reading route,
+      fenced three independent ways (decode-then-whole-name-match; a
+      sidecar must exist; `realpath` must land back on the assembled path —
+      the only fence that catches a symlink planted *inside* the dir) ·
+      `/api/frame.jpg`, a same-origin proxy of the frozen S3 server's
+      cached frame, **required** because an `<img>` on :8080 taints the
+      canvas and `getImageData` throws · the histogram engine carried from
+      the approved mockup, live and per-still, with **greyscale decided by
+      the pixels (R=G=B), not by the commanded format** · compare view
+      dropping the right column · the banner, three triggers, clearing only
+      on a good reply. Host tests **42 → 67**.
+      **Two things reading the fork's source changed:** on a timeout
+      `cam_seen` is set true and `cam_state="timeout"` while the reply
+      struct is **not** updated (`ctl_note_cam(nullptr, ...)`), so every
+      other `cam_reply` field is the last GOOD reply — the banner keys on
+      `state` alone and the page labels the rest STALE. That staleness is
+      exactly why the C1 failure read as normal.
+      **Found by testing against a running server rather than unit tests
+      alone:** a non-ASCII character in a `send_error` *message* lands in
+      the HTTP status line, fails latin-1, and **drops the connection
+      instead of answering 404**. Fixed (reason moved to the body) and
+      regression-tested.
+      **NOT verified: the page in a real browser.** The sandboxed browser
+      pane refuses `localhost` and the Chrome extension is not connected,
+      so the canvas/histogram/compare paths have host-side structural tests
+      (every `getElementById` target exists, braces/backticks balance) but
+      no live render. That is nibble 3's first item.
+      **Remaining: nibble 3 (Nick runs the demo) → nibble 4 PR.**
 - [ ] Bite C (original scope, for reference) — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual
@@ -1023,8 +1076,17 @@ the Telemetry CLI → both open as valid 1280×800 JPEGs at
 heap floor reported alongside.
 **Status 2026-08-16: HALF DEMONSTRATED.** `capture 50 hd color` passes
 (1280×800, 42,574 B lit / 20,665 B dark, `pub_errs=0 gaps=0`, ledger
-exact). **`capture 50 hd mono` has never been run** — it is bite 4, and
-the demo is not satisfied without it.
+exact). ~~**`capture 50 hd mono` has never been run**~~ — **CORRECTED
+2026-08-16 (S18 bite C2 nibble 1), from an artifact:** it HAS been run
+once, during the C1 demo session. `~/bench_captures/
+cap_20260816T223333Z_seq000395` on nereus001 is `req {q:50, res:"hd",
+pf:"mono"}` and the JPEG checks out against **its own header** —
+`SOI ffd8 … EOI ffd9`, `SOF0: 1280×800, 1 components`, 24,207 B — with
+`chunks:18`, `pub_errs:0`, `gaps_delta:0`. So the *command* is proven end
+to end. Bite 4 still owes the parts that were never run: a **sustained
+multi-frame HD run** with the ledger exact, and **HD as a stream**
+(`stream 2.0 1 60 50 hd mono`, predicted ~2.5 fps, still unverified).
+Nick's call whether that half-closes the demo line.
 **Also never measured: HD as a STREAM.** Every sustained run this sprint
 was QVGA 15 fps (the relay regression). From S18's encode table the
 expectation is **~1 fps HD colour / ~2.5 fps HD mono, encoder-bound**
