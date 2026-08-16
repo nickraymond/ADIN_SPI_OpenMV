@@ -101,17 +101,34 @@ harness classifier blocks the agent from pushing to the fork, same as S17)
 **Bench state:** both units stopped; repo checkouts on
 `sprint/18-bench-control` at `e05b653`; fork at `8c0ff7a` on both Pis;
 `~/bench_captures/` on nereus001 holds the verified stills + sidecars.
-**AE3 fixture NOT restored — three attempts, all failed on port
-contention**, and the board's `/flash/main.py` was never read back
-successfully, so its state is **unverified** (most likely still the
-bridge launcher `170e637c…`, which `demo_up.sh` stages anyway). The
-deadlock: writing flash needs the raw REPL; `mpremote` entering the raw
-REPL soft-resets the board; the soft reset runs `main.py` = the bridge
-launcher; the bridge then holds the VCP for ≥30 s. Windows do open
-between quiet-exits, and one `mpremote cat` did succeed mid-session, so
-this is a serialisation problem rather than a hard block: **one command,
-after ≥60 s of genuinely zero port contact, with nothing else touching
-the port.** Restore for Nick (repo `main.py` = `55fa6ccfdd3f7f65`):
+**AE3 fixture NOT restored — five attempts, and its state is
+unverified** (most likely still the bridge launcher `170e637c…`, which
+`demo_up.sh` stages at the start of every demo day anyway, so this is
+hygiene rather than a blocker).
+
+**My first attribution was wrong and the later attempts disproved it.**
+I recorded "port contention" because `mpremote` says *"failed to access
+… (it may be in use by another program)"*. It says that for a device
+that is simply **absent**, and `chain_status.sh` later caught the real
+state: the AE3 had fallen off the USB bus again (12 `error -71` /
+`unable to enumerate` lines in dmesg). A second `ae3-usb-unstick` reboot
+of nereus000 brought it back. **Do not trust that mpremote message —
+check `/dev/serial/by-id/` first.**
+
+The genuine obstacle underneath is a lifecycle deadlock worth writing
+down: writing flash needs the raw REPL; `mpremote` enters the raw REPL
+via a **soft reset**; the soft reset runs `/flash/main.py` = the bridge
+launcher; the bridge comes up with `kbd_intr` disabled and holds the
+VCP, and a read-back of `/flash/main.py` returns **BM protocol frames**
+(`\x86\xdd`, `\xfe\x80`, the `\xbe\x9c` node prefix) instead of source.
+Worse, each `mpremote` touch supplies the VCP bytes the bridge's phase 1
+is waiting for, pushing it into linked mode for another ≥30 s. So a
+`cp + cat` chain cannot work — the first REPL entry restarts the bridge
+before the second.
+**What should work:** ≥60 s of genuinely zero port contact, then ONE
+`cp`, and verify in a separate later window — or stage a neutral
+`main.py` first, which is the same prerequisite the re-init probe needs.
+Restore for Nick (repo `main.py` = `55fa6ccfdd3f7f65`):
 `mpremote connect $P cp firmware/ae3_usb/main.py :/flash/main.py`.
 
 **Next:** the sensor re-init fix in `firmware/bm_bridge/bm_bridge.py`
