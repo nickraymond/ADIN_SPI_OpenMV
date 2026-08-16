@@ -491,6 +491,14 @@ Build on the Mac, then from the repo checkout:
 scp firmware/bm_he/build/bm_he.elf firmware/bm_bridge/bm_bridge.py pi@nereus000:/tmp/
 ```
 
+The off-chain probe (demo 3) lives on the Pi, not on the board, and
+**must not live in `/tmp`** — this bench reboots the Pi to recover the
+AE3's USB (`ae3-usb-unstick`), which wipes it. Put it beside the TOMLs:
+
+```bash
+scp bench/probes/s19_pub_probe.py pi@nereus000:~/bm_bench/
+```
+
 ```bash
 ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; mpremote connect $P cp /tmp/bm_he.elf :/flash/bm_he.elf + cp /tmp/bm_bridge.py :/flash/bm_bridge.py'
 ```
@@ -530,8 +538,13 @@ Proves the wall is gone at bursts far past HD, and needs nothing but the
 AE3:
 
 ```bash
-ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; printf "{\"phases\": [\"verify\"]}" > /tmp/c.json; mpremote connect $P cp /tmp/c.json :/flash/s19_probe_cfg.json; mpremote connect $P run bench/probes/s19_pub_probe.py'
+ssh pi@nereus000 'export PATH=$PATH:~/.local/bin; P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00; printf "{\"phases\": [\"verify\"]}" > /tmp/c.json; mpremote connect $P cp /tmp/c.json :/flash/s19_probe_cfg.json; mpremote connect $P run ~/bm_bench/s19_pub_probe.py'
 ```
+
+`mpremote run` resolves its path **on the Pi**, not on your Mac — a
+repo-relative path only works if you are sitting in a checkout that has
+the branch, which the Pi's is not (it tracks whatever the last deploy
+left). Hence the absolute path and the scp above.
 
 Expect `VERDICT: SURVIVED all 6 rows`, including 60 × 1400 B = 84,000 B
 (2.3× an HD frame), with `txdrop=0 stall=0` and a heap floor around
