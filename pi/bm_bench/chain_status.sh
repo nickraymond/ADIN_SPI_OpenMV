@@ -17,6 +17,11 @@ set -uo pipefail   # deliberately not -e: every check runs, then a verdict
 
 BIN=/home/pi/bm_sbc_s15/build/all/bm_sbc_bench_apps
 FIFO=/run/bm/telemetry.cmd
+# S18 bite B. Both must agree with pi/services/bm-telemetry.service and with
+# the app's own defaults — pi/services/test_bm_units.py asserts that they do,
+# because a path that drifts gives a bench that starts and then does nothing.
+CTL_SOCK=/run/bm/bench.sock
+CAPTURE_DIR=/home/pi/bench_captures
 AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00
 FAILS=0
 
@@ -140,6 +145,18 @@ case "$(hostname)" in
         pass "command FIFO present at $FIFO (bm-cmd.sh)"
       else
         fail "$FIFO missing while bm-telemetry is active — commands would go nowhere"
+      fi
+      # S18 bite B. Same failure shape as the FIFO: without the socket the
+      # web tool's requests go nowhere, and the app only logs it at startup.
+      if [[ -S "$CTL_SOCK" ]]; then
+        pass "control socket present at $CTL_SOCK (bench-ctl.sh, web tool)"
+      else
+        fail "$CTL_SOCK missing while bm-telemetry is active — journalctl -u bm-telemetry | grep 'ctl:'"
+      fi
+      if [[ -d "$CAPTURE_DIR" && -w "$CAPTURE_DIR" ]]; then
+        pass "capture dir writable at $CAPTURE_DIR ($(ls -1 "$CAPTURE_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ') stills)"
+      else
+        fail "$CAPTURE_DIR missing or not writable — stills will not be saved"
       fi
     fi
     ;;

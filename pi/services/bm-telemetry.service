@@ -40,6 +40,11 @@ WorkingDirectory=/home/pi/bm_bench
 SyslogIdentifier=bm-telemetry
 Environment=S17_ROLE=telemetry
 Environment=BM_SBC_GATEWAY_IPC=/tmp/s17_ipc.sock
+# S18 bite B: stills + JSON sidecars land here. Set explicitly rather than
+# derived from $HOME — a service's environment is not a login shell's, and a
+# bench tool that writes its evidence somewhere surprising is worse than one
+# that writes it nowhere.
+Environment=S18_CAPTURE_DIR=/home/pi/bench_captures
 
 # /run/bm, owned by User=, removed when the unit stops — so a stale FIFO
 # can never outlive the app that reads it.

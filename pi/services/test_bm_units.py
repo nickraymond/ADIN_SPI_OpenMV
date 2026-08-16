@@ -25,9 +25,17 @@ INSTALLER = os.path.join(PI, "install_stream_service.sh")
 LIGHT_TOML = os.path.join(PI, "bm_bench", "light.toml")
 DEMO_UP = os.path.join(PI, "bm_bench", "demo_up.sh")
 
+CTL = os.path.join(PI, "bm_bench", "bench-ctl.sh")
+CTL_PY = os.path.join(PI, "bm_bench", "bench_ctl.py")
+
 FIFO = "/run/bm/telemetry.cmd"
 AE3 = "/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
 BIN = "/home/pi/bm_sbc_s15/build/all/bm_sbc_bench_apps"
+# S18 bite B. These two must agree between the unit, the preflight and the
+# client's defaults; they are the app's compiled-in defaults too
+# (apps/bench_apps/app_main.cpp, S18_CTL_SOCK / S18_CAPTURE_DIR).
+CTL_SOCK = "/run/bm/bench.sock"
+CAPTURE_DIR = "/home/pi/bench_captures"
 
 
 def read(path):
@@ -231,12 +239,13 @@ class TestInstallerKeepsThemDisabled(unittest.TestCase):
 
 class TestShellTooling(unittest.TestCase):
     def test_scripts_are_executable(self):
-        for path in (CMD, STATUS):
+        for path in (CMD, STATUS, CTL):
             mode = os.stat(path).st_mode
             self.assertTrue(mode & stat.S_IXUSR, path)
 
     def test_scripts_fail_loudly(self):
         self.assertIn("set -euo pipefail", read(CMD))
+        self.assertIn("set -euo pipefail", read(CTL))
         # chain_status runs every check before its verdict, so no -e.
         self.assertIn("set -uo pipefail", read(STATUS))
 
@@ -270,6 +279,70 @@ class TestShellTooling(unittest.TestCase):
 
     def test_status_exits_nonzero_on_failure(self):
         self.assertIn("exit 1", read(STATUS))
+
+
+class TestControlSocketPlumbing(unittest.TestCase):
+    """S18 bite B. The socket and the capture directory are named in four
+    places (the unit, the preflight, the client, the app's own defaults). A
+    disagreement gives a bench that starts and then quietly does nothing --
+    exactly the failure the FIFO path agreements already guard against."""
+
+    def test_capture_dir_is_set_explicitly_in_the_unit(self):
+        # Not derived from $HOME: a service's environment is not a login
+        # shell's, and evidence must land where the tools look for it.
+        env = values(parse_unit(TELEM), "Environment")
+        self.assertTrue(any(e == "S18_CAPTURE_DIR=" + CAPTURE_DIR for e in env),
+                        env)
+
+    def test_light_has_no_control_socket(self):
+        # Only the telemetry role serves it, same as the CLI (the light
+        # role's loop() never polls either).
+        text = read(LIGHT)
+        self.assertNotIn(CTL_SOCK, text)
+        self.assertNotIn("S18_CAPTURE_DIR", text)
+
+    def test_socket_path_agrees_across_every_file_that_names_it(self):
+        for path in (STATUS, CTL_PY):
+            self.assertIn(CTL_SOCK, read(path), path)
+
+    def test_capture_dir_agrees_between_unit_and_preflight(self):
+        self.assertIn(CAPTURE_DIR, code(STATUS))
+
+    def test_socket_lives_in_the_units_runtime_directory(self):
+        # Same lifetime rule as the FIFO: a socket that outlives its reader
+        # accepts commands nobody will ever act on.
+        self.assertTrue(CTL_SOCK.startswith("/run/bm/"), CTL_SOCK)
+        self.assertIn("bm", values(parse_unit(TELEM), "RuntimeDirectory"))
+
+    def test_bench_ctl_refuses_when_nobody_is_listening(self):
+        # bm-cmd.sh's rule, applied to the socket.
+        text = code(CTL)
+        self.assertIn("is-active", text)
+        self.assertIn("-S \"$SOCK\"", text)
+
+    def test_preflight_checks_socket_and_capture_dir(self):
+        text = code(STATUS)
+        self.assertIn("$CTL_SOCK", text)
+        self.assertIn("$CAPTURE_DIR", text)
+
+    def test_client_binds_its_own_address(self):
+        # An unbound DGRAM sender has no address, so the node cannot reply
+        # and the command reads as a timeout.
+        self.assertIn("s.bind(", read(CTL_PY))
+
+    def test_client_matches_the_echoed_id(self):
+        # Datagrams: a late reply to a timed-out request must not be
+        # returned as the answer to the next one.
+        self.assertIn('rep.get("id")', read(CTL_PY))
+
+    def test_client_is_stdlib_only(self):
+        # Same rule as the frozen S3 stream server: nothing to install on
+        # the Pi, nothing to drift.
+        for line in read(CTL_PY).splitlines():
+            if line.startswith("import ") or line.startswith("from "):
+                mod = line.split()[1].split(".")[0]
+                self.assertIn(mod, ("__future__", "json", "os", "socket",
+                                    "sys", "tempfile"), line)
 
 
 if __name__ == "__main__":
