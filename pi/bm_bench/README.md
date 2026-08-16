@@ -640,6 +640,32 @@ ssh pi@nereus001 'sudo systemctl start bm-telemetry'
 open. It also chmods the ACT LED sysfs for the light HAL, which retires
 the manual per-boot `chmod` in §S17 deploy.
 
+> ### ⚠ Command the camera within ~30 s of starting `bm-light`
+>
+> **The bridge quiet-exits after 30 s with no VCP traffic, and it can do
+> that in phase 1 — after the BM neighbor has already come up.** Measured
+> 2026-08-16 (S18 bite C1 demo): `bm-light` attached at 18:33:10, the AE3
+> was adopted as neighbor `be9c…03`, and at **18:34:00** the log read
+> `🏚 Neighbor offline` / `UART link down (port 15)`. `bridge_crash.txt`
+> shows that bridge wrote `exit: main() returned cleanly` — it **quit, it
+> did not crash**. The captures that followed 37 minutes later all came
+> back `cam_reply state=timeout cmds=0`.
+>
+> **A light command does not count** — the light service runs on
+> nereus000's own Pi and never crosses the CDC leg to the board. Only a
+> camera command does.
+>
+> So: start Telemetry, then **capture immediately**, then check the link
+> before trusting anything:
+>
+> ```bash
+> ssh pi@nereus000 'journalctl -u bm-light --no-pager -o short-iso | grep -Ei "neighbor|link (up|down)" | tail -3'
+> ```
+>
+> No `Neighbor offline` line after the `Adding new neighbor` = you are
+> good; once past phase 1 it stays up on heartbeats (verified over a 75 s
+> idle window).
+
 ## Commands and output
 
 The operator CLI is a FIFO now, not a terminal:

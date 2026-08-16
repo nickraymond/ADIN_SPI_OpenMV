@@ -1,12 +1,16 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**S18 bite C1 CODE+TESTS DONE and LIVE on
-nereus001** — the bench page is served at `http://nereus001:8090/`, driving
-bite B's control socket, with the fast-click guard **enforced on the server**
-rather than in the browser; bite C split into C1 (drive the bench) + C2
-(gallery/compare/histograms), D35; branch `sprint/18-bench-web`; nibble 3 =
-Nick runs the demo. Pi-side only — the AE3 still runs the S19 artifacts.
+*Last updated: 2026-08-16 (**S18 bite C1 DEMO RUN AND APPROVED BY NICK —
+the bench page works end to end and the PR is open.** Page at
+`http://nereus001:8090/` driving bite B's control socket, fast-click guard
+**enforced on the server** rather than in the browser; verified frame
+`SOF0 320×200, 3 components`, `gaps=0`. Bite C split into C1 + C2 (D35).
+**NEXT = bite C2** (gallery / compare / histograms) — it is on the critical
+path, the sprint's demo line needs it. **New standing ops rule: command the
+camera within ~30 s of starting `bm-light`** or the bridge quiet-exits in
+phase 1 (measured; a light command does not count). Pi-side only — the AE3
+still runs the S19 artifacts.
 Previous: **PRIORITY CHANGE — D32: S18 is NEXT, with a
 FRESH AGENT ON ITS OWN BRANCH, and S18's systemd units (bite D) are
 promoted to first and made mandatory.** S19 bites 1–2 delivered: HD
@@ -654,10 +658,11 @@ the nodes are systemd units. Do the harness before the features.)*
       project has carried over the chain** · VGA colour 640×400
       10,909 B/8 chunks. Every row checked against the JPEG's own SOF
       header (geometry AND component count), not against an exit code.
-      **Remaining: one more fork push** for the `(null)` reply-state fix
-      (patched locally, unpushed — `%s` of a NULL state pointer prints
-      `(null)`, which the web tool would read as a real state), then
-      nibble 3 + PR.
+      → **MERGED as PR #29.** The `(null)` reply-state fix was part of it;
+      no live status read during the bite C1 demo (2026-08-16) showed
+      `(null)` — `cam_reply.state` renders `none`/`ok`/`timeout` — but
+      that was observed, not diffed against the fork source, so confirm
+      before relying on it.
 - [ ] **Bite B2 — the sensor re-init race (NEW, found by bite B's trial
       matrix). Sequenced AFTER bite C (Nick, 2026-08-16)** — it is a
       fast-click hazard that bite C mitigates in the UI, not a blocker
@@ -740,15 +745,43 @@ the nodes are systemd units. Do the harness before the features.)*
       blocked `nereus001:8080` (`ERR_BLOCKED_BY_CLIENT`) while serving
       `:8090` fine; the S3 server answers 200 on `/stream` and `/frame.jpg`
       from the Pi, so that is Nick's to confirm in a real browser.
-      **Remaining: nibble 3 (Nick runs README §S18 bite C1) → PR.**
+      → **DEMO RUN AND APPROVED BY NICK 2026-08-16 → nibble 4 (PR).**
+      Live proof after re-staging: `cam_reply state=ok ok=1 cmds=3
+      pub_ok=3 pub_errs=0`, ledger `frames_ok=2 gaps=0 dropped=0
+      ingest_ok=2`, save `saved`, `/frame.jpg` 200, and the artifact
+      checked against its OWN header — `SOI ffd8 … EOI ffd9`,
+      `SOF0: 320×200, 3 components`, not against a status field.
+      **The demo also found the phase-1 quiet-exit trap** (below) and one
+      gap in the page, filed for C2: **a `cam_reply.state` that is not
+      `ok` is reported too quietly.** Every capture logged `200 ok`
+      because the socket ACCEPTED it; the camera's real answer
+      (`timeout`) sat in a stats row, so seven captures went into a dead
+      node before anyone noticed. Deliberately NOT patched into this
+      bite — the demo passed on the code as it stands, and changing the
+      demoed artifact after approval needs its own gate.
+      **NEW STANDING OPS RULE (measured this session, README §Start
+      order): command the camera within ~30 s of starting `bm-light`.**
+      The bridge quiet-exits after 30 s of no VCP traffic and can do so
+      in **phase 1, after the BM neighbor is already up** — measured
+      18:33:10 neighbor up → 18:34:00 `UART link down`, with
+      `bridge_crash.txt` recording `exit: main() returned cleanly` (it
+      quit, it did not crash). A **light command does not count**: that
+      service runs on nereus000's own Pi and never crosses the CDC leg.
       **Both Pis are on the branch @ `8431690`**; nereus000's `bm-light` is
       inactive and the AE3 is not staged, so the camera half of the demo
       starts at `demo_up.sh`. (An ssh to nereus000 hung past 120 s and was
       recorded here as "unreachable" — it was a **Tailscale SSH re-auth
       prompt**, invisible in a piped command. Corrected the same session.)
-- [ ] **Bite C2** — gallery from `~/bench_captures/` sidecars, side-by-side
-      compare view, RGB+luma histograms (canvas, client-side). CSS for all
-      three is already in the page, so C2 is pure addition.
+- [ ] **Bite C2 — NEXT.** Gallery from `~/bench_captures/` sidecars,
+      side-by-side compare view, RGB+luma histograms (canvas,
+      client-side). CSS for all three is already in the page and bite B
+      already writes the sidecars, so C2 is close to pure addition.
+      **Carries one C1 follow-up:** surface a non-`ok` `cam_reply.state`
+      loudly (banner, not a stats row) — the bite C1 demo lost seven
+      captures to a dead camera node that the page reported only as a
+      quiet `timeout`. **On the critical path: the S18 demo line requires
+      the compare view and histograms, so the sprint cannot close without
+      this bite.**
 - [ ] Bite C (original scope, for reference) — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual
@@ -870,7 +903,7 @@ the nodes are systemd units. Do the harness before the features.)*
       (`170e637c…`), not the S6 fixture (`55fa6ccf…`).** Board flash
       writes were blocked for the agent this session; the restore is one
       command for Nick (README §S18 bite D / DEV_LOG). **Remaining:
-      nibble 4 (PR).**
+      nibble 4 (PR).** → **DONE: merged as PR #28.**
 - [ ] Bite D2 — demo ladder + docs (the remainder of the old bite D).
 **Demo (Nick):** `demo_up.sh` → open the bench page → capture q50 and
 q90 stills → compare view shows both + histograms → start a VGA stream

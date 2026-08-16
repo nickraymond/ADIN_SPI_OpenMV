@@ -84,9 +84,54 @@ untouched this session: `/flash/main.py` is still
 the bridge launcher (`170e637c…`), NOT the S6 fixture — bite D's outstanding
 one-command restore still stands.
 
-**Next:** nibble 3 — Nick runs the demo ladder in `pi/bm_bench/README.md`
-§S18 bite C1 (page + capture + the guard holding a mode switch), then the PR.
-Bite C2 (gallery, compare, histograms) follows.
+**Nibble 3 — DEMO RUN AND APPROVED BY NICK (2026-08-16), after one real
+failure and its diagnosis:**
+- Nick's first seven captures returned **nothing**. Not the page's fault
+  and not the B2 sensor race: `cam_reply state=timeout cmds=0 pub_ok=0`
+  — the camera service never answered and never counted a command. The
+  journal timeline settled it: `bm-light` adopted the AE3 at 18:33:10,
+  and at **18:34:00** `🏚 Neighbor offline` / `UART link down (port 15)`.
+  The node had been dead for 37 minutes before the first capture.
+- **The crash log nearly produced a wrong conclusion, and the near-miss
+  is the lesson.** `bridge_crash.txt` ended on a bare `boot: launcher
+  start` with no exit record, which is precisely the crash signature from
+  bite A. A second read 60 s later showed an `exit:` had appeared after
+  it — **that trailing boot was my own `mpremote` soft-reset**, which
+  starts the launcher, and its bridge then quiet-exited during the wait.
+  Counts: 57 lines, 30 boots, 27 exits (3 genuine historical crashes, none
+  today). **The bridge that died QUIT CLEANLY.** Reading the log once
+  would have sent bite C2 chasing a firmware crash that does not exist.
+- **Root cause / new standing ops rule: the bridge quiet-exits after 30 s
+  of no VCP traffic, and it does that in PHASE 1 — after the BM neighbor
+  is already up.** A **light command does not count**: that service runs
+  on nereus000's own Pi and never crosses the CDC leg. My two light
+  commands (18:33:49, 18:34:07) bracketed the death and told me nothing.
+  Re-staged, started `bm-light`, captured **within seconds** — and it has
+  since held a 75 s idle window with no offline line, so once past phase 1
+  it stays up on heartbeats. Written into README §Start order.
+- **Demo evidence:** `cam_reply state=ok ok=1 cmds=3 pub_ok=3 pub_errs=0`,
+  ledger `frames_ok=2 gaps=0 dropped=0 ingest_ok=2`, save `saved`
+  (`cap_20260816T215924Z_seq000001.jpg`, 3,727 B), `/frame.jpg` 200, and
+  the artifact checked against **its own header** — `SOI ffd8 … EOI ffd9`,
+  `SOF0: 320×200, 3 components` — not against a status field.
+
+**What the demo found in the page, filed NOT fixed:** every capture logged
+`200 ok`, because the socket ACCEPTED it; the camera's real answer landed
+in a stats row as `state=timeout`. Honest and far too quiet — seven
+captures went into a dead node before anyone noticed. A non-`ok`
+`cam_reply.state` should raise a banner. **Deliberately not patched into
+this bite**: the demo passed on the code as it stands, and changing the
+demoed artifact after approval needs its own gate. It is the first item of
+bite C2.
+
+**Also corrected here:** TRACKER still listed bites B and D as "Remaining:
+PR". Both were merged (#29, #28) and there are **zero open PRs** on the
+repo; a fresh agent reading cover-to-cover would have gone hunting for
+them.
+
+**Next:** **bite C2** — gallery, side-by-side compare, RGB+luma histograms,
+plus the cam_reply banner. On the critical path: the S18 demo line requires
+the compare view and the histograms, so the sprint cannot close without it.
 
 ---
 
