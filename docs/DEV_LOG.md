@@ -149,9 +149,20 @@ before the second.
 Restore for Nick (repo `main.py` = `55fa6ccfdd3f7f65`):
 `mpremote connect $P cp firmware/ae3_usb/main.py :/flash/main.py`.
 
-**Next:** the sensor re-init fix in `firmware/bm_bridge/bm_bridge.py`
-(bridge-only — no fork push, no HE rebuild), then re-run the full matrix,
-then bite C against the approved mockup.
+**Next (RE-ORDERED by Nick after this session): bite C, the web page.**
+Checked for a real blocker and there is none — the socket is deployed and
+answering, and QVGA/VGA work at a sane cadence — so the page ships with a
+UI-level guard (controls disabled until the previous capture completes)
+and bite B2 removes the hazard underneath afterwards.
+
+**Lessons from this session were turned into standing guidance rather
+than left in this entry:** new **`ae3-board-access`** skill (the
+bridge-launcher lifecycle, the no-retry rule, the three misleading
+mpremote messages, the CRLF read-back trap, the three-attempt budget);
+`ae3-usb-unstick` gained the "may be in use" = *absent* diagnostic;
+CLAUDE.md value 4 gained the three concrete exit-code traps; `agent-entry`
+gained a "protect the deliverable" section (no polling for hardware, cap
+the yak-shave, a discovered bug does not silently become the sprint).
 
 ---
 

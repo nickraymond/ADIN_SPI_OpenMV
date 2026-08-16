@@ -653,7 +653,11 @@ the nodes are systemd units. Do the harness before the features.)*
       `(null)`, which the web tool would read as a real state), then
       nibble 3 + PR.
 - [ ] **Bite B2 — the sensor re-init race (NEW, found by bite B's trial
-      matrix; blocks the sprint demo).** A sensor re-init arriving too
+      matrix). Sequenced AFTER bite C (Nick, 2026-08-16)** — it is a
+      fast-click hazard that bite C mitigates in the UI, not a blocker
+      for having a page. It still owes the sprint the full 9-row matrix
+      and the first stream numbers, which is what turns bite C's
+      feasibility model from extrapolated into measured. A sensor re-init arriving too
       soon after a capture throws `Sensor control failed.` and wedges the
       sensor for the bridge's whole life, while the HE keeps replying
       `ok=1` — full measurement in SPEC §Open questions. It has been
@@ -674,6 +678,21 @@ the nodes are systemd units. Do the harness before the features.)*
       into the HE reply (`ok=0` instead of a lie) is a **lockstep ABI
       change and is deferred** — parts 1+2 stop the wedge happening, so
       the lie stops happening in practice. File it, don't ship it now.
+- [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
+      re-init fix.** Checked for a real blocker and there is none: the
+      control socket bite C talks to is deployed and answering, and
+      QVGA/VGA stills + streams work at a sane command cadence. The
+      re-init race (bite B2) is a **fast-click hazard, not a wall** — so
+      bite C carries the mitigation instead of waiting for the fix:
+      **the UI disables its capture/stream controls until the previous
+      capture completes, plus a settle**, which is what an operator would
+      want anyway. Bite B2 then removes the hazard underneath.
+      Constants: build against the **approved mockup** (Nick approved it
+      2026-08-16; preserved copy carries the reviewed layout, `RES`/`MEAS`
+      tables, `BRIDGE_DERATE`, histogram panel, warning box, pill and
+      compare view). Its fps model is EXTRAPOLATED from one measured
+      point — label it as such in the UI until B2's matrix replaces it
+      with measured numbers.
 - [ ] Bite C — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual

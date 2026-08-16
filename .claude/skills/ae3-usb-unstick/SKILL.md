@@ -53,6 +53,20 @@ Bench rules still apply: `sudo poweroff`/`reboot`, never pull power
 (SPEC §Safety); eth1's ADIN driver is kernel-locked — a plain reboot is
 safe, but if apt upgraded the kernel see `pi-kernel-upgrade`.
 
+## Recognising it from the wrong error message (S18 bite B)
+
+`mpremote` reports **"failed to access … (it may be in use by another
+program)"** for a device that is simply **ABSENT**, so that message sends
+you hunting for a process holding the port when the board is off the bus.
+**Check `ls /dev/serial/by-id/` before believing it** — and
+`dmesg | grep -cE "error -71|unable to enumerate"` confirms it in one
+line. An S18 session mis-attributed five failures to "port contention"
+on the strength of that message alone.
+
+For everything you do while the board IS on the bus (the bridge-launcher
+lifecycle, the no-retry rule, the CRLF read-back trap), see the
+**`ae3-board-access`** skill.
+
 ## Escalation ladder (in order)
 
 1. Board enumerated but service wedged → documented D15 ladder:

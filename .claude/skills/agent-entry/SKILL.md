@@ -31,6 +31,25 @@ You are working under this repo's agent discipline. OWNER (the human gate) is:
 - **Branch:** all new work on `sprint/<n>-<slug>`. Never commit to main.
 - **Demo:** a sprint is not done until OWNER runs its live demo successfully.
 
+## Protect the deliverable (S18 bite B lesson)
+
+The bite the sprint is waiting on is the deliverable; everything else is
+overhead, and overhead expands to fill a session if you let it.
+
+- **Waiting on hardware is not progress.** Never poll or retry-loop to
+  wait for a board or a port — on this bench that actively prevents the
+  thing you are waiting for (see `ae3-board-access`). One timed wait, one
+  attempt, then stop.
+- **Cap the yak-shave.** If a side quest (bench recovery, fixture
+  hygiene, a flaky read-back) has not resolved in ~3 attempts, STOP:
+  record the exact state in DEV_LOG, hand OWNER the one command, and get
+  back to the bite. An S18 session spent its final hours on session-end
+  hygiene and shipped no page.
+- **A discovered bug does not silently become the sprint.** Investigating
+  it far enough to measure and record it is right; fixing it is a NEW
+  bite that needs OWNER's gate, and the original bite still owes its
+  demo. Say out loud when the scope has moved.
+
 ## On session end — always
 
 - Add a DEV_LOG.md entry (newest on top): done / broke / next.
