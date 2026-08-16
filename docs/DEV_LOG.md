@@ -120,14 +120,35 @@ the demo captures; called out rather than skipped silently).
   demos 1 and 2 in one bridge lifetime): **602 s, 8,886 frames, 15.0 fps
   steady, zero on every loss counter across all 602 stat lines, no gap
   in the stat stream.**
-- **Not attributed.** Two clean 600 s runs and one wedge, so it is
-  intermittent. The rule violation is the obvious suspect but is NOT
-  established as causal: the earlier 604 s soak also followed an HD
-  capture in the same bridge lifetime and passed. Telemetry is the fork
-  app at ba594ec, unchanged by S19 — but this bite changes chunk
-  *delivery timing*, so I cannot exonerate it either. Next step if it
-  recurs: read the telemetry role's stat/ingest loop in the fork and
-  run demo 2 three times back to back for a repeat rate.
+- **ROOT-CAUSED on the repeat run (Nick: "run demo 2 three more times").
+  Not a flake, not a product bug — MY operator error.** The wedge
+  reproduced at *exactly* `t=109 frames_ok=1416`, identical to the first
+  occurrence, which is the signature of a fixed-size limit rather than a
+  race. `ss -tnp` while wedged showed **two Telemetry instances** both
+  connected to the frozen S3 ingest on `:8081`: one with Send-Q 0 (being
+  read by the server, `python3 pid=1103`) and the wedged one with
+  **Send-Q 2,592,256 B** and no reader attached. The ingest is
+  **single-producer**; 2.59 MB is the wmem ceiling, and at ~1.87 KB per
+  QVGA frame that is 1,416 frames — hence the exact repeat. **Causality
+  proven directly:** killing the stale instance made the server accept
+  the blocked connection and the wedged app resumed instantly (t 109 →
+  274, frames 1,416 → 1,853, back to 15.0 fps, `q_drops=4118` for what
+  piled up). My driver left demo 1's Telemetry instance running when it
+  started demo 2. The hazard is already in the S17/S18 record ("would
+  race the single-producer ingest"; "nereus001 had two racing telemetry
+  instances") and I walked into it anyway.
+- **A follow-up run was contaminated the same way, at a different
+  layer:** 607 s reporting 26,141 frames (~43 fps, not 15) with 1,676
+  gaps, because the AE3 bridge was still executing the previous run's
+  600 s `stream` command when the next one was issued — two overlapping
+  streams into one reassembler. Also procedure, not product. The board
+  keeps streaming after the app that asked for it dies.
+- **Mitigations:** README demo 2 now carries a preflight
+  (`ss -tn | grep -c :8081` must be 2) and the let-the-stream-finish
+  rule; my earlier "start from a fresh bridge" warning was a guess and
+  has been removed. Real fix agreed with Nick: **run the nodes as
+  systemd units** (singleton by construction, clean stop, journald) —
+  promoted ahead of bite 4.
 
 **Next:** nibble 3 — Nick runs README §S19 demos 1–3 → nibble 4 PR.
 Then bites 3 (heap — looking unnecessary) and 4 (HD mono + sustained

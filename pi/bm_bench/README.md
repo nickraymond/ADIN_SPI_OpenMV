@@ -533,15 +533,30 @@ Expect 15.0 fps steady for 600 s with `gaps=0 dropped=0 q_drops=0`,
 matching the S17 demoed number. Measured 2026-08-16: 602 s, 8,886
 frames, zero on every loss counter across all 602 stat lines.
 
-> **Start this one from a FRESH bridge** (`demo_up.sh` again after
-> demo 1) — the standing "one bridge lifetime per demo" rule. Running it
-> against the bridge that already served demo 1 wedged the Telemetry app
-> once at ~94 s: it stayed alive (main thread in its normal sleep loop,
-> chain up, Light logging no errors) but stopped emitting TEL_STAT and
-> stopped feeding the ingest. Not root-caused, and not proven to be
-> caused by the rule violation — two other 600 s runs passed, one of
-> them also sharing a bridge lifetime. If demo 2 goes quiet, restart it
-> from a fresh bridge and note it.
+> ### ⚠ Preflight: exactly ONE producer on the ingest
+> The frozen S3 stream server is **single-producer**. Two Telemetry
+> instances both connect to `:8081`; the server reads one and never
+> reads the other, so the loser's socket buffer fills at 2,592,256 B —
+> about 1,416 frames — and the app wedges. Deterministic: it froze at
+> exactly `t=109 frames_ok=1416` on both occasions, and killing the
+> stale instance unwedged the live one instantly (t 109 → 274). The app
+> stays alive and the chain stays up, which makes it look like a product
+> fault. It is not.
+>
+> Before every run, expect exactly two lines (one producer, two socket
+> ends):
+>
+> ```bash
+> ssh pi@nereus001 'ss -tn | grep -c :8081'
+> ```
+>
+> Also let the previous `stream` command finish, or cycle the bridge:
+> the AE3 keeps streaming its 600 s command even after the Telemetry app
+> that asked for it dies, and a second overlapping stream shows up as
+> impossible frame counts and gaps (measured: 26,141 frames / 1,676 gaps
+> in 607 s — two streams interleaved, not a transport fault).
+>
+> Both hazards disappear once the nodes run as systemd units.
 
 ## S19 demo 3 — off-chain acceptance (no Pis, no camera, ~90 s)
 
