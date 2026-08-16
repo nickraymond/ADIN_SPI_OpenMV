@@ -741,8 +741,11 @@ the nodes are systemd units. Do the harness before the features.)*
       `:8090` fine; the S3 server answers 200 on `/stream` and `/frame.jpg`
       from the Pi, so that is Nick's to confirm in a real browser.
       **Remaining: nibble 3 (Nick runs README §S18 bite C1) → PR.**
-      **nereus000 is still on `sprint/18-bench-control`** and did not answer
-      ssh at session end — it needs the branch before the camera demo.
+      **Both Pis are on the branch @ `8431690`**; nereus000's `bm-light` is
+      inactive and the AE3 is not staged, so the camera half of the demo
+      starts at `demo_up.sh`. (An ssh to nereus000 hung past 120 s and was
+      recorded here as "unreachable" — it was a **Tailscale SSH re-auth
+      prompt**, invisible in a piped command. Corrected the same session.)
 - [ ] **Bite C2** — gallery from `~/bench_captures/` sidecars, side-by-side
       compare view, RGB+luma histograms (canvas, client-side). CSS for all
       three is already in the page, so C2 is pure addition.

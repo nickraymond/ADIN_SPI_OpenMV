@@ -67,16 +67,20 @@ pin move, no ABI lockstep and no size audit in this bite.
   serving `:8090` fine. The S3 server itself answers `200` on `/stream` and
   `/frame.jpg` from the Pi, so the endpoint is good — but the embed is
   Nick's to confirm.
-- nereus000 did not answer ssh within 120 s. Not chased (one attempt, no
-  retry loop): the page runs on nereus001 and nereus000 is only needed for
-  the camera half of the demo.
+- **nereus000 looked dead and was not.** An ssh hung past 120 s and I
+  recorded it as unreachable; it was actually blocked on a **Tailscale SSH
+  re-authentication prompt**, which is invisible in a piped command. Once
+  that was satisfied the same command returned instantly. Worth knowing:
+  on this bench a silent 120 s ssh hang is a plausible auth prompt, not
+  evidence of a down host — and "unreachable" is a claim that needs the
+  same standard of proof as any other.
 
-**Bench state:** nereus001 on `sprint/18-bench-web` @ `14e8446`; `bench-web`
-installed (disabled at boot) and **RUNNING**; `bm-telemetry` **RUNNING**
-(started here — that role never opens the CDC leg, so zero camera contact);
-`t1l-stream-server` active. **nereus000 still on `sprint/18-bench-control`
-and unreachable at session end** — it needs `git checkout sprint/18-bench-web`
-before the camera demo. AE3 untouched this session: `/flash/main.py` is still
+**Bench state:** **both Pis on `sprint/18-bench-web` @ `8431690`.**
+nereus001: `bench-web` installed (disabled at boot) and **RUNNING**;
+`bm-telemetry` **RUNNING** (started here — that role never opens the CDC
+leg, so zero camera contact); `t1l-stream-server` active. nereus000:
+`bm-light` **inactive**, no local modifications, AE3 not staged. AE3
+untouched this session: `/flash/main.py` is still
 the bridge launcher (`170e637c…`), NOT the S6 fixture — bite D's outstanding
 one-command restore still stands.
 
