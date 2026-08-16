@@ -617,11 +617,63 @@ the nodes are systemd units. Do the harness before the features.)*
 > board is running. The S18 branch (`sprint/18-bench-tool`) is cut from
 > `main`. **The Pi checkouts are still stale** — both are on
 > `sprint/18-web-bench` and need moving to the S18 branch before a demo.
-- [ ] Bite B — fork app: **loopback-only control socket** on the
+- [~] Bite B — fork app: **loopback-only control socket** on the
       telemetry role (JSON command in / JSON status out: last replies,
       current params, live receiver ledger) + **still-save** to
       `~/bench_captures/` with JSON sidecars (all params + measured
       stats at capture time). Fork pin move — Nick pushes.
+      → **CODE + TESTS DONE 2026-08-16** (nibbles 1–2; plan + 4 decision
+      points approved by Nick — **D34**). Branch
+      `sprint/18-bench-control` (`e05b653`), fork
+      `feature/udp-transport` **`8c0ff7a`** (pushed by Nick; the harness
+      classifier blocks the agent from pushing to the fork).
+      **Pi-side only — no camera_svc.h, wire or HE firmware change**, so
+      the AE3 keeps running the S19 artifacts and there is no ABI
+      lockstep and no size audit in this bite.
+      Shipped: `apps/bench_apps/bench_ctl.h` (the whole parse/render
+      surface, no OS calls) + `tests/test_bench_ctl.c` **98 checks**
+      registered in the fork's ctest · the AF_UNIX SOCK_DGRAM socket at
+      `/run/bm/bench.sock` on the gateway_ipc pattern · still-save with
+      sidecars (`.tmp`+rename, JPEG before sidecar — the sidecar is the
+      commit record) · repo side `bench_ctl.py` / `bench-ctl.sh` /
+      `S18_CAPTURE_DIR` in the unit / socket + capture-dir checks in
+      `chain_status.sh` / `test_bm_units.py` 33 → **43** checks / pin
+      bump / README §S18 bite B.
+      → **LIVE 2026-08-16**: both Pis deployed at the new pin, telemetry
+      unit reinstalled, `chain_status.sh` PASS on both, socket answered
+      first try. **Sidecar verified exact** (`size_bytes` == the file on
+      disk; chunks × 10 B + JPEG == the `pub_bytes` delta). Verified
+      stills: QVGA colour 320×200 3,936 B/3 chunks · **QVGA mono
+      320×200, 1 component, 2,910 B — the first greyscale frame this
+      project has carried over the chain** · VGA colour 640×400
+      10,909 B/8 chunks. Every row checked against the JPEG's own SOF
+      header (geometry AND component count), not against an exit code.
+      **Remaining: one more fork push** for the `(null)` reply-state fix
+      (patched locally, unpushed — `%s` of a NULL state pointer prints
+      `(null)`, which the web tool would read as a real state), then
+      nibble 3 + PR.
+- [ ] **Bite B2 — the sensor re-init race (NEW, found by bite B's trial
+      matrix; blocks the sprint demo).** A sensor re-init arriving too
+      soon after a capture throws `Sensor control failed.` and wedges the
+      sensor for the bridge's whole life, while the HE keeps replying
+      `ok=1` — full measurement in SPEC §Open questions. It has been
+      there since bite A; nothing caught it because **mono was never run
+      end to end** (bite A's README ladder lists a `vga mono` step, but
+      nibble 3 only ran colour + the refusal path).
+      **Fix lives in `firmware/bm_bridge/bm_bridge.py` — bridge only, so
+      NO fork push and NO HE rebuild.** Shape depends on the mechanism,
+      which is NOT yet established: measure first (S0 discipline).
+      **Nibble 1 = run `bench/probes/s18_reinit_probe.py` off-chain with
+      the HE core NOT loaded** (written this session, never executed —
+      it needs a neutral `/flash/main.py`, because `mpremote run` soft-
+      resets into the bridge launcher, which then holds the VCP).
+      If the sensor pipeline is the cause the fix is local waiting or a
+      flush; if the HE is the cause, the bridge already parses
+      `wire_status_t.stream_sent` and can gate the re-init on it.
+      **Decided with Nick 2026-08-16:** propagating the bridge's refusal
+      into the HE reply (`ok=0` instead of a lie) is a **lockstep ABI
+      change and is deferred** — parts 1+2 stop the wedge happening, so
+      the lie stops happening in practice. File it, don't ship it now.
 - [ ] Bite C — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual

@@ -17,6 +17,99 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite B: the control socket and still-save land, and the first full resolution sweep finds a sensor re-init race that has been there since bite A
+
+**Branch:** `sprint/18-bench-control` (repo, `e05b653`) + bm_sbc fork
+`feature/udp-transport` **`8c0ff7a`** (pin move; pushed by Nick — the
+harness classifier blocks the agent from pushing to the fork, same as S17)
+
+**Done:**
+- Nibble-1 plan approved with 4 decision points (**D34**): one bite in two
+  commits · AF_UNIX SOCK_DGRAM at `/run/bm/bench.sock` · save on every
+  accepted capture from any source · never delete, refuse below a
+  200 MB floor.
+- **`apps/bench_apps/bench_ctl.h`** — the whole parse/render surface with
+  no OS calls, so `tests/test_bench_ctl.c` exercises it on a laptop:
+  **98 checks**, including the nested-value trap, every refusal path and
+  truncation-instead-of-half-an-object. Registered in the fork's ctest
+  (5 tests now). Compiles clean as C99 *and* C++17.
+- **Control socket** on the telemetry role: one JSON object in, one out.
+  Shape copied from the shipped `gateway_ipc` listener — non-blocking,
+  drained from `loop()`, one datagram = one complete message, so there is
+  no framing code and no connection table. Verbs map 1:1 onto the FIFO
+  CLI's own handlers, so the two front ends cannot drift.
+- **Still-save**: every accepted capture writes `cap_<UTC>_seq<N>.jpg`
+  plus a sidecar carrying commanded params, the reply, seq/bytes/chunks
+  and the ledger absolutely *and* as deltas since arm. `.tmp` + rename,
+  JPEG before sidecar, so the sidecar is the commit record.
+- Repo side: `bench_ctl.py` (the one place that speaks the socket — binds
+  its own address, matches the echoed id), `bench-ctl.sh`,
+  `S18_CAPTURE_DIR` in the unit, socket + capture-dir checks in
+  `chain_status.sh`, `test_bm_units.py` **33 → 43** checks, pin bump,
+  README §S18 bite B.
+- Deployed both Pis at the new pin, telemetry unit reinstalled,
+  `chain_status.sh` PASS on both. Socket answered first try.
+- **Sidecar verified exact**: `size_bytes` == the file on disk, and
+  chunks × 10 B + JPEG == the `pub_bytes` delta.
+- **First greyscale frame this project has ever delivered over the
+  chain**: 320×200, **1 component**, 1,090 B, valid SOI→EOI,
+  `gaps_delta=0`. Mono had never been run end to end — bite A's README
+  ladder listed a `vga mono` step but nibble 3 only ran colour.
+
+**Broke/surprised us:**
+- **THE FINDING — a sensor re-init that arrives too soon after a capture
+  throws `RuntimeError('Sensor control failed.')` and wedges the sensor
+  for the rest of the session.** `_ensure_sensor` then marks geometry
+  unknown and *every* later command fails the same way, including plain
+  `qvga color` that worked a minute earlier — measured across 7 further
+  commands over 60 s. Bridge trace:
+  `camera: sensor setup FAILED res=1 pf=2: RuntimeError('Sensor control
+  failed.',)` → `camera: cmd mode 1 REFUSED -- no sensor`.
+  **The failure mode is the worst kind for a bench: the HE keeps replying
+  `ok=1`** (it does not know the HP refused), so the operator sees eleven
+  cheerful acks and zero images.
+  Measured, one variable at a time: sub-second gap → fails (2/2 on fresh
+  bridges, deterministic under the trial driver); ≥6 s → succeeds (3/3).
+  At a 2 s gap it survived three re-inits and then failed on the fourth —
+  **the one that followed a VGA frame**. So the required quiet time
+  scales with the previous frame's size, and a fixed delay is the wrong
+  shape of fix. NOT greyscale: greyscale works. Greyscale was merely the
+  first command in the matrix that required a re-init.
+- **`(null)` in the status reply.** `s_ctl.cam_state`/`light_state` are
+  NULL until the first reply and `%s` prints `(null)`, which a client
+  would read as a real state. Fixed locally; needs a second fork push.
+- Two C ordering errors (state used above its declaration), both caught
+  by the compiler on the Pi, both fixed by moving declarations up.
+- **My own ops mistakes, recorded because they cost real time:**
+  (1) I waited for the board with a *retry loop*, and every attempt
+  re-opened the VCP and reset the 30 s quiet-exit timer I was waiting
+  on — `demo_up.sh`'s own comment warns about exactly this. I did it
+  twice. (2) I chained `demo_up.sh ... | tail -2` with `&&`, so a
+  **failed** staging returned `tail`'s exit status and the run continued
+  against the wrong board state; that run was void. Trust artifacts, not
+  exit codes — the rule was right there.
+- **The AE3 fell off the USB bus** (`device not accepting address, error
+  -71`, `unable to enumerate`). The `ae3-usb-unstick` ladder worked
+  exactly as written: `sudo reboot` on nereus000, board re-enumerated.
+- **The board cannot be probed while `/flash/main.py` is the bridge
+  launcher.** `mpremote run` enters the raw REPL via a soft reset, which
+  runs main.py, which starts a bridge that then holds the VCP — so the
+  isolation probe never executed (three attempts). A probe session must
+  first put a neutral `main.py` on the board. Recorded for whoever writes
+  the next probe.
+
+**Bench state:** both units stopped; repo checkouts on
+`sprint/18-bench-control` at `e05b653`; fork at `8c0ff7a` on both Pis;
+`~/bench_captures/` on nereus001 holds the verified stills + sidecars.
+AE3 fixture restore attempted this session (repo `main.py` =
+`55fa6ccfdd3f7f65`) — **verify before trusting it**.
+
+**Next:** the sensor re-init fix in `firmware/bm_bridge/bm_bridge.py`
+(bridge-only — no fork push, no HE rebuild), then re-run the full matrix,
+then bite C against the approved mockup.
+
+---
+
 ## 2026-08-16 — Sprint S18 (camera bench web tool) — bite D: the bench nodes become systemd units; the sketched stdin design was wrong and the fork's source said so
 
 **Branch:** `sprint/18-bench-tool`, cut from `main` (repo only — no fork
