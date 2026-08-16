@@ -17,6 +17,75 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite C1: the bench page is live, and its click guard is enforced on the server
+
+**Branch:** `sprint/18-bench-web` (`14e8446`, cut from `main` @ `18349ed`)
+**No fork change, no firmware change, no board contact.** Pi-side python and
+a static page only — the AE3 keeps running the S19 artifacts, so there is no
+pin move, no ABI lockstep and no size audit in this bite.
+
+**Done:**
+- Nibble-1 plan approved with 5 decision points (**D35**). Bite C split into
+  **C1** (drive the bench: controls, live view, pill, warnings, guard) and
+  **C2** (gallery, side-by-side compare, RGB+luma histograms).
+- `pi/bench_web/bench_web.py` (:8090) + `static/bench.html`, carrying the
+  approved mockup's layout, CSS and feasibility model and **deleting its
+  simulation** — no embedded reef photo, no synthetic scene, no client-side
+  JPEG encoder, no fake ledger. Every number comes from `status`.
+- The live view is an `<img>` at the frozen S3 server's `/stream`: no frame
+  bytes pass through this server, and the single-producer ingest on `:8081`
+  is not touched.
+- **The click guard is in Python, mirrored in JS.** Two holds — *busy* (one
+  camera command at a time) and *settle* (8 s, and ONLY for a command that
+  changes resolution or pixel format, because only a genuine delta re-inits
+  the sensor). `stop` is never gated.
+- `pi/services/bench-web.service` + a `bench-web` arm on
+  `install_stream_service.sh`, installed **disabled** like the BM nodes.
+- Host tests **42 checks** (`pi/bench_web/test_bench_web.py`), injected clock,
+  no hardware. Bite D's 43 still green.
+- **Live on nereus001**: checkout moved to the branch, unit installed and
+  started, host tests re-run **on the Pi** (42 OK), page served (34,478 B),
+  and `/api/status` returning the real ledger through the real socket.
+
+**Broke/surprised us:**
+- **`mode_active` is "last commanded", not "currently busy".** Found by
+  reading `camera_svc.c` before relying on it: it stays `1` after a still
+  completes and only `stop` clears it (`s_mode_active`, lines 74/85). A
+  guard keyed on it would never release. Completion comes from bite B's save
+  counters instead.
+- **`save.state` still reads `saved` from the PREVIOUS capture at the moment
+  of arming**, so gating on the string releases the gate one poll after the
+  click — i.e. it would have looked like it worked, and let exactly the
+  fast second click through. The counters are monotonic; the string is not.
+  Both traps now have a named test.
+- **Two UI faults only a screenshot caught**, both in states the operator
+  stares at: a disabled *primary* button faded to an unreadable blue block
+  (dark text at 45% on the accent fill), and the stage collapsed to a sliver
+  when no stream was running, clipping its own diagnostic. Fixed in CSS.
+- **The live `<img>` is UNVERIFIED in a real browser.** The sandboxed
+  browser pane blocked `nereus001:8080` (`ERR_BLOCKED_BY_CLIENT`) while
+  serving `:8090` fine. The S3 server itself answers `200` on `/stream` and
+  `/frame.jpg` from the Pi, so the endpoint is good — but the embed is
+  Nick's to confirm.
+- nereus000 did not answer ssh within 120 s. Not chased (one attempt, no
+  retry loop): the page runs on nereus001 and nereus000 is only needed for
+  the camera half of the demo.
+
+**Bench state:** nereus001 on `sprint/18-bench-web` @ `14e8446`; `bench-web`
+installed (disabled at boot) and **RUNNING**; `bm-telemetry` **RUNNING**
+(started here — that role never opens the CDC leg, so zero camera contact);
+`t1l-stream-server` active. **nereus000 still on `sprint/18-bench-control`
+and unreachable at session end** — it needs `git checkout sprint/18-bench-web`
+before the camera demo. AE3 untouched this session: `/flash/main.py` is still
+the bridge launcher (`170e637c…`), NOT the S6 fixture — bite D's outstanding
+one-command restore still stands.
+
+**Next:** nibble 3 — Nick runs the demo ladder in `pi/bm_bench/README.md`
+§S18 bite C1 (page + capture + the guard holding a mode switch), then the PR.
+Bite C2 (gallery, compare, histograms) follows.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite B: the control socket and still-save land, and the first full resolution sweep finds a sensor re-init race that has been there since bite A
 
 **Branch:** `sprint/18-bench-control` (repo, `e05b653`) + bm_sbc fork

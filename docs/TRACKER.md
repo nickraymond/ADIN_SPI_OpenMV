@@ -1,7 +1,13 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**PRIORITY CHANGE — D32: S18 is NEXT, with a
+*Last updated: 2026-08-16 (**S18 bite C1 CODE+TESTS DONE and LIVE on
+nereus001** — the bench page is served at `http://nereus001:8090/`, driving
+bite B's control socket, with the fast-click guard **enforced on the server**
+rather than in the browser; bite C split into C1 (drive the bench) + C2
+(gallery/compare/histograms), D35; branch `sprint/18-bench-web`; nibble 3 =
+Nick runs the demo. Pi-side only — the AE3 still runs the S19 artifacts.
+Previous: **PRIORITY CHANGE — D32: S18 is NEXT, with a
 FRESH AGENT ON ITS OWN BRANCH, and S18's systemd units (bite D) are
 promoted to first and made mandatory.** S19 bites 1–2 delivered: HD
 stills work end to end — `capture 50 hd color` lands a valid 1280×800
@@ -695,7 +701,52 @@ the nodes are systemd units. Do the harness before the features.)*
       compare view). Its fps model is EXTRAPOLATED from one measured
       point — label it as such in the UI until B2's matrix replaces it
       with measured numbers.
-- [ ] Bite C — `pi/bench_web/` (stdlib python, S3-server pattern):
+- [~] **Bite C1 — the page that drives the bench.** *(Bite C split into C1
+      + C2, Nick approved 2026-08-16 — **D35**. The TRACKER's single bite C
+      was ~700 LoC; the split is on the seam the mockup itself has, live
+      control vs stored captures.)*
+      → **CODE + TESTS DONE 2026-08-16** (nibbles 1–2; plan + 5 decision
+      points approved by Nick). Branch `sprint/18-bench-web` (`14e8446`),
+      cut from `main` @ `18349ed`. **Pi-side only — no fork change, no
+      `camera_svc.h`, no wire, no bridge or HE firmware**, so no pin move,
+      no ABI lockstep, no size audit, and no board contact.
+      Shipped: `pi/bench_web/bench_web.py` (:8090, stdlib `http.server`,
+      driving bite B's socket through `bench_ctl.py` so the front ends
+      cannot drift) · `static/bench.html` carrying the approved mockup's
+      layout, CSS and model and **deleting its simulation** · the live view
+      as an `<img>` at the frozen S3 server's `/stream` (no frame bytes
+      through this server, `:8081` untouched) · commanded-vs-actual pill and
+      receiver ledger from real `status` · warnings labelled
+      **EXTRAPOLATED** everywhere · `pi/services/bench-web.service` +
+      installer arm, installed **disabled** · **42 host checks**.
+      **The click guard is enforced in PYTHON and only mirrored in JS** — a
+      reload or a second tab walks past a browser-side guard, and what it
+      prevents is a camera wedged for the bridge's life. Two holds: *busy*
+      (one command at a time) and *settle* (8 s, **only** for a command that
+      changes res or pf, because only a genuine delta re-inits the sensor).
+      `stop` is never gated.
+      **Two traps found by reading source rather than assuming**, both now
+      tested: `mode_active` is *last commanded*, not *currently busy* (it
+      stays 1 after a still; only `stop` clears it), and `save.state` still
+      reads `saved` from the PREVIOUS capture at the moment of arming — so
+      the obvious gate would have released one poll after the click and let
+      the fast second click through. Completion comes from the monotonic
+      save counters.
+      → **LIVE on nereus001 2026-08-16**: checkout on the branch, unit
+      installed + started, host tests re-run **on the Pi** (42 OK), page
+      served, `/api/status` returning the real ledger through the real
+      socket, and the socket-down path answering 503 with the fix.
+      **NOT verified: the embedded `<img>`** — the agent's sandboxed browser
+      blocked `nereus001:8080` (`ERR_BLOCKED_BY_CLIENT`) while serving
+      `:8090` fine; the S3 server answers 200 on `/stream` and `/frame.jpg`
+      from the Pi, so that is Nick's to confirm in a real browser.
+      **Remaining: nibble 3 (Nick runs README §S18 bite C1) → PR.**
+      **nereus000 is still on `sprint/18-bench-control`** and did not answer
+      ssh at session end — it needs the branch before the camera demo.
+- [ ] **Bite C2** — gallery from `~/bench_captures/` sidecars, side-by-side
+      compare view, RGB+luma histograms (canvas, client-side). CSS for all
+      three is already in the page, so C2 is pure addition.
+- [ ] Bite C (original scope, for reference) — `pi/bench_web/` (stdlib python, S3-server pattern):
       controls (resolution/q/fps/rate/secs, capture/stream/stop, light
       level+strobe), embedded live `/stream`, **commanded-vs-actual
       pill** (receiver-ledger fps + Mbps, ~1 Hz), **feasibility
