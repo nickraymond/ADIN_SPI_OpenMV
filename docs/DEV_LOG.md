@@ -101,10 +101,16 @@ harness classifier blocks the agent from pushing to the fork, same as S17)
 **Bench state:** both units stopped; repo checkouts on
 `sprint/18-bench-control` at `e05b653`; fork at `8c0ff7a` on both Pis;
 `~/bench_captures/` on nereus001 holds the verified stills + sidecars.
-**AE3 fixture NOT restored — five attempts, and its state is
-unverified** (most likely still the bridge launcher `170e637c…`, which
-`demo_up.sh` stages at the start of every demo day anyway, so this is
-hygiene rather than a blocker).
+**AE3 fixture: the write REPORTED success on the sixth attempt
+(`mpremote cp` → `rc=0`) but the read-back could never be obtained, so
+by this repo's own rule — trust artifacts, not exit codes — treat it as
+PROBABLY restored, NOT verified.** Two read-back attempts afterwards
+both lost the REPL race. Either way this is hygiene, not a blocker:
+`demo_up.sh` stages the launcher at the start of every demo day.
+**What finally worked is the recipe worth keeping:** ≥60 s of genuinely
+zero port contact, then ONE `mpremote` operation, no `+` chaining. Every
+earlier failure was a chained command or a second command racing the
+first.
 
 **My first attribution was wrong and the later attempts disproved it.**
 I recorded "port contention" because `mpremote` says *"failed to access
