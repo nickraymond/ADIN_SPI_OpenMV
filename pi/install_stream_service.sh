@@ -9,6 +9,7 @@
 # BM bench nodes (installed DISABLED — S18 bite D):
 #   sudo pi/install_stream_service.sh light      # on nereus000
 #   sudo pi/install_stream_service.sh telemetry  # on nereus001
+#   sudo pi/install_stream_service.sh bench-web  # on nereus001 (S18 bite C)
 #
 # The two BM nodes are deliberately NOT enabled at boot. bm-light opens
 # the AE3's CDC port, and a node that grabs it at every boot fights
@@ -26,7 +27,8 @@ case "$ROLE" in
   shim)      UNIT=t1l-chunk-shim.service;    AUTOSTART=yes ;;
   light)     UNIT=bm-light.service;          AUTOSTART=no  ;;
   telemetry) UNIT=bm-telemetry.service;      AUTOSTART=no  ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry" >&2; exit 1 ;;
+  bench-web) UNIT=bench-web.service;         AUTOSTART=no  ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

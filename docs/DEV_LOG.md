@@ -17,6 +17,124 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite C1: the bench page is live, and its click guard is enforced on the server
+
+**Branch:** `sprint/18-bench-web` (`14e8446`, cut from `main` @ `18349ed`)
+**No fork change, no firmware change, no board contact.** Pi-side python and
+a static page only — the AE3 keeps running the S19 artifacts, so there is no
+pin move, no ABI lockstep and no size audit in this bite.
+
+**Done:**
+- Nibble-1 plan approved with 5 decision points (**D35**). Bite C split into
+  **C1** (drive the bench: controls, live view, pill, warnings, guard) and
+  **C2** (gallery, side-by-side compare, RGB+luma histograms).
+- `pi/bench_web/bench_web.py` (:8090) + `static/bench.html`, carrying the
+  approved mockup's layout, CSS and feasibility model and **deleting its
+  simulation** — no embedded reef photo, no synthetic scene, no client-side
+  JPEG encoder, no fake ledger. Every number comes from `status`.
+- The live view is an `<img>` at the frozen S3 server's `/stream`: no frame
+  bytes pass through this server, and the single-producer ingest on `:8081`
+  is not touched.
+- **The click guard is in Python, mirrored in JS.** Two holds — *busy* (one
+  camera command at a time) and *settle* (8 s, and ONLY for a command that
+  changes resolution or pixel format, because only a genuine delta re-inits
+  the sensor). `stop` is never gated.
+- `pi/services/bench-web.service` + a `bench-web` arm on
+  `install_stream_service.sh`, installed **disabled** like the BM nodes.
+- Host tests **42 checks** (`pi/bench_web/test_bench_web.py`), injected clock,
+  no hardware. Bite D's 43 still green.
+- **Live on nereus001**: checkout moved to the branch, unit installed and
+  started, host tests re-run **on the Pi** (42 OK), page served (34,478 B),
+  and `/api/status` returning the real ledger through the real socket.
+
+**Broke/surprised us:**
+- **`mode_active` is "last commanded", not "currently busy".** Found by
+  reading `camera_svc.c` before relying on it: it stays `1` after a still
+  completes and only `stop` clears it (`s_mode_active`, lines 74/85). A
+  guard keyed on it would never release. Completion comes from bite B's save
+  counters instead.
+- **`save.state` still reads `saved` from the PREVIOUS capture at the moment
+  of arming**, so gating on the string releases the gate one poll after the
+  click — i.e. it would have looked like it worked, and let exactly the
+  fast second click through. The counters are monotonic; the string is not.
+  Both traps now have a named test.
+- **Two UI faults only a screenshot caught**, both in states the operator
+  stares at: a disabled *primary* button faded to an unreadable blue block
+  (dark text at 45% on the accent fill), and the stage collapsed to a sliver
+  when no stream was running, clipping its own diagnostic. Fixed in CSS.
+- **The live `<img>` is UNVERIFIED in a real browser.** The sandboxed
+  browser pane blocked `nereus001:8080` (`ERR_BLOCKED_BY_CLIENT`) while
+  serving `:8090` fine. The S3 server itself answers `200` on `/stream` and
+  `/frame.jpg` from the Pi, so the endpoint is good — but the embed is
+  Nick's to confirm.
+- **nereus000 looked dead and was not.** An ssh hung past 120 s and I
+  recorded it as unreachable; it was actually blocked on a **Tailscale SSH
+  re-authentication prompt**, which is invisible in a piped command. Once
+  that was satisfied the same command returned instantly. Worth knowing:
+  on this bench a silent 120 s ssh hang is a plausible auth prompt, not
+  evidence of a down host — and "unreachable" is a claim that needs the
+  same standard of proof as any other.
+
+**Bench state:** **both Pis on `sprint/18-bench-web` @ `8431690`.**
+nereus001: `bench-web` installed (disabled at boot) and **RUNNING**;
+`bm-telemetry` **RUNNING** (started here — that role never opens the CDC
+leg, so zero camera contact); `t1l-stream-server` active. nereus000:
+`bm-light` **inactive**, no local modifications, AE3 not staged. AE3
+untouched this session: `/flash/main.py` is still
+the bridge launcher (`170e637c…`), NOT the S6 fixture — bite D's outstanding
+one-command restore still stands.
+
+**Nibble 3 — DEMO RUN AND APPROVED BY NICK (2026-08-16), after one real
+failure and its diagnosis:**
+- Nick's first seven captures returned **nothing**. Not the page's fault
+  and not the B2 sensor race: `cam_reply state=timeout cmds=0 pub_ok=0`
+  — the camera service never answered and never counted a command. The
+  journal timeline settled it: `bm-light` adopted the AE3 at 18:33:10,
+  and at **18:34:00** `🏚 Neighbor offline` / `UART link down (port 15)`.
+  The node had been dead for 37 minutes before the first capture.
+- **The crash log nearly produced a wrong conclusion, and the near-miss
+  is the lesson.** `bridge_crash.txt` ended on a bare `boot: launcher
+  start` with no exit record, which is precisely the crash signature from
+  bite A. A second read 60 s later showed an `exit:` had appeared after
+  it — **that trailing boot was my own `mpremote` soft-reset**, which
+  starts the launcher, and its bridge then quiet-exited during the wait.
+  Counts: 57 lines, 30 boots, 27 exits (3 genuine historical crashes, none
+  today). **The bridge that died QUIT CLEANLY.** Reading the log once
+  would have sent bite C2 chasing a firmware crash that does not exist.
+- **Root cause / new standing ops rule: the bridge quiet-exits after 30 s
+  of no VCP traffic, and it does that in PHASE 1 — after the BM neighbor
+  is already up.** A **light command does not count**: that service runs
+  on nereus000's own Pi and never crosses the CDC leg. My two light
+  commands (18:33:49, 18:34:07) bracketed the death and told me nothing.
+  Re-staged, started `bm-light`, captured **within seconds** — and it has
+  since held a 75 s idle window with no offline line, so once past phase 1
+  it stays up on heartbeats. Written into README §Start order.
+- **Demo evidence:** `cam_reply state=ok ok=1 cmds=3 pub_ok=3 pub_errs=0`,
+  ledger `frames_ok=2 gaps=0 dropped=0 ingest_ok=2`, save `saved`
+  (`cap_20260816T215924Z_seq000001.jpg`, 3,727 B), `/frame.jpg` 200, and
+  the artifact checked against **its own header** — `SOI ffd8 … EOI ffd9`,
+  `SOF0: 320×200, 3 components` — not against a status field.
+
+**What the demo found in the page, filed NOT fixed:** every capture logged
+`200 ok`, because the socket ACCEPTED it; the camera's real answer landed
+in a stats row as `state=timeout`. Honest and far too quiet — seven
+captures went into a dead node before anyone noticed. A non-`ok`
+`cam_reply.state` should raise a banner. **Deliberately not patched into
+this bite**: the demo passed on the code as it stands, and changing the
+demoed artifact after approval needs its own gate. It is the first item of
+bite C2.
+
+**Also corrected here:** TRACKER still listed bites B and D as "Remaining:
+PR". Both were merged (#29, #28) and there are **zero open PRs** on the
+repo; a fresh agent reading cover-to-cover would have gone hunting for
+them.
+
+**Next:** **bite C2** — gallery, side-by-side compare, RGB+luma histograms,
+plus the cam_reply banner. On the critical path: the S18 demo line requires
+the compare view and the histograms, so the sprint cannot close without it.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite B: the control socket and still-save land, and the first full resolution sweep finds a sensor re-init race that has been there since bite A
 
 **Branch:** `sprint/18-bench-control` (repo, `e05b653`) + bm_sbc fork
