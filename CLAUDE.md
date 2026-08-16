@@ -31,7 +31,18 @@ shim, stream server) · `bench/` (benchmarks, counters) · `docs/diagrams/`.
    plausible guesses.
 4. **Trust artifacts, not exit codes.** A capture that "succeeded" but produced
    an empty file failed. Verify outputs exist, sizes are plausible, images
-   open, counters moved.
+   open, counters moved. Three traps that have each cost a session:
+   - **A pipeline returns the LAST command's status.** `script.sh | tail -2`
+     exits 0 even when the script failed, so `&&` chains march on against a
+     broken state. Capture the script's own `rc`, or grep its output for the
+     verdict it prints.
+   - **A tool's success message is not the artifact.** `mpremote cp` returning
+     `rc=0` sat next to a file that still needed a normalised read-back to
+     prove it. Read the bytes back.
+   - **A comparison can lie about a correct result.** `mpremote cat`
+     CRLF-translates, so a read-back is N bytes larger than its N-line source
+     and `cmp`/`sha256` report a mismatch that is not real. Understand the
+     transport before believing a diff.
 5. **One variable at a time.** Bench debugging dies when wiring, straps,
    driver code, and stream settings change together. Change one; keep the
    known-good path recorded before touching it.

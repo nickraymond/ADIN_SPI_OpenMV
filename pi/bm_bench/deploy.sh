@@ -14,14 +14,15 @@
 # Trust artifacts: the script ends by printing the binary path, its
 # build id, and the verified revs. If it didn't print PASS, it didn't work.
 #
-# Pins (S17, 2026-08-15 — bm_sbc +2: apps/bench_apps, the BUILD-4
-# application layer (light service + telemetry camera consumer/CLI/
-# uplink) + its chunk_reasm ctest. bm_core pin UNCHANGED — no stack or
-# wire changes; the app rides existing pubsub/bm_service/gateway_ipc/
-# spotter surfaces). Fork branches:
+# Pins (S18 bite B, 2026-08-16 — bm_sbc +2 on top of bite A: the telemetry
+# role's loopback JSON control socket (/run/bm/bench.sock) and still-save
+# with JSON sidecars, plus a bench_ctl ctest. Pi-side only: NO camera_svc.h
+# change, no wire_capture_t change, no bridge or HE firmware change, so the
+# AE3 artifacts from S19 stay exactly as they are. bm_core pin UNCHANGED.)
+# Fork branches:
 #   bm_sbc:  feature/udp-transport (nickraymond/bm_sbc)  — base 17ea904
 #   bm_core: bench/d4ecc38-obs     (nickraymond/bm_core) — base d4ecc38
-BM_SBC_PIN="ba594ecb54959f157aae5b1232f58786befd81d4"
+BM_SBC_PIN="8c0ff7a7c6ac55f4025101bed58876890eca52bf"
 BM_CORE_PIN="eec6e82f0010fe43b96464bb8215c9c9ffd7665b"
 
 set -euo pipefail

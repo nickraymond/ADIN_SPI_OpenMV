@@ -715,3 +715,101 @@ start → one PID, `NRestarts=0`; `bm-cmd.sh status`/`help` answered live
 in the journal; 0 s CPU over 10 s elapsed (the FIFO poll does not spin);
 stop took 1.06 s leaving zero processes and no `/run/bm`. Items 2 and 3's
 camera half need the chain, i.e. Nick's run.
+
+---
+
+# S18 bite B — control socket + still-save
+
+Two additions to the telemetry role, both Pi-side. **No camera_svc.h
+change, no wire change, no bridge or HE firmware change** — the AE3 keeps
+running exactly the S19 artifacts.
+
+1. **A loopback control socket** at `/run/bm/bench.sock` (AF_UNIX
+   SOCK_DGRAM): one JSON object in, one JSON object out. It is the door
+   the S18 web tool (bite C) drives the bench through.
+2. **Still-save**: every accepted `capture` writes the frame to
+   `~/bench_captures/` with a JSON sidecar carrying the commanded
+   parameters, the camera's reply, the frame's seq/bytes/chunks, and the
+   receiver ledger — absolutely and as deltas since the capture was armed.
+
+## Deploy (both Pis, after the fork push)
+
+```bash
+ssh pi@nereus000 'cd ~/bm_sbc_s15 && git fetch fork -q && git checkout -q feature/udp-transport && git pull -q --ff-only && cd ~/ADIN_SPI_OpenMV && git pull -q && ~/ADIN_SPI_OpenMV/pi/bm_bench/deploy.sh'
+```
+
+```bash
+ssh pi@nereus001 'cd ~/bm_sbc_s15 && git fetch fork -q && git checkout -q feature/udp-transport && git pull -q --ff-only && cd ~/ADIN_SPI_OpenMV && git pull -q && ~/ADIN_SPI_OpenMV/pi/bm_bench/deploy.sh'
+```
+
+Pin for this bite: `8c0ff7a`. `deploy.sh` refuses to build on any other
+rev, so a half-deployed bench fails loudly instead of behaving oddly.
+
+The telemetry unit gained `S18_CAPTURE_DIR`, so **reinstall it** before
+starting:
+
+```bash
+ssh pi@nereus001 'sudo ~/ADIN_SPI_OpenMV/pi/install_stream_service.sh telemetry'
+```
+
+## Commands
+
+`bench-ctl.sh` takes the same argument order as the FIFO CLI and prints
+the JSON reply here instead of on the journal:
+
+```bash
+ssh pi@nereus001 '~/ADIN_SPI_OpenMV/pi/bm_bench/bench-ctl.sh capture 50 hd color'
+```
+
+```bash
+ssh pi@nereus001 '~/ADIN_SPI_OpenMV/pi/bm_bench/bench-ctl.sh status'
+```
+
+Raw JSON works too, for anything the shorthand does not cover:
+
+```bash
+ssh pi@nereus001 '~/ADIN_SPI_OpenMV/pi/bm_bench/bench-ctl.sh "{\"cmd\":\"capture\",\"q\":90,\"save\":false}"'
+```
+
+**Camera and light commands are asynchronous.** The reply says `accepted`,
+not `done`; the camera's own answer lands in the next `status` (under
+`cam_reply`) and in the journal as `CAM_REPLY`. `status` is the only verb
+that answers with live data — params, last replies, receiver ledger, save
+state — and it is what the web tool polls at ~1 Hz.
+
+`bm-cmd.sh` still works unchanged, and **its captures are saved too**: the
+save is armed inside the app's command path, not in the socket, so a still
+taken by hand is recorded exactly like one taken from the web tool.
+
+## Stills and sidecars
+
+```bash
+ssh pi@nereus001 'ls -l ~/bench_captures/ | tail -6'
+```
+
+Each capture produces `cap_<UTC>_seq<N>.jpg` and `cap_<UTC>_seq<N>.json`.
+The **sidecar is the commit record**: the JPEG is written and renamed
+first, so a sidecar can never point at a missing or half-written image.
+Bite C's gallery enumerates sidecars for that reason.
+
+`gaps_delta` and `dropped_delta` answer "did THIS still lose anything?" —
+zero means the frame crossed the chain intact.
+
+Nothing here ever deletes a capture. Below 200 MB free the save is refused
+and counted (`save.errors` in `status`); a capture whose frame never
+arrives times out after 8 s and logs `CAP_SAVE TIMEOUT` rather than
+staying silent.
+
+## Host tests (no hardware, no Pi)
+
+```bash
+python3 pi/services/test_bm_units.py
+```
+
+43 checks: the bite D singleton properties plus the bite B path agreements
+(socket, capture dir), the client's bind-and-match-id contract, and the
+stdlib-only rule.
+
+The fork's own wire-format tests run under ctest (`deploy.sh` runs them):
+`bench_ctl` is 98 checks covering the parser's nested-value trap, every
+refusal path, and truncation-instead-of-half-an-object.

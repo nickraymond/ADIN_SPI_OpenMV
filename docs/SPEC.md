@@ -134,6 +134,44 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **A sensor re-init too soon after a capture throws
+  `RuntimeError('Sensor control failed.')` and WEDGES the sensor for the
+  rest of the bridge's life (measured 2026-08-16, S18 bite B trial
+  matrix).** `_ensure_sensor` catches it, sets `cur_res/cur_pf = None`,
+  and every later command fails identically — measured across 7 further
+  commands over 60 s, including `qvga color` that had worked a minute
+  earlier. Recovery requires restarting the bridge.
+  **The visible symptom lies:** the HE camera service replies `ok=1` with
+  advancing `cmds` because it never learns the HP bridge refused, so the
+  operator sees healthy acks and zero images while `pub_ok` stays frozen.
+  Measured, one variable at a time (chain up, systemd units, S19
+  artifacts):
+  - sub-second gap between a capture and the next re-init → **fails**,
+    2/2 on freshly staged bridges, deterministic under the trial driver;
+  - ≥6 s gap → **succeeds**, 3/3;
+  - at a **2 s** gap it survived three re-inits and failed on the fourth —
+    the one that followed a **VGA** frame (8 chunks) rather than a QVGA
+    one (2–3 chunks).
+  So the required quiet time **scales with the previous frame's size**,
+  which is why a fixed delay is the wrong shape of fix.
+  **It is NOT greyscale.** Greyscale works: `capture 50 qvga mono` with
+  time around it delivered 320×200, 1 component, 1,090 B, `gaps_delta=0`
+  — the first mono frame this project has carried over the chain.
+  Greyscale was simply the first command in the sweep that required a
+  re-init at all; QVGA→QVGA colour repeats need none.
+  **Mechanism NOT established — do not guess it.** Two candidates, and
+  they imply different fixes: (a) the sensor's own frame pipeline/DMA is
+  still busy (the size scaling fits, and 8 chunks would drain from the HE
+  in ~20 ms, not 2 s — which argues against the HE); (b) the HE core is
+  still publishing (`wire_status_t.stream_sent` is already parsed by the
+  bridge and would gate it precisely). **The decisive experiment is an
+  off-chain probe with the HE core NOT loaded**
+  (`bench/probes/s18_reinit_probe.py`, written but never executed).
+  **Prerequisite learned the hard way: the board cannot be probed while
+  `/flash/main.py` is the bridge launcher** — `mpremote run` enters the
+  raw REPL via a soft reset, which runs main.py, which starts a bridge
+  that then holds the VCP. Stage a neutral `main.py` first.
+
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
   `capture 50 vga color` over the BM chain was accepted (`ok=1
