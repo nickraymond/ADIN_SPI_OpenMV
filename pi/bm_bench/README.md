@@ -335,6 +335,11 @@ ssh pi@nereus001 'sudo systemctl stop t1l-chunk-shim && systemctl is-active t1l-
 
 ## S17 start order
 
+> **Superseded by §S18 bite D (2026-08-16): the nodes are systemd units
+> now.** Kept because it documents the roles, env vars and ordering the
+> units encode. Start with `systemctl start`, not these command lines —
+> hand-running them alongside a unit is the S19 wedge.
+
 1. **Bridge:** `mpremote connect $P reset` → by-id absent→present→settle.
 2. **Light** (nereus000):
 
@@ -582,3 +587,131 @@ Expect `VERDICT: SURVIVED all 6 rows`, including 60 × 1400 B = 84,000 B
 > `ae3-usb-unstick` ladder. Let a run finish and settle before the next
 > `mpremote` command. The non-blocking pump removes the backpressured
 > state that provoked it, but the habit is cheap.
+
+---
+
+# S18 bite D — the bench nodes run as systemd units
+
+**This replaces the hand-run start order above.** Everything from §S16
+onward said "run the binary in a shell and Ctrl-C it"; that is what cost
+the S19 session most of its hours. Two Telemetry instances silently wedge
+the single-producer S3 ingest, `pkill -f` patterns match the driving SSH
+command line, and a leftover `stream` command corrupts the next run. A
+systemd unit is a **singleton by construction** — a second
+`systemctl start` is a no-op, not a race.
+
+The units are installed **disabled**: they never start at boot. An
+enabled `bm-light` would open the AE3's CDC port on every boot and fight
+`mpremote`, `demo_up.sh` and firmware flashing — the dev loop wins by
+default.
+
+## Install (once per Pi, after a `git pull` on the branch)
+
+```bash
+ssh pi@nereus000 'sudo ~/ADIN_SPI_OpenMV/pi/install_stream_service.sh light'
+```
+
+```bash
+ssh pi@nereus001 'sudo ~/ADIN_SPI_OpenMV/pi/install_stream_service.sh telemetry'
+```
+
+Each prints `installed, NOT enabled at boot (state: disabled)`. Re-running
+is idempotent, and it re-disables a unit someone enabled by hand.
+
+## Start order (every session)
+
+AE3 staging stays manual and separate — starting a service should never
+rewrite board flash:
+
+```bash
+ssh pi@nereus000 '~/ADIN_SPI_OpenMV/pi/bm_bench/demo_up.sh'
+```
+
+```bash
+ssh pi@nereus000 'sudo systemctl start bm-light'
+```
+
+```bash
+ssh pi@nereus001 'sudo systemctl start bm-telemetry'
+```
+
+`bm-light` refuses to start if the AE3 is not on the bus, naming the
+`ae3-usb-unstick` ladder, instead of failing later inside bm_sbc's uart
+open. It also chmods the ACT LED sysfs for the light HAL, which retires
+the manual per-boot `chmod` in §S17 deploy.
+
+## Commands and output
+
+The operator CLI is a FIFO now, not a terminal:
+
+```bash
+ssh pi@nereus001 '~/ADIN_SPI_OpenMV/pi/bm_bench/bm-cmd.sh capture 50 hd color'
+```
+
+```bash
+ssh pi@nereus001 'journalctl -u bm-telemetry -f'
+```
+
+`bm-cmd.sh` refuses to write when the unit is not active — a command
+appended to a FIFO nobody reads looks exactly like a command that worked.
+Every command from §S16–§S19 works unchanged (`help` lists them).
+
+## Preflight (run on BOTH Pis, before and after a demo)
+
+```bash
+ssh pi@nereus000 '~/ADIN_SPI_OpenMV/pi/bm_bench/chain_status.sh'
+```
+
+```bash
+ssh pi@nereus001 '~/ADIN_SPI_OpenMV/pi/bm_bench/chain_status.sh'
+```
+
+Read-only, PASS/FAIL per check, non-zero exit on any FAIL. It checks the
+things that actually bit: one bench_apps process and it is the unit's
+(found by `/proc/<pid>/exe`, never by command-line pattern), exactly one
+producer on `:8081` (0 or 2 socket ends — 4 is the wedge), units not
+enabled at boot, AE3 present, stream server up, shim stopped, FIFO
+present. **It supersedes the §S19 demo-2 preflight box** — that box
+documents the failure this script now checks for you.
+
+## Stop
+
+```bash
+ssh pi@nereus001 'sudo systemctl stop bm-telemetry'
+```
+
+```bash
+ssh pi@nereus000 'sudo systemctl stop bm-light'
+```
+
+Stopping Telemetry pushes `stop` to the camera first, so the AE3 is not
+left executing a 600 s `stream` into the next run — the other S19
+contaminator. `systemctl stop` kills the whole cgroup, so "did it
+actually die?" stops being a question. The bridge quiet-exits ~30 s after
+the port closes, exactly as before.
+
+## Host tests (no hardware, no Pi)
+
+```bash
+python3 pi/services/test_bm_units.py
+```
+
+33 checks: the singleton properties, the FIFO contract, and the
+cross-file path agreements (FIFO / AE3 by-id / binary) that would
+otherwise drift into a bench that starts and then does nothing.
+
+## Acceptance — the bug that caused this bite
+
+1. `sudo systemctl start bm-telemetry` **twice** → `chain_status.sh`
+   still reports exactly one process. The second start is a silent no-op;
+   there is no error to miss.
+2. A full `stream 2.0 15 600` under units → 15.0 fps, zero on every loss
+   counter (the run that wedged twice in S19).
+3. `sudo systemctl stop bm-telemetry` → zero processes, `/run/bm` gone,
+   and the board not left streaming.
+
+**Rehearsed 2026-08-16 (Telemetry only, no camera contact):** double
+start → one PID, `NRestarts=0`; `bm-cmd.sh status`/`help` answered live
+in the journal; 0 s CPU over 10 s elapsed (the FIFO poll does not spin);
+stop took 1.06 s leaving zero processes and no `/run/bm`. Items 2 and 3's
+camera half need the chain, i.e. Nick's run.

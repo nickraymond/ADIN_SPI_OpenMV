@@ -1,0 +1,46 @@
+# bm-light.service — bench Light node on nereus000 (S18 bite D).
+#
+# Runs the bm_sbc fork's bench_apps in the `light` role: UDP leg to
+# Telemetry (nereus001) plus the AE3's CDC leg, so it is the node that
+# opens the camera's serial port.
+#
+# Install: sudo pi/install_stream_service.sh light
+# Start:   sudo systemctl start bm-light        (NOT enabled at boot —
+#          see install_stream_service.sh for why)
+#
+# The light role has no operator CLI (bench_apps only polls stdin in the
+# telemetry role), so this unit needs no command channel. Contrast
+# bm-telemetry.service, which does.
+[Unit]
+Description=BM bench Light node (bench_apps light role, AE3 CDC leg)
+After=network.target
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/bm_bench/README.md
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/bm_bench
+SyslogIdentifier=bm-light
+Environment=S17_ROLE=light
+
+# The AE3 must already be running the bridge (demo_up.sh) before this
+# starts, or bm_sbc's uart open fails with a much less obvious message.
+# Fail here instead, naming the recovery ladder.
+ExecStartPre=/bin/sh -c 'test -e /dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00 || { echo "bm-light: AE3 not on USB at its by-id path — run pi/bm_bench/demo_up.sh first; if the board is off the bus entirely, use the ae3-usb-unstick ladder (Pi reboot)" >&2; exit 1; }'
+
+# The light HAL writes the green ACT LED through sysfs, which is
+# root-owned. The '+' prefix runs this one command as root regardless of
+# User=, which replaces the README's manual per-boot chmod. Restore with
+# `sudo chmod go-w /sys/class/leds/ACT/trigger` when done with the bench.
+ExecStartPre=+/bin/chmod a+w /sys/class/leds/ACT/trigger /sys/class/leds/ACT/brightness
+
+ExecStart=/home/pi/bm_sbc_s15/build/all/bm_sbc_bench_apps --init /home/pi/bm_bench/light.toml
+
+# on-failure, not always: a deliberate `systemctl stop` must stay
+# stopped. This absorbs the fork's known ~1-in-4 startup segfault
+# (TRACKER §Flagged during S19) rather than fixing it.
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

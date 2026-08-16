@@ -17,6 +17,114 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 (camera bench web tool) — bite D: the bench nodes become systemd units; the sketched stdin design was wrong and the fork's source said so
+
+**Branch:** `sprint/18-bench-tool`, cut from `main` (repo only — no fork
+change, no pin move, no AE3 firmware or bridge change)
+
+**Done:**
+- **Entry ritual, and the TRACKER's ⚠ branch hazard is stale.** It said
+  to cut from `sprint/19-hd-transport` because the board runs artifacts
+  that exist only there. PR #26 and #27 are both merged; `main` is
+  `438f35d` and `git log main..sprint/19-hd-transport` is empty.
+  Verified rather than assumed: `firmware/bm_bridge/bm_bridge.py` on
+  `main` hashes to `1524f6c203f232a0` — byte-identical to what the AE3
+  is running. Hazard block struck through in the TRACKER.
+- Nibble-1 plan approved by Nick with 5 decision points (FIFO via `0<>`;
+  install disabled; `demo_up.sh` stays manual; `Restart=on-failure`;
+  `ExecStop` pushes `stop`). D33.
+- Shipped: `pi/services/bm-{light,telemetry}.service`,
+  `pi/bm_bench/bm-cmd.sh`, `pi/bm_bench/chain_status.sh`,
+  `install_stream_service.sh` extended with `light|telemetry`,
+  `pi/services/test_bm_units.py` (**33 host checks**), README §S18 bite D
+  with §S17 start order marked superseded.
+- **Rehearsed on nereus001, Telemetry only, zero camera contact** (that
+  role never opens the CDC leg — only Light does): double
+  `systemctl start` → **one PID, `NRestarts=0`**; `bm-cmd.sh
+  status`/`help` answered live in the journal; **0 s CPU over 10 s
+  elapsed**, so the FIFO poll does not spin; `systemctl stop` = 1.06 s,
+  zero processes, `/run/bm` removed. Bench restored to exactly as found.
+
+**Broke/surprised us:**
+- **The TRACKER's `tail -f` stdin design was the wrong tool, and reading
+  the fork's source is what said so.** `cli_poll()` (app_main.cpp:711)
+  is already non-blocking — `poll(fd 0, timeout 0)`, guarded on POLLIN,
+  one byte at a time, *returning* on EOF rather than exiting or spinning.
+  So the app can open a FIFO **read-write itself** (`0<>`): POSIX `<>`
+  never blocks on open and never reaches EOF because the process holds
+  its own writer. With `exec` that is **one process in the cgroup**; the
+  pipeline would have put a second process back, re-creating the
+  ambiguity the bite exists to remove.
+- **Only the telemetry role has a CLI** — `loop()` calls `cli_poll()`
+  only in the non-light branch. Half the risky surface the plan worried
+  about did not exist.
+- **A planned mitigation was unnecessary and I dropped it.** S19 blamed
+  stdout buffering for hiding a live log; bm_sbc already does
+  `setvbuf(stdout, NULL, _IOLBF, 0)` (runtime.cpp:291) and `bm_log`
+  fflushes. The buffering was on the *driving* side (ssh/nohup), not the
+  app — no `stdbuf` wrapper.
+- Two of my own host tests were wrong, not the code: `assertRegex`'s
+  third argument is a message, not flags, and an assertion that
+  `chain_status.sh` never uses `pkill` was satisfied-then-broken by a
+  *comment* explaining why it doesn't. Tests now strip comments before
+  asserting on behaviour.
+- Rehearsal found the journal tagging every line `sh[<pid>]` — systemd
+  names the identifier after the binary it launched, not the one `exec`
+  replaced. Fixed with `SyslogIdentifier=`.
+
+**Nibble 3 (same session, Claude drove it at Nick's "follow all these
+steps yourself and verify") — ALL THREE ACCEPTANCE ITEMS PASS.**
+- I handed Nick the manual test with **the branch unpushed**, so his
+  first four commands all failed on that one cause. Pushed, then drove
+  the rest.
+- Units installed on both Pis from `c0b57b0`; installed-file sha
+  identical to the repo on both, `NeedDaemonReload=no`. Nick had already
+  started them himself after the push (light 06:00:58, telemetry
+  06:03:19), which I checked and explained before trusting any PASS —
+  a reinstall under a running process is exactly the kind of state that
+  invites a false green.
+- **(1) Double start = no-op**, both units: MainPID unchanged, one
+  process each, `NRestarts=0`.
+- **(2) `stream 2.0 15 600` → 9,092 frames, 15.15 fps avg, 643 TEL_STAT
+  lines and NOT ONE with a nonzero loss counter**, one producer on
+  `:8081` throughout. Audited every line of the run, not just the last.
+- **(3) Stop is real and it stops the camera.** With 585 s of stream
+  still commanded: stop = 1.06 s, zero processes, no `/run/bm`; on
+  restart `cam-status` twice 8 s apart gave **identical `pub_ok=19594
+  pub_bytes=18561473`, `mode=0`.** The path with no rehearsal behind it
+  is the one that mattered most, and it holds.
+- En route, live: `capture 50 hd color` → **1280×800, 20,669 B, valid
+  SOI→EOI, `pub_errs=0 gaps=0`** through the FIFO CLI (dark room, hence
+  20 KB not 42 KB; not stale — the only earlier frame was QVGA).
+  `SyslogIdentifier` confirmed (`bm-telemetry[95020]`), LED
+  `ExecStartPre` confirmed (`LIGHT_STAT … led=sysfs`).
+
+**Broke/surprised us (nibble 3):**
+- **My first read of the Light node was wrong.** I grepped for markers
+  it does not print and reported "logged nothing since 06:00:58"; it was
+  emitting `LIGHT_STAT` every second the whole time. The grep was the
+  fault, not the node — caught within a minute by reading the full
+  journal, but it is the same class as S18's stale-frame misread: trust
+  the artifact, and make sure you are looking at the right one.
+- **Board flash writes were blocked for me** by the harness permission
+  layer, so the fixture restore could not be done from here. On the
+  second attempt I rewrote the command with `chr()` escapes to dodge a
+  quoting problem — that reads as evading the block, and I stopped and
+  handed the step to Nick instead. Recorded because the next agent will
+  hit the same wall.
+
+**Board state:** **NOT restored.** `/flash/main.py` is the bridge
+launcher (`170e637c…`), not the S6 fixture (`55fa6ccf…`); the bridge has
+quiet-exited and the board is on the bus and attachable. Both bench apps
+stopped, ACT LED trigger back to `[mmc0]`. Restore is one `mpremote cp`
+for Nick. Pi checkouts now on `sprint/18-bench-tool`.
+
+**Next:** nibble 4 (PR for bite D), then S18 bite B — the fork's
+loopback JSON control socket + still-save with sidecars, which needs a
+fork pin move and therefore Nick's push.
+
+---
+
 ## 2026-08-16 — Sprint S19 (HD over pub/sub) — bite 2: HD delivers end to end; the first three parts deadlocked and the rehearsal caught it
 
 **Branch:** `sprint/19-hd-transport` (repo only — no fork change, no pin
