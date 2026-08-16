@@ -1,0 +1,36 @@
+# bench-web.service — S18 bite C1 camera bench page on nereus001.
+#
+# Serves the operator page on :8090 and drives bite B's control socket at
+# /run/bm/bench.sock. Read-only until someone clicks: it owns no hardware,
+# opens no CDC port and never touches the frozen S3 ingest on :8081.
+#
+# Install: sudo pi/install_stream_service.sh bench-web
+# Start:   sudo systemctl start bench-web        (NOT enabled at boot)
+# Open:    http://nereus001:8090/
+# Watch:   journalctl -u bench-web -f
+#
+# Installed DISABLED for the same reason as bm-telemetry: this is a bench
+# instrument, started per session, not a standing fixture.
+#
+# It deliberately does NOT require bm-telemetry. If the socket is absent the
+# page says so in the header and every command answers 503 with the fix
+# ("is bm-telemetry running?") — which beats a unit that refuses to start and
+# leaves the operator with a browser error page and no explanation.
+[Unit]
+Description=S18 camera bench web tool (control page on :8090)
+After=network.target t1l-stream-server.service
+Wants=t1l-stream-server.service
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/bm_bench/README.md
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV/pi/bench_web
+SyslogIdentifier=bench-web
+ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/bench_web/bench_web.py
+
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

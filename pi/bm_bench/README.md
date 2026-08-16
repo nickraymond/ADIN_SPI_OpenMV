@@ -813,3 +813,76 @@ stdlib-only rule.
 The fork's own wire-format tests run under ctest (`deploy.sh` runs them):
 `bench_ctl` is 98 checks covering the parser's nested-value trap, every
 refusal path, and truncation-instead-of-half-an-object.
+
+# S18 bite C1 — the bench page
+
+A control page on the Telemetry Pi that drives the bite-B socket. **Pi-side
+only**: no fork change, no `camera_svc.h`, no wire change, no bridge or HE
+firmware — the AE3 keeps running exactly the S19 artifacts, so there is no
+pin move, no ABI lockstep and no size audit in this bite.
+
+Layout and the feasibility model are carried from the mockup Nick approved
+on 2026-08-16 (`docs/mockups/s18_bench_mockup.html`). The mockup's
+*simulation* is not: no embedded reef photo, no synthetic scene, no
+client-side JPEG encoder, no simulated ledger. Every number on the page
+comes from `status`, and the live view is the frozen S3 server's own
+`/stream` — this server copies no frame bytes and never touches the
+single-producer ingest on `:8081`.
+
+Gallery, side-by-side compare and the RGB+luma histograms are **bite C2**.
+
+## Install and start (nereus001)
+
+```bash
+ssh pi@nereus001 'sudo ~/ADIN_SPI_OpenMV/pi/install_stream_service.sh bench-web'
+```
+
+```bash
+ssh pi@nereus001 'sudo systemctl start bench-web'
+```
+
+Then open **`http://nereus001:8090/`**. Installed disabled, like the BM
+nodes. It does *not* require `bm-telemetry`: with the socket absent the page
+header goes red and every command answers 503 saying which unit to start,
+which beats a unit that refuses to boot and leaves you with a browser error.
+
+## The click guard
+
+Until bite B2 lands, a sensor re-init arriving too soon after a capture
+throws `Sensor control failed.` and **wedges the camera until the bridge
+restarts** (SPEC §Open questions). The page holds its controls in two
+independent ways, and says which one is active:
+
+- **busy** — one camera command at a time. A capture holds until bite B's
+  save counter moves (`saved` or `errors`), because `mode_active` in the
+  camera reply is *last commanded*, not *currently busy* — it stays 1 after
+  a still completes. A frame that never arrives releases at 12 s, past the
+  save's own 8 s timeout.
+- **settle** — 8 s after a capture, **and only for a command that changes
+  resolution or pixel format**, because only a genuine delta re-inits the
+  sensor (bite A). QVGA→QVGA colour repeats are never held.
+
+**The server enforces it, the page only shows it** — a reload or a second
+tab cannot get past a guard that lives in JavaScript. `Stop` is never gated.
+
+8 s is 2 beyond the only passing measurement (≥6 s succeeded 3/3;
+sub-second failed 2/2). The required quiet time **scales with the previous
+frame's size and nothing has been measured at HD** — `--settle` is a knob,
+and bite B2's matrix is what should replace the constant.
+
+## Predictions are EXTRAPOLATED
+
+The fps/bandwidth model comes from **one** measured point (QVGA colour reef
+q50 = 15.00 fps in-bridge, S17 bite 0); everything off that mode is
+arithmetic. The page says so on every warning, in the constants panel and in
+the footer. Bite B2's 9-row matrix replaces it with measurement.
+
+## Host tests (no hardware, no Pi, no browser)
+
+```bash
+python3 pi/bench_web/test_bench_web.py
+```
+
+42 checks, most of them on the guard: the stale-`save.state` trap, the
+grace release, repeats-not-held, mode-change-held, stop-never-gated, and
+that a refused command never reaches the socket.
