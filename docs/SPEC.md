@@ -134,6 +134,110 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
+  bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
+  `capture 50 vga color` over the BM chain was accepted (`ok=1
+  res=vga pf=color`) and the board then died: `uart_l2: decode error`
+  on the Light node (garbage mid-transmission), neighbor offline 46 s
+  later, and the AE3 off the USB bus entirely (`device not accepting
+  address, error -71`, `unable to enumerate`). Recovered only by the
+  `ae3-usb-unstick` ladder (Pi reboot).
+  **Isolated by bisection on a clean REPL, same firmware, same session:**
+  (a) QVGA capture under the bridge — **works** (3 chunks published);
+  (b) VGA capture standalone, no HE stack — **works** (640×400,
+  10,833 B); (c) the runtime switch QVGA→VGA→QVGA standalone —
+  **works** (3,898 / 10,779 / 3,889 B, 4 MB heap free throughout).
+  Only VGA *with the HE stack loaded and the bridge pumping* fails, so
+  it is neither VGA itself nor the re-init/switch path.
+  **The fault is below MicroPython:** no Python traceback was raised
+  (the bridge's non-fatal sensor handler never ran) and
+  `bridge_crash.txt` has a `boot:` line with no matching exit record,
+  where every clean shutdown writes one. Same family as D15.
+  **ROOT CAUSE FOUND 2026-08-15 by two breadcrumb probes (each step
+  flushed to flash before the call it names, so the fault leaves a
+  record): GROWING the framebuffer while the HE core is loaded is
+  fatal. Shrinking is safe. VGA capture alongside a running HE stack is
+  completely fine.**
+  Probe 1 (`s18_vga_probe.py`, HE loaded → QVGA → grow to VGA): last
+  breadcrumb `set_framesize(VGA) ->`, board gone. Heap was **4,067,616
+  B free** against a 512,000 B VGA framebuffer and there was **no VCP
+  traffic at all** — so neither exhaustion nor bridge activity.
+  Probe 2 (`s18_order_probe.py`, VGA allocated FIRST, then HE loaded):
+  VGA capture pre-HE 10,957 B OK · HE load OK · **VGA capture WITH HE
+  up 10,935 B OK** · shrink to QVGA OK · QVGA capture 4,007 B OK ·
+  **grow back to VGA → dead**.
+  Mechanism (consistent with both runs, not yet confirmed against the
+  allocator source): the HE ELF loads at **0x60080000, the SRAM9_B
+  upper half** (bm_he MANIFEST `load_base`), and OpenMV's framebuffer
+  allocator grows into that region, destroying the running core. QVGA
+  (320×200×2 = 128,000 B) stays below the collision; VGA (512,000 B)
+  does not. Explains why S17 never hit it — QVGA only, framebuffer
+  never grew — and why S18's switching code hit it immediately.
+  **WORKAROUND FOUND + PROVEN 2026-08-15 (`s18_fb_probe.py`): pin
+  `sensor.set_framebuffers(1)` immediately BEFORE every
+  `set_framesize()`, and allocate the session's maximum resolution
+  BEFORE loading the HE ELF.** With that recipe the grow that killed
+  the board twice now succeeds repeatably: VGA pre-HE 11,331 B → HE
+  loaded → VGA-with-HE 11,423 B → shrink QVGA 3,965 B → **grow back to
+  VGA OK** 10,968 B → second shrink/grow cycle 3,950 / 10,978 B →
+  clean HE stop, board alive. Reading: OpenMV sizes the framebuffer
+  COUNT to fit the pool, so an unpinned shrink silently re-allocates
+  several buffers and the later grow has to expand the pool into
+  SRAM9_B; pinning the count to 1 stops the pool reflowing.
+  **HD PROVEN 2026-08-15 (`s18_hd_probe.py`) — the full ladder is
+  switchable in-session with the HE core live**, including pixel-format
+  swaps: HD-preHE 36,845 B → HE loaded → HD-with-HE 36,694 → VGA 11,233
+  → QVGA 4,080 → VGA 11,277 → **HD regrown 36,489** → HD-mono 25,131 →
+  HD-colour 36,544 → clean HE stop, board alive.
+  **THE RECIPE (bridge must follow exactly):**
+  1. `sensor.reset()`
+  2. `set_pixformat(RGB565)`
+  3. `set_framesize(QVGA)` — small, always safe
+  4. `set_framebuffers(1)` — pins the count; **cannot be called earlier**,
+     it raises "Pixel format is not supported or is not set" and then
+     "Frame size is not supported or is not set" until both exist (both
+     found live). QVGA-then-pin sidesteps the chicken-and-egg: an
+     unpinned `set_framesize(HD)` is the over-allocation to avoid.
+  5. `set_framesize(HD)` — claim the session CEILING before the HE loads
+  6. load the HE ELF
+  7. thereafter, per change: `set_pixformat` (if changing) →
+     `set_framebuffers(1)` → `set_framesize(<= ceiling)` → settle
+  **Still untested:** growing ABOVE the pre-HE ceiling. Every passing
+  run allocated the maximum before loading the HE, so the ceiling rule
+  stands as stated — do not assume a bridge that booted at QVGA can
+  reach HD.
+  **Watch item:** MicroPython heap drifted 3,893,968 → 3,755,904 B
+  across seven switches (~20 KB each) in one run. Not fatal here, and
+  the framebuffer itself is NOT on this heap (it stayed ~3.8 MB with HD
+  allocated), but a long web-tool session doing hundreds of switches
+  should be checked for a plateau.
+  Underlying allocator behaviour remains a candidate upstream OpenMV
+  report — it should refuse to grow into a loaded remoteproc image
+  rather than corrupting it. Pairs with D15.
+
+- **SECOND, INDEPENDENT HD LIMIT: the HE core's FreeRTOS heap cannot
+  carry an HD frame through pub/sub (measured 2026-08-15, S18 bite A
+  rehearsal).** With the framebuffer recipe above in place, HD capture
+  on the HP core works perfectly over the live chain — bridge ledger
+  `cap_frames=4 cap_bytes=54,232 cap_chunks=40`, i.e. the HD frame was
+  captured at ~36 KB and chunked into 26 payloads — but the HE debug
+  ring ends: `camera: cmd mode 1 -> bridge` ×4 then **`freertos: malloc
+  failed`**, after publishing only 8 of those 26 chunks (`pub_ok` 6→14).
+  The board stayed on the USB bus and the bridge quiet-exited cleanly,
+  so this is an ordinary resource exhaustion, not the allocator fault.
+  Note the S18 probes did NOT cover this: probe 4 exercised capture and
+  encode on the HP core and never published a frame over BM.
+  **Measured ladder as it now stands: QVGA and VGA work end to end
+  (640×400 / 11,030 B delivered to the browser, gaps=0); HD captures
+  but cannot be delivered.**
+  Untested candidate fixes, in rough order of cost: pace/backpressure
+  the WCMD_PUB chunk burst so bm_pub can drain (the bridge currently
+  emits a frame's chunks back-to-back with no flow control — 3 chunks
+  at QVGA and 8 at VGA drain fine, 26 does not); raise
+  configTOTAL_HEAP_SIZE on the HE (RAM, not the 16 KB flash headroom);
+  or accept HD stills at low q only. HD greyscale (~25 KB, ~18 chunks)
+  is likely to hit the same wall and was not reached.
+
 - ADIN1110 OA control-data protection (CONFIG0.PROTE, bit 5): measured
   2026-08-11 on hat #2 (straps opened to default) — chip comes up in OA
   mode with PROTE=0 and the bit does NOT accept a write (tried plain and

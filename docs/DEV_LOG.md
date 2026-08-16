@@ -17,6 +17,193 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-15 — Sprint S18 (camera bench web tool) — bite A: resolution + pixel format plumbed end to end; front end designed against a working mockup first
+
+**Branch:** `sprint/18-web-bench` (repo) + bm_sbc fork `feature/udp-transport`
+(bite-A commit local, NOT pushed — Nick pushes)
+
+**Done:**
+- Nibble-1 plan approved by Nick with 5 decision points: struct grows by
+  an appended pair (even sizes, one spare byte); out-of-range geometry
+  **REFUSED, not clamped** (deliberate break from payload_max's clamp —
+  a silently substituted resolution corrupts an image comparison
+  invisibly); switch only on a delta, never `sensor.reset()`;
+  `res_active`/`pf_active` reported in the reply's old `rsvd` u16 (zero
+  size change); CLI args positional.
+- **Front end mocked and reviewed BEFORE the ABI was cut** — which paid
+  for itself twice: reviewing the mockup is what surfaced HD greyscale
+  as a requirement, and that landed in the reserved byte instead of
+  forcing a second lockstep break.
+- Bite A (HE): `wire_capture_t` 12 → 14 B (+resolution +pixformat),
+  `camera_req_t` 16 → 18 B, `camera_rep_t` **stays 24 B** (rsvd u16 →
+  res_active/pf_active). Service validates geometry before the command
+  switch; refusal answers ok=0 without touching the mailbox, the command
+  counter, or the previously commanded geometry. Host tests 170 → 191.
+- Bite A (bridge): `WREP_CAPTURE` → `"<BBHIHHBB"`, len gate 12 → 14 (a
+  stale 12 B S17 body is now rejected outright, asserted by test — a
+  half-upgraded bench is a real state). New pure `sensor_steps()` plans
+  the sensor calls and returns **()** when geometry is unchanged: every
+  set_framesize/set_pixformat is a re-init = the D15 crash class, and
+  S18 hands that trigger to a web page. Host tests 61 → 73.
+- Bite A (fork): structs + static_asserts in lockstep, `capture [q]
+  [res] [pf]` / `stream <mbps> <fps> <secs> [q] [res] [pf]`, res/pf
+  echoed in CAM_REPLY with an explicit REFUSED hint. Unrecognised
+  spellings are passed through as out-of-range **on purpose** so the
+  service refuses them loudly rather than the CLI guessing.
+- **Size audit (REV-25): 246,096 / 262,144 = 93.88%, 16,048 B headroom
+  — bite A cost +64 B.** Clean build (S17 lesson: no header deps in the
+  bm_he Makefile, and this bite is all headers). ELF `4be541ae…`.
+
+**Broke/surprised us:**
+- **Two facts in DESIGN §S0 contradicted what I had already built.** The
+  sensor LETTERBOXES to 16:10 — QVGA is 320×200, not 320×240 — and
+  QQVGA/SVGA/WXGA are unsupported on sensor 0x7936, so Nick's "720"
+  does not exist; HD 1280×800 is the top of the proven ladder. The
+  mockup had generic 4:3 geometries until the tables were read properly.
+  Same pass caught that VGA+ needs `set_framebuffers(1)`, which the
+  first cut of `sensor_steps()` had omitted.
+- The mockup was **invisible to Nick for two rounds**: it displayed
+  every image through `data:` URIs into `<img>` tags, which the render
+  sandbox blocks, and the histograms are computed from those images —
+  so one cause blanked four features. The rebuild displays nothing
+  through a URL (Blob + `createImageBitmap`), paints synchronously
+  first and treats the JPEG decode as a refinement, so a decode that
+  never resolves degrades instead of blanking. Then the viewer turned
+  out not to run JS at all for files outside the project folder — the
+  preview pane says so and I missed it; it needs a real browser.
+
+**Nibble-3 addendum (same session, Claude drove the hardware at Nick's
+"run the checks"): ABI PROVEN LIVE, then VGA hard-faulted the board.**
+- Fork + repo branch pushed; `deploy.sh` **PASS on both Pis** at
+  ba594ec/eec6e82. En route: nereus000's bm_sbc checkout was detached at
+  c1d0df9 (the S17 trap again) and my `git checkout` landed on a stale
+  local branch at 4ebdbc3 — caught by deploy.sh's pin check, fixed with
+  an explicit ff-only pull. Stale S17 apps were still running on BOTH
+  Pis (nereus001 had two racing telemetry instances); stopped first.
+- Staged ELF + bridge, **on-board shas verified** against the Mac
+  (4be541ae…, 7a00a19…). Chain formed: Camera …03 ↔ Light …02 ↔
+  Telemetry …01.
+- **The S18 ABI works end to end over two BM hops:** `cam-status` →
+  `res=default pf=default`; `capture 50 qvga color` → `ok=1 res=qvga
+  pf=color`, 3 chunks / 3,871 B published. HE service, HP bridge and
+  fork app all agree on 18 B / 14 B.
+- **`capture 50 vga color` KILLED THE BOARD** — accepted, then
+  uart_l2 decode error, neighbor offline, AE3 off the USB bus
+  (error -71). Recovered via the `ae3-usb-unstick` ladder (Pi reboot;
+  uhubctl cannot help — the Pi 5 root hub never cuts VBUS).
+- **Bisected on a clean REPL: VGA standalone works (10,833 B), the
+  QVGA→VGA→QVGA runtime switch works, QVGA under the bridge works.
+  Only VGA WITH the HE stack live fails.** No Python traceback and no
+  bridge exit record → the fault is below MicroPython, D15 family.
+  Full evidence + candidate causes in SPEC §Open questions.
+- Fix shipped for the next attempt: the bridge no longer deletes its
+  trace at boot (`bridge_trace.prev.txt`). The first crash's trace was
+  destroyed by the bridge that restarted after it.
+- Board restored to the S6 fixture, sha-verified 55fa6ccf… . Bench apps
+  stopped on both Pis.
+
+**Honest note on my own reporting:** I first read a 320×200 JPEG off
+`:8080/frame.jpg` as proof the QVGA capture had landed. It was a STALE
+frame from the S17 session (`stats.json uptime_s=99594`,
+`ingest_connected=false`); no frame completed at the receiver this run
+(`frames_ok=0 gaps=2`, cause not isolated — the S17 startup race is the
+untested candidate). Caught and corrected in-session, but it is exactly
+the "trust artifacts, not exit codes" failure this repo warns about:
+the artifact was real, it just wasn't *this run's* artifact.
+
+**Probe results (Nick: "run the probe") — ROOT CAUSE FOUND.** Two
+breadcrumb probes, each flushing every step to flash BEFORE the call it
+names, so a fault that takes USB down still leaves the answer:
+- Probe 1 (HE loaded → QVGA → grow to VGA): died inside
+  `set_framesize(VGA)` with **4,067,616 B heap free** (VGA needs
+  512,000) and **zero VCP traffic**. Not exhaustion, not the bridge.
+- Probe 2 (VGA allocated FIRST, then load HE): VGA pre-HE 10,957 B ·
+  HE load OK · **VGA capture WITH HE up 10,935 B OK** · shrink to QVGA
+  OK · QVGA 4,007 B · **grow back to VGA → dead**.
+- **Verdict: growing the framebuffer with the HE core loaded is fatal;
+  shrinking is safe; VGA alongside a live HE stack is fine.** The HE
+  ELF loads at 0x60080000 (SRAM9_B upper half) and the framebuffer
+  allocator grows into it. QVGA (128,000 B) stays clear, VGA (512,000)
+  does not — which is exactly why S17 (QVGA only, never grew) never saw
+  this and bite A hit it on the first VGA command.
+- Cost: three `ae3-usb-unstick` Pi reboots. Board left healthy, fixture
+  re-verified 55fa6ccf…, sensor capturing 4,054 B.
+- Correction to my own earlier reasoning: I had guessed heap/DMA
+  contention. Both were wrong — the heap was 4 MB free and no traffic
+  was flowing. The breadcrumb file, not the hypothesis, produced the
+  answer.
+
+**Probe 3 (`s18_fb_probe.py`) — WORKAROUND PROVEN, switching restored.**
+Pinning `set_framebuffers(1)` immediately before every `set_framesize()`
+(with the session maximum allocated before the HE ELF loads) makes the
+grow that killed the board twice succeed repeatably: VGA pre-HE 11,331 B
+→ HE loaded → VGA-with-HE 11,423 B → shrink QVGA 3,965 B → **grow back
+to VGA OK** → second cycle 3,950 / 10,978 B → clean HE stop, board
+alive, no reboot needed. Reading: OpenMV sizes the framebuffer COUNT to
+fit the pool, so an unpinned shrink re-allocates several buffers and the
+next grow expands into SRAM9_B; pinning the count stops the reflow.
+Caveat recorded honestly: the passing run changed BOTH variables, so
+this proves the combination and not the minimal condition — and **HD
+(2,048,000 B, 4× VGA) is still untested**, which matters because the
+recipe depends on the maximum fitting below SRAM9_B.
+
+**Probe 4 (`s18_hd_probe.py`) — HD PASSES, full ladder switchable.**
+HD-preHE 36,845 B → HE loaded → HD-with-HE 36,694 → VGA 11,233 → QVGA
+4,080 → VGA 11,277 → **HD regrown 36,489** → HD-mono 25,131 → HD-colour
+36,544 → clean HE stop, board alive, no reboot needed. Pixel-format
+swaps at HD work too, which is what S18's HD-greyscale video needs.
+Two ordering constraints found live along the way (each cost a run, both
+clean exceptions rather than crashes): `set_framebuffers()` refuses
+until BOTH pixformat and framesize are set. Since an unpinned
+`set_framesize(HD)` is precisely the over-allocation to avoid, the
+bootstrap has to come up at QVGA, pin the count there, then grow to the
+ceiling. Full recipe now in SPEC §Open questions.
+Scene note: HD colour q50 measured 36.5–36.8 KB on the dim bench vs the
+93,253 B reef figure in DESIGN §S0 — scene-bound as expected, not a
+contradiction.
+
+**Recipe implemented + rehearsed (Nick approved option A).** CaptureEngine
+gained `bootstrap()` (eager, runs BEFORE `he.start()`: reset → RGB565 →
+QVGA → pin `set_framebuffers(1)` → grow to the HD ceiling), `sensor_steps()`
+now emits pixformat → framebuffers → framesize → settle with the count
+pinned immediately before every resize, and `_ensure_sensor` hard-refuses
+anything above the claimed ceiling. Ceiling configurable via
+`bridge_cfg.json` `"ceiling"`, default HD. Bridge host tests 73 → **252**
+(the new invariant is asserted across the whole res × pf ladder). HE
+untouched, so no rebuild and no size change.
+
+**Rehearsal on the live chain — QVGA and VGA PASS, HD hits a SECOND,
+unrelated wall:**
+- QVGA: `ok=1 res=qvga pf=color`, **frames_ok=2 gaps=0 ingest_ok=2**,
+  fresh 3,991 B frame at the browser. (The earlier `gaps=2` was the
+  known S17 startup race — a warm-up capture clears it.)
+- **VGA: `ok=1 res=vga pf=color`, 640×400 / 11,030 B delivered, gaps=0,
+  board alive.** This is the exact command that took the board off the
+  USB bus twice before the fix. The framebuffer fix holds.
+- HD: capture succeeded on the HP side — ledger `cap_frames=4
+  cap_bytes=54,232 cap_chunks=40` — but the HE ring ends `freertos:
+  malloc failed` after publishing 8 of 26 chunks. **The HE core's heap
+  cannot carry an HD frame through pub/sub.** Board stayed on the bus,
+  bridge quiet-exited cleanly; ordinary exhaustion, not the allocator
+  fault. My probes never covered this: probe 4 tested capture+encode on
+  HP and never published over BM.
+- Board restored to the S6 fixture, sha 55fa6ccf…, apps stopped.
+
+**Next:** Nick's call on HD. QVGA+VGA are demo-ready now. HD needs
+chunk pacing/backpressure (the bridge emits a frame's chunks
+back-to-back with no flow control — 3 drains fine, 8 fine, 26 does not),
+or a bigger HE heap, or HD-stills-at-low-q only. Detail + candidate
+fixes in SPEC §Open questions.
+
+**Superseded plan (kept for the record):** nibble 3 — Nick pushes the fork, then the geometry ladder in
+`pi/bm_bench/README.md` §S18 bite A (QVGA/VGA/HD stills, repeated
+format+resolution cycling as the D15 probe, a deliberate refusal, and
+HD-mono stream). **The numbers that matter: in-bridge fps at VGA and HD,
+which are currently EXTRAPOLATIONS from the single measured QVGA point
+(15.00 fps, S17 bite 0) and feed bite C's feasibility warnings.**
+
+---
+
 ## 2026-08-15 — Sprint S17 (BUILD-4) — application services: code complete across all four surfaces; bite-0 measurement + demos wait at the VCP gate
 
 **Branch:** `sprint/17-build4-apps` (repo) + bm_sbc fork

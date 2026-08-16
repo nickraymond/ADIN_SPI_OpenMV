@@ -18,6 +18,8 @@ static volatile bool s_pending_valid;
 static wire_capture_t s_pending;
 
 static volatile uint8_t s_mode_active;
+static volatile uint8_t s_res_active;   // last COMMANDED, not confirmed
+static volatile uint8_t s_pf_active;
 static volatile uint32_t s_cmds;
 static volatile uint32_t s_pub_ok;
 static volatile uint32_t s_pub_errs;
@@ -44,37 +46,50 @@ bool camera_svc_handle(const uint8_t *req_data, uint32_t req_len,
         req.payload_max = CAMERA_MAX_PAYLOAD;
     }
 
-    bool ok = true;
-    switch (req.cmd) {
-    case CAMERA_CMD_CAPTURE:
-    case CAMERA_CMD_STREAM: {
-        wire_capture_t cap = {
-            .mode = req.cmd == CAMERA_CMD_STREAM ? CAMERA_MODE_STREAM
-                                                 : CAMERA_MODE_SINGLE,
-            .quality = req.quality,
-            .fps_x10 = req.fps_x10,
-            .rate_bps = req.rate_bps,
-            .secs = req.secs,
-            .payload_max = req.payload_max,
-        };
-        s_pending = cap;
-        s_pending_valid = true;     // written AFTER the payload (reader
-                                    // copies then clears; last-wins)
-        s_mode_active = cap.mode;
-        break;
-    }
-    case CAMERA_CMD_STOP: {
-        wire_capture_t cap = {.mode = CAMERA_MODE_STOP};
-        s_pending = cap;
-        s_pending_valid = true;
-        s_mode_active = CAMERA_MODE_STOP;
-        break;
-    }
-    case CAMERA_CMD_STATUS:
-        break;                      // counters only
-    default:
-        ok = false;                 // answered, but not accepted
-        break;
+    // Refuse rather than substitute (see camera_svc.h): a resolution the
+    // operator did not ask for would silently invalidate an image-quality
+    // comparison. payload_max still clamps -- it is a transport ceiling,
+    // not something being compared.
+    bool ok = req.resolution <= CAMERA_RES_MAX && req.pixformat <= CAMERA_PF_MAX;
+
+    if (ok) {
+        switch (req.cmd) {
+        case CAMERA_CMD_CAPTURE:
+        case CAMERA_CMD_STREAM: {
+            wire_capture_t cap = {
+                .mode = req.cmd == CAMERA_CMD_STREAM ? CAMERA_MODE_STREAM
+                                                     : CAMERA_MODE_SINGLE,
+                .quality = req.quality,
+                .fps_x10 = req.fps_x10,
+                .rate_bps = req.rate_bps,
+                .secs = req.secs,
+                .payload_max = req.payload_max,
+                .resolution = req.resolution,
+                .pixformat = req.pixformat,
+            };
+            s_pending = cap;
+            s_pending_valid = true;     // written AFTER the payload (reader
+                                        // copies then clears; last-wins)
+            s_mode_active = cap.mode;
+            s_res_active = req.resolution;
+            s_pf_active = req.pixformat;
+            break;
+        }
+        case CAMERA_CMD_STOP: {
+            // Geometry is NOT reset: res/pf report the last commanded
+            // pair, which is still what the sensor is holding.
+            wire_capture_t cap = {.mode = CAMERA_MODE_STOP};
+            s_pending = cap;
+            s_pending_valid = true;
+            s_mode_active = CAMERA_MODE_STOP;
+            break;
+        }
+        case CAMERA_CMD_STATUS:
+            break;                      // counters only
+        default:
+            ok = false;                 // answered, but not accepted
+            break;
+        }
     }
     if (ok && req.cmd != CAMERA_CMD_STATUS) {
         s_cmds = s_cmds + 1;
@@ -82,6 +97,8 @@ bool camera_svc_handle(const uint8_t *req_data, uint32_t req_len,
 
     rep->ok = ok ? 1 : 0;
     rep->mode_active = s_mode_active;
+    rep->res_active = s_res_active;
+    rep->pf_active = s_pf_active;
     rep->cmds = s_cmds;
     rep->pub_ok = s_pub_ok;
     rep->pub_errs = s_pub_errs;

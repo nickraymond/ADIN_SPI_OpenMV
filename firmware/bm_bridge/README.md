@@ -88,6 +88,42 @@ AE3 HP core / CPython on Pi + host tests).
    `/flash/s14_crash.txt`. Read it FIRST when anything misbehaves.
 5. After `mpremote reset` the by-id symlink lingers, drops, reappears:
    wait for absent→present→3 s settle before opening the port.
+6. **NEVER grow the framebuffer after the HE ELF is loaded** (S18,
+   three board lock-ups). The HE loads at 0x60080000 (SRAM9_B upper
+   half) and OpenMV's allocator grows straight into it: the board
+   leaves the USB bus, no Python exception is raised, and only a Pi
+   reboot recovers it (`ae3-usb-unstick` — uhubctl cannot help, the
+   Pi 5 root hub never actually cuts VBUS). `CaptureEngine.bootstrap()`
+   claims the ceiling BEFORE `he.start()` for exactly this reason, and
+   `_ensure_sensor` refuses anything above it. If you are editing that
+   code, keep `set_framebuffers(1)` immediately before every
+   `set_framesize` — the pin is what stops the buffer pool reflowing.
+
+## S18 camera geometry — what works and what does not
+
+| mode | capture | publish over pub/sub |
+|---|---|---|
+| QVGA 320×200 colour/mono | ✅ | ✅ 3 chunks |
+| VGA 640×400 colour/mono | ✅ | ✅ 8 chunks, 11 KB delivered |
+| **HD 1280×800** | ✅ ~36 KB | ❌ **`freertos: malloc failed`** |
+
+HD capture is fine — the ceiling recipe handles it, and the HP-side
+ledger shows the frame captured and chunked (`cap_bytes=54,232`,
+26 chunks). What fails is the HE core publishing that burst: it dies
+after 8 of 26 chunks with `freertos: malloc failed` on its debug ring,
+and the camera service stops answering until the bridge restarts. The
+board stays on the bus; this is ordinary heap exhaustion, not the
+allocator fault above.
+
+Why it was not caught earlier: the S18 probes (`bench/probes/`)
+exercised capture and encode on the HP core and never published a frame
+over BM, so they cleared HD while the delivery half was still broken.
+**A probe that only covers half the path only clears half the path.**
+
+First thing to try (S19): the bridge emits a frame's chunks
+back-to-back with no flow control — 3 drains fine, 8 drains fine, 26
+does not. Pace or backpressure the `WCMD_PUB` burst before reaching for
+`configTOTAL_HEAP_SIZE` on the HE. Full evidence: SPEC §Open questions.
 
 ## Deploy (from the repo checkout, Mac)
 

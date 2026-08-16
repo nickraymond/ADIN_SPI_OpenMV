@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import uart_codec as uc            # noqa: E402
+import bm_bridge                   # noqa: E402
 from bm_bridge import (            # noqa: E402
     BridgeCore, MSG_PAYLOAD, MAX_L2, STATUS_FMT,
     WCMD_FRAME_TX, WCMD_FRAME_RX, WCMD_FRAG, WCMD_LINK, WCMD_LINK_UP,
@@ -19,6 +20,8 @@ from bm_bridge import (            # noqa: E402
     WREP_CAPTURE, CHUNK_HDR_FMT, CHUNK_HDR_LEN, CAMERA_MAX_PAYLOAD,
     CAP_DEFAULT_Q, CAP_DEFAULT_FPS_X10, CAP_DEFAULT_SECS,
     CAMERA_MODE_SINGLE, CAMERA_MODE_STREAM,
+    CAP_DEFAULT_RES, CAP_DEFAULT_PF, CAMERA_RES_HD, CAMERA_PF_MONO,
+    CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_PF_COLOR, sensor_steps,
 )
 
 checks = 0
@@ -196,29 +199,89 @@ core = BridgeCore()
 
 # WREP_CAPTURE: explicit values pass through; the reply produces no VCP
 # output; take_capture is fetch-and-clear.
-cap_body = struct.pack("<BBHIHH", CAMERA_MODE_STREAM, 60, 150, 2000000,
-                       600, 1000)
+cap_body = struct.pack("<BBHIHHBB", CAMERA_MODE_STREAM, 60, 150, 2000000,
+                       600, 1000, CAMERA_RES_HD, CAMERA_PF_MONO)
 out = core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) +
                   cap_body)
 check(out == [], "capture: no wire output")
 cmd = core.take_capture()
 check(cmd == {"mode": CAMERA_MODE_STREAM, "q": 60, "fps_x10": 150,
-              "rate_bps": 2000000, "secs": 600, "payload_max": 1000},
+              "rate_bps": 2000000, "secs": 600, "payload_max": 1000,
+              "res": CAMERA_RES_HD, "pf": CAMERA_PF_MONO},
       "capture: explicit fields pass through")
 check(core.take_capture() is None, "capture: fetch-and-clear")
 
 # Zeros -> bridge defaults; oversize payload_max clamped to REV-28.
-cap_body = struct.pack("<BBHIHH", CAMERA_MODE_SINGLE, 0, 0, 0, 0, 1500)
+cap_body = struct.pack("<BBHIHHBB", CAMERA_MODE_SINGLE, 0, 0, 0, 0, 1500, 0, 0)
 core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) + cap_body)
 cmd = core.take_capture()
 check(cmd["q"] == CAP_DEFAULT_Q and cmd["fps_x10"] == CAP_DEFAULT_FPS_X10
       and cmd["secs"] == CAP_DEFAULT_SECS, "capture: zeros -> defaults")
 check(cmd["rate_bps"] == 0, "capture: rate 0 stays 0 (fps-paced)")
 check(cmd["payload_max"] == CAMERA_MAX_PAYLOAD, "capture: pmax clamped")
+check(cmd["res"] == CAP_DEFAULT_RES and cmd["pf"] == CAP_DEFAULT_PF,
+      "capture: geometry zeros -> bridge defaults")
+
+# An S17-length (12 B) body must NOT be parsed as if geometry were there:
+# the ABI moved in lockstep, and a stale HE image is a real bench state.
+cap_body = struct.pack("<BBHIHH", CAMERA_MODE_SINGLE, 60, 100, 0, 60, 1000)
+core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, len(cap_body)) + cap_body)
+check(core.take_capture() is None, "capture: 12 B S17 body rejected")
 
 # Truncated capture msg ignored, no crash, nothing pending.
 core.he_msg(struct.pack("<BBH", WREP_CAPTURE, 0, 4) + b"\x01\x00\x00\x00")
 check(core.take_capture() is None, "capture: truncated body ignored")
+
+# ---- S18: sensor step planning -------------------------------------------
+# These assertions encode a hardware fact measured the expensive way
+# (bench/probes/, three board lock-ups): with the HE core loaded, the
+# framebuffer COUNT must be pinned immediately before every set_framesize,
+# or a grow expands the pool into SRAM9_B and the board leaves the USB bus
+# with no catchable error. Order here is not style -- it is the fix.
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_QVGA, CAMERA_PF_COLOR) == (),
+      "steps: unchanged geometry touches nothing")
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_COLOR)
+      == ("framebuffers", "framesize", "settle"), "steps: resolution only")
+check(sensor_steps(CAMERA_RES_HD, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_MONO)
+      == ("pixformat", "framebuffers", "framesize", "settle"),
+      "steps: pixformat change still re-applies framesize (realloc)")
+check(sensor_steps(CAMERA_RES_QVGA, CAMERA_PF_COLOR,
+                   CAMERA_RES_HD, CAMERA_PF_MONO)
+      == ("pixformat", "framebuffers", "framesize", "settle"),
+      "steps: both change, pixformat first")
+# The invariant that keeps the board alive, asserted over the whole ladder.
+for cr in (None, CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+    for wr in (CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+        for cp in (None, CAMERA_PF_COLOR, CAMERA_PF_MONO):
+            for wp in (CAMERA_PF_COLOR, CAMERA_PF_MONO):
+                st = sensor_steps(cr, cp, wr, wp)
+                if not st:
+                    continue
+                check(st.index("framebuffers") == st.index("framesize") - 1,
+                      "steps: count pinned immediately before every resize")
+                check(st[-1] == "settle", "steps: a change always settles")
+                if "pixformat" in st:
+                    check(st[0] == "pixformat", "steps: pixformat leads")
+
+# ---- S18: the ceiling guard ----------------------------------------------
+# Growing past the ceiling claimed before the HE loaded is unrecoverable,
+# so CaptureEngine must refuse it rather than ask the allocator.
+eng = bm_bridge.CaptureEngine(ceiling=CAMERA_RES_VGA)
+check(eng.ceiling == CAMERA_RES_VGA, "ceiling: honoured from constructor")
+check(not eng.booted and eng._ensure_sensor(CAMERA_RES_QVGA, CAMERA_PF_COLOR)
+      is False, "ceiling: no sensor work before bootstrap()")
+eng.booted = True                     # simulate a successful bootstrap
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_VGA, CAMERA_PF_COLOR
+check(eng._ensure_sensor(CAMERA_RES_HD, CAMERA_PF_COLOR) is False,
+      "ceiling: HD refused under a VGA ceiling")
+check(eng.cur_res == CAMERA_RES_VGA,
+      "ceiling: a refusal leaves the live geometry untouched")
+check(bm_bridge.CaptureEngine().ceiling == bm_bridge.CAP_DEFAULT_CEILING,
+      "ceiling: defaults to HD so the full ladder is offerable")
 
 
 def reassemble_pubs(msgs):

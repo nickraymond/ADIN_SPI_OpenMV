@@ -14,6 +14,15 @@
 // (apps/bench_apps) with sizeof static_asserts -- change them in
 // lockstep or not at all.
 //
+// S18 adds `resolution` and `pixformat` to the request. Out-of-range
+// values are REFUSED (ok = 0), not clamped -- unlike payload_max, which
+// clamps. Deliberate: this service now drives an image-quality
+// comparison bench, and silently substituting a resolution the operator
+// did not ask for corrupts a comparison invisibly. The reply's
+// res_active/pf_active report the last COMMANDED pair (same semantics as
+// mode_active); whether the sensor actually accepted them is the
+// bridge's business and shows up in its trace.
+//
 // Chunk header (inside each CAMERA_STREAM_TOPIC payload, 10 B, packed
 // LE, adapted from S6's BMV6 -- firmware/adin_drv/s6_video.py):
 //   frame_seq u32 | chunk_idx u16 | chunk_count u16 | payload_len u16
@@ -47,18 +56,21 @@ typedef struct {
     uint32_t rate_bps;    // payload-rate cap, 0 = fps-paced only
     uint16_t secs;        // stream duration, 0 = bridge default
     uint16_t payload_max; // chunk ceiling, 0 = CAMERA_MAX_PAYLOAD
-} __attribute__((packed)) camera_req_t;    // 16 B
+    uint8_t  resolution;  // CAMERA_RES_*, 0 = bridge default (S18)
+    uint8_t  pixformat;   // CAMERA_PF_*,  0 = bridge default (S18)
+} __attribute__((packed)) camera_req_t;    // 18 B
 
 typedef struct {
     uint32_t magic;       // CAMERA_REQ_MAGIC (echoed)
     uint8_t  ok;          // 1 = command accepted / status valid
     uint8_t  mode_active; // CAMERA_MODE_* currently commanded
-    uint16_t rsvd;        // 0
+    uint8_t  res_active;  // CAMERA_RES_* last COMMANDED (S18)
+    uint8_t  pf_active;   // CAMERA_PF_*  last COMMANDED (S18)
     uint32_t cmds;        // accepted commands since boot
     uint32_t pub_ok;      // stream chunks published (bm_pub BmOK)
     uint32_t pub_errs;    // failed/oversize publishes
     uint32_t pub_bytes;   // payload bytes published
-} __attribute__((packed)) camera_rep_t;    // 24 B
+} __attribute__((packed)) camera_rep_t;    // 24 B (rsvd u16 -> res/pf)
 
 // Register the service. Call after bm_service_init()/bm_pubsub_init().
 BmErr camera_svc_init(void);
