@@ -414,5 +414,163 @@ check(n == 26, "HD frame drains 26 times, once per chunk")
 check(bm_bridge.CHUNK_DRAIN_EVERY == 3,
       "default every matches the messages-per-chunk at 1400 B")
 
+# ---- S18 reef-matrix: ref-scene source -----------------------------------
+# Asset naming is a contract with demo_up.sh's staging arm and the S0
+# assets in bench/assets/ref_scene -- lock it with tests.
+from bm_bridge import (  # noqa: E402
+    ref_asset_names, CAMERA_RES_HD as _HD, CAMERA_MODE_STOP,
+)
+
+check(ref_asset_names(CAMERA_RES_QVGA, CAMERA_PF_COLOR) ==
+      ("ref_color_320x200.bmp", "ref_color_320x200.jpg"),
+      "ref assets: QVGA color = 320x200 BMP, JPEG fallback second")
+check(ref_asset_names(CAMERA_RES_VGA, CAMERA_PF_MONO) ==
+      ("ref_mono_640x400.pgm", "ref_mono_640x400.jpg"),
+      "ref assets: VGA mono = 640x400 PGM, JPEG fallback second")
+check(ref_asset_names(_HD, CAMERA_PF_COLOR)[0] == "ref_color_1280x800.bmp",
+      "ref assets: HD color geometry")
+
+# CaptureEngine in ref mode, against fake sensor/image/time modules.
+class _FakeTime:
+    _t = 1000
+    @classmethod
+    def ticks_ms(cls):
+        return cls._t
+    @classmethod
+    def ticks_us(cls):
+        return cls._t * 1000
+    @staticmethod
+    def ticks_diff(a, b):
+        return a - b
+    @staticmethod
+    def ticks_add(a, b):
+        return a + b
+    @staticmethod
+    def time():
+        return _FakeTime._t / 1000.0
+
+
+class _FakeJpeg:
+    def __init__(self, tag):
+        self._tag = tag
+    def bytearray(self):
+        return self._tag
+
+
+class _FakeImg:
+    def __init__(self, tag):
+        self.tag = tag
+    def to_jpeg(self, quality=50, copy=True):
+        return _FakeJpeg(b"jpeg-of-" + self.tag)
+
+
+class _FakeSensor:
+    RGB565 = GRAYSCALE = QVGA = VGA = HD = 0
+    @staticmethod
+    def snapshot():
+        return _FakeImg(b"live")
+    @staticmethod
+    def reset():
+        pass
+    @staticmethod
+    def set_pixformat(x):
+        pass
+    @staticmethod
+    def set_framesize(x):
+        pass
+    @staticmethod
+    def set_framebuffers(x):
+        pass
+    @staticmethod
+    def skip_frames(time=0):
+        pass
+
+
+class _FakeImageMod:
+    """image module whose Image() succeeds only for `available` names."""
+    loads = 0
+    available = ()
+    def Image(self, path):
+        _FakeImageMod.loads += 1
+        name = path.rsplit("/", 1)[-1]
+        if name not in _FakeImageMod.available:
+            raise OSError("no such file: %s" % path)
+        return _FakeImg(name.encode())
+
+
+_real_time = bm_bridge.time
+bm_bridge.time = _FakeTime
+sys.modules["sensor"] = _FakeSensor
+sys.modules["image"] = _FakeImageMod()
+
+_cmd = {"mode": CAMERA_MODE_SINGLE, "q": 50, "fps_x10": 100, "rate_bps": 0,
+        "secs": 60, "payload_max": CAMERA_MAX_PAYLOAD,
+        "res": CAMERA_RES_QVGA, "pf": CAMERA_PF_COLOR}
+
+# 1. sensor mode is untouched by the feature: poll encodes the snapshot.
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))
+check(eng.mode == CAMERA_MODE_SINGLE, "sensor mode: command accepted")
+check(eng.poll(0) == b"jpeg-of-live", "sensor mode: encodes the live scene")
+check(eng.enc_frames == 1, "encode accounting counts the frame")
+
+# 2. ref mode with no asset staged: command REFUSED, mode stays STOP.
+_FakeImageMod.available = ()
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))
+check(eng.mode == CAMERA_MODE_STOP, "ref mode: missing asset REFUSES")
+check(eng.poll(0) is None, "ref mode: refused command captures nothing")
+
+# 3. ref mode with the raw asset staged: poll encodes the REF image, and
+#    the discarded snapshot still happened (capture cost stays real).
+_FakeImageMod.available = ("ref_color_320x200.bmp",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))
+check(eng.mode == CAMERA_MODE_SINGLE, "ref mode: staged asset accepted")
+check(eng.poll(0) == b"jpeg-of-ref_color_320x200.bmp",
+      "ref mode: encodes the reference, not the live scene")
+
+# 4. JPEG fallback: raw missing, .jpg staged -> loads the .jpg.
+_FakeImageMod.available = ("ref_color_320x200.jpg",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))
+check(eng.poll(0) == b"jpeg-of-ref_color_320x200.jpg",
+      "ref mode: falls back to the staged JPEG")
+
+# 5. Same-mode repeat does NOT reload the asset; a (res,pf) change does.
+_FakeImageMod.available = ("ref_color_320x200.bmp", "ref_mono_320x200.pgm")
+_FakeImageMod.loads = 0
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))
+n_first = _FakeImageMod.loads
+eng.command(dict(_cmd))
+check(_FakeImageMod.loads == n_first,
+      "ref mode: repeat at the same (res,pf) reuses the loaded image")
+mono = dict(_cmd)
+mono["pf"] = CAMERA_PF_MONO
+eng.command(mono)
+check(_FakeImageMod.loads > n_first, "ref mode: pf change reloads")
+check(eng.ref_key == (CAMERA_RES_QVGA, CAMERA_PF_MONO),
+      "ref mode: loaded key tracks the commanded mode")
+
+del sys.modules["sensor"]
+del sys.modules["image"]
+bm_bridge.time = _real_time
+
 print("bm_bridge host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)

@@ -107,6 +107,16 @@ PF_NAME = {CAMERA_PF_COLOR: "RGB565", CAMERA_PF_MONO: "GRAYSCALE"}
 CFG_RES = {"qvga": CAMERA_RES_QVGA, "vga": CAMERA_RES_VGA, "hd": CAMERA_RES_HD}
 CFG_PF = {"color": CAMERA_PF_COLOR, "mono": CAMERA_PF_MONO,
           "grayscale": CAMERA_PF_MONO, "greyscale": CAMERA_PF_MONO}
+# S18 reef-matrix: scene source for the ENCODE path. "sensor" (default)
+# encodes what the camera sees; "ref" encodes the S0 reef reference for
+# the commanded (res, pf) instead -- the dark bench room compresses
+# ~2.6x too well (S0/S18 B2 measured), so throughput measured on it is
+# not representative of a deployment scene. In ref mode the sensor path
+# runs UNCHANGED -- bring-up, re-inits, PublishGate, and a discarded
+# sensor.snapshot() per frame -- so the B2 hazard, its gate, and the
+# capture cost all stay in the measured pipeline. Only the pixels handed
+# to the encoder are swapped.
+REF_SCENE_DIR = "/flash/ref_scene"
 STATUS_FMT = "<Q16s16sIIIIIIIIIIII"   # wire_status_t (88 B)
 STATUS_KEYS = ("node_id", "ip_ll", "ip_ucast", "stage", "err",
                "tx_frames", "rx_frames", "tx_oversize", "link_up",
@@ -568,6 +578,23 @@ def sensor_steps(cur_res, cur_pf, want_res, want_pf):
     return tuple(steps)
 
 
+def ref_asset_names(res, pf):
+    """Candidate ref-scene filenames for (res, pf), preference order.
+
+    Pure -- host-tested. Raw first (the S0 originals: 24-bit BMP /
+    binary PGM, byte-comparable to the S0 encode table), q95 JPEG
+    second (staged instead when /flash is tight; the decode-once
+    recompression bias is small but real, so the matrix output records
+    which set was loaded -- the bridge traces the filename).
+    """
+    w, h = RES_GEOM.get(res, (0, 0))
+    if pf == CAMERA_PF_MONO:
+        return ("ref_mono_%dx%d.pgm" % (w, h),
+                "ref_mono_%dx%d.jpg" % (w, h))
+    return ("ref_color_%dx%d.bmp" % (w, h),
+            "ref_color_%dx%d.jpg" % (w, h))
+
+
 class PublishGate:
     """Keeps a sensor re-init from overlapping an HE publish.
 
@@ -768,6 +795,14 @@ def _elapsed(t0, now):
         return now - t0
 
 
+def _ticks_us():
+    """ticks_us that also works in CPython host tests."""
+    try:
+        return time.ticks_us()
+    except AttributeError:
+        return int(time.time() * 1e6)
+
+
 class CaptureEngine:
     """Camera capture/encode for the S17 camera service (HP side).
 
@@ -791,11 +826,14 @@ class CaptureEngine:
     error. So the ceiling is claimed up front and enforced thereafter.
     """
 
-    def __init__(self, ceiling=None):
+    def __init__(self, ceiling=None, scene="sensor"):
         self.mode = CAMERA_MODE_STOP
         self.sensor_ok = None       # None = not tried yet
         self.booted = False         # bootstrap() ran and claimed a ceiling
         self.ceiling = ceiling or CAP_DEFAULT_CEILING
+        self.scene = scene          # "sensor" | "ref" (S18 reef matrix)
+        self.ref_img = None         # loaded reference image (ref mode)
+        self.ref_key = None         # (res, pf) the loaded image matches
         self.cur_res = None         # geometry the sensor is actually holding
         self.cur_pf = None          # (None = unknown -> next cmd re-applies)
         self.q = CAP_DEFAULT_Q
@@ -807,6 +845,8 @@ class CaptureEngine:
         self.slots = 0              # pacing slots consumed this stream
         self.caps = 0               # total frames captured (lifetime)
         self.sent_bytes = 0         # JPEG bytes this stream (rate cap)
+        self.enc_us = 0             # encode time this command (matrix column)
+        self.enc_frames = 0
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -938,6 +978,43 @@ class CaptureEngine:
             _trace("camera: sensor -> %dx%d %s (%s)"
                    % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
 
+    def _load_ref(self, res, pf):
+        """Load the reef reference for (res, pf); True when ready.
+
+        Loaded once per mode change, never per frame (HD color is a 2 MB
+        heap object; per-frame loads would dominate the very number the
+        matrix exists to measure). The previous image is freed FIRST:
+        heap headroom is ~3.8 MB and the load needs contiguous space, so
+        it only fits reliably with the old mode's image gone.
+
+        Failure REFUSES the command upstream. Never a silent fall-through
+        to the live scene -- dark-room bytes look plausible in a table
+        and would poison the matrix invisibly.
+        """
+        key = (res, pf)
+        if self.ref_key == key and self.ref_img is not None:
+            return True
+        import gc
+        self.ref_img = None
+        self.ref_key = None
+        gc.collect()
+        import image
+        for name in ref_asset_names(res, pf):
+            path = REF_SCENE_DIR + "/" + name
+            try:
+                t0 = time.ticks_ms()
+                self.ref_img = image.Image(path)
+                self.ref_key = key
+                free = gc.mem_free() if hasattr(gc, "mem_free") else -1
+                _trace("camera: ref scene %s loaded in %d ms (heap free %d)"
+                       % (name, _elapsed(t0, time.ticks_ms()), free))
+                return True
+            except Exception as e:
+                _trace("camera: ref scene %s not usable: %r" % (name, e))
+        _trace("camera: ref scene MISSING for res=%d pf=%d -- stage "
+               "/flash/ref_scene (demo_up.sh does it)" % (res, pf))
+        return False
+
     def command(self, cmd):
         if cmd["mode"] == CAMERA_MODE_STOP:
             if self.mode != CAMERA_MODE_STOP:
@@ -950,6 +1027,10 @@ class CaptureEngine:
         if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
+        if self.scene == "ref" and not self._load_ref(res, pf):
+            _trace("camera: cmd mode %d REFUSED -- no ref scene"
+                   % cmd["mode"])
+            return
         self.q = cmd["q"]
         self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
         self.rate_bps = cmd["rate_bps"]
@@ -959,6 +1040,8 @@ class CaptureEngine:
         self.until = time.ticks_add(self.t_start, cmd["secs"] * 1000)
         self.slots = 0
         self.sent_bytes = 0
+        self.enc_us = 0
+        self.enc_frames = 0
         w, h = RES_GEOM.get(res, (0, 0))
         _trace("camera: mode %d %dx%d %s q=%d %dms/frame rate=%d secs=%d pmax=%d"
                % (self.mode, w, h, PF_NAME.get(pf, "?"), self.q,
@@ -971,8 +1054,13 @@ class CaptureEngine:
             return None
         if self.mode == CAMERA_MODE_STREAM:
             if time.ticks_diff(self.until, now) <= 0:
-                _trace("camera: stream done (%d frames, %d B)"
-                       % (self.slots, self.sent_bytes))
+                # enc avg is the matrix's encode column, measured in the
+                # real pipeline -- one trace line per stream, not per
+                # frame (the trace file lives on flash).
+                _trace("camera: stream done (%d frames, %d B, enc avg "
+                       "%d us/frame)"
+                       % (self.slots, self.sent_bytes,
+                          self.enc_us // max(1, self.enc_frames)))
                 self.mode = CAMERA_MODE_STOP
                 return None
             el = time.ticks_diff(now, self.t_start)
@@ -981,14 +1069,23 @@ class CaptureEngine:
             if self.rate_bps and self.sent_bytes * 8000 > self.rate_bps * el:
                 return None          # over the byte budget, skip the slot
         import sensor
-        img = sensor.snapshot()
+        img = sensor.snapshot()      # ref mode still pays the capture cost
+        if self.scene == "ref":
+            if self.ref_img is None:
+                return None          # command() refused; belt and braces
+            img = self.ref_img
+        t0 = _ticks_us()
         jpg = img.to_jpeg(quality=self.q, copy=True)
+        self.enc_us += _elapsed(t0, _ticks_us())
+        self.enc_frames += 1
         b = jpg.bytearray()          # proven idiom (s6_video_tx.py)
         self.slots += 1
         self.caps += 1
         self.sent_bytes += len(b)
         if self.mode == CAMERA_MODE_SINGLE:
             self.mode = CAMERA_MODE_STOP
+            _trace("camera: single enc %d us, %d B, q=%d"
+                   % (self.enc_us, len(b), self.q))
         return b
 
 
@@ -999,7 +1096,8 @@ def main():
     cfg = _load_cfg()
     engine = CaptureEngine(
         ceiling=CFG_RES.get(str(cfg.get("ceiling", "hd")).lower(),
-                            CAP_DEFAULT_CEILING))
+                            CAP_DEFAULT_CEILING),
+        scene=str(cfg.get("scene", "sensor")).lower())
 
     # Keep ONE generation of the previous trace instead of deleting it.
     # Bench-earned (S18 bite A): a capture hard-faulted the board below
