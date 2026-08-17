@@ -216,6 +216,29 @@ pair, USB carrying no video.
   fits the size scaling and the ≥6 s heal. **Decisive next experiment:
   rung E — after the barrier, pump until the HE→HP side is silent for
   N ms, then re-init.** If that dies too, the fix is not bridge-side.
+  **RUNG E RUN (2026-08-16) — BOTH HYPOTHESES NOW FALSIFIED, AND THE
+  ORIGINAL WEDGE REPRODUCED OFF-CHAIN FOR THE FIRST TIME.** With the
+  gate open AND **zero** late messages AND 250 ms of measured rpmsg
+  silence, `set_framebuffers(1)` at ~270 ms after the publish **still
+  failed — but politely**: `RuntimeError('Sensor control failed.')`
+  after a **100,818 µs** attempt (I2C-timeout scale), board alive, probe
+  exited cleanly. Every later `set_framebuffers` this session failed in
+  **13 µs** (instant refusal, not an attempt) across 9 tries spanning
+  ~80 s of quiet — bite B's "wedged for the bridge's life," measured.
+  **The severity is a function of TIME SINCE THE PUBLISH, not of
+  traffic:** ~0–10 ms → board off the bus (rungs C, D); ~270 ms →
+  catchable RuntimeError + persistent wedge (rung E); ≥6 s on-chain →
+  success 3/3 (bite B). Some HE-publish-coupled state decays over
+  seconds and breaks sensor control from the HP side; it is **not
+  observable from the bridge** — both observable proxies (publish
+  drained; rpmsg quiet) are now measured insufficient. Root cause is
+  below MicroPython and remains open (candidate upstream report).
+  **Never tested, and now the two questions that decide the fix:**
+  (1) does `sensor.reset()` + re-bootstrap CLEAR the wedge (rung E
+  never attempted recovery — if yes, the bridge can catch and
+  self-heal); (2) where is the safe-delay boundary per frame size
+  (bite B's 2 s/6 s points are on-chain; no off-chain boundary has
+  been measured — it would replace the 8 s guess with a number).
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
