@@ -579,9 +579,11 @@ class PublishGate:
     bridge-only -- no ABI change, no HE rebuild, no fork pin move.
 
     Note the TRACKER's original suggestion -- gate on
-    wire_status_t.stream_sent -- does NOT work: that counter belongs to
-    the synthetic WCMD_STREAM publisher (main.c:361). The camera's pub_ok
-    lives in camera_rep_t and goes to the Pi, never to the bridge.
+    wire_status_t.stream_sent -- does NOT work for the camera path: that
+    counter belongs to the synthetic WCMD_STREAM publisher (main.c:361).
+    The camera's pub_ok lives in camera_rep_t and goes to the Pi, never
+    to the bridge. It IS the right signal for a different hazard -- the
+    third condition below.
 
     SECOND CONDITION. bm_pub returns when the L2 frame is enqueued, not
     when it is on the wire, so the reply alone can still leave transmit
@@ -591,6 +593,17 @@ class PublishGate:
     rather than hard-coded, so it survives an HE build whose idle heap
     differs, and a status that carries no heap_free simply does not gate
     on it.
+
+    THIRD CONDITION (nibble 2 self-review amendment). The barrier only
+    proves OUR chunks drained. The HE has a second publisher the bridge
+    never feeds: the synthetic WCMD_STREAM relay stream (main.c s_stream
+    task), which bm_pub's continuously for up to 600 s during the ledger
+    regression -- and a re-init overlapping THAT is the same measured
+    hazard. Its counters are stream_sent/stream_errs, so the gate opens
+    only when TWO consecutive replies carry identical stream counters. A
+    live stream advances them every sample and the command is refused at
+    the deadline (correct: there is no safe moment); an idle one costs
+    one extra query round trip, a few ms.
 
     NEVER OPENING IS NOT FATAL. Past `deadline_ms` the command is REFUSED
     -- which is exactly what the bridge already does for a sensor it
@@ -609,6 +622,8 @@ class PublishGate:
         self.barrier_seq = None     # status_seq that must advance
         self.t_wait = None          # when the held command started waiting
         self.t_query = 0            # when the barrier query went out
+        self.wait_counters = None   # (stream_sent, stream_errs), 1st sample
+        self.wait_seq = 0           # status_seq that sample was taken from
         self.heap_high = 0          # learned idle high-water of HE heap_free
         # Counters, traced at exit -- a gate that silently costs images is
         # worse than no gate.
@@ -658,14 +673,30 @@ class PublishGate:
             return GATE_REFUSE
         if self.barrier_seq is None:
             return GATE_QUERY
-        if status_seq > self.barrier_seq and self._heap_ok(status):
-            self.opens += 1
-            if waited > self.wait_ms_max:
-                self.wait_ms_max = waited
-            self._clear()
-            return GATE_GO
+        if status_seq > self.barrier_seq:
+            counters = self._stream_counters(status)
+            if self.wait_counters is None:
+                # First reply of this wait: proof OUR chunks drained, but
+                # one reply says nothing about the synthetic stream
+                # publisher. Sample its counters and ask once more.
+                self.wait_counters = counters
+                self.wait_seq = status_seq
+                return GATE_QUERY
+            if status_seq > self.wait_seq:
+                # A LATER reply than the sample -- comparing a reply with
+                # itself would wave a live stream through.
+                if counters == self.wait_counters and self._heap_ok(status):
+                    self.opens += 1
+                    if waited > self.wait_ms_max:
+                        self.wait_ms_max = waited
+                    self._clear()
+                    return GATE_GO
+                # Counters moved (stream live) or heap still low: this
+                # reply becomes the new sample and we keep watching.
+                self.wait_counters = counters
+                self.wait_seq = status_seq
         if _elapsed(self.t_query, now) >= self.requery_ms:
-            return GATE_QUERY       # reply lost, or the heap has not caught up
+            return GATE_QUERY       # reply lost, stream live, or heap low
         return GATE_WAIT
 
     def armed(self, status_seq, now):
@@ -680,6 +711,14 @@ class PublishGate:
     def _reset_wait(self):
         self.barrier_seq = None
         self.t_wait = None
+        self.wait_counters = None   # stability is proven per wait, never
+        self.wait_seq = 0           #   remembered across one
+
+    @staticmethod
+    def _stream_counters(status):
+        if not status:
+            return (0, 0)
+        return (status.get("stream_sent", 0), status.get("stream_errs", 0))
 
 
 def _elapsed(t0, now):

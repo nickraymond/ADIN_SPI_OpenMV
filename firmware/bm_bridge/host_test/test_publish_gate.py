@@ -67,10 +67,14 @@ g.armed(5, 1000)
 check(g.poll(1001, 5, status()) == GATE_WAIT,
       "same status_seq as when armed = the reply has NOT come back yet")
 check(g.poll(1002, 5, status()) == GATE_WAIT, "still waiting")
-check(g.poll(1003, 6, status()) == GATE_GO,
-      "status_seq advanced past the barrier -> the HE drained our chunks")
+check(g.poll(1003, 6, status()) == GATE_QUERY,
+      "reply arrived -> our chunks drained -> but ask ONCE MORE: one reply "
+      "cannot prove the synthetic stream publisher is idle")
+g.armed(6, 1003)
+check(g.poll(1004, 7, status()) == GATE_GO,
+      "second reply, stream counters unchanged -> the HE is idle -> open")
 check(g.opens == 1, "the open is counted")
-check(g.poll(1004, 6, status()) == GATE_GO, "and the gate stays open after")
+check(g.poll(1005, 7, status()) == GATE_GO, "and the gate stays open after")
 
 # A status that arrived BEFORE the query proves nothing.
 g = PublishGate()
@@ -102,25 +106,39 @@ check(g.heap_high == 20712, "a lower reading does not lower the high-water")
 g.note_chunks(9, 0)
 g.poll(0, 1, status(20712))
 g.armed(1, 0)
+check(g.poll(1, 2, status(20712)) == GATE_QUERY, "stability sample first")
 one_chunk_outstanding = 20712 - 1488
-check(g.poll(1, 2, status(one_chunk_outstanding)) != GATE_GO,
+check(g.poll(2, 3, status(one_chunk_outstanding)) != GATE_GO,
       "reply back but a 1,488 B transmit copy still held -> not yet safe")
-check(g.poll(1, 2, status(20712 - REINIT_HEAP_SLACK + 1)) == GATE_GO,
+check(g.poll(3, 4, status(20712 - REINIT_HEAP_SLACK + 1)) == GATE_GO,
       "heap within the slack of the high-water -> safe")
 
 g = PublishGate()
 g.note_chunks(9, 0)
 g.poll(0, 1, None)
 g.armed(1, 0)
-check(g.poll(1, 2, None) == GATE_GO,
-      "no status content to compare against -> the barrier alone opens it")
+check(g.poll(1, 2, None) == GATE_QUERY, "even with no content, sample first")
+check(g.poll(2, 3, None) == GATE_GO,
+      "no status content to compare against -> the barrier pair alone opens")
 
 g = PublishGate()
 g.note_chunks(9, 0)
 g.poll(0, 1, {"tx_frames": 3})      # a status carrying no heap_free
 g.armed(1, 0)
-check(g.poll(1, 2, {"tx_frames": 4}) == GATE_GO,
+g.poll(1, 2, {"tx_frames": 4})      # stability sample
+check(g.poll(2, 3, {"tx_frames": 5}) == GATE_GO,
       "a status without heap_free does not gate on heap")
+
+# The same reply polled twice must NOT satisfy the stability pair -- if
+# the barrier query could not be re-sent, comparing a reply with itself
+# would wave a live stream through.
+g = PublishGate()
+g.note_chunks(9, 0)
+g.poll(0, 1, status())
+g.armed(1, 0)
+check(g.poll(1, 2, status()) == GATE_QUERY, "first reply samples")
+check(g.poll(2, 2, status()) != GATE_GO,
+      "re-polling the SAME reply is not a second observation")
 
 
 # ---- re-query: a lost reply must not hang the gate ----------------------
@@ -152,9 +170,13 @@ check(g.refusals == 1, "the refusal is counted")
 check(g.poll(REINIT_DEADLINE_MS + 1, 1, status()) == GATE_QUERY,
       "after a refusal the NEXT command re-arms -- it is not waved through")
 g.armed(1, REINIT_DEADLINE_MS + 1)
-check(g.poll(REINIT_DEADLINE_MS + 2, 2, status()) == GATE_GO,
+check(g.poll(REINIT_DEADLINE_MS + 2, 2, status()) == GATE_QUERY,
+      "and needs a fresh stability pair -- the refused wait's samples died "
+      "with it")
+g.armed(2, REINIT_DEADLINE_MS + 2)
+check(g.poll(REINIT_DEADLINE_MS + 3, 3, status()) == GATE_GO,
       "and it can then open normally -- a refusal is not permanent")
-check(g.poll(REINIT_DEADLINE_MS + 3, 2, status()) == GATE_GO,
+check(g.poll(REINIT_DEADLINE_MS + 4, 3, status()) == GATE_GO,
       "once opened, the gate stays open until new chunks are sent")
 check(g.refusals == 1 and g.opens == 1,
       "the ledger separates refusals from opens")
@@ -174,8 +196,9 @@ g = PublishGate()
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
-g.poll(400, 2, status())
-check(g.wait_ms_max == 400, "the worst wait is recorded for the exit ledger")
+g.poll(400, 2, status())            # stability sample
+g.poll(401, 3, status())            # opens
+check(g.wait_ms_max == 401, "the worst wait is recorded for the exit ledger")
 
 
 # ---- needs_reinit: only a real delta pays the gate ----------------------
@@ -216,8 +239,75 @@ check(v == GATE_QUERY, "so it is gated, not applied: the barrier goes out")
 g.armed(4, 100)
 check(g.poll(101, 4, status(19000)) == GATE_WAIT,
       "at +1 ms -- where the board died -- the gate holds the command")
-check(g.poll(140, 5, status(20712)) == GATE_GO,
-      "once the HE answers and the heap is back, the re-init proceeds")
+check(g.poll(140, 5, status(20712)) == GATE_QUERY,
+      "the HE answered: our chunks drained; confirm the stream is idle")
+g.armed(5, 140)
+check(g.poll(145, 6, status(20712)) == GATE_GO,
+      "second matching reply, heap back -> the re-init proceeds")
+
+
+# ---- the synthetic stream publisher (the amendment) --------------------
+print("synthetic stream publisher:")
+# The HE's WCMD_STREAM relay stream publishes with NO bridge involvement,
+# so the barrier alone cannot see it. stream_sent/stream_errs advancing
+# between two replies is the tell.
+g = PublishGate()
+g.note_chunks(9, 0)
+g.poll(0, 1, status())
+g.armed(1, 0)
+s = status()
+s["stream_sent"] = 100
+check(g.poll(5, 2, s) == GATE_QUERY, "first reply samples the counters")
+s2 = status()
+s2["stream_sent"] = 180
+check(g.poll(300, 3, s2) != GATE_GO,
+      "stream_sent advanced between replies -> the synthetic publisher is "
+      "LIVE -> a re-init now is rung C -> hold")
+s3 = status()
+s3["stream_sent"] = 260
+s3["stream_errs"] = 1
+check(g.poll(600, 4, s3) != GATE_GO,
+      "stream_errs counts too -- a failing publisher is still a publisher")
+s4 = status()
+s4["stream_sent"] = 260
+s4["stream_errs"] = 1
+check(g.poll(900, 5, s4) == GATE_GO,
+      "two consecutive matching replies -> the stream went idle -> open")
+
+# A stream that never goes idle: the command is refused at the deadline,
+# never applied. There is no safe moment during a live stream to guess at.
+g = PublishGate()
+g.note_chunks(9, 0)
+g.poll(0, 1, status())
+g.armed(1, 0)
+n, seq, t, v = 100, 2, 5, None
+verdicts = set()
+while t < REINIT_DEADLINE_MS + 500:
+    s = status()
+    s["stream_sent"] = n
+    v = g.poll(t, seq, s)
+    verdicts.add(v)
+    if v == GATE_REFUSE:
+        break
+    n += 37
+    seq += 1
+    t += 137
+check(GATE_GO not in verdicts,
+      "a stream that never pauses NEVER lets a re-init through")
+check(v == GATE_REFUSE, "it is refused at the deadline instead")
+
+# Stability is proven per wait, never remembered across one.
+g = PublishGate()
+g.note_chunks(9, 0)
+g.poll(0, 1, status())
+g.armed(1, 0)
+g.poll(1, 2, status())
+check(g.poll(2, 3, status()) == GATE_GO, "first wait opens on its pair")
+g.note_chunks(9, 10)
+check(g.poll(10, 3, status()) == GATE_QUERY, "new chunks -> new barrier")
+g.armed(3, 10)
+check(g.poll(11, 4, status()) == GATE_QUERY,
+      "and a fresh stability pair -- the old samples are gone")
 
 
 # ---- a barrier query that could not be sent must not count -------------
