@@ -171,6 +171,35 @@ pair, USB carrying no video.
   `/flash/main.py` is the bridge launcher** — `mpremote run` enters the
   raw REPL via a soft reset, which runs main.py, which starts a bridge
   that then holds the VCP. Stage a neutral `main.py` first.
+  **ANSWERED 2026-08-16 (S18 bite B2 nibble 1, measured off-chain — no
+  Pi, no chain — in one board window; full record in DEV_LOG):** three
+  rungs, one ingredient added at a time.
+  - **Rung A, no HE core loaded: 12/12 PASS** (QVGA/VGA/HD ×
+    0/250/1000/4000 ms). Candidate (a) — the sensor's own frame pipeline
+    — is **REFUTED**, and with it the "required quiet time scales with
+    the previous frame's size" reading: a 0 ms re-init after a 35.7 KB HD
+    frame is fine when nothing else is running.
+  - **Rung B, HE core loaded but idle: 9/9 PASS**, core ticking, rpmsg
+    queue empty. A loaded core is not sufficient either.
+  - **Rung C, HE core loaded AND publishing: the board went off the USB
+    bus on the first measured re-init.** 4,051 B QVGA capture → its real
+    3-chunk WCMD_PUB burst (0 send timeouts) → `set_pixformat(GRAYSCALE)`
+    → `device not accepting address, error -71`, `unable to enumerate`.
+    **So the mechanism is the overlap of a sensor re-init with a publish
+    in flight** — candidate (b), narrowed.
+  **SEVERITY CORRECTION, and it changes the shape of the fix:** the fault
+  is not only the catchable `RuntimeError` above. With a publish in
+  flight the same trigger can kill the board outright, with **no Python
+  exception to catch** (the D15 class; recovery = `sudo reboot` on
+  nereus000 per `ae3-usb-unstick`). **A fix that catches and recovers is
+  therefore not sufficient — the overlap must be prevented.** The bridge
+  already parses `wire_status_t.stream_sent` and can gate on it.
+  Rate unknown: the board died on the first rung, so N=1 for the fatal
+  variant. **Until the fix lands, the bench page's 8 s settle guard is
+  safety equipment** — it is the only thing between a fast double-click
+  and a bench that needs a reboot.
+  Reproducer, off-chain and ~4 minutes, no Pi chain required:
+  `bench/probes/s18_reinit_probe{,_b,_c}.py`.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
