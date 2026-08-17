@@ -236,12 +236,17 @@ class Matrix:
     # -- plumbing ----------------------------------------------------------
     def _poll(self, seconds):
         """Sleep `seconds` in POLL_S steps, polling status as keep-alive.
-        Returns the last status."""
+
+        cam_status too: it crosses the CDC leg, which is what actually
+        keeps the bridge's quiet-exit timer fed (B2 ladder pattern) — a
+        local socket status never leaves the Pi. Returns the last status.
+        """
         end = self.clock() + seconds
         st = None
         while self.clock() < end:
             self.sleep(min(POLL_S, max(0.1, end - self.clock())))
             st = self.ctl.status()
+            self.ctl.cam_status()
         return st
 
     def _wait_quiet(self, mode_change):
@@ -258,6 +263,7 @@ class Matrix:
         while self.clock() - t0 < timeout_s:
             self.sleep(POLL_S)
             st = self.ctl.status()
+            self.ctl.cam_status()      # CDC-leg keep-alive (B2 pattern)
             saved, errors = counters(st)
             if saved > save0[0]:
                 return "saved", st
