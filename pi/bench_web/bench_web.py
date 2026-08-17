@@ -597,7 +597,7 @@ def main(argv=None):
     ap.add_argument("--captures",
                     default=os.environ.get("S18_CAPTURE_DIR", "~/bench_captures"),
                     help="bite B's capture directory (read-only; $S18_CAPTURE_DIR)")
-    ap.add_argument("--settle", type=float, default=8.0,
+    ap.add_argument("--settle", type=float, default=20.0,
                     help="seconds to hold a sensor re-init after a capture")
     args = ap.parse_args(argv)
 
