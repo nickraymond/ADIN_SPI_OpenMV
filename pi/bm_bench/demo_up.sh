@@ -65,6 +65,19 @@ missing = [f for f in need if f not in have]
 print("MISSING:" + ",".join(missing) if missing else "staged-files-ok")
 ' | grep -q "staged-files-ok" || fail "S17 files missing on /flash — run the README §S17 deploy first"
 
+# Preserve the previous session's bridge traces BEFORE anything else
+# touches the board: the launcher keeps exactly one prior generation,
+# and the next boot rotates it away. A crash you cannot read twice is a
+# crash you debug twice (DEV_LOG 2026-08-17 — the ledger that would
+# have confirmed the B2 mechanism was destroyed by exactly this).
+mkdir -p "$HOME/bridge_traces"
+STAMP=$(date +%Y%m%dT%H%M%S)
+for tf in bridge_trace.txt bridge_trace.prev.txt; do
+  mpremote connect "$P" cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
+    >/dev/null 2>&1 || true
+done
+echo "bridge traces preserved to ~/bridge_traces/${STAMP}_*"
+
 # S18: keep /flash's bridge code in step with the checkout (this is how
 # the 20 s REINIT_MIN_QUIET_MS build finally deploys — B2 left the 6 s
 # build on the board). sha16 compare, copy only on mismatch, re-verify.
