@@ -17,6 +17,44 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — bite B2 ladder run: VGA fails at 10 s and passes at 15 s → the constant is 20 s, flat, and HD stays flagged
+
+**Branch:** `sprint/18-reinit-race` @ `9666604`.
+
+**Done:**
+- **Recovery path that unblocked everything (Nick enabled the permission
+  and the insight):** Pi reboot → USB session teardown kills every stuck
+  port-holder + forces the bridge's quiet-exit → `demo_up.sh` on the
+  fresh bus wins the REPL race and its chip reset clears the stale HE.
+  ~2 min, replaces the 11-minute phase-1 waits. **Standing recovery from
+  now on.** (uhubctl stays measured-useless on the Pi 5 — no VBUS cut.)
+- **The ladder (liveness-gated, 2 s cam-status keep-alive so the C1
+  quiet-exit trap structurally cannot fire):** VGA source, dark
+  (~11 KB): **10 s FAIL** (re-init threw; the self-heal failed — 0/4
+  observed heal successes now — and latched the camera) · **15 s PASS**
+  (mono delivered 1.1 s after command). All HD rungs sat behind the
+  latch: **HD is unmeasured**.
+- **The constant (Nick: one flat delay for all):**
+  `REINIT_MIN_QUIET_MS = 20000` — safe side of the measured boundary.
+  Every measured point fits ~1.5 s/KB of published bytes, so 20 s is NOT
+  a daylight-HD certification; the reef-matrix session owes that number
+  and the comment at the constant says so. `bench_web` settle raised
+  8 → 20 s to match (server-enforced; JS mirror follows). All suites
+  green: bridge 419, bench_web 67.
+
+**Bench state:** chain up (bm-light + bm-telemetry + stream server
+active), AE3 camera LATCHED from the 10 s failure — next `demo_up.sh`
+clears it. **`/flash` still carries the 6 s bridge build `d558f7f5…`;
+the 20 s build deploys at the next chain session.** Launcher staged as
+`main.py` (fixture restore deferred to the next session's demo_up, the
+C2 precedent). 3 new sidecars (23 total saves).
+
+**Next:** nibble 4 — PR for bite B2 (fix + probes + ladder + constant).
+Then the reef-scene matrix (which also revisits this constant with
+daylight bytes), bite D2, S18 demo.
+
+---
+
 ## 2026-08-17 — Sprint S18 — bite B2 spacing ladder: BLOCKED on a physical replug; the port-race afternoon, recorded so it is never repeated
 
 **Branch:** `sprint/18-reinit-race`. No code change this stretch — ops only.

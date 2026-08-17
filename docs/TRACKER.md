@@ -742,6 +742,27 @@ the nodes are systemd units. Do the harness before the features.)*
       **The 9-row matrix and the first stream numbers are deferred behind
       the fix** (they need the chain and a healthy board; the hazard
       closes first). Remaining: nibble 2 (the fix + host tests) → 3 → 4.
+      → **NIBBLES 2–3 DONE 2026-08-17 (an honest, winding road — full
+      record in DEV_LOG).** The clever fixes died by experiment: rung D
+      (gate on "publish drained") opened exactly as designed and the
+      board died anyway; rung E (add measured rpmsg quiescence, zero
+      late messages) failed politely and reproduced bite B's wedge
+      off-chain. **The hazard is wall-clock time since the publish**,
+      scaling ~1.5 s/KB of published bytes across every measured point.
+      **Shipped fix (`PublishGate` + `REINIT_MIN_QUIET_MS = 20 s` flat,
+      Nick's call) + catch-and-self-heal** (0/4 observed successes — the
+      latch on failed heal is the allocator rule and stands). **Proven
+      on-chain:** the exact bite-B fast pair delivers both frames (mono
+      held 6.3 s under the earlier 6 s build, artifacts header-verified);
+      ladder: VGA-source 10 s FAIL / 15 s PASS (dark frames);
+      **HD unmeasured — the reef-matrix session owes it before anyone
+      lowers or trusts the constant for HD.** `bench_web` settle raised
+      to 20 s to match. Bridge tests 262→419; bench_web 67.
+      **New standing recovery (Nick):** camera stuck → reboot nereus000
+      (USB teardown + quiet-exit + demo_up chip reset ≈ 2 min); uhubctl
+      remains measured-useless on Pi 5. **`/flash` still carries the 6 s
+      build — the 20 s build deploys at the next chain session.**
+      Remaining: nibble 4 (PR), then the matrix + stream numbers.
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and
