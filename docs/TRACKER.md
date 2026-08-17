@@ -1047,6 +1047,52 @@ ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
 evidence stills ride the existing bridge→pub/sub path. Data collection
 for training can use the S18 tool + S17 pipeline.
 
+
+### S22 — HD-mono video feasibility: encoder decomposition bench  `[ ]`
+*(captured 2026-08-16 from the S18 bite C1 session's encoder investigation;
+ONE bite, S0-style measurement. **Sequenced: interleave AFTER S18 bite B2's
+matrix lands — never mid-B2**, because it flashes custom firmware and B2's
+measurements must not straddle a firmware change (one variable at a time).
+B2 first also gives the in-bridge HD-mono baseline this bite's number is
+read against.)*
+
+**Goal:** one number that decides whether HD greyscale video at 15 fps is a
+firmware project or a board change: the **DCT-vs-Huffman time split** inside
+the JPEG encoder at HD mono on the HP core.
+
+**Why this number is the whole question (measured/read facts, 2026-08-16
+session):** encode is a fixed per-pixel pump — measured 0.115–0.130 µs/px
+mono across a 16× size range (DESIGN §S0 reef table) → HD mono pure-encode
+ceiling **8.50 fps** (117.6 ms/frame); 15 fps needs 66.7 ms = **1.76×**.
+The encoder (`lib/imlib/jpege.c` @ `7d4dbf7a`, 1,393 lines) is **scalar C —
+zero MVE intrinsics** — while the AE3 build compiles with Helium enabled
+(`ports/alif/alif.mk:59`, `-march=armv8.1-m.main+fp+mve.fp`), so
+vectorization is real headroom; but Huffman/bitstream coding does not
+vectorize, and Amdahl caps the win at 1/(1−f) for vectorizable fraction f.
+**Decision rule: f ≥ ~43% or HD mono @15 fps is infeasible on the AE3 even
+with a perfect DCT** (and 30 fps needs f ≥ ~72% AND >3.5× on that fraction —
+state as near-impossible unless measured otherwise). Dual-core split is a
+NON-lever: HE is 160 MHz (he_spike, measured) vs HP, and full of BM stack.
+No hardware escape on this silicon: Alif E7 pack enumerates 213 peripherals,
+no JPEG/H264/VENC block; `OMV_JPEG_CODEC_ENABLE (0)` on AE3; VC8000 driver
+is N6-only; PAG7936 + Alif CPI both reject JPEG pixformat (all read from
+source, session record 2026-08-16).
+
+- [ ] Instrument `jpeg_processDU()` vs the rest of `jpeg_compress()` with
+      the DWT cycle counter (he_spike precedent) in a custom OpenMV build
+      (D23/D24 Mac docker); flash via the S7 headless ladder; measure on
+      the **reef reference scene** (S0 pipeline, P7071008) at HD mono +
+      HD colour + QVGA colour q50, ≥100 frames each → table: %DCT+quant,
+      %Huffman+bitstream, %MCU-fetch/other, per mode.
+      Verifiable: printed table + a verdict line applying the decision
+      rule above. **Restore dev `7d4dbf7ab2` after** (S7 verify ladder).
+- [ ] Record in DESIGN (§S22): table + verdict + decision entry — either
+      "scope a Helium DCT bite (ceiling X.X×)" or "HD-mono video joins the
+      N6/H.264 icebox cell; AE3 HD stays stills + ~2.5 fps in-bridge".
+**Demo (Nick):** the printed split table and its verdict line.
+**Needs:** S18 bite B2 done (baseline + bench free), Mac build env, S7
+flash loop. Zero chain dependency — standalone board bench.
+
 ---
 
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
