@@ -151,7 +151,13 @@ def ledger_delta(led0, led1, keys=("frames_ok", "dropped", "gaps",
 
 
 def cam_pub(status):
-    """(pub_ok, pub_bytes) from the camera reply carried in status."""
+    """(pub_ok, pub_bytes) from the camera reply carried in status.
+
+    NOTE the socket's cam-status verb is ASYNC — it acks immediately and
+    the reply lands in the NEXT status's cam_reply (measured live,
+    2026-08-17). So callers nudge with cam_status() and then read a
+    fresh status(); never parse the ack itself.
+    """
     cam = (status or {}).get("cam_reply") or {}
     return int(cam.get("pub_ok") or 0), int(cam.get("pub_bytes") or 0)
 
@@ -216,17 +222,25 @@ class Matrix:
     testable; production wiring is in main()."""
 
     def __init__(self, ctl, clock=time.monotonic, sleep=time.sleep,
-                 listdir=None, read_file=None, log=print):
+                 listdir=None, read_file=None, log=None):
         self.ctl = ctl
         self.clock = clock
         self.sleep = sleep
         self.listdir = listdir or (lambda: os.listdir(CAPTURE_DIR))
         self.read_file = read_file or self._read_file
-        self.log = log
+        self.log = log if log is not None else self._log
         self.rows = []
         self.cur_mode = None        # (res, pf) the sensor holds
         self.t_last_pub = None      # when the last frame finished arriving
         self.fail_streak = 0
+
+    @staticmethod
+    def _log(msg):
+        # Timestamped AND flushed: the first live run produced an empty
+        # log for 5 minutes (block-buffered print into a file — the S19
+        # stdout trap, driving-side edition) and the post-mortem had to
+        # be reconstructed from journals.
+        print("%s %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
     @staticmethod
     def _read_file(name):
@@ -271,6 +285,31 @@ class Matrix:
                 return "save-error", st
         return "timeout", None
 
+    def _quiesce(self, label, timeout_s=90.0):
+        """Refuse to start a row until the chain is provably idle.
+
+        THE fix for the first live run's failure mode: rows measured
+        against windows that overlapped a previous row's activity
+        (frames still flowing, a save landing late), which corrupted
+        three rows and stopped the run. stop is never gated, so send it,
+        then require frames_ok AND the save counters static across two
+        consecutive polls. Returns the settled status (the row's true
+        baseline) or None on timeout.
+        """
+        self.ctl.stop()
+        t0 = self.clock()
+        prev = None
+        while self.clock() - t0 < timeout_s:
+            self.sleep(POLL_S)
+            st = self.ctl.status()
+            self.ctl.cam_status()
+            now = (int(ledger_of(st).get("frames_ok") or 0), counters(st))
+            if prev is not None and now == prev:
+                return st
+            prev = now
+        self.log("  %s: chain never went quiet in %.0f s" % (label, timeout_s))
+        return None
+
     def _record(self, row):
         self.rows.append(row)
         if row.get("ok"):
@@ -280,9 +319,31 @@ class Matrix:
         self.log("  -> %s" % json.dumps(row))
 
     # -- rows --------------------------------------------------------------
+    def _find_capture(self, res, pf, q):
+        """Newest sidecar whose req matches the command. Scans a few
+        newest: the FIRST live run failed a row on someone else's save
+        (a stream tail frame) — matching by req makes that impossible."""
+        stems = sorted((n[:-5] for n in self.listdir()
+                        if n.startswith("cap_") and n.endswith(".json")),
+                       reverse=True)
+        for stem in stems[:5]:
+            try:
+                side = json.loads(self.read_file(stem + ".json"))
+            except (ValueError, OSError):
+                continue
+            req = side.get("req") or {}
+            if (req.get("q"), req.get("res"), req.get("pf")) == (q, res, pf):
+                return stem, side
+        return None, None
+
     def run_still(self, res, pf, q):
         self.log("STILL %s %s q%d" % (res, pf, q))
-        row = {"kind": "still", "res": res, "pf": pf, "q": q, "ok": False}
+        row = {"kind": "still", "res": res, "pf": pf, "q": q, "ok": False,
+               "t": self.clock()}
+        if self._quiesce("still") is None:
+            row["reason"] = "chain would not go quiet before the row"
+            self._record(row)
+            return row
         mode_change = (res, pf) != self.cur_mode
         self._wait_quiet(mode_change)
         save0 = counters(self.ctl.status())
@@ -296,9 +357,12 @@ class Matrix:
                              % verdict)
             self._record(row)
             return row
-        stem = newest_sidecar(self.listdir())
+        stem, side = self._find_capture(res, pf, q)
+        if stem is None:
+            row["reason"] = "a save landed but no sidecar matches the command"
+            self._record(row)
+            return row
         try:
-            side = json.loads(self.read_file(stem + ".json"))
             jpeg = self.read_file(stem + ".jpg")
             row.update(check_sidecar(side, jpeg, res, pf, q))
             row["ok"] = True
@@ -314,17 +378,29 @@ class Matrix:
         self.log("STREAM %s %s q%d %s" % (res, pf, q, opts))
         row = {"kind": "stream", "res": res, "pf": pf, "q": q,
                "cmd_fps": opts["fps"], "cmd_mbps": opts["mbps"],
-               "secs": opts["secs"], "tag": opts.get("tag", ""), "ok": False}
+               "secs": opts["secs"], "tag": opts.get("tag", ""), "ok": False,
+               "t": self.clock()}
+        st0 = self._quiesce("stream-start")
+        if st0 is None:
+            row["reason"] = "chain would not go quiet before the row"
+            self._record(row)
+            return row
         mode_change = (res, pf) != self.cur_mode
         self._wait_quiet(mode_change)
-        st0 = self.ctl.status()
-        led0, pub0 = ledger_of(st0), cam_pub(self.ctl.cam_status())
+        led0, pub0 = ledger_of(st0), cam_pub(st0)
         self.ctl.stream(mbps=opts["mbps"], fps=opts["fps"],
                         secs=opts["secs"], q=q, res=res, pf=pf)
         extra = QUIET_S if mode_change else 0    # gate holds the start
         self._poll(opts["secs"] + STREAM_SLACK_S + extra)
-        st1 = self.ctl.status()
-        led1, pub1 = ledger_of(st1), cam_pub(self.ctl.cam_status())
+        # End on a PROVEN-idle chain, so the delta contains exactly this
+        # stream — the first live run's windows overlapped rows and it
+        # cost three of them.
+        st1 = self._quiesce("stream-end")
+        if st1 is None:
+            row["reason"] = "stream never went quiet after its window"
+            self._record(row)
+            return row
+        led1, pub1 = ledger_of(st1), cam_pub(st1)
         d = ledger_delta(led0, led1)
         frames = d["frames_ok"]
         pub_bytes = pub1[1] - pub0[1]
@@ -346,11 +422,28 @@ class Matrix:
         return row
 
     def run_cert(self, res, pf, q):
-        """The 20 s constant vs daylight-HD bytes. Sent IMMEDIATELY after
-        the last stream: the bridge holds the re-init to its quiet window,
-        then applies it. Delivery afterwards is the certification."""
-        self.log("CERT: re-init at the gate window after the HD stream")
-        row = {"kind": "cert", "res": res, "pf": pf, "q": q, "ok": False}
+        """The 20 s constant vs daylight-HD bytes, self-contained.
+
+        Generate the hazard's exact shape on demand: one HD colour still
+        (the largest publish the bench can produce, ~93 KB reef) and
+        then IMMEDIATELY a mode-changing capture. The bridge holds the
+        re-init to its quiet window measured from that publish; whether
+        anything delivers afterwards is the certification. Self-timed so
+        it does not depend on the previous row's schedule (the first
+        live run proved rows must not share windows).
+        """
+        self.log("CERT: HD publish, then a mode change at the gate window")
+        row = {"kind": "cert", "res": res, "pf": pf, "q": q, "ok": False,
+               "t": self.clock()}
+        if self._quiesce("cert") is None:
+            row["reason"] = "chain would not go quiet before the rung"
+            self._record(row)
+            return row
+        hd = self.run_still("hd", "color", 50)      # the hot publish
+        if not hd.get("ok"):
+            row["reason"] = "could not produce the HD source publish"
+            self._record(row)
+            return row
         t0 = self.clock()
         led0 = ledger_of(self.ctl.status())
         # No save-based verdict here: the fork's save arm times out at
@@ -359,6 +452,7 @@ class Matrix:
         while self.clock() - t0 < CERT_TIMEOUT_S:
             self.sleep(POLL_S)
             st = self.ctl.status()
+            self.ctl.cam_status()
             if ledger_delta(led0, ledger_of(st))["frames_ok"] > 0:
                 row["latency_s"] = self.clock() - t0
                 break
@@ -393,7 +487,8 @@ class Matrix:
                 break
             if kind == "still":
                 row = self.run_still(res, pf, q)
-                if not first_still_checked and row.get("ok"):
+                if not first_still_checked and row.get("ok") \
+                        and (res, pf, q) == ("qvga", "color", 50):
                     first_still_checked = True
                     if not (REEF_BYTES_MIN <= row["bytes"] <= REEF_BYTES_MAX):
                         raise SystemExit(

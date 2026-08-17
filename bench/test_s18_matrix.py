@@ -123,6 +123,7 @@ class FakeNode:
         self.deliver_bytes = 9198
         self.deliver_chunks = 7
         self.dead = False           # a latched sensor: nothing delivers
+        self.die_after_deliveries = None   # latch AFTER N more deliveries
         self.stream_fps = 15.0
         self._pending = None        # (t_due, res, pf, q)
         self._stream = None         # (t_end, fps, res, pf, q)
@@ -156,6 +157,7 @@ class FakeNode:
 
     def _deliver_still(self, res, pf, q):
         self.seq += 1
+        self._last_mode = (res, pf)
         w, h = M.RES_GEOM[res]
         jpeg = make_jpeg(w, h, M.PF_COMPONENTS[pf], size=self.deliver_bytes)
         stem = "cap_20260817T%06dZ_seq%06d" % (self.seq, self.seq)
@@ -168,6 +170,10 @@ class FakeNode:
         self.saved += 1
         self.frames_ok += 1
         self.pub_bytes += len(jpeg)
+        if self.die_after_deliveries is not None:
+            self.die_after_deliveries -= 1
+            if self.die_after_deliveries <= 0:
+                self.dead = True
 
     # BenchCtl surface
     def status(self):
@@ -184,10 +190,17 @@ class FakeNode:
     def capture(self, q=None, res=None, pf=None, save=None):
         if not self.dead:
             delay = self.deliver_after
-            if self.deliver_after_once is not None:
+            # the once-override models the gate hold: it applies to the
+            # next MODE-CHANGING capture (a re-init), not to same-mode
+            # repeats like the cert rung's HD source publish
+            if self.deliver_after_once is not None and \
+                    (res, pf) != getattr(self, "_last_mode", None):
                 delay = self.deliver_after_once
                 self.deliver_after_once = None
             self._pending = (self.t + delay, res, pf, q)
+        return {"ok": True}
+
+    def stop(self):
         return {"ok": True}
 
     def stream(self, mbps=None, fps=None, secs=None, q=None, res=None,
@@ -257,20 +270,26 @@ check(abs(row["fps"] - 12.0) <= 1.5,
       % row["fps"])
 check(row["mbps"] > 0, "stream Mbps computed from pub_bytes")
 
-# cert rung: pass path (frame delivers after the held re-init; the
-# confirm still afterwards is a normal fast same-mode capture)
+# cert rung: pass path. The rung makes its own HD publish (same-mode,
+# fast), then the mode-changing capture pays the modeled 21 s gate hold.
 node = FakeNode()
-node.deliver_after_once = 21.0     # the gate hold, once
+node._last_mode = ("hd", "color")
+node.deliver_after_once = 21.0     # the gate hold, on the next re-init
 m = make_matrix(node)
-m.t_last_pub = node.t
+m.cur_mode = ("hd", "color")
 row = m.run_cert("qvga", "color", 50)
 check(row["ok"] and row["latency_s"] >= 20.0,
       "cert PASS: delivery after the hold, confirm still good")
+check(any(r["kind"] == "still" and r["res"] == "hd" for r in m.rows),
+      "cert produced its own HD source publish")
 
-# cert rung: latch path
+# cert rung: latch path — the HD source delivers, then the re-init kills
+# the camera (the measured hazard shape)
 node = FakeNode()
-node.dead = True
+node._last_mode = ("hd", "color")
+node.die_after_deliveries = 1
 m = make_matrix(node)
+m.cur_mode = ("hd", "color")
 row = m.run_cert("qvga", "color", 50)
 check(not row["ok"] and "NOT enough" in row["reason"],
       "cert FAIL names the finding and the recovery")
