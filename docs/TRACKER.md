@@ -768,9 +768,26 @@ the nodes are systemd units. Do the harness before the features.)*
       to 20 s to match. Bridge tests 262→419; bench_web 67.
       **New standing recovery (Nick):** camera stuck → reboot nereus000
       (USB teardown + quiet-exit + demo_up chip reset ≈ 2 min); uhubctl
-      remains measured-useless on Pi 5. **`/flash` still carries the 6 s
-      build — the 20 s build deploys at the next chain session.**
-      Remaining: nibble 4 (PR), then the matrix + stream numbers.
+      remains measured-useless on Pi 5.
+      → **SUPERSEDED THE SAME DAY, AND DEMO PASSED BY NICK.** The 20 s
+      window was falsified live (a QVGA→grey click killed the board with
+      the 20 s build verified running): **the hazard is PROBABILISTIC —
+      no delay closes it** (SPEC corrected). The shipped fix is
+      **RESET-ON-CHANGE (Nick's design)**: a res/pf change persists the
+      full command, hard-resets the board, boots into the new mode
+      pre-publish (the only 100%-measured-safe re-init window), and
+      auto-resumes the command once the link reforms; a udev rule
+      (`99-bm-ae3.rules`, try-restart, D33-safe) relinks bm-light.
+      **Measured through the page's own endpoints and passed by Nick:
+      one click → ~9 s → a SAVED frame in the new mode; streams at
+      commanded fps.** The PublishGate remains as cfg fallback
+      (`{"reinit":"gate"}`) and the fast-click guard. Bridge build
+      `a18808f0…` deployed + byte-verified. Board tests: gate suite 101,
+      bridge total 442, bench_web 67, units +5.
+      Remaining in the bite: PR #33 review + merge (Nick, carries the
+      whole branch). Remaining in the sprint from B2's scope: the
+      reef-scene matrix + first stream numbers (page still labeled
+      EXTRAPOLATED), then D2.
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and

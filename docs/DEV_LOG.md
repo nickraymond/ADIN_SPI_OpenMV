@@ -17,6 +17,57 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — reset-on-change SHIPPED and PASSED BY NICK: one click, ~9 s, a saved frame in the new mode
+
+**Branch:** `sprint/18-reinit-race` (stacks on PR #33). **DEMO PASSED BY
+NICK on the live bench page.**
+
+**The arc of the day, compressed:** the 20 s quiet-window fix was
+falsified live (Nick's QVGA→grey click killed the board with the 20 s
+build verified running → SPEC corrected: the hazard is probabilistic, no
+delay closes it). Nick asked the right question — why not reboot the AE3
+per mode change — and the two-unknown measurement said viable. v1
+shipped, and Nick's demo found it felt dead: the triggering click was
+DROPPED by design and only a command clears the banner. My acceptance
+script had masked it by knowing to click twice — and I had verified the
+page *served*, not the page *path*. Both mistakes owned and fixed.
+
+**v2 (`a18808f0…`, deployed + byte-verified): auto-resume.** The mode
+change persists the full command (validated field-by-field; one-shot,
+deleted BEFORE execution so a crash cannot loop it); the fresh boot
+applies the standing mode pre-publish, and once the link reforms the
+original command executes itself.
+
+**Verified through the page's own HTTP endpoints** (`POST /api/capture`
+/ `/api/stream` — the route clicks take), then **passed by Nick live**:
+- capture colour → frame delivered → saved;
+- **mode change → reset cycle → auto-resumed frame at t=9 s, SOF
+  320×200×1, `save.state=saved`** — under the save deadline, so one
+  click = one saved gallery still in the new mode;
+- stream at 10.0 fps ledger (commanded 10) → clean stop.
+
+**Also today:** the udev relink rule (`99-bm-ae3.rules`, try-restart,
+D33-safe) installed via the light-role installer arm; `bench_web`
+argparse settle default fixed (the second definition site — found by
+Nick seeing 8 s); the Pi-reboot recovery became the standing procedure
+(~2 min); Tailscale/GitHub auth outage survived via the bench cross-
+cable diagnosis. Gate suite 90 → **101**; units +5; all suites green.
+
+**Known cosmetic:** the banner can linger after a mode change until the
+next click refreshes `cam_reply` — stale text, not a dead camera; filed
+for the page's next touch.
+
+**Bench state:** chain LIVE (bridge `a18808f0`, standing mode qvga mono,
+stream server + telemetry + bench-web up) — left up for Nick. Launcher
+staged as `main.py`; fixture restore rides the next demo_up cycle as
+always.
+
+**Next:** Nick reviews + merges PR #33 (carries the whole bite). Then
+the reef-scene matrix + stream numbers (retires the page's EXTRAPOLATED
+labels), bite D2, S18 demo.
+
+---
+
 ## 2026-08-17 — Sprint S18 — reset-on-change measured VIABLE (Nick's idea): the board self-boots into the bridge after machine.reset(); bm-light needs a udev restart trigger
 
 **Branch:** `sprint/18-reinit-race`. Two measurements, both pre-registered
