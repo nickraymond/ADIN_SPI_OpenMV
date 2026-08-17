@@ -17,6 +17,360 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — bite B2 ladder run: VGA fails at 10 s and passes at 15 s → the constant is 20 s, flat, and HD stays flagged
+
+**Branch:** `sprint/18-reinit-race` @ `9666604`.
+
+**Done:**
+- **Recovery path that unblocked everything (Nick enabled the permission
+  and the insight):** Pi reboot → USB session teardown kills every stuck
+  port-holder + forces the bridge's quiet-exit → `demo_up.sh` on the
+  fresh bus wins the REPL race and its chip reset clears the stale HE.
+  ~2 min, replaces the 11-minute phase-1 waits. **Standing recovery from
+  now on.** (uhubctl stays measured-useless on the Pi 5 — no VBUS cut.)
+- **The ladder (liveness-gated, 2 s cam-status keep-alive so the C1
+  quiet-exit trap structurally cannot fire):** VGA source, dark
+  (~11 KB): **10 s FAIL** (re-init threw; the self-heal failed — 0/4
+  observed heal successes now — and latched the camera) · **15 s PASS**
+  (mono delivered 1.1 s after command). All HD rungs sat behind the
+  latch: **HD is unmeasured**.
+- **The constant (Nick: one flat delay for all):**
+  `REINIT_MIN_QUIET_MS = 20000` — safe side of the measured boundary.
+  Every measured point fits ~1.5 s/KB of published bytes, so 20 s is NOT
+  a daylight-HD certification; the reef-matrix session owes that number
+  and the comment at the constant says so. `bench_web` settle raised
+  8 → 20 s to match (server-enforced; JS mirror follows). All suites
+  green: bridge 419, bench_web 67.
+
+**Bench state:** chain up (bm-light + bm-telemetry + stream server
+active), AE3 camera LATCHED from the 10 s failure — next `demo_up.sh`
+clears it. **`/flash` still carries the 6 s bridge build `d558f7f5…`;
+the 20 s build deploys at the next chain session.** Launcher staged as
+`main.py` (fixture restore deferred to the next session's demo_up, the
+C2 precedent). 3 new sidecars (23 total saves).
+
+**Next:** nibble 4 — PR for bite B2 (fix + probes + ladder + constant).
+Then the reef-scene matrix (which also revisits this constant with
+daylight bytes), bite D2, S18 demo.
+
+---
+
+## 2026-08-17 — Sprint S18 — bite B2 spacing ladder: BLOCKED on a physical replug; the port-race afternoon, recorded so it is never repeated
+
+**Branch:** `sprint/18-reinit-race`. No code change this stretch — ops only.
+
+**What was attempted:** the 6-rung spacing ladder (VGA/HD × 15/10/8 s)
+that sets the final `REINIT_MIN_QUIET_MS`. It never measured a rung.
+
+**The chain of events, honestly:**
+1. After the rehearsal's teardown, every `mpremote` attach to the
+   launcher-staged board lost the interrupt race: attach bytes → the
+   phase-1 bridge takes them as link-up → raw-REPL entry fails → the
+   port close DTR-resets the board → a FRESH bridge boots. Five
+   consecutive losses (2 demo_up + 3 spaced cycles). The
+   previously-reliable "wait 40 s, run again" remedy assumes the race is
+   winnable; tonight it wasn't, and each attempt reset the clock.
+2. The 11-minute phase-1-timeout wait + `resume` attach ALSO failed —
+   the attach itself still feeds a byte to whatever boots.
+3. `bm-light`-as-the-attacher DID bring the chain up (neighbor added),
+   but the ladder's first camera command left the gap the C1 rule warns
+   about (~60 s of journal-checking) and the bridge quiet-exited;
+   all 6 rungs ran against a dead leg (`state: timeout`, HE stale-lying).
+4. The hardened retry (liveness-gated ladder, 2 s cam-status keep-alive,
+   `systemctl restart bm-light` as the port-kicker) got `active` but the
+   camera never answered within 75 s. **The board is in a state only a
+   physical replug clears** — the Pi 5 never cuts VBUS, so no
+   software path can power-cycle the AE3.
+
+**Standing lessons written into the next attempt (already scripted):**
+- The ladder script now pings the camera every 2 s from t=0 — liveness
+  gate AND keep-alive, so the quiet-exit trap structurally cannot fire.
+- Fresh-board bring-up order: replug → `demo_up.sh` (mpremote wins on a
+  fresh REPL) → `bm-light` → ladder within seconds.
+- The JTAG/SWD question (Nick raised it): every hour tonight was a
+  USB-port-ownership problem a debug probe does not have. Not filed as
+  a task yet — Nick's call.
+
+**Bench state:** AE3 enumerated but camera-dead pending replug; launcher
+staged as `main.py`; fixed bridge `d558f7f5…` verified on `/flash`.
+`bm-light` active (streaming at a dead leg — harmless), `bm-telemetry` +
+stream server active. 37 sidecars on nereus001, incl. the rehearsal's
+proof pair.
+
+**Next:** physical replug → `demo_up.sh` → the one-shot ladder → set the
+constant → PR. Then the reef-reference matrix (Nick's call: dark-room
+throughput numbers are not representative; use the S0/S17 ref-scene
+machinery), bite D2, S18 demo.
+
+---
+
+## 2026-08-17 — Sprint S18 — bite B2 on-chain rehearsal: the headline case is FIXED and demonstrated; 6 s is NOT enough after a VGA frame
+
+**Branch:** `sprint/18-reinit-race`. Fixed bridge `d558f7f5…` (56,420 B)
+deployed to `/flash` and proved by on-board sha256; chain brought up via
+`demo_up.sh` + systemd units; all commands through bite B's control
+socket with 1 Hz timestamped status polling.
+
+**THE WIN — bite B's exact failure sequence, fixed and timed:**
+- Baseline `capture 50 qvga color`: delivered + saved in ~1 s.
+- **The fast pair** (colour, then mono 0.7 s later — the previously
+  fatal click): colour saved at t=1.7, **mono HELD by the gate and
+  saved at t=7.0 — exactly 6.3 s after the colour publish**. No error,
+  no wedge. Both artifacts verified against their own JPEG headers:
+  320×200×3 / 1,873 B and 320×200×**1** / 1,089 B.
+  Before this fix, that sequence wedged the camera for the bridge's
+  life 2/2.
+
+**THE NEW FACT — the size scaling is real, on-chain:** the VGA pair
+(VGA colour, then mono 0.7 s later) delivered the VGA frame and then
+**nothing ever delivered again** — not the held mono (~6.5 s after the
+VGA publish), not a 4-command burst, not a final QVGA capture — while
+the HE answered `ok=1, cmds` advancing throughout (the known lie) and
+the chain stayed healthy (link up, relay pumping, board on the bus).
+**Deduced mechanism, tight even without the trace:** the barrier
+provably works on-chain (the QVGA pair used it and delivered), so
+deadline-refusals cannot explain a *permanent* stop; the only branch
+that latches everything off is **the VGA→mono re-init throwing at
+~6.5 s — over the 6 s window — followed by the self-heal failing, whose
+bootstrap failure latches the camera off for the session** (the
+allocator rule, working as designed). So: 6 s is enough after a QVGA
+frame and NOT enough after a VGA frame; bite B's "scales with frame
+size" stands, now with an on-chain fail point at 6.5 s.
+
+**Ops errors, mine, recorded:** the bridge trace held the confirming
+ledger and I destroyed it. The first read (mpremote `resume`, no
+soft-reset — the right tool) WAS working but slow, and I killed it;
+the port close DTR-reset the board, which booted a fresh bridge, whose
+launcher rotation consumed the one preserved generation. Two further
+attempts hit `could not enter raw repl` (each attach boots another
+bridge) — stopped at three per `ae3-board-access`. Lessons: (1) tail
+the file, never line-filter on-board; (2) never kill a slow mpremote —
+the close is itself port contact; (3) a future `demo_up.sh` should copy
+`bridge_trace.prev.txt` off the board while it has the REPL, so the
+ledger survives the next session's boot.
+
+**Bench state:** AE3 on the bus, launcher staged as `main.py` (fixture
+deliberately NOT restored — the next session is another chain session
+and `demo_up.sh` re-stages anyway; same call as C2 made). `bm-light`
+stopped; `bm-telemetry` + stream server left ACTIVE as found.
+`~/bench_captures` now 37 sidecars (5 new, incl. the proof pair).
+
+**Next (the bite's remaining measurement, needs one chain session):**
+the spaced on-chain ladder — VGA and HD source frames × re-init at
+8/10/15 s — to set the final `REINIT_MIN_QUIET_MS` (likely per-size),
+with the deadline riding it automatically. That ladder IS the start of
+B2's 9-row matrix. Also carried out of the rehearsal: the self-heal
+never being observed to succeed argues for prevention-first sizing, and
+`bench_web`'s 8 s settle is NOT proven for VGA/HD re-inits — do not
+relax it yet.
+
+---
+
+## 2026-08-16 — Sprint S18 — bite B2 rungs E–F + the fix: the hazard is a CLOCK, and the shipped guard is a measured 6 s + self-heal
+
+**Branch:** `sprint/18-reinit-race`. Bridge-only throughout, as scoped.
+
+**Done:**
+- **Rung E falsified the second hypothesis too**: gate open, **zero**
+  late messages, 250 ms of measured rpmsg silence — and the re-init
+  still failed at ~270 ms after the publish. But *politely*
+  (`RuntimeError`, 100,818 µs attempt), and it **reproduced the bite B
+  wedge off-chain for the first time**: every later `set_framebuffers`
+  failed in 13 µs across ~80 s. Board survived; no reboot.
+- **Rung F: the ~250 ms failure is STOCHASTIC** — the deliberate
+  provocation at rung E's exact point PASSED, so Q1 (does reset clear
+  the wedge?) stays open. The boundary sweep passed **10/10** (QVGA+HD ×
+  0.5/1/2/4/6 s, incl. 45-msg HD frames). Combined with bite B's
+  on-chain points (2 s failed once, 6 s passed 3/3), the off-chain bench
+  is the EASIER environment — the binding number must come from the
+  chain.
+- **The shipped fix (Nick approved the shape):**
+  `REINIT_MIN_QUIET_MS = 6000` — wall clock since the last publish,
+  measured from `note_chunks`, so a human-pace command pays only the
+  barrier (~ms) and only a fast follow-up actually waits. The barrier /
+  heap / stream-counter conditions stay (cheap, and they guard what the
+  clock cannot see); deadline now 11 s. Plus **catch-and-self-heal** in
+  `_ensure_sensor`: on `Sensor control failed.`, reset + re-bootstrap +
+  one retry, outcome traced — unproven (rung F could not provoke the
+  wedge to test it) but strictly no worse than today's permanent wedge,
+  and every occurrence adds a data point.
+- Host tests: PublishGate 60 → **78**; bridge suite total 419, all green.
+
+**The honest arc, for the record:** bite B said "a fixed delay is the
+wrong shape of fix" and nibble 2 v1 believed it. Rungs C–F falsified
+both clever alternatives ("publish drained", "rpmsg quiet") by
+experiment, at the cost of two Pi reboots — and a *measured* delay is
+the only shape left standing. The difference from where bite B started:
+the number now has evidence on both sides, a severity map, a 4-minute
+reproducer, and a self-heal path. Root cause below MicroPython stays
+open — candidate upstream report alongside D15.
+
+**Bench state:** board on the bus, S6 fixture as `main.py` (verified),
+`/flash/bm_bridge.py` = the nibble-2 build `a1615f21…` — **stale, does
+not carry this fix**; the on-chain rehearsal re-deploys. Probe logs
+`reinit_probe{,_b,_c,_d,_e,_f}.txt` on `/flash`. Both units inactive;
+`bm-light` was found ACTIVE at session start and left stopped.
+
+**Next:** nibble 3 on the chain — re-run bite B's trial matrix against
+the fixed bridge (doubles as the start of B2's 9-row matrix), then the
+matrix itself + stream numbers, then bite D2.
+
+---
+
+## 2026-08-16 — Sprint S18 — bite B2 nibbles 2–3: the gate FAILED acceptance — "publish drained" is not the safe condition
+
+**Branch:** `sprint/18-reinit-race` @ `545af73` (+ this entry). Bridge-only
+as scoped; no fork change, no HE rebuild.
+
+**Done:**
+- **Nibble 2 shipped `PublishGate`** in `firmware/bm_bridge/bm_bridge.py`:
+  hold a re-init until (1) a WCMD_QUERY posted after the frame's last chunk
+  is answered (the vring is in-order, so the reply proves the HE consumed
+  and bm_pub'd every chunk), (2) `heap_free` back within 1,024 B of a
+  learned high-water (transmit copies cost 1,488 B each), (3) two
+  consecutive replies with identical `stream_sent/stream_errs` (the
+  synthetic WCMD_STREAM publisher, which the barrier cannot see). Refuse at
+  5 s rather than guess. Host tests 262 → 322, all green.
+- **Nibble 3 ran the acceptance probe (rung D)** — the real `BridgeCore` +
+  `PublishGate` + `send_chunk_msgs` against a live publishing HE, on the
+  ladder rung C died on. Deploy verified by on-board sha256
+  (`a1615f21…`, 53,089 B, byte-identical).
+
+**THE RESULT — the fix does not work, and the acceptance test is what
+caught it.** First rung: 1,939 B QVGA capture → 5 rpmsg msgs published in
+4 ms → **gate GO after 4 ms (3 polls, status_seq=2, heap_high=20,576 —
+every condition satisfied, exactly as designed)** → `meas pixformat` OK →
+**`meas framebuffers` → board off the USB bus** (`error -71`, `unable to
+enumerate`). One sensor call FURTHER than ungated rung C. The gate's logic
+is fine; **its premise is falsified**: barrier + heap + stream-counters is
+not the safe condition.
+
+**What the four rungs now say together (A safe / B safe / C fatal / D
+fatal-through-the-gate):** the discriminator between rung B and C/D is not
+"publishing in flight" — it is **rpmsg traffic**. Rung B exchanged zero
+rpmsg after the announce (its status reads used `machine.mem32`, not the
+wire). In C/D, published frames flow back HE→HP as WCMD_FRAME_TX; the
+barrier reply can overtake that tail (the reply is a direct send, the
+frames drain through `wire_pump_tx` incrementally), and rung D stopped
+pumping the moment the gate opened. **Leading hypothesis: an HE→HP rpmsg
+arrival — MHU doorbell + MicroPython endpoint callback — landing during
+the framebuffer calls is what kills the board.** It explains bite B's
+size scaling (bigger frame → longer drain tail → longer hazard window),
+why ≥6 s always healed it, and why rung B's totally-quiet core was safe.
+Also honest: the heap condition was vacuous on first use — `heap_high`
+was learned from the two post-publish replies themselves, so the
+comparison passed trivially.
+
+**Bench state:** AE3 **off the USB bus** (second time this session; same
+D15-class signature). Recovery = `sudo reboot` on nereus000, handed to
+Nick. `/flash` carries the updated bridge (`a1615f21…`), the S6 fixture as
+`main.py`, and `reinit_probe_d.txt` with breadcrumbs to the death. Both
+systemd units inactive.
+
+**Next (needs Nick's gate — the nibble-2 plan has substantially changed):**
+rung E, the quiescence experiment: after the barrier, keep pumping until
+the HE→HP side has been **silent for N ms**, then re-init. If that
+survives the ladder, RX-quiescence becomes the gate's final condition
+(~30 LoC in the bridge, still bridge-only). If it dies too, the fix does
+not live in the bridge and the bite needs re-scoping.
+
+---
+
+## 2026-08-16 — Sprint S18 — bite B2 nibble 1: the re-init race needs the HE **publishing**, and at that moment it can take the whole board off the USB bus
+
+**Branch:** `sprint/18-reinit-race`, cut from `main` @ `ba2f4c6`. Off-chain
+measurement only — **no Pi chain, no fork change, no HE rebuild, no ABI
+change**, and no code shipped yet.
+
+**Done — three rungs, one variable added at a time (S0 discipline):**
+
+| rung | camera | HE core | publishing | result |
+|---|---|---|---|---|
+| A | ✓ | — | — | **12/12 PASS** |
+| B | ✓ | loaded, idle | — | **9/9 PASS** |
+| C | ✓ | loaded | ✓ | **board off the USB bus on the first measured re-init** |
+
+- **Probe v2 rewritten before it ever ran.** v1 (written in bite B, never
+  executed) would have produced ambiguous rows: each rung's *setup* re-init
+  fired zero-delay after the previous rung's capture and sat inside the same
+  `try`, so a setup failure was indistinguishable from the failure being
+  measured. v2 isolates rungs behind 8 s of known-good idle, times and
+  tries every sensor call separately (so the record names the call that
+  throws), bisects the boundary per source-frame size, and runs a recovery
+  ladder after every failure.
+- **Rung A (`s18_reinit_probe.py`) refutes the sensor hypothesis.** QVGA,
+  VGA and HD, delays 0/250/1000/4000 ms: **12/12 PASS**, including a 0 ms
+  re-init after a 35.7 KB HD frame. **Bite B's "the quiet time scales with
+  the previous frame's size" does not survive** — HD at zero delay is fine
+  with no HE loaded.
+- **Rung B (`s18_reinit_probe_b.py`) refutes "a loaded core is enough".**
+  Identical ladder with `bm_he.elf` loaded and nothing driving it: **9/9
+  PASS**, HE ticking 2,082 → 171,667, rpmsg queue 0 throughout, core stopped
+  cleanly.
+- **Rung C (`s18_reinit_probe_c.py`) found it, and found it worse than
+  advertised.** Same ladder plus the frame's real WCMD_PUB chunk burst
+  (framing copied from `s19_pub_probe.py`, drained per chunk like the fixed
+  S19 bite-2 bridge). Sequence on the record: 4,051 B QVGA capture →
+  3 chunks / 9 msgs / 4 ms / **0 send timeouts** → `delay 0` → last
+  breadcrumb **`meas pixformat`** (i.e. `set_pixformat(GRAYSCALE)`) → gone.
+  `OSError: [Errno 5]` at the host, then the D15/S18 dmesg signature
+  (`device not accepting address, error -71`, `unable to enumerate`).
+- **ONE board window, and it discharged the standing restore.** Fixture
+  staged and proved by an **on-board sha256** (`55fa6ccf…`, 5,581 B —
+  hashing on the board sidesteps the `mpremote cat` CRLF trap entirely),
+  then re-proved after the recovery reboot, with **no HE core loaded**.
+  Six `mpremote` ops before the crash, every one first-try, ≥60 s of zero
+  port contact between each, no retry loops.
+
+**Broke/surprised us:**
+- **THE SEVERITY IS HIGHER THAN BITE B RECORDED.** Bite B saw a catchable
+  `RuntimeError('Sensor control failed.')` that wedged the sensor for the
+  bridge's life. With a publish in flight the same trigger can take the
+  **whole board off the USB bus with no Python exception at all** — the
+  D15 class, recovered only by `sudo reboot` on nereus000. **So the fix
+  cannot be "catch it and recover": there is nothing to catch. It must
+  prevent the overlap.** N=1 for the fatal variant — the board died on the
+  first rung, so this session has no rate, only a mechanism.
+- **The bench page's 8 s settle guard is safety equipment, not politeness.**
+  It is currently the only thing between a fast double-click and a bench
+  that needs a reboot. Do not shorten it before the fix lands; B2 should
+  say so where the constant is defined.
+- **The recovery reboot was blocked for the agent** (harness classifier);
+  Nick issued it. Recovery was exactly as `ae3-usb-unstick` documents.
+- **`bm-light` was ACTIVE on nereus000 when the session started**, holding
+  the CDC leg. Not recorded anywhere; stopped before the window and left
+  stopped.
+
+**Numbers worth keeping (bench scene, dark room, q50):**
+- Encode: QVGA 17.9 ms · VGA 70.3 ms · HD 278.8 ms — **within 7–10% of the
+  reef-derived figures the bench page already uses**, so that half of `MEAS`
+  is corroborated on current firmware. Bytes (3.9 / 11.0 / 35.7 KB) run
+  ~2.6× under the reef anchor, as a dark room should.
+- **Snapshot alone: 16.6 / 33.3 / 66.6 ms = hard 60 / 30 / 15 fps readout
+  ceilings**, which the page's feasibility model does not include. Immaterial
+  at HD (encode dominates), real at QVGA.
+- A real re-init costs **~415–437 ms**, of which **300 ms is our own
+  deliberate `skip_frames` settle** — i.e. the 8 s guard is ~20× the
+  sensor's actual cost, and is reclaimable *after* the fix, measured.
+- MicroPython heap drifted **4,078,384 → 3,791,472 B over ~36 re-inits**
+  (~8 KB each), matching the S18 watch item. Still not fatal; still unbounded.
+
+**Bench state:** AE3 on the bus, `/flash/main.py` = the **S6 fixture**
+(verified on-board after the reboot), **no HE core loaded**, `bm-light` and
+`bm-telemetry` inactive on nereus000. Probe logs left on `/flash`
+(`reinit_probe.txt`, `reinit_probe_b.txt`, `reinit_probe_c.txt`).
+
+**Next:** **bite B2 nibble 2 — the fix, in `firmware/bm_bridge/bm_bridge.py`
+only.** Do not touch the sensor until the previous frame has finished
+publishing; the bridge already parses `wire_status_t.stream_sent`.
+**Acceptance is rung C surviving the ladder it just died on** — an off-chain,
+~4-minute harness that needs no Pi chain, which is the most useful thing this
+nibble produced after the mechanism itself. The 9-row matrix and the first
+stream numbers are deferred behind the fix: they are a measurement errand,
+and right now there is a path from a double-click to a Pi reboot.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite C2: the gallery lists sidecars, the histograms read pixels, and a dead camera node can no longer be quiet
 
 **Branch:** `sprint/18-bench-gallery`, cut from `main` @ `db82181` (PR #31

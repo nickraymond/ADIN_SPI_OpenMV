@@ -229,12 +229,16 @@ class BenchGate:
       QVGA→QVGA colour repeats are never held; the transition that can wedge
       the bench is.
 
-    Measured basis for ``settle`` (SPEC §Open questions, S18 bite B): a
-    sub-second gap fails 2/2, **≥6 s succeeds 3/3**, and a 2 s gap survived
-    three re-inits then failed on the one following a VGA frame. The default
-    is 8 s — two beyond the only passing measurement. The required quiet time
-    **scales with the previous frame's size and nothing has been measured at
-    HD**; S18 bite B2 owes the matrix that replaces this constant.
+    Measured basis for ``settle`` (SPEC §Open questions; S18 bite B2
+    on-chain ladder 2026-08-17): the required quiet time scales with the
+    previous frame's published bytes (~1.5 s/KB fits every measured
+    point). QVGA-source re-inits pass at 6.3 s; **VGA-source fails at
+    10 s and passes at 15 s** (dark frames — daylight is ~2.6× bigger);
+    HD is UNMEASURED. The default is 20 s — the safe side of the
+    measured VGA boundary, matching the bridge's own
+    ``REINIT_MIN_QUIET_MS`` gate underneath (bm_bridge.py). The
+    reef-scene matrix session owes the daylight/HD numbers before this
+    constant is lowered.
 
     ``stop`` is never gated. It is the escape hatch, and a bench tool whose
     stop button can be greyed out is worse than no stop button.
@@ -244,7 +248,7 @@ class BenchGate:
     # so a capture whose frame never arrives cannot hold the gate for ever.
     CAPTURE_GRACE = 12.0
 
-    def __init__(self, settle: float = 8.0, clock=time.monotonic):
+    def __init__(self, settle: float = 20.0, clock=time.monotonic):
         self.settle = float(settle)
         self._clock = clock
         self.mode = "idle"  # idle | capture | stream

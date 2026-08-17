@@ -171,6 +171,97 @@ pair, USB carrying no video.
   `/flash/main.py` is the bridge launcher** — `mpremote run` enters the
   raw REPL via a soft reset, which runs main.py, which starts a bridge
   that then holds the VCP. Stage a neutral `main.py` first.
+  **ANSWERED 2026-08-16 (S18 bite B2 nibble 1, measured off-chain — no
+  Pi, no chain — in one board window; full record in DEV_LOG):** three
+  rungs, one ingredient added at a time.
+  - **Rung A, no HE core loaded: 12/12 PASS** (QVGA/VGA/HD ×
+    0/250/1000/4000 ms). Candidate (a) — the sensor's own frame pipeline
+    — is **REFUTED**, and with it the "required quiet time scales with
+    the previous frame's size" reading: a 0 ms re-init after a 35.7 KB HD
+    frame is fine when nothing else is running.
+  - **Rung B, HE core loaded but idle: 9/9 PASS**, core ticking, rpmsg
+    queue empty. A loaded core is not sufficient either.
+  - **Rung C, HE core loaded AND publishing: the board went off the USB
+    bus on the first measured re-init.** 4,051 B QVGA capture → its real
+    3-chunk WCMD_PUB burst (0 send timeouts) → `set_pixformat(GRAYSCALE)`
+    → `device not accepting address, error -71`, `unable to enumerate`.
+    **So the mechanism is the overlap of a sensor re-init with a publish
+    in flight** — candidate (b), narrowed.
+  **SEVERITY CORRECTION, and it changes the shape of the fix:** the fault
+  is not only the catchable `RuntimeError` above. With a publish in
+  flight the same trigger can kill the board outright, with **no Python
+  exception to catch** (the D15 class; recovery = `sudo reboot` on
+  nereus000 per `ae3-usb-unstick`). **A fix that catches and recovers is
+  therefore not sufficient — the overlap must be prevented.** The bridge
+  already parses `wire_status_t.stream_sent` and can gate on it.
+  Rate unknown: the board died on the first rung, so N=1 for the fatal
+  variant. **Until the fix lands, the bench page's 8 s settle guard is
+  safety equipment** — it is the only thing between a fast double-click
+  and a bench that needs a reboot.
+  Reproducer, off-chain and ~4 minutes, no Pi chain required:
+  `bench/probes/s18_reinit_probe{,_b,_c}.py`.
+  **FIX ATTEMPT #1 FALSIFIED (2026-08-16, S18 bite B2 nibble 3, rung D):**
+  gating the re-init on "publish drained" — an in-order WCMD_QUERY
+  barrier + heap_free recovery + stable stream counters — is NOT
+  sufficient. The gate opened with every condition satisfied (GO after
+  4 ms, status_seq=2, heap_high=20,576) and the board still went off the
+  bus, at `set_framebuffers(1)`, one call further than the ungated run.
+  **Refined hypothesis, not yet proven: the killer is an HE→HP rpmsg
+  ARRIVAL (MHU doorbell + MicroPython endpoint callback) landing during
+  the framebuffer calls**, not the publish being in flight per se. Fits
+  all four rungs: rung B exchanged zero rpmsg after the announce (status
+  via `machine.mem32`) and was safe; the barrier reply can overtake the
+  published frames' drain tail (`wire_pump_tx` is incremental, the reply
+  is direct), so traffic was still arriving when rung D re-inited. Also
+  fits the size scaling and the ≥6 s heal. **Decisive next experiment:
+  rung E — after the barrier, pump until the HE→HP side is silent for
+  N ms, then re-init.** If that dies too, the fix is not bridge-side.
+  **RUNG E RUN (2026-08-16) — BOTH HYPOTHESES NOW FALSIFIED, AND THE
+  ORIGINAL WEDGE REPRODUCED OFF-CHAIN FOR THE FIRST TIME.** With the
+  gate open AND **zero** late messages AND 250 ms of measured rpmsg
+  silence, `set_framebuffers(1)` at ~270 ms after the publish **still
+  failed — but politely**: `RuntimeError('Sensor control failed.')`
+  after a **100,818 µs** attempt (I2C-timeout scale), board alive, probe
+  exited cleanly. Every later `set_framebuffers` this session failed in
+  **13 µs** (instant refusal, not an attempt) across 9 tries spanning
+  ~80 s of quiet — bite B's "wedged for the bridge's life," measured.
+  **The severity is a function of TIME SINCE THE PUBLISH, not of
+  traffic:** ~0–10 ms → board off the bus (rungs C, D); ~270 ms →
+  catchable RuntimeError + persistent wedge (rung E); ≥6 s on-chain →
+  success 3/3 (bite B). Some HE-publish-coupled state decays over
+  seconds and breaks sensor control from the HP side; it is **not
+  observable from the bridge** — both observable proxies (publish
+  drained; rpmsg quiet) are now measured insufficient. Root cause is
+  below MicroPython and remains open (candidate upstream report).
+  **Never tested, and now the two questions that decide the fix:**
+  (1) does `sensor.reset()` + re-bootstrap CLEAR the wedge (rung E
+  never attempted recovery — if yes, the bridge can catch and
+  self-heal); (2) where is the safe-delay boundary per frame size
+  (bite B's 2 s/6 s points are on-chain; no off-chain boundary has
+  been measured — it would replace the 8 s guess with a number).
+  **RUNG F RUN (2026-08-16): the ~250 ms failure is STOCHASTIC, and
+  ≥500 ms passed 10/10 off-chain.** The deliberate wedge provocation at
+  rung E's exact 250 ms point PASSED this run — so Q1 (recovery) stays
+  OPEN: there was no wedge to clear, and R1/R2/R3 remain unexercised.
+  The sweep then passed every row: QVGA and HD × 500/1000/2000/4000/
+  6000 ms, including HD frames of 45 rpmsg messages, board alive, HE
+  stopped cleanly. Consolidated picture, all sources:
+  - **~0–10 ms after a publish: board off the bus** (rungs C, D — 2/2,
+    with and without the barrier exchange);
+  - **~250–270 ms: stochastic** — 1 fatal-polite (rung E: RuntimeError
+    + wedge), 1 pass (rung F), n=1 each;
+  - **≥500 ms off-chain: 10/10 pass**;
+  - **on-chain (bite B): sub-second fails 2/2, 2 s failed ONCE (after a
+    VGA frame), ≥6 s passes 3/3** — the on-chain environment (VCP relay
+    pumping, service traffic) fails at delays the off-chain bench
+    survives, so **off-chain bounds are optimistic and the binding
+    boundary must be measured on-chain** (folds into B2's matrix).
+  Fix shape this supports (bridge-only): a minimum wall-clock quiet
+  window after the last publish before any re-init — 6 s until the
+  on-chain matrix tightens it (6 s = the only measured-safe on-chain
+  point; 2 s is measured-unsafe) — plus catch-and-self-heal
+  (reset + re-bootstrap) as an instrumented backstop, unproven but
+  strictly no worse than today's permanent wedge.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A

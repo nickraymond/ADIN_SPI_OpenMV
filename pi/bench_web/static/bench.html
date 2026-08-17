@@ -398,7 +398,7 @@ const MEAS = {
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,
             note: null };
-let CFG = { stream_port: 8080, settle: 8.0 };
+let CFG = { stream_port: 8080, settle: 20.0 };  // mirror; server enforces
 let GATE = { mode: "idle", busy: false, settle_in: 0, res: null, pf: null,
              reason: "", retry_in: 0, stream_left: 0 };
 

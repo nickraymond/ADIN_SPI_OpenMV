@@ -128,6 +128,47 @@ PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
 
+# S18 bite B2 -- the sensor re-init hazard gate (PublishGate below).
+# How often to re-post the WCMD_QUERY barrier while waiting. The HE
+# answers a query in one wire-task pass; this only bounds the cost of a
+# reply that was dropped, so it is a retry interval, not a settle.
+REINIT_REQUERY_MS = 250
+# THE fix (S18 bite B2, rungs C-F + the on-chain ladder): minimum
+# wall-clock quiet after the last publish before ANY sensor re-init. The
+# hazard is TIME since the publish, not anything the bridge can observe
+# -- both observable proxies (publish drained, rpmsg silent) were
+# measured insufficient. On-chain evidence, one number per row, all with
+# DARK frames (~2.6x smaller than daylight):
+#   QVGA source (~2-4 KB):  6.3 s PASS (the rehearsal's fast pair)
+#   VGA source  (~11 KB):   2 s FAIL (bite B) . ~6.5 s FAIL (rehearsal)
+#                           . 10 s FAIL . 15 s PASS (the ladder)
+#   HD source:              UNMEASURED -- every ladder HD rung sat
+#                           behind a latch from the 10 s failure
+# The decay tracks published bytes (~1.5 s/KB fits every point), so 20 s
+# is the safe side of the measured VGA boundary with margin -- NOT a
+# certification for daylight HD (~93 KB), which the reef-scene matrix
+# session must measure before anyone lowers or trusts this for HD.
+# Off-chain numbers (>=500 ms passed 10/10) do NOT bind: the chain is
+# measurably the harder environment.
+REINIT_MIN_QUIET_MS = 20000
+# A gate that never opens REFUSES the command rather than re-initialising
+# into a live publish. Budget: the quiet window above, plus 5 s for the
+# barrier -- reaching the deadline means something is genuinely wrong
+# (HE wedged, rpmsg stalled), exactly when touching the sensor is least
+# safe.
+REINIT_DEADLINE_MS = REINIT_MIN_QUIET_MS + 5000
+# heap_free must come back to within this of its learned high-water before
+# the sensor is touched. One 1,400 B chunk costs the HE exactly 1,488 B
+# (S19 bite 1, measured), so a slack below that detects a single
+# outstanding transmit copy while tolerating ordinary allocator jitter.
+REINIT_HEAP_SLACK = 1024
+
+# PublishGate.poll() verdicts.
+GATE_GO = "go"              # safe: apply the re-init now
+GATE_WAIT = "wait"          # barrier posted, waiting on the HE's reply
+GATE_QUERY = "query"        # caller should send core.query_msg()
+GATE_REFUSE = "refuse"      # deadline passed: drop the command, do NOT re-init
+
 
 class BridgeCore:
     """Pure duplex pump logic -- no hardware imports, host-testable.
@@ -142,6 +183,7 @@ class BridgeCore:
         self.splitter = uc.StreamSplitter()
         self.reasm = None           # (port, total, bytearray) mid-assembly
         self.status = None          # last WREP_STATUS, dict
+        self.status_seq = 0         # WREP_STATUS arrivals (PublishGate barrier)
         self.capture_cmd = None     # last WREP_CAPTURE, dict (take_capture)
         # Preallocated encode buffers (hot path, no per-frame allocation).
         self._payload_buf = bytearray(MAX_L2 + uc.FRAME_OVERHEAD)
@@ -192,6 +234,10 @@ class BridgeCore:
             if ln >= struct.calcsize(STATUS_FMT) and len(b) - 4 >= ln:
                 vals = struct.unpack_from(STATUS_FMT, b, 4)
                 self.status = dict(zip(STATUS_KEYS, vals))
+                # Counts ARRIVALS, not content. PublishGate needs to know
+                # that a reply came back AFTER its barrier query, and two
+                # identical status dicts are indistinguishable by value.
+                self.status_seq += 1
             return []
         if cmd == WREP_CAPTURE:
             if ln >= 14 and len(b) - 4 >= 14:
@@ -479,8 +525,8 @@ class HeWire:
             time.sleep_ms(5)
         return rp
 
-    def send(self, msg):
-        self.ept.send(msg, timeout=1000)
+    def send(self, msg, timeout=1000):
+        self.ept.send(msg, timeout=timeout)
 
 
 def sensor_steps(cur_res, cur_pf, want_res, want_pf):
@@ -520,6 +566,206 @@ def sensor_steps(cur_res, cur_pf, want_res, want_pf):
     steps.append("framesize")
     steps.append("settle")      # first frames after a re-init are garbage
     return tuple(steps)
+
+
+class PublishGate:
+    """Keeps a sensor re-init from overlapping an HE publish.
+
+    Pure -- host-tested without a board or an HE core.
+
+    WHY THIS IS NOT A try/except. S18 bite B2 nibble 1 measured the
+    hazard three ways off-chain, one ingredient at a time
+    (bench/probes/s18_reinit_probe{,_b,_c}.py):
+
+      * no HE core loaded          -- re-init at a 0 ms delay is safe,
+                                      12/12 across QVGA, VGA and HD;
+      * HE core loaded but IDLE    -- safe, 9/9;
+      * HE core loaded + PUBLISHING-- the FIRST re-init took the board off
+                                      the USB bus. No Python exception, no
+                                      traceback, nothing to catch; recovery
+                                      is a reboot of the host Pi.
+
+    So the overlap has to not happen. Catching and recovering is not an
+    option that the failure mode leaves open.
+
+    THE BINDING CONDITION IS TIME (rungs C-F falsified everything else):
+    REINIT_MIN_QUIET_MS of wall clock since the last publish, measured
+    from note_chunks. The three conditions below it (barrier, heap,
+    stream counters) are cheap, still true, and guard cases the clock
+    cannot see (an HE backed up beyond the window; the synthetic stream
+    publisher running) -- but none of them is sufficient without the
+    clock, and that was measured, not assumed.
+
+    THE BARRIER IS THE WIRE'S OWN ORDERING, NOT A TIMER. The HE wire task
+    consumes the inbound vring in order and publishes each WCMD_PUB inline
+    before it reads the next message (main.c rr_poll), so a WCMD_QUERY
+    posted straight after a frame's last chunk is not processed until
+    every one of those chunks has been published. The WREP_STATUS that
+    comes back is therefore proof of drain. It costs no new wire commands:
+    both ends have spoken WCMD_QUERY/WREP_STATUS since S14, so this is
+    bridge-only -- no ABI change, no HE rebuild, no fork pin move.
+
+    Note the TRACKER's original suggestion -- gate on
+    wire_status_t.stream_sent -- does NOT work for the camera path: that
+    counter belongs to the synthetic WCMD_STREAM publisher (main.c:361).
+    The camera's pub_ok lives in camera_rep_t and goes to the Pi, never
+    to the bridge. It IS the right signal for a different hazard -- the
+    third condition below.
+
+    SECOND CONDITION. bm_pub returns when the L2 frame is enqueued, not
+    when it is on the wire, so the reply alone can still leave transmit
+    copies on the HE heap -- exactly 1,488 B per 1,400 B chunk (S19 bite 1,
+    measured). heap_free recovering to within REINIT_HEAP_SLACK of its
+    learned high-water is the second condition. The high-water is LEARNED
+    rather than hard-coded, so it survives an HE build whose idle heap
+    differs, and a status that carries no heap_free simply does not gate
+    on it.
+
+    THIRD CONDITION (nibble 2 self-review amendment). The barrier only
+    proves OUR chunks drained. The HE has a second publisher the bridge
+    never feeds: the synthetic WCMD_STREAM relay stream (main.c s_stream
+    task), which bm_pub's continuously for up to 600 s during the ledger
+    regression -- and a re-init overlapping THAT is the same measured
+    hazard. Its counters are stream_sent/stream_errs, so the gate opens
+    only when TWO consecutive replies carry identical stream counters. A
+    live stream advances them every sample and the command is refused at
+    the deadline (correct: there is no safe moment); an idle one costs
+    one extra query round trip, a few ms.
+
+    NEVER OPENING IS NOT FATAL. Past `deadline_ms` the command is REFUSED
+    -- which is exactly what the bridge already does for a sensor it
+    cannot reach, and which the HE-side ledger already shows as zero
+    publishes. A refused capture costs one image. A re-init into a live
+    publish costs the bench.
+    """
+
+    def __init__(self, deadline_ms=REINIT_DEADLINE_MS,
+                 requery_ms=REINIT_REQUERY_MS,
+                 heap_slack=REINIT_HEAP_SLACK,
+                 min_quiet_ms=REINIT_MIN_QUIET_MS):
+        self.deadline_ms = deadline_ms
+        self.requery_ms = requery_ms
+        self.heap_slack = heap_slack
+        self.min_quiet_ms = min_quiet_ms
+        self.t_chunks = 0           # when the last chunks were handed over
+        self.pending = False        # chunks handed over since the last clear
+        self.barrier_seq = None     # status_seq that must advance
+        self.t_wait = None          # when the held command started waiting
+        self.t_query = 0            # when the barrier query went out
+        self.wait_counters = None   # (stream_sent, stream_errs), 1st sample
+        self.wait_seq = 0           # status_seq that sample was taken from
+        self.heap_high = 0          # learned idle high-water of HE heap_free
+        # Counters, traced at exit -- a gate that silently costs images is
+        # worse than no gate.
+        self.opens = 0
+        self.refusals = 0
+        self.wait_ms_max = 0
+
+    def note_chunks(self, n, now):
+        """A frame's chunks have just been handed to the HE."""
+        if n > 0:
+            self.pending = True
+            self.t_chunks = now         # the quiet clock starts HERE
+            self.barrier_seq = None     # any earlier barrier is stale now
+
+    def note_status(self, status):
+        """Learn the idle heap high-water from any status that arrives."""
+        if status:
+            hf = status.get("heap_free", 0)
+            if hf > self.heap_high:
+                self.heap_high = hf
+
+    def _heap_ok(self, status):
+        if not status or not self.heap_high:
+            return True             # nothing to compare against yet
+        return status.get("heap_free", 0) >= self.heap_high - self.heap_slack
+
+    def poll(self, now, status_seq, status):
+        """One decision per loop pass. Returns a GATE_* verdict.
+
+        GATE_QUERY asks the caller to send core.query_msg(); the caller
+        must then call armed() so the barrier knows what to wait for. The
+        gate never sends anything and never sleeps -- blocking this loop
+        would stop draining the HE, which is its own hazard (the S19 bite 2
+        deadlock).
+        """
+        if not self.pending:
+            return GATE_GO
+        if self.t_wait is None:
+            self.t_wait = now
+        waited = _elapsed(self.t_wait, now)
+        if waited >= self.deadline_ms:
+            self.refusals += 1
+            # Reset the WAIT, not the pending flag. Chunks we were never
+            # told had drained are still, as far as we know, in flight --
+            # so the NEXT command must post its own barrier rather than
+            # inheriting a clean bill of health from a refusal.
+            self._reset_wait()
+            return GATE_REFUSE
+        # THE binding condition (rungs C-F): wall-clock quiet since the
+        # last publish. The clock runs from note_chunks, not from when
+        # the command arrived -- a command at a human pace finds the
+        # window already elapsed and pays only the barrier (~ms); only a
+        # fast follow-up actually waits. No queries until it has passed:
+        # the barrier cannot prove anything the clock has not.
+        if _elapsed(self.t_chunks, now) < self.min_quiet_ms:
+            return GATE_WAIT
+        if self.barrier_seq is None:
+            return GATE_QUERY
+        if status_seq > self.barrier_seq:
+            counters = self._stream_counters(status)
+            if self.wait_counters is None:
+                # First reply of this wait: proof OUR chunks drained, but
+                # one reply says nothing about the synthetic stream
+                # publisher. Sample its counters and ask once more.
+                self.wait_counters = counters
+                self.wait_seq = status_seq
+                return GATE_QUERY
+            if status_seq > self.wait_seq:
+                # A LATER reply than the sample -- comparing a reply with
+                # itself would wave a live stream through.
+                if counters == self.wait_counters and self._heap_ok(status):
+                    self.opens += 1
+                    if waited > self.wait_ms_max:
+                        self.wait_ms_max = waited
+                    self._clear()
+                    return GATE_GO
+                # Counters moved (stream live) or heap still low: this
+                # reply becomes the new sample and we keep watching.
+                self.wait_counters = counters
+                self.wait_seq = status_seq
+        if _elapsed(self.t_query, now) >= self.requery_ms:
+            return GATE_QUERY       # reply lost, stream live, or heap low
+        return GATE_WAIT
+
+    def armed(self, status_seq, now):
+        """The caller has just sent the barrier query."""
+        self.barrier_seq = status_seq
+        self.t_query = now
+
+    def _clear(self):
+        self.pending = False
+        self._reset_wait()
+
+    def _reset_wait(self):
+        self.barrier_seq = None
+        self.t_wait = None
+        self.wait_counters = None   # stability is proven per wait, never
+        self.wait_seq = 0           #   remembered across one
+
+    @staticmethod
+    def _stream_counters(status):
+        if not status:
+            return (0, 0)
+        return (status.get("stream_sent", 0), status.get("stream_errs", 0))
+
+
+def _elapsed(t0, now):
+    """ticks_diff that also works on plain ints in host tests."""
+    try:
+        return time.ticks_diff(now, t0)
+    except AttributeError:          # CPython: time has no ticks_diff
+        return now - t0
 
 
 class CaptureEngine:
@@ -606,6 +852,21 @@ class CaptureEngine:
                    "run, relay unaffected" % e)
             return False
 
+    def needs_reinit(self, cmd):
+        """Would this command actually touch the sensor?
+
+        Only a real geometry/format delta re-initialises, and only a
+        re-init is the S18 bite B2 hazard -- so a repeat capture at the
+        same settings must NOT pay the gate's latency. A stop never
+        touches the sensor at all. Same pure planner _ensure_sensor uses,
+        so the two cannot disagree.
+        """
+        if cmd is None or cmd.get("mode") == CAMERA_MODE_STOP:
+            return False
+        res = cmd.get("res", CAP_DEFAULT_RES)
+        pf = cmd.get("pf", CAP_DEFAULT_PF)
+        return bool(sensor_steps(self.cur_res, self.cur_pf, res, pf))
+
     def _ensure_sensor(self, res, pf):
         """Bring the sensor to (res, pf); no-op when already there.
 
@@ -626,30 +887,56 @@ class CaptureEngine:
                    "before the HE loaded" % (res, self.ceiling))
             return False
         try:
-            import sensor
-            steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
-            for step in steps:
-                if step == "pixformat":
-                    sensor.set_pixformat(sensor.GRAYSCALE
-                                         if pf == CAMERA_PF_MONO
-                                         else sensor.RGB565)
-                elif step == "framebuffers":
-                    sensor.set_framebuffers(1)   # pin: stops the pool reflow
-                elif step == "framesize":
-                    sensor.set_framesize(self._framesize(sensor, res))
-                elif step == "settle":
-                    sensor.skip_frames(time=300)
-            self.cur_res, self.cur_pf = res, pf
-            if steps:
-                w, h = RES_GEOM.get(res, (0, 0))
-                _trace("camera: sensor -> %dx%d %s (%s)"
-                       % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
+            self._apply(res, pf)
             return True
         except Exception as e:
             self.cur_res = self.cur_pf = None    # geometry now unknown
             _trace("camera: sensor setup FAILED res=%d pf=%d: %r"
                    % (res, pf, e))
-            return False
+            # S18 bite B2 self-heal (the backstop). The wedge this catches
+            # was measured (rung E): after one 'Sensor control failed.'
+            # every later set_framebuffers fails instantly, for the rest
+            # of the session -- previously curable only by restarting the
+            # bridge. Whether reset + re-bootstrap clears it is UNPROVEN
+            # (rung F could not provoke the wedge to test it), but the
+            # worst case is exactly today's behaviour, and the trace line
+            # records the outcome so the bench accumulates the answer.
+            # Safe to run here: the caller sits behind PublishGate's
+            # quiet window, and re-claiming the SAME ceiling under a live
+            # HE is the proven s18_hd_probe path.
+            _trace("camera: self-heal -- reset + re-bootstrap + one retry")
+            try:
+                if not self.bootstrap():
+                    return False     # bootstrap latched the camera off
+                self._apply(res, pf)
+                _trace("camera: self-heal SUCCEEDED")
+                return True
+            except Exception as e2:
+                self.cur_res = self.cur_pf = None
+                _trace("camera: self-heal FAILED: %r -- sensor wedged for "
+                       "this run" % e2)
+                return False
+
+    def _apply(self, res, pf):
+        """Apply the planned sensor steps; raises on failure."""
+        import sensor
+        steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
+        for step in steps:
+            if step == "pixformat":
+                sensor.set_pixformat(sensor.GRAYSCALE
+                                     if pf == CAMERA_PF_MONO
+                                     else sensor.RGB565)
+            elif step == "framebuffers":
+                sensor.set_framebuffers(1)   # pin: stops the pool reflow
+            elif step == "framesize":
+                sensor.set_framesize(self._framesize(sensor, res))
+            elif step == "settle":
+                sensor.skip_frames(time=300)
+        self.cur_res, self.cur_pf = res, pf
+        if steps:
+            w, h = RES_GEOM.get(res, (0, 0))
+            _trace("camera: sensor -> %dx%d %s (%s)"
+                   % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
 
     def command(self, cmd):
         if cmd["mode"] == CAMERA_MODE_STOP:
@@ -757,6 +1044,13 @@ def main():
     rp = he.start()
     _trace("he loaded, bm-wire announced")
 
+    # Above the try: the finally traces the gate's ledger, and a phase-1
+    # timeout returns THROUGH that finally -- an unbound name there would
+    # mask the real reason the bridge exited.
+    gate = PublishGate()        # S18 bite B2 -- see the class docstring
+    pending_cmd = None          # camera command held until the gate opens
+    last_status_seq = 0
+
     try:
         # Phase 1: hold WCMD_LINK down until the Pi actually speaks
         # (bm_sbc's gateway heartbeats on its UART port as soon as it
@@ -840,8 +1134,10 @@ def main():
                     time.ticks_diff(now, t_link) >= \
                     int(camera_cfg.get("delay", 10)) * 1000:
                 # Local camera one-shot (bring-up aid): same engine path
-                # as a service-triggered command, no HE round trip.
-                engine.command({
+                # as a service-triggered command, no HE round trip. Goes
+                # through the same held-command slot so the B2 gate has
+                # exactly one path to cover, not two.
+                pending_cmd = {
                     "mode": (CAMERA_MODE_STREAM
                              if camera_cfg.get("mode", "stream") == "stream"
                              else CAMERA_MODE_SINGLE),
@@ -856,22 +1152,74 @@ def main():
                                        CAP_DEFAULT_RES),
                     "pf": CFG_PF.get(str(camera_cfg.get("pf", "color")).lower(),
                                      CAP_DEFAULT_PF),
-                })
+                }
                 camera_sent = True
                 _trace("camera cfg armed: %s" % json.dumps(camera_cfg))
 
             # S17 camera service: commands from the HE (WREP_CAPTURE ->
             # take_capture), captures go back down as WCMD_PUB chunks
             # which the HE publishes on camera/stream.
+            #
+            # S18 bite B2: a command that re-initialises the sensor is HELD
+            # until the HE has finished publishing the previous frame
+            # (PublishGate). Held, not blocked -- this loop must keep
+            # draining the HE while it waits, or the wait becomes the S19
+            # deadlock. Last-wins while held, mirroring the HE's own
+            # single-slot mailbox, so a fast double-click collapses to the
+            # newest command instead of queueing two re-inits.
             cap_cmd = core.take_capture()
             if cap_cmd is not None:
-                engine.command(cap_cmd)
-            jpeg = engine.poll(now)
+                if pending_cmd is not None:
+                    _trace("camera: command superseded while gated")
+                pending_cmd = cap_cmd
+            if pending_cmd is not None:
+                if not engine.needs_reinit(pending_cmd):
+                    engine.command(pending_cmd)     # no delta: no hazard
+                    pending_cmd = None
+                else:
+                    verdict = gate.poll(now, core.status_seq, core.status)
+                    if verdict == GATE_GO:
+                        engine.command(pending_cmd)
+                        pending_cmd = None
+                    elif verdict == GATE_QUERY:
+                        # SHORT timeout, and arm only on success. The
+                        # default 1 s would park this loop inside ept.send
+                        # when the HP->HE vring is full -- and this loop is
+                        # what drains the other direction, so a blocking
+                        # send here recreates the S19 bite 2 deadlock. A
+                        # dropped barrier just costs one re-query.
+                        try:
+                            he.send(core.query_msg(), timeout=50)
+                            gate.armed(core.status_seq, now)
+                        except Exception as e:
+                            _trace("camera: barrier query not sent (%r) -- "
+                                   "will retry" % e)
+                        idle = False
+                    elif verdict == GATE_REFUSE:
+                        # Deliberately NOT a re-init attempt. See PublishGate.
+                        _trace("camera: re-init REFUSED -- HE never confirmed "
+                               "the previous publish drained within %d ms; "
+                               "command dropped rather than risk the board"
+                               % REINIT_DEADLINE_MS)
+                        pending_cmd = None
+                    else:
+                        idle = False        # waiting on the barrier reply
+            # While a re-init is held, STOP capturing. A running stream
+            # publishes ~15 frames a second, and every frame re-arms the
+            # barrier -- so without this the gate would never open and a
+            # mid-stream resolution change would always hit the deadline
+            # and be refused. The pending command supersedes the current
+            # mode anyway; letting the in-flight frame drain is the point.
+            jpeg = engine.poll(now) if pending_cmd is None else None
             if jpeg is not None:
                 idle = False
-                send_chunk_msgs(core.capture_pub_msgs(jpeg, engine.caps - 1,
-                                                      engine.payload_max),
-                                he.send, pump_he_to_pi)
+                msgs = core.capture_pub_msgs(jpeg, engine.caps - 1,
+                                             engine.payload_max)
+                send_chunk_msgs(msgs, he.send, pump_he_to_pi)
+                gate.note_chunks(len(msgs), now)
+            if core.status is not None and core.status_seq != last_status_seq:
+                last_status_seq = core.status_seq
+                gate.note_status(core.status)
 
             # periodic stats snapshot (flash only -- the VCP is a data pipe)
             if time.ticks_diff(now, last_stat) >= 30000:
@@ -890,6 +1238,10 @@ def main():
         _trace("exit stats %s splitter f=%d e=%d qdrops=%d"
                % (json.dumps(core.stats), core.splitter.frames,
                   core.splitter.errors, he.q_drops))
+        # The gate costs images when it refuses; say so out loud rather
+        # than letting a quiet refusal look like a camera that did nothing.
+        _trace("exit gate opens=%d refusals=%d worst_wait=%d ms"
+               % (gate.opens, gate.refusals, gate.wait_ms_max))
         try:
             he.send(core.link_msg(False))
             time.sleep_ms(50)   # let the HE see the link drop

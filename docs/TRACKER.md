@@ -675,7 +675,7 @@ the nodes are systemd units. Do the harness before the features.)*
       `(null)` — `cam_reply.state` renders `none`/`ok`/`timeout` — but
       that was observed, not diffed against the fork source, so confirm
       before relying on it.
-- [ ] **Bite B2 — the sensor re-init race (NEW, found by bite B's trial
+- [~] **Bite B2 — the sensor re-init race (NEW, found by bite B's trial
       matrix). Sequenced AFTER bite C (Nick, 2026-08-16)** — it is a
       fast-click hazard that bite C mitigates in the UI, not a blocker
       for having a page. It still owes the sprint the full 9-row matrix
@@ -713,6 +713,56 @@ the nodes are systemd units. Do the harness before the features.)*
       into the HE reply (`ok=0` instead of a lie) is a **lockstep ABI
       change and is deferred** — parts 1+2 stop the wedge happening, so
       the lie stops happening in practice. File it, don't ship it now.
+      → **NIBBLE 1 DONE 2026-08-16 (plan approved by Nick; branch
+      `sprint/18-reinit-race` from `main` @ `ba2f4c6`). MECHANISM FOUND,
+      and the severity is worse than bite B recorded.** One board window,
+      three rungs, one ingredient at a time: **no HE core = 12/12 PASS**
+      (so the sensor pipeline is NOT it, and "quiet time scales with
+      frame size" does not survive — 0 ms after a 35.7 KB HD frame is
+      fine); **HE loaded but idle = 9/9 PASS**; **HE loaded AND
+      publishing = the board went off the USB bus on the first measured
+      re-init** (4,051 B QVGA frame → its real 3-chunk WCMD_PUB burst,
+      0 send timeouts → `set_pixformat(GRAYSCALE)` → `error -71`,
+      `unable to enumerate`; recovered by `sudo reboot` on nereus000).
+      **So the fix cannot catch-and-recover — with a publish in flight
+      there is no Python exception to catch. It must PREVENT the
+      overlap**, which is the `stream_sent` gate the bridge can already
+      see. Full record: DEV_LOG + SPEC §Open questions.
+      **Until it lands, bite C1's 8 s settle guard is safety equipment,
+      not politeness** — it is what stands between a fast double-click
+      and a bench that needs a reboot. Do not shorten it.
+      **Nibble 1 also left a reproducer worth as much as the finding:**
+      `bench/probes/s18_reinit_probe{,_b,_c}.py` reproduce this
+      **off-chain in ~4 minutes with no Pi chain**, and rung C is
+      nibble 2's acceptance test.
+      **The AE3 fixture restore outstanding since bite D is DISCHARGED** —
+      `/flash/main.py` is the S6 fixture, proved by an on-board sha256
+      (`55fa6ccf…`) both before the probes and after the recovery reboot,
+      with no HE core loaded.
+      **The 9-row matrix and the first stream numbers are deferred behind
+      the fix** (they need the chain and a healthy board; the hazard
+      closes first). Remaining: nibble 2 (the fix + host tests) → 3 → 4.
+      → **NIBBLES 2–3 DONE 2026-08-17 (an honest, winding road — full
+      record in DEV_LOG).** The clever fixes died by experiment: rung D
+      (gate on "publish drained") opened exactly as designed and the
+      board died anyway; rung E (add measured rpmsg quiescence, zero
+      late messages) failed politely and reproduced bite B's wedge
+      off-chain. **The hazard is wall-clock time since the publish**,
+      scaling ~1.5 s/KB of published bytes across every measured point.
+      **Shipped fix (`PublishGate` + `REINIT_MIN_QUIET_MS = 20 s` flat,
+      Nick's call) + catch-and-self-heal** (0/4 observed successes — the
+      latch on failed heal is the allocator rule and stands). **Proven
+      on-chain:** the exact bite-B fast pair delivers both frames (mono
+      held 6.3 s under the earlier 6 s build, artifacts header-verified);
+      ladder: VGA-source 10 s FAIL / 15 s PASS (dark frames);
+      **HD unmeasured — the reef-matrix session owes it before anyone
+      lowers or trusts the constant for HD.** `bench_web` settle raised
+      to 20 s to match. Bridge tests 262→419; bench_web 67.
+      **New standing recovery (Nick):** camera stuck → reboot nereus000
+      (USB teardown + quiet-exit + demo_up chip reset ≈ 2 min); uhubctl
+      remains measured-useless on Pi 5. **`/flash` still carries the 6 s
+      build — the 20 s build deploys at the next chain session.**
+      Remaining: nibble 4 (PR), then the matrix + stream numbers.
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and
