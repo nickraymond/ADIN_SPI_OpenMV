@@ -239,6 +239,29 @@ pair, USB carrying no video.
   self-heal); (2) where is the safe-delay boundary per frame size
   (bite B's 2 s/6 s points are on-chain; no off-chain boundary has
   been measured — it would replace the 8 s guess with a number).
+  **RUNG F RUN (2026-08-16): the ~250 ms failure is STOCHASTIC, and
+  ≥500 ms passed 10/10 off-chain.** The deliberate wedge provocation at
+  rung E's exact 250 ms point PASSED this run — so Q1 (recovery) stays
+  OPEN: there was no wedge to clear, and R1/R2/R3 remain unexercised.
+  The sweep then passed every row: QVGA and HD × 500/1000/2000/4000/
+  6000 ms, including HD frames of 45 rpmsg messages, board alive, HE
+  stopped cleanly. Consolidated picture, all sources:
+  - **~0–10 ms after a publish: board off the bus** (rungs C, D — 2/2,
+    with and without the barrier exchange);
+  - **~250–270 ms: stochastic** — 1 fatal-polite (rung E: RuntimeError
+    + wedge), 1 pass (rung F), n=1 each;
+  - **≥500 ms off-chain: 10/10 pass**;
+  - **on-chain (bite B): sub-second fails 2/2, 2 s failed ONCE (after a
+    VGA frame), ≥6 s passes 3/3** — the on-chain environment (VCP relay
+    pumping, service traffic) fails at delays the off-chain bench
+    survives, so **off-chain bounds are optimistic and the binding
+    boundary must be measured on-chain** (folds into B2's matrix).
+  Fix shape this supports (bridge-only): a minimum wall-clock quiet
+  window after the last publish before any re-init — 6 s until the
+  on-chain matrix tightens it (6 s = the only measured-safe on-chain
+  point; 2 s is measured-unsafe) — plus catch-and-self-heal
+  (reset + re-bootstrap) as an instrumented backstop, unproven but
+  strictly no worse than today's permanent wedge.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
