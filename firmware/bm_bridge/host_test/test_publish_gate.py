@@ -45,13 +45,13 @@ def status(heap_free=20000):
 
 # ---- the open case: nothing published, nothing to wait for --------------
 print("idle gate:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 check(g.poll(0, 0, None) == GATE_GO,
       "a gate that has seen no chunks opens immediately")
 check(g.poll(0, 0, None) == GATE_GO, "and stays open when asked again")
 check(g.opens == 0, "an always-open gate is not counted as an open")
 
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(0, 0)
 check(g.poll(0, 0, None) == GATE_GO,
       "an empty frame (0 messages) arms nothing")
@@ -59,7 +59,7 @@ check(g.poll(0, 0, None) == GATE_GO,
 
 # ---- the barrier: query, then wait for the reply that must follow it ----
 print("barrier sequence:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 1000)              # a 3-chunk QVGA frame = 9 rpmsg msgs
 check(g.poll(1000, 5, status()) == GATE_QUERY,
       "chunks in flight -> the first ask posts the barrier query")
@@ -77,7 +77,7 @@ check(g.opens == 1, "the open is counted")
 check(g.poll(1005, 7, status()) == GATE_GO, "and the gate stays open after")
 
 # A status that arrived BEFORE the query proves nothing.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 7, status())
 g.armed(7, 0)
@@ -87,7 +87,7 @@ check(g.poll(1, 7, status()) == GATE_WAIT,
 
 # ---- a new frame invalidates an outstanding barrier ---------------------
 print("re-arming:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -98,7 +98,7 @@ check(g.poll(11, 2, status()) == GATE_QUERY,
 
 # ---- the heap condition: bm_pub returns before the wire is clear --------
 print("heap recovery:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_status(status(20712))        # learn the idle high-water
 check(g.heap_high == 20712, "the high-water is learned, not hard-coded")
 g.note_status(status(19000))
@@ -113,7 +113,7 @@ check(g.poll(2, 3, status(one_chunk_outstanding)) != GATE_GO,
 check(g.poll(3, 4, status(20712 - REINIT_HEAP_SLACK + 1)) == GATE_GO,
       "heap within the slack of the high-water -> safe")
 
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, None)
 g.armed(1, 0)
@@ -121,7 +121,7 @@ check(g.poll(1, 2, None) == GATE_QUERY, "even with no content, sample first")
 check(g.poll(2, 3, None) == GATE_GO,
       "no status content to compare against -> the barrier pair alone opens")
 
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, {"tx_frames": 3})      # a status carrying no heap_free
 g.armed(1, 0)
@@ -132,7 +132,7 @@ check(g.poll(2, 3, {"tx_frames": 5}) == GATE_GO,
 # The same reply polled twice must NOT satisfy the stability pair -- if
 # the barrier query could not be re-sent, comparing a reply with itself
 # would wave a live stream through.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -143,7 +143,7 @@ check(g.poll(2, 2, status()) != GATE_GO,
 
 # ---- re-query: a lost reply must not hang the gate ----------------------
 print("re-query:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -155,7 +155,7 @@ check(g.poll(REINIT_REQUERY_MS, 1, status()) == GATE_QUERY,
 
 # ---- the deadline: refuse, never re-init anyway -------------------------
 print("deadline:")
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -184,7 +184,7 @@ check(g.refusals == 1 and g.opens == 1,
 # The deadline runs from when the command started waiting, not from when
 # the chunks were sent -- a command that arrives long after a frame must
 # still get its full barrier attempt.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 check(g.poll(60000, 1, status()) == GATE_QUERY,
       "a command arriving long after the frame is not born expired")
@@ -192,7 +192,7 @@ g.armed(1, 60000)
 check(g.poll(60001, 1, status()) == GATE_WAIT, "and gets its full deadline")
 
 # Worst-case wait is recorded, so a gate that is quietly slow is visible.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -227,7 +227,7 @@ check(e.needs_reinit({"mode": CAMERA_MODE_SINGLE, "res": CAMERA_RES_QVGA,
 print("end-to-end: the bite B failure, replayed:")
 # capture qvga colour -> chunks out -> immediately command qvga mono.
 # Before B2 this re-initialised while the HE was publishing. Now:
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 e = CaptureEngine()
 e.cur_res, e.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
 cmd = {"mode": CAMERA_MODE_SINGLE, "res": CAMERA_RES_QVGA,
@@ -251,7 +251,7 @@ print("synthetic stream publisher:")
 # The HE's WCMD_STREAM relay stream publishes with NO bridge involvement,
 # so the barrier alone cannot see it. stream_sent/stream_errs advancing
 # between two replies is the tell.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -276,7 +276,7 @@ check(g.poll(900, 5, s4) == GATE_GO,
 
 # A stream that never goes idle: the command is refused at the deadline,
 # never applied. There is no safe moment during a live stream to guess at.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -297,7 +297,7 @@ check(GATE_GO not in verdicts,
 check(v == GATE_REFUSE, "it is refused at the deadline instead")
 
 # Stability is proven per wait, never remembered across one.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.poll(0, 1, status())
 g.armed(1, 0)
@@ -315,7 +315,7 @@ print("unsent barrier:")
 # The loop arms only when he.send() succeeded. If the vring was full and
 # the send raised, armed() is never called -- the gate must ask again
 # rather than wait forever on a barrier that was never posted.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 check(g.poll(0, 1, status()) == GATE_QUERY, "first ask posts a query")
 check(g.poll(1, 1, status()) == GATE_QUERY,
@@ -329,7 +329,7 @@ print("invariant:")
 # There is no input sequence in which a gate with chunks in flight and no
 # confirming reply returns GO. If this ever passes something through, the
 # board is what pays.
-g = PublishGate()
+g = PublishGate(min_quiet_ms=0)
 g.note_chunks(9, 0)
 g.armed(3, 0)
 leaked = []
@@ -340,6 +340,94 @@ for t in range(0, REINIT_DEADLINE_MS, 137):
     g.armed(3, t)                   # keep the barrier at seq 3
 check(not leaked,
       "no unconfirmed re-init is ever allowed through (%d leaks)" % len(leaked))
+
+
+# ---- the quiet window: THE binding condition (rungs C-F) ---------------
+print("quiet window:")
+check(bm_bridge.REINIT_MIN_QUIET_MS == 6000,
+      "6 s: the only measured-safe ON-CHAIN point (2 s measured unsafe)")
+check(bm_bridge.REINIT_DEADLINE_MS > bm_bridge.REINIT_MIN_QUIET_MS,
+      "the deadline budgets barrier time BEYOND the quiet window")
+
+g = PublishGate(min_quiet_ms=1000)
+g.note_chunks(9, 0)
+check(g.poll(0, 1, status()) == GATE_WAIT,
+      "inside the quiet window: WAIT, no barrier query is wasted")
+check(g.poll(999, 1, status()) == GATE_WAIT, "still inside")
+check(g.poll(1000, 1, status()) == GATE_QUERY,
+      "window elapsed -> the barrier starts")
+g.armed(1, 1000)
+g.poll(1001, 2, status())
+g.armed(2, 1001)
+check(g.poll(1002, 3, status()) == GATE_GO, "then opens as before")
+
+# The clock runs from the PUBLISH, not from the command: a command at a
+# human pace finds the window already elapsed and pays only the barrier.
+g = PublishGate(min_quiet_ms=1000)
+g.note_chunks(9, 0)
+check(g.poll(5000, 1, status()) == GATE_QUERY,
+      "human-pace command: window already elapsed, straight to barrier")
+
+# A later frame restarts the clock -- quiet since the LAST publish.
+g = PublishGate(min_quiet_ms=1000)
+g.note_chunks(9, 0)
+g.note_chunks(9, 800)
+check(g.poll(1000, 1, status()) == GATE_WAIT,
+      "a later frame restarts the quiet clock")
+check(g.poll(1800, 1, status()) == GATE_QUERY,
+      "which elapses from ITS publish time")
+
+# The deadline still binds with the window active.
+g = PublishGate(min_quiet_ms=1000, deadline_ms=1500)
+g.note_chunks(9, 0)
+g.poll(0, 1, status())
+check(g.poll(1500, 1, status()) == GATE_REFUSE,
+      "a window the deadline outruns still ends in a refusal, not a guess")
+
+
+# ---- self-heal: the backstop for the measured wedge --------------------
+print("self-heal:")
+import types                        # noqa: E402
+fake = types.ModuleType("sensor")
+fake.QVGA, fake.VGA, fake.HD = 1, 2, 3
+fake.RGB565, fake.GRAYSCALE = 10, 11
+calls = {"reset": 0, "fail_next_fb": 0}
+fake.reset = lambda: calls.__setitem__("reset", calls["reset"] + 1)
+fake.set_pixformat = lambda v: None
+fake.set_framesize = lambda v: None
+
+
+def _fb(n):
+    if calls["fail_next_fb"] > 0:
+        calls["fail_next_fb"] -= 1
+        raise RuntimeError("Sensor control failed.")
+
+
+fake.set_framebuffers = _fb
+fake.skip_frames = lambda time=0: None
+sys.modules["sensor"] = fake
+
+e = CaptureEngine()
+check(e.bootstrap() is True, "fake bootstrap claims the ceiling")
+check(e.cur_res == bm_bridge.CAMERA_RES_HD, "at the HD ceiling")
+# Rung E's wedge, replayed: one 'Sensor control failed.' on the
+# framebuffer call. The engine must reset, re-bootstrap and retry
+# instead of marking the sensor dead for the rest of the run.
+calls["fail_next_fb"] = 1
+r0 = calls["reset"]
+check(e._ensure_sensor(CAMERA_RES_QVGA, CAMERA_PF_MONO) is True,
+      "one failing set_framebuffers -> self-heal -> command succeeds")
+check(calls["reset"] == r0 + 1, "the heal really did reset the sensor")
+check(e.cur_res == CAMERA_RES_QVGA and e.cur_pf == CAMERA_PF_MONO,
+      "geometry lands where commanded after the heal")
+# A wedge the reset cannot clear: refuse the command, never loop.
+calls["fail_next_fb"] = 99
+check(e._ensure_sensor(CAMERA_RES_VGA, CAMERA_PF_COLOR) is False,
+      "a heal that fails refuses the command -- no retry loop")
+check(e.cur_res is None, "and leaves geometry marked unknown")
+check(e.booted is False,
+      "a failed heal-bootstrap latches the camera off (allocator rule)")
+del sys.modules["sensor"]
 
 print("PublishGate host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)

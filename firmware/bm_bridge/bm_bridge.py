@@ -133,11 +133,23 @@ QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
 # answers a query in one wire-task pass; this only bounds the cost of a
 # reply that was dropped, so it is a retry interval, not a settle.
 REINIT_REQUERY_MS = 250
+# THE fix (S18 bite B2, rungs C-F): minimum wall-clock quiet after the
+# last publish before ANY sensor re-init. The hazard is TIME since the
+# publish, not anything the bridge can observe -- both observable proxies
+# (publish drained, rpmsg silent) were measured insufficient. Evidence:
+# ~0-10 ms = board off the USB bus (2/2); ~250 ms = stochastic
+# RuntimeError + wedge (1 fail / 1 pass); >=500 ms = 10/10 off-chain;
+# but ON-CHAIN 2 s failed once and only 6 s is measured safe (bite B,
+# 3/3) -- and the chain is the harder environment, so the on-chain
+# number is the one that binds. B2's on-chain matrix exists to tighten
+# this constant; do not lower it on off-chain evidence.
+REINIT_MIN_QUIET_MS = 6000
 # A gate that never opens REFUSES the command rather than re-initialising
-# into a live publish. Generous: on the chain a frame drains in tens of
-# ms, so reaching this means something is genuinely wrong (HE wedged, rpmsg
-# stalled) -- exactly when touching the sensor is least safe.
-REINIT_DEADLINE_MS = 5000
+# into a live publish. Budget: the quiet window above, plus 5 s for the
+# barrier -- reaching the deadline means something is genuinely wrong
+# (HE wedged, rpmsg stalled), exactly when touching the sensor is least
+# safe.
+REINIT_DEADLINE_MS = REINIT_MIN_QUIET_MS + 5000
 # heap_free must come back to within this of its learned high-water before
 # the sensor is touched. One 1,400 B chunk costs the HE exactly 1,488 B
 # (S19 bite 1, measured), so a slack below that detects a single
@@ -569,6 +581,14 @@ class PublishGate:
     So the overlap has to not happen. Catching and recovering is not an
     option that the failure mode leaves open.
 
+    THE BINDING CONDITION IS TIME (rungs C-F falsified everything else):
+    REINIT_MIN_QUIET_MS of wall clock since the last publish, measured
+    from note_chunks. The three conditions below it (barrier, heap,
+    stream counters) are cheap, still true, and guard cases the clock
+    cannot see (an HE backed up beyond the window; the synthetic stream
+    publisher running) -- but none of them is sufficient without the
+    clock, and that was measured, not assumed.
+
     THE BARRIER IS THE WIRE'S OWN ORDERING, NOT A TIMER. The HE wire task
     consumes the inbound vring in order and publishes each WCMD_PUB inline
     before it reads the next message (main.c rr_poll), so a WCMD_QUERY
@@ -614,10 +634,13 @@ class PublishGate:
 
     def __init__(self, deadline_ms=REINIT_DEADLINE_MS,
                  requery_ms=REINIT_REQUERY_MS,
-                 heap_slack=REINIT_HEAP_SLACK):
+                 heap_slack=REINIT_HEAP_SLACK,
+                 min_quiet_ms=REINIT_MIN_QUIET_MS):
         self.deadline_ms = deadline_ms
         self.requery_ms = requery_ms
         self.heap_slack = heap_slack
+        self.min_quiet_ms = min_quiet_ms
+        self.t_chunks = 0           # when the last chunks were handed over
         self.pending = False        # chunks handed over since the last clear
         self.barrier_seq = None     # status_seq that must advance
         self.t_wait = None          # when the held command started waiting
@@ -635,6 +658,7 @@ class PublishGate:
         """A frame's chunks have just been handed to the HE."""
         if n > 0:
             self.pending = True
+            self.t_chunks = now         # the quiet clock starts HERE
             self.barrier_seq = None     # any earlier barrier is stale now
 
     def note_status(self, status):
@@ -671,6 +695,14 @@ class PublishGate:
             # inheriting a clean bill of health from a refusal.
             self._reset_wait()
             return GATE_REFUSE
+        # THE binding condition (rungs C-F): wall-clock quiet since the
+        # last publish. The clock runs from note_chunks, not from when
+        # the command arrived -- a command at a human pace finds the
+        # window already elapsed and pays only the barrier (~ms); only a
+        # fast follow-up actually waits. No queries until it has passed:
+        # the barrier cannot prove anything the clock has not.
+        if _elapsed(self.t_chunks, now) < self.min_quiet_ms:
+            return GATE_WAIT
         if self.barrier_seq is None:
             return GATE_QUERY
         if status_seq > self.barrier_seq:
@@ -848,30 +880,56 @@ class CaptureEngine:
                    "before the HE loaded" % (res, self.ceiling))
             return False
         try:
-            import sensor
-            steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
-            for step in steps:
-                if step == "pixformat":
-                    sensor.set_pixformat(sensor.GRAYSCALE
-                                         if pf == CAMERA_PF_MONO
-                                         else sensor.RGB565)
-                elif step == "framebuffers":
-                    sensor.set_framebuffers(1)   # pin: stops the pool reflow
-                elif step == "framesize":
-                    sensor.set_framesize(self._framesize(sensor, res))
-                elif step == "settle":
-                    sensor.skip_frames(time=300)
-            self.cur_res, self.cur_pf = res, pf
-            if steps:
-                w, h = RES_GEOM.get(res, (0, 0))
-                _trace("camera: sensor -> %dx%d %s (%s)"
-                       % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
+            self._apply(res, pf)
             return True
         except Exception as e:
             self.cur_res = self.cur_pf = None    # geometry now unknown
             _trace("camera: sensor setup FAILED res=%d pf=%d: %r"
                    % (res, pf, e))
-            return False
+            # S18 bite B2 self-heal (the backstop). The wedge this catches
+            # was measured (rung E): after one 'Sensor control failed.'
+            # every later set_framebuffers fails instantly, for the rest
+            # of the session -- previously curable only by restarting the
+            # bridge. Whether reset + re-bootstrap clears it is UNPROVEN
+            # (rung F could not provoke the wedge to test it), but the
+            # worst case is exactly today's behaviour, and the trace line
+            # records the outcome so the bench accumulates the answer.
+            # Safe to run here: the caller sits behind PublishGate's
+            # quiet window, and re-claiming the SAME ceiling under a live
+            # HE is the proven s18_hd_probe path.
+            _trace("camera: self-heal -- reset + re-bootstrap + one retry")
+            try:
+                if not self.bootstrap():
+                    return False     # bootstrap latched the camera off
+                self._apply(res, pf)
+                _trace("camera: self-heal SUCCEEDED")
+                return True
+            except Exception as e2:
+                self.cur_res = self.cur_pf = None
+                _trace("camera: self-heal FAILED: %r -- sensor wedged for "
+                       "this run" % e2)
+                return False
+
+    def _apply(self, res, pf):
+        """Apply the planned sensor steps; raises on failure."""
+        import sensor
+        steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
+        for step in steps:
+            if step == "pixformat":
+                sensor.set_pixformat(sensor.GRAYSCALE
+                                     if pf == CAMERA_PF_MONO
+                                     else sensor.RGB565)
+            elif step == "framebuffers":
+                sensor.set_framebuffers(1)   # pin: stops the pool reflow
+            elif step == "framesize":
+                sensor.set_framesize(self._framesize(sensor, res))
+            elif step == "settle":
+                sensor.skip_frames(time=300)
+        self.cur_res, self.cur_pf = res, pf
+        if steps:
+            w, h = RES_GEOM.get(res, (0, 0))
+            _trace("camera: sensor -> %dx%d %s (%s)"
+                   % (w, h, PF_NAME.get(pf, "?"), ",".join(steps)))
 
     def command(self, cmd):
         if cmd["mode"] == CAMERA_MODE_STOP:

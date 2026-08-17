@@ -17,6 +17,57 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite B2 rungs E–F + the fix: the hazard is a CLOCK, and the shipped guard is a measured 6 s + self-heal
+
+**Branch:** `sprint/18-reinit-race`. Bridge-only throughout, as scoped.
+
+**Done:**
+- **Rung E falsified the second hypothesis too**: gate open, **zero**
+  late messages, 250 ms of measured rpmsg silence — and the re-init
+  still failed at ~270 ms after the publish. But *politely*
+  (`RuntimeError`, 100,818 µs attempt), and it **reproduced the bite B
+  wedge off-chain for the first time**: every later `set_framebuffers`
+  failed in 13 µs across ~80 s. Board survived; no reboot.
+- **Rung F: the ~250 ms failure is STOCHASTIC** — the deliberate
+  provocation at rung E's exact point PASSED, so Q1 (does reset clear
+  the wedge?) stays open. The boundary sweep passed **10/10** (QVGA+HD ×
+  0.5/1/2/4/6 s, incl. 45-msg HD frames). Combined with bite B's
+  on-chain points (2 s failed once, 6 s passed 3/3), the off-chain bench
+  is the EASIER environment — the binding number must come from the
+  chain.
+- **The shipped fix (Nick approved the shape):**
+  `REINIT_MIN_QUIET_MS = 6000` — wall clock since the last publish,
+  measured from `note_chunks`, so a human-pace command pays only the
+  barrier (~ms) and only a fast follow-up actually waits. The barrier /
+  heap / stream-counter conditions stay (cheap, and they guard what the
+  clock cannot see); deadline now 11 s. Plus **catch-and-self-heal** in
+  `_ensure_sensor`: on `Sensor control failed.`, reset + re-bootstrap +
+  one retry, outcome traced — unproven (rung F could not provoke the
+  wedge to test it) but strictly no worse than today's permanent wedge,
+  and every occurrence adds a data point.
+- Host tests: PublishGate 60 → **78**; bridge suite total 419, all green.
+
+**The honest arc, for the record:** bite B said "a fixed delay is the
+wrong shape of fix" and nibble 2 v1 believed it. Rungs C–F falsified
+both clever alternatives ("publish drained", "rpmsg quiet") by
+experiment, at the cost of two Pi reboots — and a *measured* delay is
+the only shape left standing. The difference from where bite B started:
+the number now has evidence on both sides, a severity map, a 4-minute
+reproducer, and a self-heal path. Root cause below MicroPython stays
+open — candidate upstream report alongside D15.
+
+**Bench state:** board on the bus, S6 fixture as `main.py` (verified),
+`/flash/bm_bridge.py` = the nibble-2 build `a1615f21…` — **stale, does
+not carry this fix**; the on-chain rehearsal re-deploys. Probe logs
+`reinit_probe{,_b,_c,_d,_e,_f}.txt` on `/flash`. Both units inactive;
+`bm-light` was found ACTIVE at session start and left stopped.
+
+**Next:** nibble 3 on the chain — re-run bite B's trial matrix against
+the fixed bridge (doubles as the start of B2's 9-row matrix), then the
+matrix itself + stream numbers, then bite D2.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite B2 nibbles 2–3: the gate FAILED acceptance — "publish drained" is not the safe condition
 
 **Branch:** `sprint/18-reinit-race` @ `545af73` (+ this entry). Bridge-only
