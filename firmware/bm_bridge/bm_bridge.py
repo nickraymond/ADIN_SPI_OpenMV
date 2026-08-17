@@ -133,17 +133,24 @@ QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
 # answers a query in one wire-task pass; this only bounds the cost of a
 # reply that was dropped, so it is a retry interval, not a settle.
 REINIT_REQUERY_MS = 250
-# THE fix (S18 bite B2, rungs C-F): minimum wall-clock quiet after the
-# last publish before ANY sensor re-init. The hazard is TIME since the
-# publish, not anything the bridge can observe -- both observable proxies
-# (publish drained, rpmsg silent) were measured insufficient. Evidence:
-# ~0-10 ms = board off the USB bus (2/2); ~250 ms = stochastic
-# RuntimeError + wedge (1 fail / 1 pass); >=500 ms = 10/10 off-chain;
-# but ON-CHAIN 2 s failed once and only 6 s is measured safe (bite B,
-# 3/3) -- and the chain is the harder environment, so the on-chain
-# number is the one that binds. B2's on-chain matrix exists to tighten
-# this constant; do not lower it on off-chain evidence.
-REINIT_MIN_QUIET_MS = 6000
+# THE fix (S18 bite B2, rungs C-F + the on-chain ladder): minimum
+# wall-clock quiet after the last publish before ANY sensor re-init. The
+# hazard is TIME since the publish, not anything the bridge can observe
+# -- both observable proxies (publish drained, rpmsg silent) were
+# measured insufficient. On-chain evidence, one number per row, all with
+# DARK frames (~2.6x smaller than daylight):
+#   QVGA source (~2-4 KB):  6.3 s PASS (the rehearsal's fast pair)
+#   VGA source  (~11 KB):   2 s FAIL (bite B) . ~6.5 s FAIL (rehearsal)
+#                           . 10 s FAIL . 15 s PASS (the ladder)
+#   HD source:              UNMEASURED -- every ladder HD rung sat
+#                           behind a latch from the 10 s failure
+# The decay tracks published bytes (~1.5 s/KB fits every point), so 20 s
+# is the safe side of the measured VGA boundary with margin -- NOT a
+# certification for daylight HD (~93 KB), which the reef-scene matrix
+# session must measure before anyone lowers or trusts this for HD.
+# Off-chain numbers (>=500 ms passed 10/10) do NOT bind: the chain is
+# measurably the harder environment.
+REINIT_MIN_QUIET_MS = 20000
 # A gate that never opens REFUSES the command rather than re-initialising
 # into a live publish. Budget: the quiet window above, plus 5 s for the
 # barrier -- reaching the deadline means something is genuinely wrong

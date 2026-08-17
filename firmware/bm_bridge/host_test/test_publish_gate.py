@@ -344,8 +344,9 @@ check(not leaked,
 
 # ---- the quiet window: THE binding condition (rungs C-F) ---------------
 print("quiet window:")
-check(bm_bridge.REINIT_MIN_QUIET_MS == 6000,
-      "6 s: the only measured-safe ON-CHAIN point (2 s measured unsafe)")
+check(bm_bridge.REINIT_MIN_QUIET_MS == 20000,
+      "20 s: safe side of the measured VGA boundary (10 s FAIL / 15 s "
+      "PASS on-chain, dark frames); HD unmeasured -- matrix revisits")
 check(bm_bridge.REINIT_DEADLINE_MS > bm_bridge.REINIT_MIN_QUIET_MS,
       "the deadline budgets barrier time BEYOND the quiet window")
 
