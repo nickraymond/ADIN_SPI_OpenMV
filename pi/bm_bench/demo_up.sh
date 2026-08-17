@@ -113,6 +113,7 @@ for f in os.listdir("/flash/ref_scene"):
 declare -A HAVE LOCAL
 FREE=0
 while IFS= read -r line; do
+  line="${line//$'\r'/}"   # mpremote output is CRLF — the documented trap
   case "$line" in
     FREE:*) FREE="${line#FREE:}" ;;
     HAVE:*) rest="${line#HAVE:}"; HAVE["${rest%%:*}"]="${rest##*:}" ;;
@@ -164,6 +165,7 @@ if (( COPIED > 0 )); then
   # trust artifacts: re-inventory and verify every file of the chosen set
   declare -A HAVE2
   while IFS= read -r line; do
+    line="${line//$'\r'/}"
     case "$line" in
       HAVE:*) rest="${line#HAVE:}"; HAVE2["${rest%%:*}"]="${rest##*:}" ;;
     esac
