@@ -30,6 +30,10 @@ You are working under this repo's agent discipline. OWNER (the human gate) is:
   4. **Open PR** — description includes the demo commands.
 - **Branch:** all new work on `sprint/<n>-<slug>`. Never commit to main.
 - **Demo:** a sprint is not done until OWNER runs its live demo successfully.
+  **Hand over a FULLY WORKING chain** (OWNER's standing rule,
+  2026-08-17): deploy every artifact to the hardware yourself, bring the
+  chain up, verify end to end with a real delivered frame, and reduce
+  the demo to URLs + commands. OWNER installs nothing on the hardware.
 
 ## Protect the deliverable (S18 bite B lesson)
 

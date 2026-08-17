@@ -84,6 +84,14 @@ the S13 item.) · Owner/gate: **Nick***
    `main` directly.
 5. **Every sprint ends with a live demo Nick can run.** Exact commands go in
    the sprint's Demo section below and in the PR description.
+   **HANDOVER RULE (Nick, 2026-08-17): the agent hands over a FULLY
+   WORKING chain.** Before asking Nick to demo: every artifact deployed
+   to the hardware (board flash, Pi checkouts, services), the chain
+   brought up and verified end to end by the agent (a real frame
+   delivered, not a status field), and the demo reduced to URLs to open
+   and commands to type. Nick installs NOTHING on the hardware —
+   staging, deployment and bring-up are the agent's responsibility, and
+   a demo that starts with "first copy this file" is not ready.
 6. **End of every session:** add a DEV_LOG.md entry (newest on top). Update
    DESIGN.md whenever architecture or a decision changes.
 7. **Facts carry sources; unknowns get flagged, not guessed.** This project has
