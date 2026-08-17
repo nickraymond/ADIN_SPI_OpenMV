@@ -39,6 +39,15 @@ SRC="$DIR/services/$UNIT"
 install -m 644 "$SRC" "/etc/systemd/system/$UNIT"
 systemctl daemon-reload
 
+# The light role also carries the reset-on-change udev rule (S18): when
+# the AE3 re-enumerates after its self-reset, bm-light gets try-restarted
+# (measured: bm_sbc survives the vanish but never reopens the device).
+if [ "$ROLE" = "light" ]; then
+  install -m 644 "$DIR/services/99-bm-ae3.rules" /etc/udev/rules.d/99-bm-ae3.rules
+  udevadm control --reload
+  echo "OK: 99-bm-ae3.rules installed (reset-on-change relink)"
+fi
+
 if [ "$AUTOSTART" = "yes" ]; then
   systemctl enable --now "$UNIT"
   sleep 2

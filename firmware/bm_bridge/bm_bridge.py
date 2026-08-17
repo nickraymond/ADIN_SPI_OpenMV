@@ -114,6 +114,9 @@ STATUS_KEYS = ("node_id", "ip_ll", "ip_ucast", "stage", "err",
                "stream_sent", "stream_errs")
 
 CFG_PATH = "/flash/bridge_cfg.json"
+# Reset-on-change (S18, Nick's design, measured viable 2026-08-17): the
+# board's standing sensor mode, surviving the self-reset that applies it.
+MODE_PATH = "/flash/bridge_mode.json"
 CRASH_PATH = "/flash/bridge_crash.txt"
 TRACE_PATH = "/flash/bridge_trace.txt"
 TRACE_PREV_PATH = "/flash/bridge_trace.prev.txt"   # last run, kept for crashes
@@ -411,6 +414,30 @@ def _load_cfg():
         return {}
 
 
+def _load_mode():
+    """The persisted standing mode, or None. Never raises."""
+    try:
+        with open(MODE_PATH) as f:
+            return parse_mode_file(f.read())
+    except Exception:
+        return None
+
+
+def _save_mode(res, pf):
+    """Persist the standing mode; returns False rather than raising.
+
+    Called on the reset-on-change path IMMEDIATELY before machine.reset()
+    -- a failed write must abort the reset (the caller checks), or the
+    board reboots into the OLD mode and the operator's change silently
+    vanishes."""
+    try:
+        with open(MODE_PATH, "w") as f:
+            f.write(mode_file_json(res, pf))
+        return True
+    except Exception:
+        return False
+
+
 def _he_page():
     """(magic_ok, tick) from the BMHE status page, no rpmsg needed."""
     import machine
@@ -566,6 +593,32 @@ def sensor_steps(cur_res, cur_pf, want_res, want_pf):
     steps.append("framesize")
     steps.append("settle")      # first frames after a re-init are garbage
     return tuple(steps)
+
+
+def mode_file_json(res, pf):
+    """Serialise the standing sensor mode (reset-on-change persistence)."""
+    return json.dumps({"res": int(res), "pf": int(pf)})
+
+
+def parse_mode_file(text):
+    """Mode file text -> (res, pf), or None on ANY garbage.
+
+    The file is read at every boot and feeds sensor calls, so an invalid
+    value must die here, not in set_framesize. Unknown res/pf values --
+    including a file written by a FUTURE bridge that knows more modes --
+    fall back to None (= boot at the ceiling, today's behaviour).
+    """
+    try:
+        d = json.loads(text)
+        res = int(d["res"])
+        pf = int(d["pf"])
+    except Exception:
+        return None
+    if res not in (CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+        return None
+    if pf not in (CAMERA_PF_COLOR, CAMERA_PF_MONO):
+        return None
+    return (res, pf)
 
 
 class PublishGate:
@@ -1050,6 +1103,30 @@ def main():
     gate = PublishGate()        # S18 bite B2 -- see the class docstring
     pending_cmd = None          # camera command held until the gate opens
     last_status_seq = 0
+    # Reset-on-change (default; cfg {"reinit": "gate"} selects the old
+    # held-command path). Nick's design, measured viable 2026-08-17: a
+    # mode change persists the target and hard-resets the chip; the
+    # launcher boots the bridge straight into the new mode BEFORE any
+    # publish -- the only re-init path ever measured 100% safe. The
+    # in-flight command is dropped (the operator re-clicks); the udev
+    # rule bounces bm-light when the board re-enumerates.
+    reinit_mode = str(cfg.get("reinit", "reset")).lower()
+    reset_for_mode = False
+
+    # Apply the persisted standing mode now: the HE is loaded but has
+    # published NOTHING (phase 1 not yet entered) -- rung B territory,
+    # measured 9/9 safe -- and validation caps the mode at/below the
+    # ceiling, so the allocator only ever shrinks. A failure leaves the
+    # ceiling mode: traced, never fatal.
+    if engine.sensor_ok:
+        _mode = _load_mode()
+        if _mode is not None:
+            if engine._ensure_sensor(_mode[0], _mode[1]):
+                _trace("camera: standing mode res=%d pf=%d applied "
+                       "pre-publish" % _mode)
+            else:
+                _trace("camera: standing mode res=%d pf=%d FAILED to apply "
+                       "-- staying at the ceiling" % _mode)
 
     try:
         # Phase 1: hold WCMD_LINK down until the Pi actually speaks
@@ -1176,6 +1253,28 @@ def main():
                 if not engine.needs_reinit(pending_cmd):
                     engine.command(pending_cmd)     # no delta: no hazard
                     pending_cmd = None
+                elif reinit_mode == "reset":
+                    # Reset-on-change: persist the target, tear down, hard
+                    # reset. The chip reset itself is publish-safe (it is
+                    # what every recovery this sprint has done); the
+                    # DANGEROUS thing -- a live sensor re-init after
+                    # publishing -- simply never happens on this path.
+                    res = pending_cmd.get("res", CAP_DEFAULT_RES)
+                    pf = pending_cmd.get("pf", CAP_DEFAULT_PF)
+                    if _save_mode(res, pf):
+                        _trace("camera: mode change res=%d pf=%d -> "
+                               "RESET-ON-CHANGE (command dropped; operator "
+                               "re-issues after the ~60 s relink)" % (res, pf))
+                        reset_for_mode = True
+                        pending_cmd = None
+                        break           # finally: clean teardown, then reset
+                    # A mode file that cannot be written must NOT reset --
+                    # the board would boot into the OLD mode and the
+                    # operator's change would silently vanish. Fall through
+                    # to the gate path instead: slower, still safe-ish.
+                    _trace("camera: mode file write FAILED -- falling back "
+                           "to the gate for this command")
+                    reinit_mode = "gate"
                 else:
                     verdict = gate.poll(now, core.status_seq, core.status)
                     if verdict == GATE_GO:
@@ -1260,3 +1359,16 @@ def main():
                 micropython.kbd_intr(3)   # console is a console again
             except Exception:
                 pass
+
+    # AFTER the finally: teardown is complete (ledger traced, link down
+    # sent, HE ring dumped, HE stopped, console restored). The reset is
+    # the LAST act, so the crash file shows a clean exit before the boot
+    # record -- a reset-on-change reads as exactly what it is, not as a
+    # crash. Measured (2026-08-17): the launcher runs after
+    # machine.reset(), so the board comes back as a fresh bridge in the
+    # persisted mode; the udev rule bounces bm-light when the CDC
+    # re-enumerates.
+    if reset_for_mode:
+        _trace("camera: reset-on-change -- resetting now")
+        import machine
+        machine.reset()

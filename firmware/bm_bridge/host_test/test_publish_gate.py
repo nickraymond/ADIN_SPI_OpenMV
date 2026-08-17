@@ -430,5 +430,27 @@ check(e.booted is False,
       "a failed heal-bootstrap latches the camera off (allocator rule)")
 del sys.modules["sensor"]
 
+
+# ---- reset-on-change: the mode file must round-trip and reject junk ---
+print("mode file (reset-on-change):")
+from bm_bridge import mode_file_json, parse_mode_file  # noqa: E402
+ok_modes = [(r, p) for r in (bm_bridge.CAMERA_RES_QVGA,
+                             bm_bridge.CAMERA_RES_VGA,
+                             bm_bridge.CAMERA_RES_HD)
+            for p in (CAMERA_PF_COLOR, CAMERA_PF_MONO)]
+for r, p in ok_modes:
+    check(parse_mode_file(mode_file_json(r, p)) == (r, p),
+          "round-trip res=%d pf=%d" % (r, p))
+check(parse_mode_file("") is None, "empty file -> None, never a crash")
+check(parse_mode_file("not json") is None, "garbage -> None")
+check(parse_mode_file('{"res": 9, "pf": 1}') is None,
+      "unknown res (a FUTURE bridge's mode) -> None -> ceiling boot")
+check(parse_mode_file('{"res": 1, "pf": 7}') is None, "unknown pf -> None")
+check(parse_mode_file('{"res": "hd"}') is None,
+      "missing/typed-wrong fields -> None")
+check(parse_mode_file('{"res": 3, "pf": 2}') ==
+      (bm_bridge.CAMERA_RES_HD, CAMERA_PF_MONO),
+      "the HD-mono video mode survives the trip")
+
 print("PublishGate host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)

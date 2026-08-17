@@ -345,5 +345,47 @@ class TestControlSocketPlumbing(unittest.TestCase):
                                     "sys", "tempfile"), line)
 
 
+class TestResetOnChangeUdevRule(unittest.TestCase):
+    """S18 reset-on-change: the udev rule that relinks bm-light.
+
+    Measured 2026-08-17: after the AE3 self-resets, bm_sbc survives the
+    tty vanishing but never reopens the device -- the rule is the ONLY
+    thing that brings the leg back, so its shape is load-bearing.
+    """
+
+    RULES = os.path.join(HERE, "99-bm-ae3.rules")
+
+    def setUp(self):
+        with open(self.RULES) as f:
+            self.text = f.read()
+
+    def test_rule_file_exists_and_targets_the_light_unit(self):
+        self.assertIn("bm-light.service", self.text)
+
+    def test_try_restart_not_restart(self):
+        # restart would START a stopped unit -- violating the D33
+        # installed-disabled decision every time the board enumerates.
+        self.assertIn("try-restart", self.text)
+        for line in self.text.splitlines():
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            self.assertNotRegex(line, r"systemctl (?!--no-block try-restart)",
+                                "only try-restart may touch the unit")
+
+    def test_no_block_so_udev_never_waits_on_systemd(self):
+        self.assertIn("--no-block", self.text)
+
+    def test_matches_the_openmv_vendor_id(self):
+        self.assertIn('ATTRS{idVendor}=="37c5"', self.text)
+        self.assertIn('SUBSYSTEM=="tty"', self.text)
+        self.assertIn('ACTION=="add"', self.text)
+
+    def test_installer_carries_the_rule_for_the_light_role(self):
+        with open(os.path.join(HERE, "..", "install_stream_service.sh")) as f:
+            inst = f.read()
+        self.assertIn("99-bm-ae3.rules", inst)
+        self.assertIn("udevadm control --reload", inst)
+
+
 if __name__ == "__main__":
     unittest.main()

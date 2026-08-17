@@ -1,0 +1,18 @@
+# pi/services/99-bm-ae3.rules — S18 reset-on-change, the Pi-side half.
+#
+# When the AE3 self-resets to apply a mode change (bm_bridge.py, Nick's
+# design), its CDC device vanishes and re-enumerates. MEASURED 2026-08-17:
+# bm_sbc SURVIVES the vanish (same PID, logs uart_l2 write errors) but
+# NEVER reopens the device — the leg stays dead until bm-light restarts.
+# This rule is that restart.
+#
+# try-restart, not restart: it bounces the unit ONLY if it is running.
+# The units are installed disabled by decision (D33 — auto-starting would
+# open the CDC leg at boot and fight the fixture/dev loop); a stopped
+# bm-light stays stopped when the board enumerates for any other reason
+# (demo_up resets, dev-loop replugs, fresh boots).
+#
+# Match: OpenMV vendor id 37c5 (D22), tty subsystem — the AE3 is the only
+# 37c5 device on this bench. --no-block because udev RUN must not wait on
+# systemd.
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="37c5", RUN+="/usr/bin/systemctl --no-block try-restart bm-light.service"
