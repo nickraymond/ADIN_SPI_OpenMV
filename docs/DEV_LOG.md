@@ -17,6 +17,45 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — reset-on-change measured VIABLE (Nick's idea): the board self-boots into the bridge after machine.reset(); bm-light needs a udev restart trigger
+
+**Branch:** `sprint/18-reinit-race`. Two measurements, both pre-registered
+discriminators, both answered.
+
+**Context:** Nick's demo death (QVGA colour→grey with the 20 s build
+running) forced the honest correction that the re-init hazard is
+probabilistic — no delay constant closes it (SPEC updated). Nick asked
+the right question: why not reboot the AE3 on every mode change? A
+rebooted board does its sensor init BEFORE any publish — the
+measured-safe path (21/21 off-chain). Two unknowns stood in the way.
+
+**Test 1 — does `main.py` run after `machine.reset()`? YES.** Marker
+written, `machine.reset()` issued, no further port contact; the outcome
+probe found the port held by a fresh bridge — the launcher ran unaided.
+(S14's "cold boot ≠ main.py" applies to power-on, not self-reset.)
+
+**Test 2 — does bm-light survive the tty vanishing? HALF.** Host-side
+USB deauth/reauth under a live bm-light: process SURVIVED (same PID,
+NRestarts=0, logs `uart_l2: write error` and carries on) — but it
+**never reopens the device**; write errors continue after the board
+returns. The leg needs a restart trigger: **a udev rule
+(`try-restart bm-light` on the AE3's CDC add)** — Pi-side, no fork
+change. `try-restart` respects the D33 installed-disabled decision (a
+stopped unit stays stopped).
+
+**Also measured: byte-soup self-recovery is NOT reliable** — 2.5 min of
+camera-command soup at a REPL board never tripped a soft reset. The
+feature does not depend on it; recorded so nobody ever waits on it.
+
+**The feature this specifies:** res/pf change → bridge persists the
+target mode to flash → clean teardown → `machine.reset()` → launcher
+boots the bridge straight into the new mode pre-publish → udev restarts
+bm-light on re-enumeration → link reforms. Deterministic ~45–60 s,
+zero gamble, in-flight command dropped (operator re-clicks; the bench
+banner covers the gap). Build approved by Nick.
+
+---
+
 ## 2026-08-17 — Sprint S18 — bite B2 ladder run: VGA fails at 10 s and passes at 15 s → the constant is 20 s, flat, and HD stays flagged
 
 **Branch:** `sprint/18-reinit-race` @ `9666604`.
