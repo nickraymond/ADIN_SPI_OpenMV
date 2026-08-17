@@ -17,6 +17,68 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — bite B2 on-chain rehearsal: the headline case is FIXED and demonstrated; 6 s is NOT enough after a VGA frame
+
+**Branch:** `sprint/18-reinit-race`. Fixed bridge `d558f7f5…` (56,420 B)
+deployed to `/flash` and proved by on-board sha256; chain brought up via
+`demo_up.sh` + systemd units; all commands through bite B's control
+socket with 1 Hz timestamped status polling.
+
+**THE WIN — bite B's exact failure sequence, fixed and timed:**
+- Baseline `capture 50 qvga color`: delivered + saved in ~1 s.
+- **The fast pair** (colour, then mono 0.7 s later — the previously
+  fatal click): colour saved at t=1.7, **mono HELD by the gate and
+  saved at t=7.0 — exactly 6.3 s after the colour publish**. No error,
+  no wedge. Both artifacts verified against their own JPEG headers:
+  320×200×3 / 1,873 B and 320×200×**1** / 1,089 B.
+  Before this fix, that sequence wedged the camera for the bridge's
+  life 2/2.
+
+**THE NEW FACT — the size scaling is real, on-chain:** the VGA pair
+(VGA colour, then mono 0.7 s later) delivered the VGA frame and then
+**nothing ever delivered again** — not the held mono (~6.5 s after the
+VGA publish), not a 4-command burst, not a final QVGA capture — while
+the HE answered `ok=1, cmds` advancing throughout (the known lie) and
+the chain stayed healthy (link up, relay pumping, board on the bus).
+**Deduced mechanism, tight even without the trace:** the barrier
+provably works on-chain (the QVGA pair used it and delivered), so
+deadline-refusals cannot explain a *permanent* stop; the only branch
+that latches everything off is **the VGA→mono re-init throwing at
+~6.5 s — over the 6 s window — followed by the self-heal failing, whose
+bootstrap failure latches the camera off for the session** (the
+allocator rule, working as designed). So: 6 s is enough after a QVGA
+frame and NOT enough after a VGA frame; bite B's "scales with frame
+size" stands, now with an on-chain fail point at 6.5 s.
+
+**Ops errors, mine, recorded:** the bridge trace held the confirming
+ledger and I destroyed it. The first read (mpremote `resume`, no
+soft-reset — the right tool) WAS working but slow, and I killed it;
+the port close DTR-reset the board, which booted a fresh bridge, whose
+launcher rotation consumed the one preserved generation. Two further
+attempts hit `could not enter raw repl` (each attach boots another
+bridge) — stopped at three per `ae3-board-access`. Lessons: (1) tail
+the file, never line-filter on-board; (2) never kill a slow mpremote —
+the close is itself port contact; (3) a future `demo_up.sh` should copy
+`bridge_trace.prev.txt` off the board while it has the REPL, so the
+ledger survives the next session's boot.
+
+**Bench state:** AE3 on the bus, launcher staged as `main.py` (fixture
+deliberately NOT restored — the next session is another chain session
+and `demo_up.sh` re-stages anyway; same call as C2 made). `bm-light`
+stopped; `bm-telemetry` + stream server left ACTIVE as found.
+`~/bench_captures` now 37 sidecars (5 new, incl. the proof pair).
+
+**Next (the bite's remaining measurement, needs one chain session):**
+the spaced on-chain ladder — VGA and HD source frames × re-init at
+8/10/15 s — to set the final `REINIT_MIN_QUIET_MS` (likely per-size),
+with the deadline riding it automatically. That ladder IS the start of
+B2's 9-row matrix. Also carried out of the rehearsal: the self-heal
+never being observed to succeed argues for prevention-first sizing, and
+`bench_web`'s 8 s settle is NOT proven for VGA/HD re-inits — do not
+relax it yet.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite B2 rungs E–F + the fix: the hazard is a CLOCK, and the shipped guard is a measured 6 s + self-heal
 
 **Branch:** `sprint/18-reinit-race`. Bridge-only throughout, as scoped.
