@@ -262,6 +262,22 @@ pair, USB carrying no video.
   point; 2 s is measured-unsafe) — plus catch-and-self-heal
   (reset + re-bootstrap) as an instrumented backstop, unproven but
   strictly no worse than today's permanent wedge.
+  **CORRECTION (2026-08-17, after Nick's live demo): THE HAZARD IS
+  PROBABILISTIC, NOT A THRESHOLD.** With the 20 s bridge build verified
+  running, a QVGA colour→grey re-init (the gentlest transition, pixformat
+  only) took the board off the USB bus during Nick's demo. Add the
+  rung E/F disagreement at ~250 ms and the n=1 ladder rows, and the
+  honest model is a **per-re-init failure probability that decreases
+  with delay but never reaches zero**: ~100% in the fast-click zone
+  (~0–1 s, 4/4 fatal-or-wedge), low-but-nonzero at ≥15–20 s (dozens of
+  passes tonight, one death). Consequences: (1) the gate stays — it
+  closes the deterministic zone; (2) **no bridge-side constant fully
+  closes the hazard** — recovery (Pi reboot + demo_up ≈ 3 min, scripted,
+  agent-runnable) is part of the bench's operating model, not an
+  incident; (3) the true fix is the upstream root cause (OpenMV/Alif —
+  below MicroPython; report owed) and/or SWD/JTAG on the AE3 to read
+  the fault directly. Re-init sparingly; treat every mode change as a
+  small gamble with a 3-minute worst case.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
