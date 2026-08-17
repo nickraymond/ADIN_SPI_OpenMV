@@ -452,5 +452,28 @@ check(parse_mode_file('{"res": 3, "pf": 2}') ==
       (bm_bridge.CAMERA_RES_HD, CAMERA_PF_MONO),
       "the HD-mono video mode survives the trip")
 
+
+# ---- auto-resume: the command file must round-trip and reject junk ----
+print("resume file (auto-resume after reset-on-change):")
+from bm_bridge import parse_resume_file, CMD_KEYS  # noqa: E402
+import json as _json  # noqa: E402
+good = {"mode": 1, "q": 50, "fps_x10": 150, "rate_bps": 2000000,
+        "secs": 60, "payload_max": 1400, "res": 1, "pf": 2}
+check(parse_resume_file(_json.dumps(good)) == good,
+      "a full command round-trips")
+check(parse_resume_file("") is None, "empty -> None")
+check(parse_resume_file("{}") is None, "missing keys -> None")
+for k, bad in (("mode", 9), ("res", 0), ("pf", 3), ("fps_x10", 0),
+               ("q", 0), ("secs", -1)):
+    d = dict(good)
+    d[k] = bad
+    check(parse_resume_file(_json.dumps(d)) is None,
+          "%s=%r is refused -- this dict feeds command() on a fresh boot"
+          % (k, bad))
+check(parse_resume_file(_json.dumps(dict(good, mode=2))) is not None,
+      "a STREAM command resumes too -- streams survive the mode change")
+check(sorted(CMD_KEYS) == sorted(good.keys()),
+      "CMD_KEYS covers exactly the command dict")
+
 print("PublishGate host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)

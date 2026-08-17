@@ -117,6 +117,12 @@ CFG_PATH = "/flash/bridge_cfg.json"
 # Reset-on-change (S18, Nick's design, measured viable 2026-08-17): the
 # board's standing sensor mode, surviving the self-reset that applies it.
 MODE_PATH = "/flash/bridge_mode.json"
+# The command that TRIGGERED the reset, executed automatically once the
+# link reforms (one-shot; deleted on arm). Added after Nick's live demo:
+# dropping the command made every mode change feel dead -- the operator
+# clicked, saw 15 s of banner, and nothing executed, because only a
+# command clears the banner and the dropped click never ran.
+RESUME_PATH = "/flash/bridge_resume.json"
 CRASH_PATH = "/flash/bridge_crash.txt"
 TRACE_PATH = "/flash/bridge_trace.txt"
 TRACE_PREV_PATH = "/flash/bridge_trace.prev.txt"   # last run, kept for crashes
@@ -423,6 +429,35 @@ def _load_mode():
         return None
 
 
+def _load_resume():
+    """One-shot: read AND DELETE the resume file. Never raises.
+
+    Deleted before use, not after -- if executing the command crashes the
+    board, booting into a crash loop that re-runs the same command every
+    16 s would be strictly worse than losing one click."""
+    try:
+        with open(RESUME_PATH) as f:
+            cmd = parse_resume_file(f.read())
+    except Exception:
+        return None
+    try:
+        import os
+        os.remove(RESUME_PATH)
+    except Exception:
+        pass
+    return cmd
+
+
+def _save_resume(cmd):
+    """Persist the command that triggered the reset. False, never raises."""
+    try:
+        with open(RESUME_PATH, "w") as f:
+            f.write(json.dumps({k: int(cmd.get(k, 0)) for k in CMD_KEYS}))
+        return True
+    except Exception:
+        return False
+
+
 def _save_mode(res, pf):
     """Persist the standing mode; returns False rather than raising.
 
@@ -598,6 +633,35 @@ def sensor_steps(cur_res, cur_pf, want_res, want_pf):
 def mode_file_json(res, pf):
     """Serialise the standing sensor mode (reset-on-change persistence)."""
     return json.dumps({"res": int(res), "pf": int(pf)})
+
+
+CMD_KEYS = ("mode", "q", "fps_x10", "rate_bps", "secs", "payload_max",
+            "res", "pf")
+
+
+def parse_resume_file(text):
+    """Resume file -> a full command dict, or None on ANY garbage.
+
+    Validated field-by-field: this dict goes straight into
+    CaptureEngine.command() on a fresh boot, so a corrupt file must die
+    here. res/pf are re-checked with the same rules as the mode file."""
+    try:
+        d = json.loads(text)
+        cmd = {k: int(d[k]) for k in CMD_KEYS}
+    except Exception:
+        return None
+    if cmd["mode"] not in (CAMERA_MODE_STOP, CAMERA_MODE_SINGLE,
+                           CAMERA_MODE_STREAM):
+        return None
+    if cmd["res"] not in (CAMERA_RES_QVGA, CAMERA_RES_VGA, CAMERA_RES_HD):
+        return None
+    if cmd["pf"] not in (CAMERA_PF_COLOR, CAMERA_PF_MONO):
+        return None
+    if not (1 <= cmd["fps_x10"] <= 600):
+        return None       # fps_x10 divides into interval_ms -- 0 would ZeroDiv
+    if cmd["q"] < 1 or cmd["q"] > 100 or cmd["secs"] < 0:
+        return None
+    return cmd
 
 
 def parse_mode_file(text):
@@ -1149,6 +1213,18 @@ def main():
         t_link = time.ticks_ms()
         _trace("link up (first VCP bytes seen)")
 
+        # Auto-resume (reset-on-change): the click that triggered the
+        # reset runs NOW, on the relinked chain. The standing mode
+        # already matches it (applied at boot), so this takes the
+        # no-re-init path and executes immediately -- and its frames are
+        # what tell the operator the change worked.
+        _resume = _load_resume()
+        if _resume is not None:
+            pending_cmd = _resume
+            _trace("camera: auto-resuming the command that triggered the "
+                   "reset (mode %d res=%d pf=%d)"
+                   % (_resume["mode"], _resume["res"], _resume["pf"]))
+
         stream_cfg = cfg.get("stream") or None
         ping_cfg = cfg.get("ping") or None
         camera_cfg = cfg.get("camera") or None
@@ -1262,9 +1338,18 @@ def main():
                     res = pending_cmd.get("res", CAP_DEFAULT_RES)
                     pf = pending_cmd.get("pf", CAP_DEFAULT_PF)
                     if _save_mode(res, pf):
+                        # Persist the command too: the fresh boot executes
+                        # it once the link reforms, so ONE click means
+                        # "banner for ~16 s, then your image/stream" --
+                        # dropping it made every mode change feel dead
+                        # (Nick's demo, 2026-08-17). A failed resume-save
+                        # still resets: the mode applies, one click lost.
+                        if not _save_resume(pending_cmd):
+                            _trace("camera: resume file write failed -- "
+                                   "the command will not auto-run")
                         _trace("camera: mode change res=%d pf=%d -> "
-                               "RESET-ON-CHANGE (command dropped; operator "
-                               "re-issues after the ~60 s relink)" % (res, pf))
+                               "RESET-ON-CHANGE (auto-resume after relink)"
+                               % (res, pf))
                         reset_for_mode = True
                         pending_cmd = None
                         break           # finally: clean teardown, then reset
