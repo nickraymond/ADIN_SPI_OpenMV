@@ -17,6 +17,55 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-17 — Sprint S18 — bite B2 spacing ladder: BLOCKED on a physical replug; the port-race afternoon, recorded so it is never repeated
+
+**Branch:** `sprint/18-reinit-race`. No code change this stretch — ops only.
+
+**What was attempted:** the 6-rung spacing ladder (VGA/HD × 15/10/8 s)
+that sets the final `REINIT_MIN_QUIET_MS`. It never measured a rung.
+
+**The chain of events, honestly:**
+1. After the rehearsal's teardown, every `mpremote` attach to the
+   launcher-staged board lost the interrupt race: attach bytes → the
+   phase-1 bridge takes them as link-up → raw-REPL entry fails → the
+   port close DTR-resets the board → a FRESH bridge boots. Five
+   consecutive losses (2 demo_up + 3 spaced cycles). The
+   previously-reliable "wait 40 s, run again" remedy assumes the race is
+   winnable; tonight it wasn't, and each attempt reset the clock.
+2. The 11-minute phase-1-timeout wait + `resume` attach ALSO failed —
+   the attach itself still feeds a byte to whatever boots.
+3. `bm-light`-as-the-attacher DID bring the chain up (neighbor added),
+   but the ladder's first camera command left the gap the C1 rule warns
+   about (~60 s of journal-checking) and the bridge quiet-exited;
+   all 6 rungs ran against a dead leg (`state: timeout`, HE stale-lying).
+4. The hardened retry (liveness-gated ladder, 2 s cam-status keep-alive,
+   `systemctl restart bm-light` as the port-kicker) got `active` but the
+   camera never answered within 75 s. **The board is in a state only a
+   physical replug clears** — the Pi 5 never cuts VBUS, so no
+   software path can power-cycle the AE3.
+
+**Standing lessons written into the next attempt (already scripted):**
+- The ladder script now pings the camera every 2 s from t=0 — liveness
+  gate AND keep-alive, so the quiet-exit trap structurally cannot fire.
+- Fresh-board bring-up order: replug → `demo_up.sh` (mpremote wins on a
+  fresh REPL) → `bm-light` → ladder within seconds.
+- The JTAG/SWD question (Nick raised it): every hour tonight was a
+  USB-port-ownership problem a debug probe does not have. Not filed as
+  a task yet — Nick's call.
+
+**Bench state:** AE3 enumerated but camera-dead pending replug; launcher
+staged as `main.py`; fixed bridge `d558f7f5…` verified on `/flash`.
+`bm-light` active (streaming at a dead leg — harmless), `bm-telemetry` +
+stream server active. 37 sidecars on nereus001, incl. the rehearsal's
+proof pair.
+
+**Next:** physical replug → `demo_up.sh` → the one-shot ladder → set the
+constant → PR. Then the reef-reference matrix (Nick's call: dark-room
+throughput numbers are not representative; use the S0/S17 ref-scene
+machinery), bite D2, S18 demo.
+
+---
+
 ## 2026-08-17 — Sprint S18 — bite B2 on-chain rehearsal: the headline case is FIXED and demonstrated; 6 s is NOT enough after a VGA frame
 
 **Branch:** `sprint/18-reinit-race`. Fixed bridge `d558f7f5…` (56,420 B)
