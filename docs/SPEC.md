@@ -200,6 +200,22 @@ pair, USB carrying no video.
   and a bench that needs a reboot.
   Reproducer, off-chain and ~4 minutes, no Pi chain required:
   `bench/probes/s18_reinit_probe{,_b,_c}.py`.
+  **FIX ATTEMPT #1 FALSIFIED (2026-08-16, S18 bite B2 nibble 3, rung D):**
+  gating the re-init on "publish drained" — an in-order WCMD_QUERY
+  barrier + heap_free recovery + stable stream counters — is NOT
+  sufficient. The gate opened with every condition satisfied (GO after
+  4 ms, status_seq=2, heap_high=20,576) and the board still went off the
+  bus, at `set_framebuffers(1)`, one call further than the ungated run.
+  **Refined hypothesis, not yet proven: the killer is an HE→HP rpmsg
+  ARRIVAL (MHU doorbell + MicroPython endpoint callback) landing during
+  the framebuffer calls**, not the publish being in flight per se. Fits
+  all four rungs: rung B exchanged zero rpmsg after the announce (status
+  via `machine.mem32`) and was safe; the barrier reply can overtake the
+  published frames' drain tail (`wire_pump_tx` is incremental, the reply
+  is direct), so traffic was still arriving when rung D re-inited. Also
+  fits the size scaling and the ≥6 s heal. **Decisive next experiment:
+  rung E — after the barrier, pump until the HE→HP side is silent for
+  N ms, then re-init.** If that dies too, the fix is not bridge-side.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A

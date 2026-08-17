@@ -17,6 +17,65 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-16 — Sprint S18 — bite B2 nibbles 2–3: the gate FAILED acceptance — "publish drained" is not the safe condition
+
+**Branch:** `sprint/18-reinit-race` @ `545af73` (+ this entry). Bridge-only
+as scoped; no fork change, no HE rebuild.
+
+**Done:**
+- **Nibble 2 shipped `PublishGate`** in `firmware/bm_bridge/bm_bridge.py`:
+  hold a re-init until (1) a WCMD_QUERY posted after the frame's last chunk
+  is answered (the vring is in-order, so the reply proves the HE consumed
+  and bm_pub'd every chunk), (2) `heap_free` back within 1,024 B of a
+  learned high-water (transmit copies cost 1,488 B each), (3) two
+  consecutive replies with identical `stream_sent/stream_errs` (the
+  synthetic WCMD_STREAM publisher, which the barrier cannot see). Refuse at
+  5 s rather than guess. Host tests 262 → 322, all green.
+- **Nibble 3 ran the acceptance probe (rung D)** — the real `BridgeCore` +
+  `PublishGate` + `send_chunk_msgs` against a live publishing HE, on the
+  ladder rung C died on. Deploy verified by on-board sha256
+  (`a1615f21…`, 53,089 B, byte-identical).
+
+**THE RESULT — the fix does not work, and the acceptance test is what
+caught it.** First rung: 1,939 B QVGA capture → 5 rpmsg msgs published in
+4 ms → **gate GO after 4 ms (3 polls, status_seq=2, heap_high=20,576 —
+every condition satisfied, exactly as designed)** → `meas pixformat` OK →
+**`meas framebuffers` → board off the USB bus** (`error -71`, `unable to
+enumerate`). One sensor call FURTHER than ungated rung C. The gate's logic
+is fine; **its premise is falsified**: barrier + heap + stream-counters is
+not the safe condition.
+
+**What the four rungs now say together (A safe / B safe / C fatal / D
+fatal-through-the-gate):** the discriminator between rung B and C/D is not
+"publishing in flight" — it is **rpmsg traffic**. Rung B exchanged zero
+rpmsg after the announce (its status reads used `machine.mem32`, not the
+wire). In C/D, published frames flow back HE→HP as WCMD_FRAME_TX; the
+barrier reply can overtake that tail (the reply is a direct send, the
+frames drain through `wire_pump_tx` incrementally), and rung D stopped
+pumping the moment the gate opened. **Leading hypothesis: an HE→HP rpmsg
+arrival — MHU doorbell + MicroPython endpoint callback — landing during
+the framebuffer calls is what kills the board.** It explains bite B's
+size scaling (bigger frame → longer drain tail → longer hazard window),
+why ≥6 s always healed it, and why rung B's totally-quiet core was safe.
+Also honest: the heap condition was vacuous on first use — `heap_high`
+was learned from the two post-publish replies themselves, so the
+comparison passed trivially.
+
+**Bench state:** AE3 **off the USB bus** (second time this session; same
+D15-class signature). Recovery = `sudo reboot` on nereus000, handed to
+Nick. `/flash` carries the updated bridge (`a1615f21…`), the S6 fixture as
+`main.py`, and `reinit_probe_d.txt` with breadcrumbs to the death. Both
+systemd units inactive.
+
+**Next (needs Nick's gate — the nibble-2 plan has substantially changed):**
+rung E, the quiescence experiment: after the barrier, keep pumping until
+the HE→HP side has been **silent for N ms**, then re-init. If that
+survives the ladder, RX-quiescence becomes the gate's final condition
+(~30 LoC in the bridge, still bridge-only). If it dies too, the fix does
+not live in the bridge and the bite needs re-scoping.
+
+---
+
 ## 2026-08-16 — Sprint S18 — bite B2 nibble 1: the re-init race needs the HE **publishing**, and at that moment it can take the whole board off the USB bus
 
 **Branch:** `sprint/18-reinit-race`, cut from `main` @ `ba2f4c6`. Off-chain
