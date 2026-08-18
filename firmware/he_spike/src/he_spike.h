@@ -29,9 +29,20 @@
 // Descriptor .addr fields are OFFSETS into the buffer region relative to
 // SHM_BASE + METAL_RSC_SIZE (measured: first pool buffer = 0x2000 ->
 // 0x60002400), not absolute addresses.
-#define VRING_NUM       64u          // VRING_NUM_BUFFS, modopenamp.c:73
-#define VRING_ALIGN     32u          // VRING_ALIGNMENT, modopenamp.c:71
-#define RPMSG_BUF_SIZE  512u         // open-amp RPMSG_BUFFER_SIZE default
+// S23 bite 2 (2026-08-18): buffers resized 512 -> 1544 so one 1400 B
+// camera chunk (or one full 1514 B L2 frame + 4 B wire header) rides ONE
+// rpmsg message -- the measured tax was ~0.57 ms PER MESSAGE, not per
+// byte. Lockstep with the HP firmware patch 0004 (extmod.mk
+// RPMSG_BUFFER_SIZE=1544, modopenamp.c VRING_NUM_BUFFS=16). Pool
+// arithmetic for the unchanged 64 KB SHM: rsc 1 K + rings 2x4 K +
+// 2x16x1544 = 49,408 B of the 56,320 B pool (6.9 K slack). VRING_NUM is
+// a VALIDATION BOUND here (rsc rejects >1024); the real count arrives in
+// the host's rsc table. A stale-ELF/new-host mismatch is safe by
+// construction: rr_send checks the descriptor's own capacity per message
+// (dbg_reason 3) and RX reads actual lengths -- degraded, never corrupt.
+#define VRING_NUM       16u          // VRING_NUM_BUFFS, modopenamp.c
+#define VRING_ALIGN     32u          // VRING_ALIGNMENT, modopenamp.c
+#define RPMSG_BUF_SIZE  1544u        // lockstep: RPMSG_BUFFER_SIZE (0004)
 
 // ---- our app / bench ---------------------------------------------------
 #define BENCH_EPT_ADDR  8192u        // above RPMSG_RESERVED_ADDRESSES=1024

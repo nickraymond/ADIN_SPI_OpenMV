@@ -424,14 +424,17 @@ const K = {
   // reason); the page mirrors them so the refusal is visible before the
   // click. Rates are predicted from the reef model — conservative for
   // darker scenes, which is the right side to miss on.
-  MSGS_PER_CHUNK: 3,        // ceil(1400 / 492), REV-28
+  // S23 bite 2: rpmsg buffers 512 -> 1544 — one chunk = ONE message
+  // (was 3 at the 492 B budget; REV-28 retires).
+  MSGS_PER_CHUNK: 1,        // 1400 + 10 chunk hdr + 4 wire <= 1524
   // S22 bite 1: the 315 msg/s wedge boundary was a u16 vring wrap in
-  // the HE rpmsg layer — fixed and re-measured. Streams now run clean
-  // at every rate tested (990 commanded / 717 delivered, 10-min soaks
-  // ledger-exact); this is a measured-envelope sanity cap, not a wedge
-  // line. The burst cap is still real: ~83-chunk stills lost 54 chunks
-  // on the FIXED stack — backpressure bite pending.
-  SAFE_STREAM_MSGS: 1200,   // msg/s — above every measured-clean command
+  // the HE rpmsg layer — fixed and re-measured (990 commanded / 717
+  // delivered clean in OLD 492 B messages). S23 bite 2 scales the cap
+  // to the same measured BYTE envelope for the 3x-bigger messages;
+  // bite 3 re-derives it from new-stack ceilings. The burst cap is
+  // still real: ~83-chunk stills lost a chunk on the fixed stack —
+  // backpressure bite pending.
+  SAFE_STREAM_MSGS: 400,    // msg/s — same byte envelope as the old 1200
   SAFE_BURST_CHUNKS: 68,    // hd color q50 reef, delivered clean twice
 };
 

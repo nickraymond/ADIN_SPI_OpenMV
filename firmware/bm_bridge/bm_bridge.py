@@ -60,7 +60,12 @@ WCMD_PUB = 0x18             # HP->HE: publish payload on camera/stream (S17)
 WREP_STATUS = 0x94
 WREP_CAPTURE = 0x95         # HE->HP: camera command, wire_capture_t <BBHIHH
 
-MSG_PAYLOAD = 492           # 496 rpmsg budget - 4 B wire header
+# S23 bite 2: rpmsg buffers 512 -> 1544 (he_spike.h + openmv patch 0004),
+# so the budget after the 16 B rpmsg header and our 4 B wire header is
+# 1524 -- one 1400 B camera chunk or one full 1514 B L2 frame per
+# message (the measured tax was ~0.57 ms PER MESSAGE). WCMD_FRAG remains
+# for anything larger; on this stack nothing legal is.
+MSG_PAYLOAD = 1524          # 1528 rpmsg budget - 4 B wire header
 MAX_L2 = 1514               # REV-14 network-wide max frame
 
 # S17 camera data plane: chunk header inside each camera/stream payload
@@ -142,9 +147,10 @@ BM_STATUS_PAGE = 0x600BFE00
 # frames.
 RPMSG_QUEUE_CAP = 1024
 # Service the HE->HP direction every N messages while pushing a frame's
-# chunks. A 1400 B chunk is 3 rpmsg messages, so 3 = "drain after every
-# chunk" (S19 bite 2 -- see send_chunk_msgs).
-CHUNK_DRAIN_EVERY = 3
+# chunks. S23 bite 2: one 1400 B chunk is now ONE rpmsg message, so 1 =
+# "drain after every chunk" -- the same interleave cadence S19 bite 2
+# established, in the new message geometry (see send_chunk_msgs).
+CHUNK_DRAIN_EVERY = 1
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit

@@ -1,0 +1,31 @@
+diff --git a/extmod/extmod.mk b/extmod/extmod.mk
+index 961699f..1837b22 100644
+--- a/extmod/extmod.mk
++++ b/extmod/extmod.mk
+@@ -593,7 +593,7 @@ CFLAGS_THIRDPARTY += \
+     -I$(TOP)/$(OPENAMP_DIR)/lib/include/ \
+     -DMETAL_INTERNAL \
+     -DNO_ATOMIC_64_SUPPORT \
+-    -DRPMSG_BUFFER_SIZE=512 \
++    -DRPMSG_BUFFER_SIZE=1544 \
+ 
+ # OpenAMP's source files.
+ SRC_OPENAMP_C += $(addprefix $(OPENAMP_DIR)/lib/,\
+diff --git a/extmod/modopenamp.c b/extmod/modopenamp.c
+index e7ae2c1..343f356 100644
+--- a/extmod/modopenamp.c
++++ b/extmod/modopenamp.c
+@@ -69,8 +69,11 @@
+ 
+ #define VRING_COUNT             2
+ #define VRING_ALIGNMENT         32
+-// Note the number of buffers must be a power of 2
+-#define VRING_NUM_BUFFS         64
++// Note the number of buffers must be a power of 2.
++// S23 (ADIN bench): 16 x 1544 B buffers per direction (RPMSG_BUFFER_SIZE
++// in extmod.mk) -- one full 1514 B L2 frame or 1400 B camera chunk per
++// message. Pool: 2 x 16 x 1544 = 49,408 B of the 56,320 B buffer region.
++#define VRING_NUM_BUFFS         16
+ 
+ // The following config should be enough for about 128 descriptors.
+ // See lib/include/openamp/virtio_ring.h for the layout of vrings

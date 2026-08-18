@@ -92,14 +92,20 @@ REEF_BYTES_Q50 = {("qvga", "color"): 8728, ("qvga", "mono"): 7536,
                   ("vga", "color"): 27021, ("vga", "mono"): 23831,
                   ("hd", "color"): 86120, ("hd", "mono"): 75324}
 CHUNK_DATA_MAX = 1390        # payload_max 1400 minus the 10 B chunk header
-MSGS_PER_CHUNK = 3           # ceil(1400 / 492): the rpmsg budget (REV-28)
+# S23 bite 2: rpmsg buffers 512 -> 1544, so one chunk = ONE message
+# (was 3 at the old 492 B budget; REV-28 retires).
+MSGS_PER_CHUNK = 1           # 1400 + 10 B chunk hdr + 4 B wire <= 1524
 # S22 bite 1 (2026-08-18): the old 315 msg/s wedge boundary was a u16
 # vring-index wrap in the HE's rpmsg layer, FIXED and re-measured. The
-# chain now runs clean at every rate tested — 990 msg/s commanded /
+# chain then ran clean at every rate tested — 990 msg/s commanded /
 # 717 msg/s delivered sustained, 10-min soaks ledger-exact — so this is
 # no longer a wedge line, it is a measured-clean-envelope sanity cap
 # (predictions are at COMMANDED fps, which always over-states delivery).
-SAFE_STREAM_MSGS = 1200      # msg/s — above every measured-clean command
+# S23 bite 2 re-anchor: those envelopes were measured in OLD 492 B-class
+# messages; the new messages are ~3x the bytes, so the cap is scaled to
+# hold the same measured BYTE envelope (1200/3) until the new stack's
+# ceilings are re-measured (this sprint's bite 3 re-derives it).
+SAFE_STREAM_MSGS = 400       # msg/s — same byte envelope as the old 1200
 # Still real post-fix: an ~83-chunk single-frame burst lost 54 chunks in
 # the relay on the FIXED stack (2026-08-18) — arrival outruns the VCP
 # drain and the HE's byte-bounded TX queue sheds the excess. Largest
