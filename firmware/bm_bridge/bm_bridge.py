@@ -324,19 +324,33 @@ class BridgeCore:
         off = 0
         for idx in range(count):
             take = min(data_max, n - off)
-            payload = struct.pack(CHUNK_HDR_FMT, frame_seq, idx, count,
-                                  take) + mv[off:off + take]
-            off += take
-            total = len(payload)
-            first = min(total, MSG_PAYLOAD)
-            msgs.append(struct.pack("<BBH", WCMD_PUB, 0, total) +
-                        payload[:first])
-            p = first
-            while p < total:
-                part = min(total - p, MSG_PAYLOAD)
-                msgs.append(struct.pack("<BBH", WCMD_FRAG, 0, part) +
-                            payload[p:p + part])
-                p += part
+            total = CHUNK_HDR_LEN + take
+            if total <= MSG_PAYLOAD:
+                # S23 bite 2 fast path (the only reachable shape at the
+                # 1524 B budget): both headers packed in place, the JPEG
+                # slice copied ONCE -- no intermediate payload object.
+                buf = bytearray(4 + total)
+                struct.pack_into("<BBH", buf, 0, WCMD_PUB, 0, total)
+                struct.pack_into(CHUNK_HDR_FMT, buf, 4, frame_seq, idx,
+                                 count, take)
+                buf[4 + CHUNK_HDR_LEN:] = mv[off:off + take]
+                msgs.append(buf)
+                off += take
+            else:
+                # Legacy spill path: kept for smaller-budget stacks and
+                # host tests; byte-identical wire shape to pre-S23.
+                payload = struct.pack(CHUNK_HDR_FMT, frame_seq, idx, count,
+                                      take) + mv[off:off + take]
+                off += take
+                first = min(total, MSG_PAYLOAD)
+                msgs.append(struct.pack("<BBH", WCMD_PUB, 0, total) +
+                            payload[:first])
+                p = first
+                while p < total:
+                    part = min(total - p, MSG_PAYLOAD)
+                    msgs.append(struct.pack("<BBH", WCMD_FRAG, 0, part) +
+                                payload[p:p + part])
+                    p += part
             self.stats["cap_chunks"] += 1
         self.stats["cap_frames"] += 1
         self.stats["cap_bytes"] += n
