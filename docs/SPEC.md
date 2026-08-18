@@ -134,6 +134,21 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **ANSWERED 2026-08-18 (S22 bite 2 desk check, vendor-sourced): the
+  Alif Ensemble E3 has NO hardware JPEG or video codec.** Its
+  image/graphics accelerators are the D/AVE 2D GPU (vector graphics),
+  2× Ethos-U55 NPUs, the LCD controller, and MIPI CSI-2/CPI camera
+  interfaces — no compression hardware of any kind. Source: Alif
+  Ensemble E3 series page + E3 datasheet v2.11 (alifsemi.com /
+  Mouser ADTS series). Consequence: HD color ≥5 fps has no hardware
+  path on the AE3 (software encoder is 299.2 ms/frame at q50 reef =
+  3.3 fps ceiling); hardware encode remains the N6/H.264 follow-on
+  (icebox). Software levers that DO exist, verified in the OpenMV
+  source at 7d4dbf7: `to_jpeg` exposes `subsampling=` (auto picks
+  4:2:2 at q50 — 4:2:0 is cheaper and one kwarg away), and jpege.c
+  has NO Helium/MVE vectorization despite the M55 build enabling
+  `+mve.fp` — a hand-vectorized encoder is real but unbounded work.
+
 - **A sensor re-init too soon after a capture throws
   `RuntimeError('Sensor control failed.')` and WEDGES the sensor for the
   rest of the bridge's life (measured 2026-08-16, S18 bite B trial

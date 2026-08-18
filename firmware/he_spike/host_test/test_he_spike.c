@@ -354,6 +354,42 @@ int main(void) {
     CHECK(n == 2 && buf[0] == BREP(BCMD_ECHO) && buf[1] == 0x5A,
           "post-restart echo");
 
+    // [8] S22 bite 1: the RX cursor across the u16 avail-index wrap.
+    // consumed[] is u32; the vring index is u16. Without a wrap-safe
+    // compare, message 65,536 turns the poll loop into a phantom-work
+    // storm (measured live: frag_errors ignited in the exact 10 s
+    // window containing message 65,536, 4/4 real mute events match).
+    // Pre-wrap the ring indices so the boundary is 8 messages away
+    // instead of 65,536 sends away.
+    host_openamp_init();
+    q_htx.avail->idx = 0xFFF8;    // empty ring (avail == used), 8 from wrap
+    q_htx.used->idx = 0xFFF8;
+    CHECK(remote_up(), "wrap-test re-init failed");
+    bench_init(&bench, bench_send, &rr, fake_cycles, NULL);
+    for (int i = 0; i < 16; i++) {   // crosses 0xFFFF -> 0x0000 mid-burst
+        buf[0] = BCMD_ECHO;
+        buf[1] = (uint8_t)i;
+        host_send(BENCH_EPT_ADDR, buf, 2);
+    }
+    CHECK(rr_poll_n(&rr, 4) == 4, "wrap: budget 1");
+    CHECK(rr_poll_n(&rr, 4) == 4, "wrap: budget 2 (crosses the wrap)");
+    CHECK(rr_poll_n(&rr, 4) == 4, "wrap: budget 3");
+    CHECK(rr_poll_n(&rr, 4) == 4, "wrap: budget 4");
+    // THE regression: pre-fix, consumed (0x10008) never equals the u16
+    // avail idx (0x0008) again, so this returns 4 phantom messages.
+    CHECK(rr_poll_n(&rr, 4) == 0, "wrap: ring must read EMPTY after 16");
+    int wrap_echoes = 0;
+    while ((n = host_recv(&src, &dst, buf, sizeof(buf))) >= 0) {
+        if (n == 2 && buf[0] == BREP(BCMD_ECHO)) {
+            CHECK(buf[1] == (uint8_t)wrap_echoes,
+                  "wrap: duplicated/reordered echo");
+            wrap_echoes++;
+        }
+    }
+    CHECK(wrap_echoes == 16, "wrap: delivered %d != 16 (no dupes, no loss)",
+          wrap_echoes);
+    CHECK(rr.stat_rx == 16, "wrap: stat_rx %u != 16", rr.stat_rx);
+
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;
