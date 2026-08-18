@@ -1507,7 +1507,7 @@ precedent for repo-carried firmware patches.
       **Remaining: Nick's 4:2:0-vs-4:2:2 eyeball on the reef pair
       (gallery compare view, seq000207 vs seq000000) — the recorded
       decision gate for force-420-at-every-q — then nibble 4 (PR).**
-- [ ] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
+- [~] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
       lever).** jpege.c is plain C; `+mve.fp` is already in the Alif
       port CFLAGS. Ships as a repo-carried openmv patch (sticky-fb
       pattern, `firmware/openmv_patches/`), built via D23/D24,
@@ -1520,6 +1520,28 @@ precedent for repo-carried firmware patches.
       lands <1.5× alone, STOP and re-plan with Nick before investing
       in (b). Off-chain acceptance = the enc matrix on the patched
       build; risk = SIMD correctness, contained by the golden tests.
+      → **(a) DONE 2026-08-18 (Nick's "Go"; the separate profile flash
+      cycle was skipped — (a)'s own before/after IS the profile).**
+      Shipped `0002-jpege-mve-colorconvert.patch`: Helium fast path in
+      `jpeg_get_mcu`'s RGB565 case, 8 px/iteration, arithmetic
+      bit-identical to the scalar SWAR (audited lane-by-lane incl. the
+      packed->>7 cross-lane bleed); MVE presence proven in the built
+      object (vldrh.u16/vmla.i16). Plus `0003` (docker git safe.dir
+      env fix — the D24 dev target broke on a Docker ownership drift)
+      and `bench/probes/s23_enc_golden.py` (sha256/row golden gate).
+      **GOLDEN PASS: all 44 rows byte-identical stock-vs-MVE, mono
+      0.99x (untouched).** Speedup uniform ~1.29× color encode (VGA
+      420 q50 65.9→51.2 ms; HD 420 q50 256.8→197.7; QVGA 17.5→13.8)
+      → conversion was ~30% of encode, now ~5 ms residual.
+      **On-chain: vga-color-15 row = 9.03 fps delivered (542 frames/
+      60 s), gaps=0, pub ledger exact to the BYTE** (pub_ok 10,840 =
+      542×20; pub_bytes/frame 27,221 = JPEG+headers). MEAS/MEAS_FPS
+      updated (7.93→9.03; enc anchors to MVE values).
+      **→ (a) landed 1.29× < 1.5× — STOPPED per the gate. Re-plan
+      presented to Nick (see DEV_LOG): both targets need the tax AND
+      the DCT; recommendation = bite 2 (C publish path, the 58 ms
+      lever, helps mono too) BEFORE (b) (the 46 ms lever, color only
+      at VGA). (b) waits on Nick's order call.**
 - [ ] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop

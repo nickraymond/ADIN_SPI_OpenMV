@@ -17,6 +17,65 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S23 — bite 1a: MVE color convert golden-passed byte-identical, VGA color 7.93→9.03 fps; STOPPED at the 1.5× gate with the re-plan
+
+**Branch:** `sprint/23-encoder-fastpath` (continues the bite-0 session).
+Nick's "Go — whichever plan maximizes target-fps chances and minimizes
+wasted time" → the separate profile flash cycle was cut: (a)'s own
+stock-vs-patched delta IS the profile.
+
+**Done:**
+- `0002-jpege-mve-colorconvert.patch`: Helium fast path in
+  `jpeg_get_mcu` RGB565 (8 px/iter, `vld1q`/`vmlaq_n`/`vstrbq`
+  narrowing stores), arithmetic **bit-identical** to the scalar SWAR —
+  audited lane-by-lane, including the packed `>>7` cross-halfword
+  bleed (harmless: the kept low byte never sees it) and the s16
+  headroom (max luma sum 32,044 < 32,768). Scalar path kept for
+  partial MCUs and non-MVE ports. MVE presence PROVEN in the built
+  object (`vldrh.u16`, `vmla.i16` in jpege.o disassembly) — a false
+  `#if` guard would have silently shipped scalar.
+- `0003-docker-makefile-git-safedir.patch`: the D24 dev build target
+  broke on Docker ownership drift ("dubious ownership" from the
+  container's git); fixed with `GIT_CONFIG_*` env injection.
+- `bench/probes/s23_enc_golden.py`: enc-matrix harness + sha256 per
+  row; the stock run is the golden, the patched run must match every
+  hash, and the timing delta between runs is the (a) measurement.
+- Board window (neutral main.py staged + proven 0 B; S7 ladder flash
+  byte-verified; MVE set at `~/fw/s23-mve-7d4dbf7/`, sticky-fb
+  rollback kept): **GOLDEN PASS — all 44 rows byte-identical, mono
+  0.99× (untouched).** Color encode ~**1.29×** across the board (VGA
+  420 q50 65.9→51.2 ms, HD 256.8→197.7, QVGA 17.5→13.8) ⇒ conversion
+  was ~30% of encode, ~5 ms residual now.
+- On-chain (demo_up --scene ref): **vga-color-15 = 9.03 fps delivered
+  (542 frames/60 s), gaps=0 dropped=0, pub ledger exact to the byte**
+  (pub_ok 10,840 = 542×20; pub_bytes/frame 27,221 = 27,021 + 20×10).
+  The row script's pub_ok DELTA was a snapshot race after the bridge
+  restart — the absolute counters close exactly; verdict authority
+  stays the receiver ledger. MEAS enc anchors + MEAS_FPS updated.
+
+**Broke/surprised us:** nothing on the board this time — both demo_ups
+and the flash landed first-try under the serialised-port discipline the
+bite-0 session earned.
+
+**The gate: (a) = 1.29× < 1.5× → STOPPED before the DCT, per Nick's
+rule.** The re-plan arithmetic (validated by 9.03 measured vs 9.1
+predicted): VGA color frame = 51 enc + 58 tax; 15 fps needs ≤67 ms —
+DCT-2× alone gives 81 ms (12.3 fps, NOT enough), tax-kill alone ~66 ms
+(borderline), both ~45 ms (~22 fps, comfortable). HD mono 3.10: (a)
+does nothing for mono (no color convert) — needs luma/DCT vectorization
+AND the tax. **Recommendation: run bite 2 (C publish path — the 58 ms
+lever, helps every mode incl. mono) BEFORE bite 1b (DCT — 46 ms, color
+@VGA), then 1b closes the gap.** Nick's order call pending.
+
+**Bench state:** chain UP under units, scene=ref, MVE firmware
+`6a9ec2cd…` flashed byte-verified, bridge `552812ba…` (bite-0 4:2:0),
+bench-web to be re-synced with the updated MEAS on next deploy.
+
+**Next:** Nick's call on bite order (2 vs 1b) + the bite-0 quality
+eyeball + PR #42 review.
+
+---
+
 ## 2026-08-18 — Sprint S23 — bite 0 nibbles 1–3: 4:2:0 forced on color, VGA color 7.41→7.93 fps, A/B pair byte-exact to the model
 
 **Branch:** `sprint/23-encoder-fastpath` from `main` @ `a0171a0`

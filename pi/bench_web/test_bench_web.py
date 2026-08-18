@@ -640,8 +640,9 @@ class TestPage(unittest.TestCase):
         # the S22 wrap-fix ceilings (2026-08-18, 10-min soaks + ceiling
         # rows on the fixed HE, receiver-ledger exact)
         self.assertIn("28.23", block)
-        # VGA color re-measured on the S23 4:2:0 bridge (was 7.41 on 4:2:2)
-        self.assertIn("7.93", block)
+        # VGA color re-measured on the S23 MVE build (7.41 on 4:2:2,
+        # 7.93 on 4:2:0 scalar, 9.03 on 4:2:0 + Helium color convert)
+        self.assertIn("9.03", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
         self.assertIn("3.10", block)
@@ -663,7 +664,7 @@ class TestPage(unittest.TestCase):
         # Color MEAS rows are the S23 forced-4:2:0 numbers (s22_enc_matrix);
         # mono rows and the derate anchor carried over from the S18 matrix.
         for const in ("5.262e6", "15.0 / (1000 / 19.7)", "1400", "492",
-                      "8728, 17.5", "86120, 258.5", "75324, 117.6"):
+                      "8728, 13.8", "86120, 197.7", "75324, 117.6"):
             self.assertIn(const, self.html, const)
 
     def test_the_live_view_is_the_frozen_s3_server(self):
