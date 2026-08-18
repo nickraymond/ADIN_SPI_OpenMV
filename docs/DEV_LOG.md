@@ -17,6 +17,65 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S22 — bite 1 nibble 1: flood wedge ROOT-CAUSED — u16 vring-index wrap at message 65,536, reproduced off-chain
+
+**Branch:** `sprint/22-he-flood` from `main` @ `664b639`. Plan gated by
+Nick (Phase A approved). One board window, zero incidents, board left
+healthy.
+
+**Done:**
+- **Evidence re-read first (no board contact):** preserved trace
+  `20260818T002807_…prev` on nereus000 — the mute struck ~12 s AFTER
+  `stream done`, during a ~556 msg/s backlog drain, and cross-session
+  arithmetic showed most published chunks never reached the wire.
+  Also established: **no mute event ever got an HE postmortem** (the
+  bridge dumps the ring/err page only on clean exit; every mute ended
+  in a reboot).
+- **Probe** `bench/probes/s22_flood_probe.py` (+ `bench/test_s22_probe.py`,
+  27 checks): sustained synthetic WCMD_PUB frames, framing byte-identical
+  to `BridgeCore.capture_pub_msgs`, three rungs at the measured boundary
+  rates (303/520/555 msg/s), postmortem block reading BP->err/tick,
+  he_sample page and the HE ring via mem32.
+- **Run (22 min, all three rungs):** control-315 clean 60 s ·
+  fatal-513 clean for exactly ~91 s — then `frag_errors` ignited in the
+  10 s window where **cumulative inbound rpmsg messages crossed 65,536**
+  (18,180 control + ~47k fatal + overhead) and climbed ~80/s to 362,959
+  by run end, `tx_frames` at ~450/s vs 126/s real input (stale-slot
+  redelivery) · demo-560 ran its full 600 s inside the storm.
+- **Root cause READ from source after the signature pointed at it:**
+  `rr_poll_n` (`firmware/he_spike/src/rpmsg_remote.c:295`, shared into
+  bm_he by Makefile) compares u32 `consumed[0]` against the vring's u16
+  `avail->idx` with NO cast — `rr_send` has the cast. Past message
+  65,536 the loop never sees "empty" again. Ring *indexing* survives the
+  wrap (vring num is a power of two); only the comparison breaks.
+- **Negatives banked:** heap_min 17,704 B flat for 22 min, tx_dropped=0,
+  no hook fired — finding 1 is NOT a memory problem; the S19 byte-bound
+  holds. "≥513 msg/s fatal" was a proxy: rate only sets how fast a
+  session reaches message 65,536. All four real events match (002807
+  crossed 65,536 mid-VGA-mono-stream where its ledger broke; the demo
+  died at ~83k msgs; 315-clean runs never approached 65k).
+
+**Broke/surprised us:** the off-chain HE stays QUERY-ALIVE in the storm
+— the full mute needs the on-chain ingredient (bridge-side openamp
+state poisoned by garbage used-ring entries under bidirectional load).
+Also the probe never dumped its ring on a surviving run (only on
+death) — cosmetic, fix with the next probe edit.
+
+**Bench state:** chain DOWN deliberately (bm-light stopped on
+nereus000; bm-telemetry still up on nereus001). AE3 healthy, fixture
+`main.py` staged (5,581 B, read-back verified normalised), `bm_he.elf`
+still the stock (bugged) build. Restore = `demo_up.sh` when wanted;
+nibble 2 wants the window as-is to stage the fixed ELF.
+
+**Next:** nibble 2 (gate pending): wrap-safe cast + host regression
+across the 65,536 boundary (must FAIL pre-fix) + D23/D24 rebuild +
+probe ladder through 5+ wraps as off-chain acceptance → nibble 3
+on-chain: 10-min QVGA @ 28.07, `capture 90 hd mono` (decides whether
+the burst-loss variant was the same bug), true mono ceilings, VGA
+max-fps 10-min ceiling, guardrail constants raised.
+
+---
+
 ## 2026-08-18 — Ladder resequence: S22 (flood fix + encoder exploration) → S21 (CV) → S20 (light) — docs only
 
 **Branch:** `sprint/18-ladder-resequence`. No code, no bench contact.

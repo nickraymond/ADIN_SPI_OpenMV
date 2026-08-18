@@ -1305,7 +1305,22 @@ for training can use the S18 tool + S17 pipeline.
 **Goal:** a camera node that cannot be wedged at any commanded rate,
 and a measured answer on how much fps headroom the encode path has.
 
-- [ ] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+- [~] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+      → **NIBBLE 1 DONE 2026-08-18 (branch `sprint/22-he-flood`; Phase A
+      approved by Nick): ROOT-CAUSED — a u16 vring-index wrap in
+      `rr_poll_n` (rpmsg_remote.c:295, shared into bm_he): u32 cursor vs
+      u16 avail->idx with no cast (rr_send HAS it), so at 65,536
+      cumulative inbound rpmsg messages the poll loop consumes phantom
+      work forever.** Reproduced off-chain by
+      `bench/probes/s22_flood_probe.py` (+27 host checks): frag_errors
+      ignited in the exact 10 s window containing message 65,536 and
+      ran to 362,959; heap flat throughout (NOT a memory problem; the
+      S19 byte-bound holds). "≥513 msg/s" was a proxy for
+      time-to-65,536; all four real events match the arithmetic. Full
+      record: DEV_LOG + SPEC flood entry. Remaining: nibble 2 (cast +
+      wrap host regression + D23/D24 rebuild + probe-ladder acceptance
+      through 5+ wraps), nibble 3 (the demo line below + VGA max-fps
+      10-min ceiling, added by Nick at kickoff), nibble 4 (PR).
       The HE wire task goes permanently mute under sustained camera
       publish ≥ ~513 rpmsg msg/s (4/4 fatal incl. a live demo at ~560;
       466 = 2/3 marginal; 315 = clean 4/4), and single-frame bursts of

@@ -263,6 +263,33 @@ pair, USB carrying no video.
   (reset + re-bootstrap) as an instrumented backstop, unproven but
   strictly no worse than today's permanent wedge.
 
+- **ROOT-CAUSED 2026-08-18 (S22 bite 1 nibble 1, off-chain reproduction +
+  source read): the flood wedge below is a u16 vring-index wrap bug in
+  the hand-rolled rpmsg layer** — `rr_poll_n`
+  (firmware/he_spike/src/rpmsg_remote.c:295, built into bm_he via the
+  shared Makefile source) compares the u32 `consumed[0]` cursor against
+  the virtio ring's u16 `avail->idx` without a cast (`rr_send` HAS the
+  cast); at exactly **65,536 cumulative inbound rpmsg messages since HE
+  load** the comparison can never be equal again, the poll loop sees
+  phantom work forever, consumes stale ring slots, and redelivers
+  garbage. Reproduced by `bench/probes/s22_flood_probe.py` (no Pi, no
+  camera): clean below the boundary (control rung 60 s, frag=0; fatal
+  rung clean for exactly ~91 s), then `frag_errors` ignited in the
+  precise 10 s window containing message 65,536 and climbed ~80/s to
+  362,959 by run end, with `tx_frames` at ~450/s against a 126/s chunk
+  input (stale redelivery). **Rate was only ever a proxy — it sets how
+  fast a session reaches message 65,536.** All four real events match
+  the arithmetic (the 002807 trace crossed 65,536 mid-VGA-mono-stream,
+  exactly where its ledger broke; the demo event died at ~83k msgs;
+  every 315-clean run sat far below 65k cumulative). **Measured NOT the
+  mechanism: the heap** — heap_min held 17,704 B across the entire
+  22-min flood, tx_dropped=0, no hook fired (BP->err=0). Off-chain the
+  HE stays query-alive in the storm; the full on-chain mute is the
+  bridge-side openamp state being poisoned by the garbage used-ring
+  entries under bidirectional load. Fix shape: wrap-safe cast in
+  `rr_poll_n` + a host regression across the 65,536 boundary + ELF
+  rebuild; acceptance = the same probe ladder through 5+ wraps clean,
+  then the on-chain ceilings this bug blocked. Original record below.
 - **Sustained camera publish above ~450–600 rpmsg msg/s silences the HE
   wire task permanently (measured 2026-08-18, S18 reef matrix, 3
   occurrences + mechanism traced).** First the receiver ledger breaks
