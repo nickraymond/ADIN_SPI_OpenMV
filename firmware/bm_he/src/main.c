@@ -505,8 +505,25 @@ static void wire_task(void *param) {
         SP->tx_count = s_rr.stat_tx;
 
         // Bounded poll: TX must get a turn between inbound messages, or
-        // the publisher starves its own drain (S19 bite 2).
-        uint32_t got = rr_poll_n(&s_rr, WIRE_POLL_BUDGET);
+        // the publisher starves its own drain (S19 bite 2). S22 bite 1b:
+        // and when the TX queue is above high water, inbound consumption
+        // PAUSES entirely -- the HP's send blocks on the filling vring
+        // and its drain-while-pushing loop becomes end-to-end flow
+        // control, instead of the byte bound shedding 54 of 83 chunks.
+        // The HE itself never blocks here: the pump stays non-blocking
+        // and the loop keeps turning (deadlock postmortem, DESIGN §S19
+        // part 4 -- the one shape this must never regress into).
+        uint32_t got = 0;
+        if (bm_net_wire_rx_backpressure()) {
+            static uint32_t bp_logged;
+            if (bm_net_wire_bp_engages() > bp_logged && bp_logged < 4) {
+                bp_logged = bm_net_wire_bp_engages();
+                he_dbg_printf("netwire: rx paused, txq high water (#%lu)\n",
+                              (unsigned long)bp_logged);
+            }
+        } else {
+            got = rr_poll_n(&s_rr, WIRE_POLL_BUDGET);
+        }
         wire_pump_tx();
         wire_pump_capture();
 

@@ -39,6 +39,20 @@
 // With the bounded poll in place this should never trigger; it exists so
 // that if it ever does, the result is a counted drop and not a dead core.
 #define NETWIRE_TXQ_MAX_BYTES 12288u
+// S22 bite 1b: RX backpressure water marks. An ~83-chunk still arrives
+// over rpmsg about twice as fast as the VCP relay drains (~76 ms vs
+// ~185 ms measured), so consuming it all just shovels frames into the
+// byte bound above -- 54 of 83 chunks were shed on the wrap-fixed
+// stack. Instead the wire task PAUSES inbound consumption while the
+// queue sits above high water and resumes below low water (hysteresis
+// so the gate doesn't thrash per frame). The HP's ept.send then blocks
+// on the full vring, and its existing drain-while-pushing loop
+// (send_chunk_msgs) turns that into end-to-end flow control. High
+// water leaves 4 KB (~2.7 chunk frames) of headroom for publishes
+// already consumed from the vring, so the hard byte bound stays the
+// net that never fires.
+#define NETWIRE_TXQ_HIGH_WATER 8192u
+#define NETWIRE_TXQ_LOW_WATER  4096u
 #define NETWIRE_MAX_FRAME 1514u  // BENCHSPEC REV-14: network-wide max L2
                                  // frame, enforced HERE at the sender (the
                                  // Light node's logged drop is the
@@ -93,5 +107,14 @@ void bm_net_wire_inject(uint8_t port, uint8_t *data, uint16_t len);
 void bm_net_wire_link_state(uint8_t port, bool up);
 
 netwire_stats_t bm_net_wire_stats(void);
+
+// Wire-task side (S22 bite 1b): should inbound rpmsg consumption pause
+// this loop iteration? Latches true when queued TX bytes reach
+// NETWIRE_TXQ_HIGH_WATER, releases below NETWIRE_TXQ_LOW_WATER.
+// Single caller, wire task only -- the paused latch is internal state.
+bool bm_net_wire_rx_backpressure(void);
+
+// Times the latch has engaged (diagnostic; wire task reads/logs it).
+uint32_t bm_net_wire_bp_engages(void);
 
 #endif // BM_NET_WIRE_H

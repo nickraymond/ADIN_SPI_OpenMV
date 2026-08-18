@@ -129,7 +129,18 @@ TRACE_PATH = "/flash/bridge_trace.txt"
 TRACE_PREV_PATH = "/flash/bridge_trace.prev.txt"   # last run, kept for crashes
 ELF_PATH = "/flash/bm_he.elf"
 BM_STATUS_PAGE = 0x600BFE00
-RPMSG_QUEUE_CAP = 256       # HE->bridge backlog cap (drops counted)
+# HE->bridge backlog cap (drops counted). S22 bite 1b: 256 was the
+# single-frame burst killer -- an 83-chunk q90 publish returns as ~332
+# rpmsg msgs while the drain stage (the blocking VCP write, ~675 KB/s)
+# is mid-burst, so the cap shed ~54 chunks and the receiver ledger
+# blamed "the relay" (measured: same 54 on two different HE builds; the
+# _rx callback recycles the vring buffer even when it drops, so no
+# HE-side backpressure can reach this hop). Sized to the largest legal
+# burst: HD color q90 ~= 190 chunks ~= 760 msgs, plus headroom. Worst
+# case ~500 KB of transient MP heap against ~3.8 MB free -- still
+# bounded, still counted, just no longer smaller than the product's own
+# frames.
+RPMSG_QUEUE_CAP = 1024
 # Service the HE->HP direction every N messages while pushing a frame's
 # chunks. A 1400 B chunk is 3 rpmsg messages, so 3 = "drain after every
 # chunk" (S19 bite 2 -- see send_chunk_msgs).

@@ -270,6 +270,57 @@ static void test_wire_device(void) {
 
 #define TEST_MSG_PAYLOAD 492u   // WIRE_MSG_PAYLOAD on target
 
+static void test_backpressure_gate(void) {
+    // S22 bite 1b: the RX-pause latch engages at NETWIRE_TXQ_HIGH_WATER
+    // queued bytes and releases at NETWIRE_TXQ_LOW_WATER -- with
+    // hysteresis, so a queue hovering between the marks cannot thrash
+    // the gate. Frames are camera-chunk-sized (1,400 B): the burst this
+    // exists for.
+    NetworkDevice dev = bm_net_wire_device();
+    static uint8_t frame[1400];
+    memset(frame, 0xC3, sizeof(frame));
+    netwire_tx_frame_t out;
+
+    uint32_t engages0 = bm_net_wire_bp_engages();
+    CHECK(!bm_net_wire_rx_backpressure());   // empty queue: no pause
+
+    // 5 x 1400 = 7,000 B -- between the marks from below: still open.
+    for (int i = 0; i < 5; i++) {
+        CHECK(dev.trait->send(dev.self, frame, sizeof(frame), 1) == BmOK);
+    }
+    CHECK(!bm_net_wire_rx_backpressure());
+    CHECK(bm_net_wire_bp_engages() == engages0);
+
+    // 6th frame crosses 8,192: latch engages.
+    CHECK(dev.trait->send(dev.self, frame, sizeof(frame), 1) == BmOK);
+    CHECK(bm_net_wire_rx_backpressure());
+    CHECK(bm_net_wire_bp_engages() == engages0 + 1);
+
+    // Pop to 4,200 B -- between the marks from above: STAYS paused.
+    for (int i = 0; i < 3; i++) {
+        CHECK(bm_net_wire_pop_tx(&out, 0));
+        bm_free(out.data);
+    }
+    CHECK(bm_net_wire_rx_backpressure());
+
+    // One more pop -> 2,800 B <= low water: releases.
+    CHECK(bm_net_wire_pop_tx(&out, 0));
+    bm_free(out.data);
+    CHECK(!bm_net_wire_rx_backpressure());
+
+    // Re-crossing engages again (the counter is per episode).
+    for (int i = 0; i < 4; i++) {
+        CHECK(dev.trait->send(dev.self, frame, sizeof(frame), 1) == BmOK);
+    }
+    CHECK(bm_net_wire_rx_backpressure());
+    CHECK(bm_net_wire_bp_engages() == engages0 + 2);
+
+    while (bm_net_wire_pop_tx(&out, 0)) {
+        bm_free(out.data);
+    }
+    CHECK(!bm_net_wire_rx_backpressure());
+}
+
 static void test_wire_frag(void) {
     static uint8_t frame[1514];
     static uint8_t msg[4 + TEST_MSG_PAYLOAD];
@@ -794,6 +845,7 @@ static void test_txq_byte_bound(void) {
 
 int main(void) {
     test_wire_device();
+    test_backpressure_gate();
     test_wire_frag();
     test_config_stubs();
     test_rtc_stub();

@@ -17,6 +17,64 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S22 — bite 1b + bite 2 window: burst loss cornered INSIDE the telemetry fork; encoder matrix measured; two hardening layers shipped
+
+**Branch:** `sprint/22-burst-backpressure` (from the bite-1 branch).
+Nick approved both. One bench window (a Tailscale re-auth stole 20 min
+mid-window — the side-door key install is still outstanding).
+
+**Done — bite 1b (an honest chain of falsified models):**
+- Model 1 (HE txq sheds): HE backpressure gate built + shipped
+  (bm_net_wire high/low-water hysteresis, +24 host checks = bm_he 256,
+  ELF `89cc92ff…` staged byte-verified; off-chain fatal-513 clean
+  through the gate, burst txf exact) — **measured NOT the mechanism**
+  (loss unchanged).
+- Model 2 (bridge RPMSG_QUEUE_CAP=256 sheds): the preserved trace's
+  `qdrops=0` + a raise to 1024 (`e50a34b8…` deployed, +1 host check)
+  — **not the mechanism** (loss unchanged), kept as right-sizing.
+- Ledger semantics correction that reframed everything: the q90 ref
+  frame is **149 chunks (206,759 B)**, and `chunk_reasm` counts gaps
+  as TAIL after a single-loss abandon — "54 gaps" = ONE chunk lost at
+  idx 95 (breaks at 95/95/41/95 across four runs).
+- Models 3–5 (light drop / UDP loss / checksum-carry from item 10's
+  TX kludge): **tcpdump on the cross-cable + outer-IPv4-fragment
+  reassembly (full chunks fragment: 1,523 B > MTU): all 149 chunks on
+  the wire, in order, no dups, ALL inner UDP checksums valid.** Kernel
+  UDP counters zero both Pis; uart decode errors zero; fork l2 drop
+  logs absent; TEL_STAT q_drops=0.
+- **Verdict: 1 chunk per burst vanishes inside bm_sbc telemetry
+  userspace with every visible counter at zero** (suspects: bm_ip
+  Linux-backend RX, pubsub cb delivery). Further localization needs
+  fork instrumentation = Nick's push (pin discipline). q50 HD mono
+  (55 chunks) delivered byte-exact (75,324 B) as the healthy control.
+  SAFE_BURST_CHUNKS stays 68.
+
+**Done — bite 2 measurement window** (`bench/probes/s22_enc_matrix.py`,
+one board run, artifact `/flash/s22_enc.txt`; table in DESIGN §S22):
+q50 color rides 4:2:2; **4:2:0 = −14% encode / −7% bytes** (VGA color
+77.0→66.4 ms, HD color 300.7→258.5) as a one-kwarg change; the binding
+constraint after that is the **measured ~2 ms/KB non-encode tax**;
+jpege.c has no MVE despite `+mve.fp` in CFLAGS; **E3 has NO hardware
+JPEG** (vendor datasheet, SPEC). Recommendation: VGA-color-15 and
+HD-mono-5–6 need C-path + MVE together; 4:2:0 worth shipping anyway;
+HD-color-5–6 impossible on this SoC.
+
+**Broke/surprised us:** four models in a row died by artifact — the
+gaps-are-tail-length semantics had misdirected every prior reading of
+this bug, including both "54-chunk" DEV_LOG entries.
+
+**Bench state:** chain UP under units, scene=ref, 1b ELF `89cc92ff…`
++ bridge `e50a34b8…` staged (both also in the Pi checkout/deploy
+dirs), guardrails suite deployed. Session ledger counters carry the
+experiments (gaps=216, dropped=4 cumulative — all q90 probes).
+
+**Next:** PR (this branch); fork instrumentation bite for the
+telemetry-internal drop (Nick sizes + pushes); Nick reviews the
+encoder table → go/no-go on C-path/MVE follow-on bites; PR #38 demo
+still owed.
+
+---
+
 ## 2026-08-18 — Sprint S22 — bite 1 nibbles 2–3: one cast kills the wedge — 10-min soaks ledger-exact, first true mono/HD ceilings, guardrails re-derived
 
 **Branch:** `sprint/22-he-flood`. Nick approved nibble 2 with the
