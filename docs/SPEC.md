@@ -263,6 +263,37 @@ pair, USB carrying no video.
   (reset + re-bootstrap) as an instrumented backstop, unproven but
   strictly no worse than today's permanent wedge.
 
+- **Sustained camera publish above ~450–600 rpmsg msg/s silences the HE
+  wire task permanently (measured 2026-08-18, S18 reef matrix, 3
+  occurrences + mechanism traced).** First the receiver ledger breaks
+  (chunk gaps: 6,711 then 20,436 across two events), then all HE output
+  stops: preserved trace `~/bridge_traces/20260818T002807_…prev` on
+  nereus000 shows `he2pi_frames` frozen at 45,146 while `pi2he_frames`
+  keeps advancing — the fork's queries land in a mute HE, `cam_reply`
+  goes `state=timeout` with every other field the stale last-good lie.
+  Boundary by evidence: 315 msg/s clean 4/4 (15 fps QVGA regression),
+  466 msg/s clean 2/3, ≥513 msg/s fatal 3/3. NOT the B2 sensor race
+  (re-inits after streams trace clean; the bridge stays healthy and
+  logging). Recovery = reboot nereus000 + demo_up (~4 min). Suspect
+  territory: the HE netwire TX path under sustained load (S19 bite 2's
+  pump). Blocks every true mono-ceiling measurement; owns a bite.
+
+- **HD in ref-scene mode hard-faults the board; HD in sensor mode
+  wedges the leg — HD has never completed on any PublishGate bridge
+  (measured 2026-08-18, S18 reef matrix run 5 + discriminator).**
+  Ref mode: fresh chain, zero streams, the transition into HD mono
+  ended the bridge trace mid-run with no exit record (the D15/S18
+  crash class). Discriminator with `scene=sensor`, same transition:
+  survived and replied (`res=hd pf=mono`, state ok) — so the fault is
+  ref-mode-specific (suspect: the 1–2 MB ref-image heap load), and the
+  bridge now REFUSES HD ref commands. But the sensor-mode HD capture
+  then delivered no frame and the leg died within ~60 s: every prior
+  on-chain HD success (C1 demo, bite D acceptance) predates the B2
+  PublishGate build. Owns the matrix's missing HD rows AND the 20 s
+  certification rung — **`REINIT_MIN_QUIET_MS = 20000` remains
+  uncertified for HD because HD itself is currently unstable**, which
+  is a stronger caveat than the constant's comment assumed.
+
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A
   `capture 50 vga color` over the BM chain was accepted (`ok=1
