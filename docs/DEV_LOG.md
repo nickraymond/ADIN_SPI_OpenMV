@@ -17,6 +17,30 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Ladder resequence: S22 (flood fix + encoder exploration) → S21 (CV) → S20 (light) — docs only
+
+**Branch:** `sprint/18-ladder-resequence`. No code, no bench contact.
+PRs #35 and #36 both MERGED before this.
+
+**Done:** captured two tasks per the capture-task discipline and
+resequenced the ladder per Nick (D39): new **S22 — Camera pipeline
+hardening & headroom** with bite 1 = the HE flood fix (all evidence
+pointers inlined; demo = 10 min at the 28.07 fps ceiling with zero
+wedges + guardrail constants raised + the blocked mono-ceiling rows
+measured) and bite 2 = encoder-headroom exploration (measure-first:
+JPEG parameter space, capture/encode overlap, C-pipeline tax, SoC
+JPEG/accel as a datasheet-verify item; deliverable is a table + a
+recommendation, not code). **S21 (CV) promoted above S20 (light —
+delayed, not a product offering yet).** Numbers stay, order changes
+(D30/D32 precedent). Next-session kickoff prompt added to PROMPTS.md.
+
+**Broke/surprised us:** nothing.
+
+**Next:** S22 bite 1 (HE flood fix), fresh session; S18 D2 + demo
+interleave when Nick wants the close-out.
+
+---
+
 ## 2026-08-18 — Sprint S18 — HD-stability nibbles 2–4: sticky-fb firmware ships, soak 40/40, HD certified and measured end to end
 
 **Branch:** `sprint/18-hd-stability`. Nick's calls: plan A (root fix),

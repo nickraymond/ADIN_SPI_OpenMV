@@ -1,7 +1,15 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 late (**S18 bite B4 HD-stability: nibbles 1–3
+*Last updated: 2026-08-18 latest (**LADDER RESEQUENCED — Nick, D39.**
+PRs #35 + #36 MERGED (bench_ctl reconnect; the whole HD-stability bite
+incl. guardrails + Danger Zone). Execution order is now: **S22 bite 1
+(HE flood fix) → S22 bite 2 (encoder-headroom exploration, NEW) →
+S21 (CV, promoted) → S20 (light, delayed — not a product offering
+yet)**; S18 still owes D2 + the sprint demo, interleavable. Numbers
+stay, order changes — the D30/D32 precedent. NEXT SESSION = S22
+bite 1. Previous:*
+*2026-08-18 late (**S18 bite B4 HD-stability: nibbles 1–3
 done, PR opening.** HD root-caused to an OpenMV firmware defect
 (per-resize framebuffer free+malloc degrades under a resident HE core),
 FIXED by the sticky-fb patch (flashed, byte-verified, soak 40/40 vs
@@ -1273,17 +1281,73 @@ prediction is UNVERIFIED; bite 4 turns it into a number.
 covered capture but never published a frame over BM, and cleared HD on
 that basis. Prove the whole path or claim nothing.
 
-### S20 — Light intelligence (stub — was S19 in D30)
+> **EXECUTION ORDER RESEQUENCED 2026-08-18 (Nick, D39) — numbers stay,
+> order changes (the D30/D32 precedent):**
+> **S22 bite 1 (HE flood fix) → S22 bite 2 (encoder exploration) →
+> S21 (CV) → S20 (light).** Light intelligence is DELAYED — "not
+> really a product offering yet" — and CV is the product; the two
+> S22 bites come first because CV development wants a camera that
+> cannot be wedged and honest fps headroom numbers.
+
+### S20 — Light intelligence (stub — was S19 in D30)  *(DELAYED behind S21 — Nick 2026-08-18, D39)*
 Camera self-detects dark scenes (HP luma stats) → camera node issues
 `light/control` requests (HE `bm_service_request`) → light auto-on;
 customer never thinks about it. All on bm_service (§6.2).
 
-### S21 — CV: count-and-report (stub — was S20 in D30)
+### S21 — CV: count-and-report (stub — was S20 in D30)  *(PROMOTED above S20 — Nick 2026-08-18, D39)*
 Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
 D29 context). Requires a custom Vela-compiled detector (S8 finding:
 ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
 evidence stills ride the existing bridge→pub/sub path. Data collection
 for training can use the S18 tool + S17 pipeline.
+
+### S22 — Camera pipeline hardening & headroom  `[ ]`  ← **RUNS FIRST (before S21/S20 — Nick 2026-08-18, D39)**
+**Goal:** a camera node that cannot be wedged at any commanded rate,
+and a measured answer on how much fps headroom the encode path has.
+
+- [ ] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+      The HE wire task goes permanently mute under sustained camera
+      publish ≥ ~513 rpmsg msg/s (4/4 fatal incl. a live demo at ~560;
+      466 = 2/3 marginal; 315 = clean 4/4), and single-frame bursts of
+      ~83 chunks lose chunks in the relay (55/68 measured clean).
+      Suspect territory: the HE netwire TX path under sustained load
+      (S19 bite 2's non-blocking pump). Evidence to start from:
+      preserved trace `~/bridge_traces/20260818T002807_*` (he2pi_frames
+      frozen while pi2he advances), matrix JSONs, the q90 single-frame
+      boundary (published complete, 54 chunks lost). Bench access per
+      ae3-board-access; off-chain reproducer likely = a G-probe-style
+      synthetic publish at swept rates. **Verifiable / demo (Nick):**
+      sustained QVGA color at the measured 28.07 fps ceiling for
+      10 min, ledger exact, zero wedges; `capture 90 hd mono` (the q90
+      burst) delivers; the UI guardrail constants
+      (`SAFE_STREAM_MSGS`/`SAFE_BURST_CHUNKS`) raised to the NEW
+      measured boundary with the suite updated; the mono-ceiling
+      matrix rows finding 1 blocked (true QVGA/VGA mono ceilings) run
+      clean and land in MEAS_FPS.
+- [ ] **Bite 2 — encoder-headroom exploration (measure first, decide
+      second; AFTER bite 1 — Nick 2026-08-18).** Delivered fps is
+      encode-bound, not transport-bound (28.07 fps QVGA uses 2.08 of
+      the 5.26 Mbps relay): in-bridge encode 20.1 / 78.5 / 299.2 ms
+      per frame (QVGA/VGA/HD color) on the one HP core, measured
+      bridge derate 0.56–0.58. This bite BUYS NUMBERS, not code:
+      measure each candidate's real delta and recommend go/no-go.
+      Candidates to measure (one variable at a time): (a) JPEG
+      parameter space — subsampling/quality trades at equal visual
+      quality on the reef reference; (b) capture/encode overlap — how
+      much of the 0.56 derate is recoverable (capture is DMA-hidden,
+      D21 said encode/tx cannot overlap in MicroPython — re-verify on
+      the current stack); (c) the MicroPython-bridge tax — what a
+      C-side capture→encode→chunk path would save (spike-level
+      estimate, the S9/D23 custom-firmware loop exists); (d) hardware
+      JPEG/2D-accel on the AE3 SoC — **verify against the Alif
+      datasheet, never assume** (the SENSOR has no JPEG; whether the
+      SoC does is an open hardware fact to flag in SPEC §Open
+      questions). **Verifiable / demo (Nick):** a printed table —
+      candidate × measured-or-sourced fps delta × LoC/risk estimate —
+      reviewed together, with a written recommendation; TRACKER gains
+      follow-on bites only if a candidate clears the product bar.
+**Needs:** S18 closed enough to free the bench (D2 can interleave);
+no new hardware.
 
 ---
 
