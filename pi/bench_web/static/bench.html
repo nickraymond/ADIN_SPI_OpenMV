@@ -425,7 +425,13 @@ const K = {
   // click. Rates are predicted from the reef model — conservative for
   // darker scenes, which is the right side to miss on.
   MSGS_PER_CHUNK: 3,        // ceil(1400 / 492), REV-28
-  SAFE_STREAM_MSGS: 315,    // msg/s — the 15 fps regression's exact rate
+  // S22 bite 1: the 315 msg/s wedge boundary was a u16 vring wrap in
+  // the HE rpmsg layer — fixed and re-measured. Streams now run clean
+  // at every rate tested (990 commanded / 717 delivered, 10-min soaks
+  // ledger-exact); this is a measured-envelope sanity cap, not a wedge
+  // line. The burst cap is still real: ~83-chunk stills lost 54 chunks
+  // on the FIXED stack — backpressure bite pending.
+  SAFE_STREAM_MSGS: 1200,   // msg/s — above every measured-clean command
   SAFE_BURST_CHUNKS: 68,    // hd color q50 reef, delivered clean twice
 };
 
@@ -445,19 +451,19 @@ const MEAS = {
   3: { color: [93253, 299.2], mono: [75324, 117.6] },
 };
 // MEASURED delivered fps at q50 per mode — reef reference scene through
-// the whole chain, receiver-ledger truth, ledger clean (S18 reef matrix
-// 2026-08-18, bench/s18_matrix.py; QVGA color ceiling and VGA color
-// each measured identically twice). null = no measured CEILING -> the
-// model extrapolates from BRIDGE_DERATE and says so. HD itself is FIXED
-// (S18 HD-stability bite: sticky-fb firmware; stills + streams run
-// ledger-exact) but its stream runs were FLOOR-capped into the
-// finding-1-safe zone (hd mono 1.50 fps, vga mono 4.98, both exact) —
-// floors are not ceilings, so these stay null until the HE flood bite
-// lands and true ceilings can be measured.
+// the whole chain, receiver-ledger truth, ledger clean. Ceilings
+// re-measured 2026-08-18 on the wrap-fixed HE (S22 bite 1,
+// bench/s22_ceiling_rows.py): every row commanded ABOVE its delivery
+// rate, so these are true encoder/pipeline ceilings, not command caps —
+// QVGA color held 28.23 for a full 10-min soak (16,939 frames,
+// pub_ok exact), VGA color 7.41 for 10 min (4,446 frames, exact),
+// QVGA mono 30.30 (sensor-cadence-capped), VGA mono 13.27 @ ~717 msg/s,
+// HD mono 3.10 @ 6 commanded (186 frames, exact). HD color stays null:
+// its ceiling run is owed (expected ~1.5-2 fps, encoder-bound).
 const MEAS_FPS = {
-  1: { color: 28.07, mono: null },
-  2: { color: 7.40,  mono: null },
-  3: { color: null,  mono: null },
+  1: { color: 28.23, mono: 30.30 },
+  2: { color: 7.41,  mono: 13.27 },
+  3: { color: null,  mono: 3.10 },
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,
@@ -523,12 +529,13 @@ function renderWarnings() {
     out.push(S.force
       ? `<div class="warn-item bad"><span class="icon">&#9888;</span><span>
         <b>OVERRIDE ARMED (Danger Zone).</b> &asymp;${m.chunks} chunks/frame &mdash; past the
-        ${K.SAFE_BURST_CHUNKS}-chunk measured-safe burst. This can wedge the camera node
-        (bench reboot). Sent as asked, logged. ${srcTag(m)}</span></div>`
+        ${K.SAFE_BURST_CHUNKS}-chunk measured-safe burst. Chunks will likely be lost in
+        the relay and the frame dropped. Sent as asked, logged. ${srcTag(m)}</span></div>`
       : `<div class="warn-item bad"><span class="icon">&times;</span><span>
         <b>Stills REFUSED at this setting.</b> &asymp;${m.chunks} chunks/frame predicted &mdash;
-        single-frame bursts above ${K.SAFE_BURST_CHUNKS} chunks lose chunks in the relay and can
-        wedge the camera node (finding 1; a bench reboot). Lower q or resolution.
+        single-frame bursts above ${K.SAFE_BURST_CHUNKS} chunks lose chunks in the relay
+        (measured on the wrap-fixed stack: ~83 chunks lost 54; backpressure bite pending).
+        Lower q or resolution.
         The server enforces this &mdash; or arm the Danger Zone at the bottom of the page.
         ${srcTag(m)}</span></div>`);
   }
@@ -536,13 +543,13 @@ function renderWarnings() {
     out.push(S.force
       ? `<div class="warn-item bad"><span class="icon">&#9888;</span><span>
         <b>OVERRIDE ARMED (Danger Zone).</b> ${S.fps} fps &rarr; &asymp;${m.msgRate.toFixed(0)} rpmsg msg/s
-        &mdash; past the ${K.SAFE_STREAM_MSGS} msg/s measured-safe rate (wedge boundary
-        &asymp;513). This can mute the camera node (bench reboot). Sent as asked, logged.
+        &mdash; past the ${K.SAFE_STREAM_MSGS} msg/s measured-clean envelope (every rate at
+        or below it ran ledger-exact; beyond it is unmeasured). Sent as asked, logged.
         ${srcTag(m)}</span></div>`
       : `<div class="warn-item bad"><span class="icon">&times;</span><span>
         <b>Stream REFUSED at this setting.</b> ${S.fps} fps &rarr; &asymp;${m.msgRate.toFixed(0)} rpmsg msg/s;
-        sustained publish above ${K.SAFE_STREAM_MSGS} msg/s wedges the camera node
-        (finding 1, measured; a bench reboot). <b>Max safe here: ${m.maxSafeFps.toFixed(1)} fps</b>
+        past the ${K.SAFE_STREAM_MSGS} msg/s measured-clean envelope (rates at or below it
+        ran ledger-exact; beyond is unmeasured). <b>Max in-envelope here: ${m.maxSafeFps.toFixed(1)} fps</b>
         &mdash; or drop q/resolution. The server enforces this &mdash; or arm the Danger Zone
         at the bottom of the page. ${srcTag(m)}</span></div>`);
   }

@@ -305,6 +305,18 @@ pair, USB carrying no video.
   `rr_poll_n` + a host regression across the 65,536 boundary + ELF
   rebuild; acceptance = the same probe ladder through 5+ wraps clean,
   then the on-chain ceilings this bug blocked. Original record below.
+  **FIXED AND CONFIRMED ON-CHAIN same day (nibbles 2–3):** one
+  wrap-safe cast, ELF `fea65304…`; off-chain 507k msgs / 7.7 wraps
+  frag=0; on-chain 10-min soaks ledger-exact (QVGA color 28.23 fps at
+  ~565 msg/s — the exact demo-killing rate+duration; VGA color 7.41)
+  and first true ceilings QVGA mono 30.30 / VGA mono 13.27 (~717
+  msg/s) / HD mono 3.10 (990 msg/s commanded). **The wedge boundary is
+  retired; the burst variant is a SEPARATE, still-open bug:**
+  `capture 90 hd mono` on the fixed stack lost exactly 54 of ~83
+  chunks again — rpmsg arrival (~76 ms/frame) outruns the VCP relay
+  drain (~185 ms) and the HE's byte-bounded txq sheds the excess,
+  silently below bm_pub. Owns TRACKER S22 bite 1b (HE-side
+  backpressure); SAFE_BURST_CHUNKS=68 stands until it lands.
 - **Sustained camera publish above ~450–600 rpmsg msg/s silences the HE
   wire task permanently (measured 2026-08-18, S18 reef matrix, 3
   occurrences + mechanism traced).** First the receiver ledger breaks

@@ -17,6 +17,78 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S22 — bite 1 nibbles 2–3: one cast kills the wedge — 10-min soaks ledger-exact, first true mono/HD ceilings, guardrails re-derived
+
+**Branch:** `sprint/22-he-flood`. Nick approved nibble 2 with the
+question "likely outcome?" — answered: the boundary deletes, doesn't
+move. It did.
+
+**Done:**
+- **Fix:** `(uint16_t)` cast in `rr_poll_n`'s cursor compare
+  (rpmsg_remote.c; rr_send already had it). Host regression [8]
+  (he_spike suite, ring indices pre-wrapped to 8-from-65,536): FAILS on
+  pre-fix code with the live signature exactly — 4 phantom messages,
+  duplicated echoes, 20 ≠ 16 delivered. Post-fix: he_spike 69, bm_he
+  232, s10_peer 40, all green. ELF `fea65304…` (+8 B, 94.1%), built
+  D23/D24, staged + on-board sha byte-verified; Pi deploy copy
+  `~/bm_he/` refreshed (was an Aug-12 build — a manual deploy would
+  have regressed the fix).
+- **Off-chain acceptance:** same probe ladder that killed stock —
+  507k msgs / 7.7 wraps / 22 min at up to 555 msg/s: **frag_errors=0
+  everywhere** (stock: 703 by t=100s, 362,959 by end), tx exact, heap
+  floor identical (17,704 — the fix changed nothing but the wrap).
+- **On-chain (chain up under units, scene=ref, fresh ledgers,
+  `bench/s22_ceiling_rows.py` driving the control socket):**
+  - **10-min QVGA color @ 30 cmd: 28.23 fps, 16,939 frames,
+    pub_ok = frames×7 EXACT, 0 gaps** — the demo line, ~565 msg/s
+    sustained across ~5 on-chain wraps (the rate+duration that killed
+    Nick's live demo).
+  - **10-min VGA color @ 15 cmd: 7.41 fps, 4,446 frames, exact** —
+    the matrix's 7.40 confirmed as a true 10-min ceiling.
+  - **First true ceilings the wedge always blocked:** QVGA mono
+    **30.30** (sensor-cadence-capped; encoder could do 100+), VGA mono
+    **13.27** at **~717 msg/s delivered** (40% past the old fatal
+    line), HD mono **3.10** at **990 msg/s commanded** — every row
+    ledger-exact to the chunk.
+  - The formerly-wedging 27 fps QVGA command accepted + run live
+    through bench_web's own API post-deploy.
+- **Guardrails re-derived (bench_web + page, deployed to nereus001,
+  suite 81 green on Mac AND Pi):** `SAFE_STREAM_MSGS` 315 → **1200**,
+  reworded as a measured-clean-envelope cap (a ~700 cap would refuse
+  the measured-clean VGA mono 15 command — commanded-fps predictions
+  overstate delivery); `SAFE_BURST_CHUNKS` stays 68 — see below.
+  MEAS_FPS filled: 28.23/30.30, 7.41/13.27, null/3.10.
+
+**Broke/surprised us:**
+- **The burst-loss variant is NOT the wrap bug.** `capture 90 hd mono`
+  on the FIXED stack lost exactly 54 of ~83 chunks again (frame
+  dropped, counted, silent below bm_pub). Arithmetic: the burst
+  arrives over rpmsg ~2× faster than the VCP relay drains, and the
+  HE's byte-bounded txq sheds the excess. Fix candidate = HE-side
+  backpressure (skip the poll while txq is above high-water; the HP's
+  blocked send + drain-while-pushing becomes end-to-end flow control).
+  **Deliberately NOT stacked into this bite** (clean A/B; deadlock
+  history in this exact loop) — new bite for Nick to size.
+- HD mono ceiling is 3.10 fps, not the ~4.2 the S0 encode+tx estimate
+  suggested — the bridge loop serializes capture (single fb at HD) +
+  encode + publish; input for bite 2.
+
+**Bench state:** chain UP under units, **scene=ref**, launcher
+`170e637c…` + bridge `df82aa70…` staged, fixed ELF `fea65304…` on
+/flash and in `~/bm_he/`. Both Pi checkouts moved to `main` @ 664b639
+(pre-merge stashes kept); bench_web files scp'd ahead of the PR
+(documented; checkout stays main). Session-cumulative ledger counters
+carry the q90 experiment (gaps=54, dropped=1) — deltas in every
+verdict were computed against snapshots.
+
+**Next:** nibble 4 (PR) → Nick's live demo. Then: the backpressure
+bite (burst variant) and bite 2's encoder review — desk work done
+this session: E3 has NO hardware JPEG (vendor datasheet), q50 color
+encodes at 4:2:2 (4:2:0 is one `to_jpeg` kwarg away), jpege.c has no
+MVE vectorization despite the M55's Helium being enabled in CFLAGS.
+
+---
+
 ## 2026-08-18 — Sprint S22 — bite 1 nibble 1: flood wedge ROOT-CAUSED — u16 vring-index wrap at message 65,536, reproduced off-chain
 
 **Branch:** `sprint/22-he-flood` from `main` @ `664b639`. Plan gated by

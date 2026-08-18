@@ -90,7 +90,18 @@ REEF_BYTES_Q50 = {("qvga", "color"): 9198, ("qvga", "mono"): 7536,
                   ("hd", "color"): 93253, ("hd", "mono"): 75324}
 CHUNK_DATA_MAX = 1390        # payload_max 1400 minus the 10 B chunk header
 MSGS_PER_CHUNK = 3           # ceil(1400 / 492): the rpmsg budget (REV-28)
-SAFE_STREAM_MSGS = 315       # msg/s — the 15 fps regression's exact rate
+# S22 bite 1 (2026-08-18): the old 315 msg/s wedge boundary was a u16
+# vring-index wrap in the HE's rpmsg layer, FIXED and re-measured. The
+# chain now runs clean at every rate tested — 990 msg/s commanded /
+# 717 msg/s delivered sustained, 10-min soaks ledger-exact — so this is
+# no longer a wedge line, it is a measured-clean-envelope sanity cap
+# (predictions are at COMMANDED fps, which always over-states delivery).
+SAFE_STREAM_MSGS = 1200      # msg/s — above every measured-clean command
+# Still real post-fix: an ~83-chunk single-frame burst lost 54 chunks in
+# the relay on the FIXED stack (2026-08-18) — arrival outruns the VCP
+# drain and the HE's byte-bounded TX queue sheds the excess. Largest
+# burst delivered clean remains 68 chunks. Fix = HE-side backpressure
+# (its own bite); until it lands this guard stands.
 SAFE_BURST_CHUNKS = 68       # hd color q50 reef, delivered clean twice
 
 
@@ -111,15 +122,17 @@ def guard_wedge(verb, res, pf, q, fps=None):
             max_fps = SAFE_STREAM_MSGS / float(chunks * MSGS_PER_CHUNK)
             raise ValueError(
                 "refused: %.1f fps at this mode predicts ~%d rpmsg msg/s "
-                "(reef model) and sustained publish above %d msg/s wedges "
-                "the HE — a bench reboot (finding 1). Max safe fps here is "
-                "%.1f; or drop q/resolution." % (fps, round(rate),
-                                                 SAFE_STREAM_MSGS, max_fps))
+                "(reef model), past the %d msg/s measured-clean envelope "
+                "(every rate at or below it ran ledger-exact; beyond it is "
+                "unmeasured). Max in-envelope fps here is %.1f; or drop "
+                "q/resolution." % (fps, round(rate),
+                                   SAFE_STREAM_MSGS, max_fps))
     elif chunks > SAFE_BURST_CHUNKS:
         raise ValueError(
             "refused: ~%d chunks/frame predicted (reef model); single-frame "
-            "bursts above %d chunks lose chunks in the relay and can wedge "
-            "the HE (finding 1). Lower q or resolution."
+            "bursts above %d chunks lose chunks in the relay (measured on "
+            "the wrap-fixed stack: ~83 chunks lost 54 — backpressure bite "
+            "pending). Lower q or resolution."
             % (chunks, SAFE_BURST_CHUNKS))
 
 
