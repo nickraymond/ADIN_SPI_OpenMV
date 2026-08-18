@@ -72,7 +72,7 @@ print("MISSING:" + ",".join(missing) if missing else "staged-files-ok")
 # have confirmed the B2 mechanism was destroyed by exactly this).
 mkdir -p "$HOME/bridge_traces"
 STAMP=$(date +%Y%m%dT%H%M%S)
-for tf in bridge_trace.txt bridge_trace.prev.txt; do
+for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt; do
   mpremote connect "$P" cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
     >/dev/null 2>&1 || true
 done
