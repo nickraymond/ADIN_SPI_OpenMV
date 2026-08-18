@@ -810,6 +810,30 @@ the nodes are systemd units. Do the harness before the features.)*
       fault — bridge now REFUSES HD ref, guard tested; sensor-mode leg
       wedge; **HD has never completed on any post-B2 build**).
       **Remaining: nibble 4 (PR).**
+- [~] **Bite B4 — bench_ctl survives a bm-telemetry restart** (bug
+      observed live on nereus001 2026-08-18 during the board-probe
+      session; fix shape specified by Nick with the capture). A connected
+      AF_UNIX SOCK_DGRAM socket points at the *socket*, not the path, so
+      restarting bm-telemetry (which rebinds `/run/bm/bench.sock`) killed
+      the held connection permanently: every later request raised raw
+      `OSError` ENOTCONN (107), and bench_web — which only catches
+      `BenchCtlError` — dropped the HTTP connection (HTTP 000) instead of
+      answering 503. **Pi-side only, no board contact.**
+      → **CODE + TESTS DONE 2026-08-18** (branch
+      `sprint/18-benchctl-reconnect` from `main`). Fix in
+      `bench_ctl.request()` alone: dead-socket errno → close + reopen
+      once + retry the same request; rebuild failure → the existing
+      socket-down `BenchCtlError` (bench_web's tested 503 path); all
+      other socket OSErrors wrapped, so no caller ever sees a raw
+      OSError. bench_web unchanged. New host suite
+      `pi/bm_bench/test_bench_ctl.py` (**6 checks**, real AF_UNIX
+      sockets, socket-recreated-between-requests simulated; the key test
+      FAILS on the pre-fix client). bench_web 70 checks still green.
+      Cross-platform errno fact measured before coding: Linux =
+      ECONNREFUSED/ENOTCONN, macOS = ECONNRESET/EDESTADDRREQ —
+      `RECONNECT_ERRNOS` carries all four. **Remaining: nibble 3 (Nick:
+      restart bm-telemetry under a running bench-web, `/api/status`
+      answers without a bench-web restart) → nibble 4 (PR).**
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and

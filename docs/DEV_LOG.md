@@ -17,6 +17,46 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S18 — bench_ctl: reconnect once when bm-telemetry rebinds the control socket
+
+**Branch:** `sprint/18-benchctl-reconnect`. Pi-side only — no board
+contact, no fork change, no bench session.
+
+**Done:**
+- Fixed the bug observed live on nereus001 2026-08-18: a connected
+  AF_UNIX SOCK_DGRAM socket points at the *socket*, not the path, so a
+  bm-telemetry restart (which rebinds `/run/bm/bench.sock`) killed the
+  held connection permanently — every later `bench_ctl.request()` raised
+  a raw `OSError` ENOTCONN (107), and `bench_web`, which only catches
+  `BenchCtlError`, dropped the HTTP connection (`curl` saw HTTP 000)
+  instead of answering 503. Operational fix at the time was restarting
+  bench-web; that is now unnecessary.
+- The fix lives in **`bench_ctl.request()` alone**: on a dead-socket
+  errno, close + reopen once and retry the same request; if the rebuild
+  fails, the ordinary socket-down `BenchCtlError` stands (bench_web's
+  tested 503 path). Every other socket `OSError` is wrapped in
+  `BenchCtlError` too, so **no caller ever sees a raw OSError** from the
+  client again. `bench_web.py` needed zero changes — its
+  `Bench._request` already resets on `BenchCtlError`.
+- New host suite `pi/bm_bench/test_bench_ctl.py` (**6 checks**, real
+  AF_UNIX sockets, no Pi): the socket-recreated-between-two-requests
+  case, node-fully-down → `BenchCtlError`, stale path with no listener,
+  recovery after a failed reconnect, monotonic ids across a reconnect.
+  Verified the key test **fails against the pre-fix client** (raw
+  `ConnectionResetError` escapes) before trusting the green. bench_web's
+  70 checks still pass.
+
+**Broke/surprised us:** the dead socket speaks different errnos per
+kernel — Linux says ECONNREFUSED then ENOTCONN, macOS says ECONNRESET
+then EDESTADDRREQ (measured with a throwaway probe before writing the
+fix). `RECONNECT_ERRNOS` carries all four so the host test exercises the
+same code path on the Mac as on the Pi.
+
+**Next:** Nick's manual test (restart `bm-telemetry` under a running
+`bench-web`, `/api/status` answers without a bench-web restart) → PR.
+
+---
+
 ## 2026-08-18 — Sprint S18 — reef matrix: QVGA+VGA measured exact, two new stream ceilings, and three findings that fence off HD
 
 **Branch:** `sprint/18-bench-matrix`. Five matrix runs, six scripted

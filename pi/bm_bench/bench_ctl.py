@@ -37,6 +37,7 @@ Usage from a shell (see also bench-ctl.sh):
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -48,6 +49,16 @@ DEFAULT_TIMEOUT = 3.0
 # The app refuses anything larger; matching it here turns an oversize reply
 # into a clear error instead of a truncated parse.
 REPLY_MAX = 8192
+
+# A connected DGRAM socket dies for good when the node restarts and rebinds
+# its path: the connection points at the OLD socket, not the path. These are
+# the errnos that death shows as — ENOTCONN (107) observed live on nereus001
+# 2026-08-18, ECONNREFUSED is Linux's first report of the same event;
+# ECONNRESET then EDESTADDRREQ are what macOS raises (measured), so the host
+# tests exercise the same path off the Pi. On any of them the peer may simply
+# have a NEW socket at the same path, so reconnecting once is the right move.
+RECONNECT_ERRNOS = (errno.ENOTCONN, errno.ECONNREFUSED,
+                    errno.ECONNRESET, errno.EDESTADDRREQ)
 
 
 class BenchCtlError(RuntimeError):
@@ -109,18 +120,45 @@ class BenchCtl:
 
     # -- the one primitive -------------------------------------------------
     def request(self, obj: dict) -> dict:
-        """Send one command, return the parsed reply. Raises on timeout."""
+        """Send one command, return the parsed reply. Raises on timeout.
+
+        Survives one node restart. bm-telemetry rebinds its socket path when
+        it restarts, and this client's connected socket points at the old
+        socket, not the path — so without this every later request would die
+        with ENOTCONN for the rest of the client's life (observed live
+        2026-08-18). On a RECONNECT_ERRNOS failure the socket is rebuilt once
+        and the same request retried; if the node is actually down, the
+        rebuild raises the ordinary socket-down BenchCtlError. Every other
+        socket failure is wrapped in BenchCtlError too, so no caller ever
+        sees a raw OSError from here.
+        """
         if self._sock is None:
             self.open()
         self._seq += 1
         msg = dict(obj)
         msg.setdefault("v", 1)
         msg["id"] = self._seq
+        try:
+            return self._exchange(msg)
+        except OSError as e:
+            if e.errno not in RECONNECT_ERRNOS:
+                raise BenchCtlError(
+                    f"socket error talking to {self.path}: {e}") from e
+            self.close()
+            self.open()
+            try:
+                return self._exchange(msg)
+            except OSError as e2:
+                raise BenchCtlError(
+                    f"cannot reach {self.path} after reconnect: {e2}") from e2
+
+    def _exchange(self, msg: dict) -> dict:
+        """One send + the matching reply. OSError escapes to request()."""
         self._sock.send(json.dumps(msg).encode())
 
         # Drain until the reply carrying our id arrives, or we run out of
         # time. A stale reply is discarded, never returned as this one's.
-        deadline = self._seq
+        deadline = msg["id"]
         while True:
             try:
                 data = self._sock.recv(REPLY_MAX)
