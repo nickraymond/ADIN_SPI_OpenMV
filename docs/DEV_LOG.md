@@ -75,6 +75,17 @@ until an app restart restored it; reconciled byte-exact before the PR.
   q95 JPEG fallback does NOT help (decode needs the same 2 MB raw).
 - bench-web holds a dead control socket across a bm-telemetry restart
   (bounce it after any telemetry restart) — spawn-task filed.
+- **Post-PR, Nick's live demo confirmed finding 1's boundary a fourth
+  time (now 4/4 fatal ≥ ~513 msg/s):** a QVGA color stream at
+  ~2.0 Mbps / ~27 fps = ~560 rpmsg msg/s delivered 4,148 frames over
+  ~5 min, then broke the ledger and muted the HE (`CAM_REPLY TIMEOUT`;
+  a restarted stream muted in <30 s). NOT the transition bug — the fix
+  held throughout; the demo simply ran long enough to reach bug #2 at
+  its filed rate. Recovery: reboot + relaunch, verified end to end.
+  **Guardrail gap named:** the matrix driver caps its own rates but
+  nothing stops a manual/page command above the boundary — proposed
+  mini-bite: compute msg/s from (res, pf, q, fps) in the bridge or
+  page and refuse/clamp above ~315 until the HE bug is fixed.
 
 **Bench state:** chain UP under units and verified end to end
 (`chain_status.sh` PASS both Pis; page + `/api/status` + `/frame.jpg`
