@@ -147,6 +147,23 @@
   .warn-item.warn { background:#2a2413; }
   .warn-item.bad { background:#2d1817; }
   .warn-item .est { color:var(--fg-faint); font:11px var(--mono); }
+  /* Danger Zone: visually apart from the working surface, red on arm. */
+  .danger-zone { margin:26px auto 0; max-width:960px; border:1px solid #4b2320;
+                 border-radius:6px; background:#1c1213; }
+  .danger-zone h2 { margin:0; padding:10px 14px; font:600 12px/1 var(--mono);
+                    letter-spacing:.12em; text-transform:uppercase;
+                    color:var(--danger); border-bottom:1px solid #4b2320; }
+  .danger-zone .dz-body { padding:12px 14px; }
+  .dz-toggle { display:flex; gap:10px; align-items:center; cursor:pointer;
+               font-size:13.5px; color:var(--fg); }
+  .dz-toggle input { width:16px; height:16px; accent-color:var(--danger); }
+  .dz-text { margin:10px 0 0; font-size:12.5px; line-height:1.55;
+             color:var(--fg-faint); }
+  .dz-text code { font:11.5px var(--mono); color:var(--fg); }
+  .dz-armed { margin:10px 0 0; padding:8px 10px; border-radius:4px;
+              background:#2d1817; color:var(--danger);
+              font:600 12px var(--mono); }
+  .dz-armed.hidden { display:none; }
 
   .res-line { text-align:center; font:11px var(--mono); color:var(--fg-dim); padding:2px 0 10px; }
   .res-line b { color:var(--fg); font-weight:400; }
@@ -360,6 +377,27 @@
   <div class="strip" id="strip"></div>
 </div>
 
+<div class="danger-zone" id="dangerZone">
+  <h2>Danger Zone</h2>
+  <div class="dz-body">
+    <label class="dz-toggle">
+      <input type="checkbox" id="dzForce">
+      <span>Override the finding-1 guardrails for my commands</span>
+    </label>
+    <p class="dz-text">
+      The limits above (streams &le; 315 rpmsg msg/s, stills &le; 68
+      chunks/frame) are the <b>measured</b> boundary of the HE flood wedge:
+      past them the camera node can go permanently mute and the recovery is
+      a <b>bench reboot (~3 min)</b>. With this ON, the page sends
+      <code>force</code> with each command and the server lets it through
+      &mdash; every override is logged in the bench-web journal. Turn it
+      off when you are done; it does not survive a reload, on purpose.
+    </p>
+    <p class="dz-armed hidden" id="dzArmed">OVERRIDE ARMED &mdash; commands
+      beyond the measured wedge boundary will be sent as asked.</p>
+  </div>
+</div>
+
 <div class="foot" id="foot"></div>
 
 <script>
@@ -423,7 +461,11 @@ const MEAS_FPS = {
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,
-            note: null };
+            note: null,
+            // Danger Zone. Deliberately NOT persisted: an override must be
+            // re-armed per page load, and each command carries it
+            // explicitly -- the server logs every bypass.
+            force: false };
 let CFG = { stream_port: 8080, settle: 20.0 };  // mirror; server enforces
 let GATE = { mode: "idle", busy: false, settle_in: 0, res: null, pf: null,
              reason: "", retry_in: 0, stream_left: 0 };
@@ -478,18 +520,31 @@ function renderWarnings() {
       <span class="est">(pure encode ${m.encCeil.toFixed(1)} fps &rarr; in-bridge &asymp; ${m.bridgeCeil.toFixed(1)} fps, ${m.src})</span></span></div>`);
 
   if (m.wedgeBurst) {
-    out.push(`<div class="warn-item bad"><span class="icon">&times;</span><span>
+    out.push(S.force
+      ? `<div class="warn-item bad"><span class="icon">&#9888;</span><span>
+        <b>OVERRIDE ARMED (Danger Zone).</b> &asymp;${m.chunks} chunks/frame &mdash; past the
+        ${K.SAFE_BURST_CHUNKS}-chunk measured-safe burst. This can wedge the camera node
+        (bench reboot). Sent as asked, logged. ${srcTag(m)}</span></div>`
+      : `<div class="warn-item bad"><span class="icon">&times;</span><span>
         <b>Stills REFUSED at this setting.</b> &asymp;${m.chunks} chunks/frame predicted &mdash;
         single-frame bursts above ${K.SAFE_BURST_CHUNKS} chunks lose chunks in the relay and can
         wedge the camera node (finding 1; a bench reboot). Lower q or resolution.
-        The server enforces this. ${srcTag(m)}</span></div>`);
+        The server enforces this &mdash; or arm the Danger Zone at the bottom of the page.
+        ${srcTag(m)}</span></div>`);
   }
   if (m.videoOk && m.wedgeStream) {
-    out.push(`<div class="warn-item bad"><span class="icon">&times;</span><span>
+    out.push(S.force
+      ? `<div class="warn-item bad"><span class="icon">&#9888;</span><span>
+        <b>OVERRIDE ARMED (Danger Zone).</b> ${S.fps} fps &rarr; &asymp;${m.msgRate.toFixed(0)} rpmsg msg/s
+        &mdash; past the ${K.SAFE_STREAM_MSGS} msg/s measured-safe rate (wedge boundary
+        &asymp;513). This can mute the camera node (bench reboot). Sent as asked, logged.
+        ${srcTag(m)}</span></div>`
+      : `<div class="warn-item bad"><span class="icon">&times;</span><span>
         <b>Stream REFUSED at this setting.</b> ${S.fps} fps &rarr; &asymp;${m.msgRate.toFixed(0)} rpmsg msg/s;
         sustained publish above ${K.SAFE_STREAM_MSGS} msg/s wedges the camera node
         (finding 1, measured; a bench reboot). <b>Max safe here: ${m.maxSafeFps.toFixed(1)} fps</b>
-        &mdash; or drop q/resolution. The server enforces this. ${srcTag(m)}</span></div>`);
+        &mdash; or drop q/resolution. The server enforces this &mdash; or arm the Danger Zone
+        at the bottom of the page. ${srcTag(m)}</span></div>`);
   }
   if (!m.videoOk) {
     out.push(`<div class="warn-item info"><span class="icon">&#9673;</span><span>
@@ -592,10 +647,13 @@ function renderGate() {
   const str = document.getElementById("btnStream");
   const held = GATE.busy || (GATE.settle_in > 0 && wouldReinit());
   // Finding-1 guardrails: settings the server would refuse anyway are
-  // dead buttons here, with the red warn-box item saying why.
+  // dead buttons here, with the red warn-box item saying why. The
+  // Danger Zone toggle re-enables them -- the command then carries
+  // force:true and the server lets it through, logged.
   const m = model();
-  cap.disabled = held || m.wedgeBurst;
-  str.disabled = held || GATE.mode === "stream" || m.wedgeBurst || m.wedgeStream;
+  cap.disabled = held || (m.wedgeBurst && !S.force);
+  str.disabled = held || GATE.mode === "stream"
+              || ((m.wedgeBurst || m.wedgeStream) && !S.force);
   document.getElementById("rec").classList.toggle("hidden", GATE.mode !== "stream");
 
   el.className = "gate " + (GATE.busy ? "busy" : held ? "hold" : "ready");
@@ -1039,7 +1097,8 @@ async function post(path, body) {
   }
 }
 
-const camBody = () => ({ q: S.q, res: RES[S.res].cmd, pf: S.pf });
+const camBody = () => ({ q: S.q, res: RES[S.res].cmd, pf: S.pf,
+                         ...(S.force ? { force: true } : {}) });
 
 // ---- wiring ----------------------------------------------------------
 document.getElementById("segres").onclick = e => {
@@ -1069,6 +1128,11 @@ document.getElementById("light").oninput = e => {
   document.getElementById("lightval").textContent = S.light;
 };
 document.getElementById("light").onchange = () => post("light", { level: S.light });
+document.getElementById("dzForce").onchange = e => {
+  S.force = e.target.checked;
+  document.getElementById("dzArmed").classList.toggle("hidden", !S.force);
+  renderWarnings(); renderGate();
+};
 document.getElementById("btnStrobe").onclick = () => post("strobe", {
   on_ms: +document.getElementById("son").value,
   off_ms: +document.getElementById("soff").value,

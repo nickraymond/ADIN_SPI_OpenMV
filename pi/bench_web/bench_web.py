@@ -122,6 +122,21 @@ def guard_wedge(verb, res, pf, q, fps=None):
             "the HE (finding 1). Lower q or resolution."
             % (chunks, SAFE_BURST_CHUNKS))
 
+
+def guard_or_override(body, verb, res, pf, q, fps=None):
+    """The Danger Zone. A command carrying ``force: true`` crosses the
+    guard deliberately -- per command, never sticky server-side, and every
+    bypass is logged to the journal so a wedged bench has a paper trail.
+    The page's toggle sets the flag; a reload disarms it by design."""
+    try:
+        guard_wedge(verb, res, pf, q, fps)
+    except ValueError as e:
+        if not body.get("force"):
+            raise
+        print("DANGER-ZONE override: %s %s/%s q%d%s -- guard bypassed (%s)"
+              % (verb, res, pf, q,
+                 "" if fps is None else " @%.1f fps" % fps, e), flush=True)
+
 # Bite B's own filename shape: cap_20260816T223333Z_seq000395. Nothing else is
 # a capture, and the character set has no separator, no dot and no NUL in it.
 CAPTURE_RE = re.compile(r"^cap_\d{8}T\d{6}Z_seq\d{6}$")
@@ -494,9 +509,9 @@ def build_camera_cmd(verb: str, body: dict):
         cmd["fps"] = _num(body, "fps", 0.1, 60.0, float)
         secs = _num(body, "secs", 1, 3600, int)
         cmd["secs"] = secs
-        guard_wedge("stream", res, pf, q, cmd["fps"])
+        guard_or_override(body, "stream", res, pf, q, cmd["fps"])
     else:
-        guard_wedge(verb, res, pf, q)
+        guard_or_override(body, verb, res, pf, q)
     return cmd, res, pf, secs
 
 

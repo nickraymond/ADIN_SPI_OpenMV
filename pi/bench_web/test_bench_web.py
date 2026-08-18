@@ -374,6 +374,35 @@ class TestRequestValidation(unittest.TestCase):
         self.assertIn("wedgeStream", page)
         self.assertIn("wedgeBurst", page)
 
+    def test_danger_zone_force_bypasses_both_guards(self):
+        # The override is per command, never sticky: the same bodies
+        # without force refuse (covered above), with force they build.
+        cmd, _, _, _ = build_camera_cmd(
+            "capture", {"q": 90, "res": "hd", "pf": "mono", "force": True})
+        self.assertEqual(cmd["cmd"], "capture")
+        cmd, _, _, _ = build_camera_cmd(
+            "stream", {"q": 50, "res": "qvga", "pf": "color",
+                       "mbps": 2.0, "fps": 27, "secs": 600, "force": True})
+        self.assertEqual(cmd["fps"], 27.0)
+
+    def test_danger_zone_force_never_reaches_the_socket(self):
+        # The control-socket schema does not know 'force'; leaking it
+        # would make the bridge's parser the enforcement point.
+        cmd, _, _, _ = build_camera_cmd(
+            "capture", {"q": 90, "res": "hd", "pf": "mono", "force": True})
+        self.assertNotIn("force", cmd)
+
+    def test_danger_zone_force_false_still_refuses(self):
+        with self.assertRaises(ValueError):
+            build_camera_cmd(
+                "capture", {"q": 90, "res": "hd", "pf": "mono", "force": False})
+
+    def test_danger_zone_is_on_the_page(self):
+        page = read(PAGE)
+        self.assertIn("Danger Zone", page)
+        self.assertIn('id="dzForce"', page)
+        self.assertIn("force: true", page)   # camBody carries the flag
+
     def test_light_and_strobe_are_range_checked(self):
         self.assertEqual(build_light_cmd("light", {"level": 0})["level"], 0)
         with self.assertRaises(ValueError):
