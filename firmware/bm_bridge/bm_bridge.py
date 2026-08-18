@@ -1027,10 +1027,24 @@ class CaptureEngine:
         if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
-        if self.scene == "ref" and not self._load_ref(res, pf):
-            _trace("camera: cmd mode %d REFUSED -- no ref scene"
-                   % cmd["mode"])
-            return
+        if self.scene == "ref":
+            # HD in ref mode HARD-FAULTED the board on-chain (S18 matrix
+            # run 5, 2026-08-18): trace ends mid-transition, no exit
+            # record, board reset -- the D15/S18 crash class. QVGA/VGA
+            # ref ran clean across four runs. Until the mechanism is
+            # found (filed finding; suspect: the 1-2 MB ref image load
+            # against the HE-pinned heap), HD ref is refused loudly
+            # rather than risked. scene=sensor HD is unaffected by this
+            # guard.
+            if res == CAMERA_RES_HD:
+                _trace("camera: cmd mode %d REFUSED -- HD ref scene is "
+                       "known-fatal on-chain (S18 matrix finding); use "
+                       "scene=sensor for HD" % cmd["mode"])
+                return
+            if not self._load_ref(res, pf):
+                _trace("camera: cmd mode %d REFUSED -- no ref scene"
+                       % cmd["mode"])
+                return
         self.q = cmd["q"]
         self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
         self.rate_bps = cmd["rate_bps"]

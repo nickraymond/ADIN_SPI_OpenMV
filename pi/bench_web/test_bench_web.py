@@ -540,7 +540,9 @@ class TestPage(unittest.TestCase):
         block = self.html.split("const MEAS_FPS")[1].split("};")[0]
         self.assertEqual(block.count("color:"), 3, "three res rows (color)")
         self.assertEqual(block.count("mono:"), 3, "three res rows (mono)")
-        self.assertIn("15.00", block)   # S17 bite 0's measured anchor
+        # the matrix's measured ceilings (2026-08-18, each confirmed twice)
+        self.assertIn("28.07", block)
+        self.assertIn("7.40", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an

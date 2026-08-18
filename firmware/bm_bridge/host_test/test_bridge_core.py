@@ -568,6 +568,26 @@ check(_FakeImageMod.loads > n_first, "ref mode: pf change reloads")
 check(eng.ref_key == (CAMERA_RES_QVGA, CAMERA_PF_MONO),
       "ref mode: loaded key tracks the commanded mode")
 
+# 6. HD in ref mode is refused BEFORE any asset load (known-fatal
+#    on-chain, S18 matrix run 5); sensor-scene HD is not guarded.
+_FakeImageMod.available = ("ref_color_1280x800.bmp",)
+_FakeImageMod.loads = 0
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = _HD, CAMERA_PF_COLOR
+hd_cmd = dict(_cmd)
+hd_cmd["res"] = _HD
+eng.command(hd_cmd)
+check(eng.mode == CAMERA_MODE_STOP, "ref mode: HD REFUSED (known-fatal)")
+check(_FakeImageMod.loads == 0, "ref mode: HD refused before any load")
+eng2 = bm_bridge.CaptureEngine()          # sensor scene
+eng2.booted = True
+eng2.sensor_ok = True
+eng2.cur_res, eng2.cur_pf = _HD, CAMERA_PF_COLOR
+eng2.command(dict(hd_cmd))
+check(eng2.mode == CAMERA_MODE_SINGLE, "sensor mode: HD unaffected")
+
 del sys.modules["sensor"]
 del sys.modules["image"]
 bm_bridge.time = _real_time
