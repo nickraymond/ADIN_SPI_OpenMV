@@ -82,10 +82,20 @@ until an app restart restored it; reconciled byte-exact before the PR.
   a restarted stream muted in <30 s). NOT the transition bug — the fix
   held throughout; the demo simply ran long enough to reach bug #2 at
   its filed rate. Recovery: reboot + relaunch, verified end to end.
-  **Guardrail gap named:** the matrix driver caps its own rates but
-  nothing stops a manual/page command above the boundary — proposed
-  mini-bite: compute msg/s from (res, pf, q, fps) in the bridge or
-  page and refuse/clamp above ~315 until the HE bug is fixed.
+  **Guardrail gap named — and CLOSED the same session (Nick: UI-side
+  only, fast follow):** `bench_web.py` now predicts each command's
+  publish from the reef model (`predicted_chunks` — the page model's
+  exact arithmetic) and REFUSES streams above 315 msg/s (the measured
+  clean point; refusal names the max safe fps) and stills above 68
+  chunks/frame (the largest burst delivered clean; q90-class bursts
+  lost chunks). Server-enforced (400 + reason), mirrored in the page
+  (red warn-box item + dead buttons — the C1 rule: JS only makes the
+  refusal visible). Suite 70→**76**, incl. the two live regressions:
+  the demo's 27 fps command and the matrix's q90 still both refuse.
+  Verified against the running server: both refused with operator-
+  readable reasons, a safe HD capture accepted and delivered.
+  Refusal beats clamping (D31) — a silently substituted rate would
+  invalidate the comparison the operator thinks they are running.
 
 **Bench state:** chain UP under units and verified end to end
 (`chain_status.sh` PASS both Pis; page + `/api/status` + `/frame.jpg`

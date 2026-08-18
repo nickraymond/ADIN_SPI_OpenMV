@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -72,6 +73,54 @@ BODY_MAX = 4096  # a command object is tens of bytes; anything larger is junk
 # bridge's (a wedged sensor is the alternative).
 RES_OK = ("qvga", "vga", "hd")
 PF_OK = ("color", "mono")
+
+# ---- Finding-1 guardrails (S18 HD-stability session, 2026-08-18) ---------
+# The HE wire task goes permanently mute under sustained camera publish
+# above ~513 rpmsg msg/s (4/4 fatal, incl. a live demo at ~560 that cost a
+# bench reboot; 466 = marginal 2/3; 315 = measured clean 4/4), and a
+# single-frame chunk burst of ~83 chunks lost 54 chunks in the relay while
+# 55- and 68-chunk frames delivered clean. Until the HE bug's own bite
+# lands, the UI refuses commands whose PREDICTED publish crosses the
+# measured-safe line. Prediction uses the reef-model bytes (the page's own
+# model; conservative for darker scenes, which is the right side to miss
+# on). Refusal beats clamping (D31): silently substituting a lower rate
+# would invalidate the comparison the operator believes they are running.
+REEF_BYTES_Q50 = {("qvga", "color"): 9198, ("qvga", "mono"): 7536,
+                  ("vga", "color"): 29148, ("vga", "mono"): 23831,
+                  ("hd", "color"): 93253, ("hd", "mono"): 75324}
+CHUNK_DATA_MAX = 1390        # payload_max 1400 minus the 10 B chunk header
+MSGS_PER_CHUNK = 3           # ceil(1400 / 492): the rpmsg budget (REV-28)
+SAFE_STREAM_MSGS = 315       # msg/s — the 15 fps regression's exact rate
+SAFE_BURST_CHUNKS = 68       # hd color q50 reef, delivered clean twice
+
+
+def predicted_chunks(res, pf, q):
+    """Reef-model chunks/frame — the same arithmetic as the page's model
+    (MEAS bytes @q50 x qFactor), so the two cannot disagree."""
+    est = REEF_BYTES_Q50[(res, pf)] * (1.95 ** ((q - 50) / 22.0))
+    return int(math.ceil(est / CHUNK_DATA_MAX))
+
+
+def guard_wedge(verb, res, pf, q, fps=None):
+    """Raise ValueError when a command's predicted publish would cross the
+    measured HE-flood boundary (SPEC §Open questions, finding 1)."""
+    chunks = predicted_chunks(res, pf, q)
+    if verb == "stream":
+        rate = fps * chunks * MSGS_PER_CHUNK
+        if rate > SAFE_STREAM_MSGS:
+            max_fps = SAFE_STREAM_MSGS / float(chunks * MSGS_PER_CHUNK)
+            raise ValueError(
+                "refused: %.1f fps at this mode predicts ~%d rpmsg msg/s "
+                "(reef model) and sustained publish above %d msg/s wedges "
+                "the HE — a bench reboot (finding 1). Max safe fps here is "
+                "%.1f; or drop q/resolution." % (fps, round(rate),
+                                                 SAFE_STREAM_MSGS, max_fps))
+    elif chunks > SAFE_BURST_CHUNKS:
+        raise ValueError(
+            "refused: ~%d chunks/frame predicted (reef model); single-frame "
+            "bursts above %d chunks lose chunks in the relay and can wedge "
+            "the HE (finding 1). Lower q or resolution."
+            % (chunks, SAFE_BURST_CHUNKS))
 
 # Bite B's own filename shape: cap_20260816T223333Z_seq000395. Nothing else is
 # a capture, and the character set has no separator, no dot and no NUL in it.
@@ -445,6 +494,9 @@ def build_camera_cmd(verb: str, body: dict):
         cmd["fps"] = _num(body, "fps", 0.1, 60.0, float)
         secs = _num(body, "secs", 1, 3600, int)
         cmd["secs"] = secs
+        guard_wedge("stream", res, pf, q, cmd["fps"])
+    else:
+        guard_wedge(verb, res, pf, q)
     return cmd, res, pf, secs
 
 

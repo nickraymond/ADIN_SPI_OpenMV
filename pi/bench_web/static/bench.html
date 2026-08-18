@@ -378,6 +378,17 @@ const K = {
   // QVGA-color is an EXTRAPOLATION until S18 bite B2 measures the matrix.
   BRIDGE_DERATE: 15.0 / (1000 / 19.7),
   VIDEO_MIN_FPS: 1.5,       // below this a mode is offered for stills only
+  // Finding-1 guardrails (S18 HD-stability, 2026-08-18). Sustained camera
+  // publish above ~513 rpmsg msg/s wedges the HE permanently (4/4 fatal,
+  // one live demo included); 315 msg/s is the measured-clean point. A
+  // single-frame burst of ~83 chunks lost chunks in the relay; 68 is the
+  // largest frame delivered clean. The SERVER enforces both (400 with the
+  // reason); the page mirrors them so the refusal is visible before the
+  // click. Rates are predicted from the reef model — conservative for
+  // darker scenes, which is the right side to miss on.
+  MSGS_PER_CHUNK: 3,        // ceil(1400 / 492), REV-28
+  SAFE_STREAM_MSGS: 315,    // msg/s — the 15 fps regression's exact rate
+  SAFE_BURST_CHUNKS: 68,    // hd color q50 reef, delivered clean twice
 };
 
 // The sensor letterboxes to 16:10 (QVGA = 320x200, not 320x240).
@@ -398,11 +409,13 @@ const MEAS = {
 // MEASURED delivered fps at q50 per mode — reef reference scene through
 // the whole chain, receiver-ledger truth, ledger clean (S18 reef matrix
 // 2026-08-18, bench/s18_matrix.py; QVGA color ceiling and VGA color
-// each measured identically twice). null = not yet measured -> the
-// model extrapolates from BRIDGE_DERATE and says so. The unmeasured
-// modes sit behind two filed findings: the HE wire task goes silent
-// under sustained publish above ~450-600 rpmsg msg/s (mono ceilings),
-// and HD wedges the leg on the current bridge build (HD rows).
+// each measured identically twice). null = no measured CEILING -> the
+// model extrapolates from BRIDGE_DERATE and says so. HD itself is FIXED
+// (S18 HD-stability bite: sticky-fb firmware; stills + streams run
+// ledger-exact) but its stream runs were FLOOR-capped into the
+// finding-1-safe zone (hd mono 1.50 fps, vga mono 4.98, both exact) —
+// floors are not ceilings, so these stay null until the HE flood bite
+// lands and true ceilings can be measured.
 const MEAS_FPS = {
   1: { color: 28.07, mono: null },
   2: { color: 7.40,  mono: null },
@@ -435,8 +448,16 @@ function modelFor(res, pf, q, fps) {
   const chunks = Math.ceil(bytes / (K.CHUNK_MAX - K.CHUNK_HDR));
   const wireBytes = bytes + chunks * K.CHUNK_HDR;
   const effFps = Math.min(fps, bridgeCeil);
+  // Finding-1 guardrails, mirrored from the server (which enforces them):
+  // msg/s at the COMMANDED fps — the wedge cares what you ask the HE to
+  // publish, not what the encoder can keep up with.
+  const msgRate = fps * chunks * K.MSGS_PER_CHUNK;
+  const wedgeStream = msgRate > K.SAFE_STREAM_MSGS;
+  const wedgeBurst = chunks > K.SAFE_BURST_CHUNKS;
+  const maxSafeFps = K.SAFE_STREAM_MSGS / (chunks * K.MSGS_PER_CHUNK);
   return { bytes, encMs, encCeil, bridgeCeil, chunks, wireBytes, effFps, src,
            bps: wireBytes * 8 * effFps, bpsAtCmd: wireBytes * 8 * fps,
+           msgRate, wedgeStream, wedgeBurst, maxSafeFps,
            videoOk: bridgeCeil >= K.VIDEO_MIN_FPS };
 }
 const model = () => modelFor(S.res, S.pf, S.q, S.fps);
@@ -456,6 +477,20 @@ function renderWarnings() {
       ${m.chunks} chunk${m.chunks>1?"s":""}, encode &asymp; ${m.encMs.toFixed(0)} ms
       <span class="est">(pure encode ${m.encCeil.toFixed(1)} fps &rarr; in-bridge &asymp; ${m.bridgeCeil.toFixed(1)} fps, ${m.src})</span></span></div>`);
 
+  if (m.wedgeBurst) {
+    out.push(`<div class="warn-item bad"><span class="icon">&times;</span><span>
+        <b>Stills REFUSED at this setting.</b> &asymp;${m.chunks} chunks/frame predicted &mdash;
+        single-frame bursts above ${K.SAFE_BURST_CHUNKS} chunks lose chunks in the relay and can
+        wedge the camera node (finding 1; a bench reboot). Lower q or resolution.
+        The server enforces this. ${srcTag(m)}</span></div>`);
+  }
+  if (m.videoOk && m.wedgeStream) {
+    out.push(`<div class="warn-item bad"><span class="icon">&times;</span><span>
+        <b>Stream REFUSED at this setting.</b> ${S.fps} fps &rarr; &asymp;${m.msgRate.toFixed(0)} rpmsg msg/s;
+        sustained publish above ${K.SAFE_STREAM_MSGS} msg/s wedges the camera node
+        (finding 1, measured; a bench reboot). <b>Max safe here: ${m.maxSafeFps.toFixed(1)} fps</b>
+        &mdash; or drop q/resolution. The server enforces this. ${srcTag(m)}</span></div>`);
+  }
   if (!m.videoOk) {
     out.push(`<div class="warn-item info"><span class="icon">&#9673;</span><span>
         <b>Stills only.</b> This mode streams at &asymp; ${m.bridgeCeil.toFixed(1)} fps &mdash; below the
@@ -556,8 +591,11 @@ function renderGate() {
   const cap = document.getElementById("btnCapture");
   const str = document.getElementById("btnStream");
   const held = GATE.busy || (GATE.settle_in > 0 && wouldReinit());
-  cap.disabled = held;
-  str.disabled = held || GATE.mode === "stream";
+  // Finding-1 guardrails: settings the server would refuse anyway are
+  // dead buttons here, with the red warn-box item saying why.
+  const m = model();
+  cap.disabled = held || m.wedgeBurst;
+  str.disabled = held || GATE.mode === "stream" || m.wedgeBurst || m.wedgeStream;
   document.getElementById("rec").classList.toggle("hidden", GATE.mode !== "stream");
 
   el.className = "gate " + (GATE.busy ? "busy" : held ? "hold" : "ready");
