@@ -1,7 +1,19 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 latest (**LADDER RESEQUENCED — Nick, D39.**
+*Last updated: 2026-08-18 latest+1 (**S22 bite 1 nibbles 1–3 DONE — the
+HE flood wedge was a u16 vring-index wrap at message 65,536 in
+`rr_poll_n`, fixed with ONE cast (D40).** ELF `fea65304…` on the bench;
+10-min QVGA color soak 28.23 fps ledger-exact at the exact rate+duration
+that killed the live demo; first true ceilings QVGA mono 30.30 / VGA
+mono 13.27 / HD mono 3.10; VGA color 7.41 confirmed at 10 min;
+guardrails re-derived (315→1200 envelope cap) + deployed, suite 81.
+NEW bite 1b fenced: the ~83-chunk burst loss is a SEPARATE bug (54
+chunks lost on the fixed stack — backpressure fix candidate, Nick to
+size). Bite 2 desk work banked: E3 has NO hardware JPEG (datasheet),
+q50 color = 4:2:2 (4:2:0 one kwarg away), jpege.c not MVE-vectorized.
+Remaining: bite 1 nibble 4 (PR) + Nick's demo. Previous:*
+*2026-08-18 latest (**LADDER RESEQUENCED — Nick, D39.**
 PRs #35 + #36 MERGED (bench_ctl reconnect; the whole HD-stability bite
 incl. guardrails + Danger Zone). Execution order is now: **S22 bite 1
 (HE flood fix) → S22 bite 2 (encoder-headroom exploration, NEW) →
@@ -1305,7 +1317,53 @@ for training can use the S18 tool + S17 pipeline.
 **Goal:** a camera node that cannot be wedged at any commanded rate,
 and a measured answer on how much fps headroom the encode path has.
 
-- [ ] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+- [~] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+      → **NIBBLE 1 DONE 2026-08-18 (branch `sprint/22-he-flood`; Phase A
+      approved by Nick): ROOT-CAUSED — a u16 vring-index wrap in
+      `rr_poll_n` (rpmsg_remote.c:295, shared into bm_he): u32 cursor vs
+      u16 avail->idx with no cast (rr_send HAS it), so at 65,536
+      cumulative inbound rpmsg messages the poll loop consumes phantom
+      work forever.** Reproduced off-chain by
+      `bench/probes/s22_flood_probe.py` (+27 host checks): frag_errors
+      ignited in the exact 10 s window containing message 65,536 and
+      ran to 362,959; heap flat throughout (NOT a memory problem; the
+      S19 byte-bound holds). "≥513 msg/s" was a proxy for
+      time-to-65,536; all four real events match the arithmetic. Full
+      record: DEV_LOG + SPEC flood entry.
+      → **NIBBLES 2–3 DONE 2026-08-18 (Nick approved).** Fix = ONE
+      wrap-safe cast in `rr_poll_n` + host regression [8] (fails
+      pre-fix with the live signature) + ELF `fea65304…` staged
+      byte-verified (+ Pi deploy copy refreshed). Off-chain: the
+      killer ladder ran 507k msgs / 7.7 wraps, frag=0. On-chain,
+      ledger-exact to the chunk: **10-min QVGA color 28.23 fps
+      (16,939 frames, ~565 msg/s across ~5 wraps — the exact
+      rate+duration that killed the live demo)** · 10-min VGA color
+      **7.41** · first true ceilings: **QVGA mono 30.30** (sensor-
+      capped), **VGA mono 13.27 @ ~717 msg/s**, **HD mono 3.10 @ 990
+      msg/s commanded**. Guardrails re-derived + deployed
+      (SAFE_STREAM_MSGS 315→1200 as a measured-envelope cap,
+      suite 76→81; MEAS_FPS filled) — D40. **The demo line's
+      `capture 90 hd mono` rung did NOT close: the burst variant is a
+      SEPARATE bug** (54 of ~83 chunks lost on the FIXED stack —
+      rpmsg arrival ~2× VCP drain, byte-bounded txq sheds; SPEC).
+      Remaining: nibble 4 (PR) + Nick's demo.
+- [ ] **Bite 1b — burst backpressure (NEW, fenced from bite 1; Nick to
+      size).** `capture 90 hd mono` (~83 chunks ≈ 125 KB) still loses
+      ~54 chunks on the wrap-fixed stack: the burst arrives over rpmsg
+      (~76 ms) about twice as fast as the VCP relay drains (~185 ms)
+      and the HE's `NETWIRE_TXQ_MAX_BYTES` bound sheds the excess —
+      counted, silent below bm_pub (`pub_errs=0`). Fix candidate,
+      HE-side (~15 LoC): skip `rr_poll_n` while netwire txq bytes are
+      above a high-water mark so the HP's `ept.send` blocks and its
+      existing drain-while-pushing loop (`send_chunk_msgs`) becomes
+      end-to-end flow control; delivery rate becomes the relay's
+      ~185 ms/frame. Deadlock history lives in exactly this loop
+      (S19 bite 2 part 4) — plan gate + off-chain probe first.
+      Verifiable: `capture 90 hd mono` ledger-exact; SAFE_BURST_CHUNKS
+      raised past 83 with the suite updated. NOTE: this closes the
+      LOSS, not the fps — the bridge still serializes capture/encode/
+      publish, so the HD mono ceiling stays ~3.1 until bite 2's
+      encoder/pipeline work; Nick's HD 5–6 target rides bite 2.
       The HE wire task goes permanently mute under sustained camera
       publish ≥ ~513 rpmsg msg/s (4/4 fatal incl. a live demo at ~560;
       466 = 2/3 marginal; 315 = clean 4/4), and single-frame bursts of

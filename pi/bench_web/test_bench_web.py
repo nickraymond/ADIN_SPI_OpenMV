@@ -350,19 +350,32 @@ class TestRequestValidation(unittest.TestCase):
             build_camera_cmd("capture", {"q": 90, "res": "hd", "pf": "mono"})
         self.assertIn("chunks", str(e.exception))
 
-    def test_finding1_the_stream_that_wedged_the_demo_is_refused(self):
-        # ~27 fps QVGA color ~= 560 msg/s wedged the HE live (bench reboot).
-        with self.assertRaises(ValueError) as e:
-            build_camera_cmd("stream", {"q": 50, "res": "qvga", "pf": "color",
-                                        "mbps": 2.0, "fps": 27, "secs": 600})
-        msg = str(e.exception)
-        self.assertIn("msg/s", msg)
-        self.assertIn("Max safe fps here is 15.0", msg)
+    def test_wrapfix_the_stream_that_wedged_the_demo_is_now_accepted(self):
+        # ~27 fps QVGA color ~= 560 msg/s wedged the HE live pre-fix. The
+        # wedge was the u16 vring wrap (S22 bite 1, FIXED): this exact
+        # command then ran a 10-min soak at 28.23 fps, ledger exact — so
+        # the server must accept it now.
+        cmd, _, _, _ = build_camera_cmd(
+            "stream", {"q": 50, "res": "qvga", "pf": "color",
+                       "mbps": 2.0, "fps": 27, "secs": 600})
+        self.assertEqual(cmd["fps"], 27.0)
 
-    def test_finding1_one_fps_over_the_line_is_refused(self):
-        with self.assertRaises(ValueError):
-            build_camera_cmd("stream", {"q": 50, "res": "qvga", "pf": "color",
-                                        "mbps": 2.0, "fps": 16, "secs": 60})
+    def test_wrapfix_measured_clean_vga_mono_15_is_accepted(self):
+        # VGA mono 15 fps commands ~810 msg/s (reef model) and was
+        # measured CLEAN post-fix (13.27 fps delivered, 0 gaps). A cap
+        # that refuses a measured-clean command is the wrong cap.
+        cmd, _, _, _ = build_camera_cmd(
+            "stream", {"q": 50, "res": "vga", "pf": "mono",
+                       "mbps": 4.0, "fps": 15, "secs": 60})
+        self.assertEqual(cmd["fps"], 15.0)
+
+    def test_envelope_beyond_every_measured_rate_is_refused(self):
+        # VGA mono 30 fps predicts ~1620 msg/s — past the 1200 msg/s
+        # measured-clean envelope; unmeasured territory still refuses.
+        with self.assertRaises(ValueError) as e:
+            build_camera_cmd("stream", {"q": 50, "res": "vga", "pf": "mono",
+                                        "mbps": 4.0, "fps": 30, "secs": 60})
+        self.assertIn("envelope", str(e.exception))
 
     def test_finding1_page_mirrors_the_server_constants(self):
         # The page only makes the refusal visible; if its numbers drift
@@ -381,9 +394,9 @@ class TestRequestValidation(unittest.TestCase):
             "capture", {"q": 90, "res": "hd", "pf": "mono", "force": True})
         self.assertEqual(cmd["cmd"], "capture")
         cmd, _, _, _ = build_camera_cmd(
-            "stream", {"q": 50, "res": "qvga", "pf": "color",
-                       "mbps": 2.0, "fps": 27, "secs": 600, "force": True})
-        self.assertEqual(cmd["fps"], 27.0)
+            "stream", {"q": 50, "res": "vga", "pf": "mono",
+                       "mbps": 4.0, "fps": 30, "secs": 60, "force": True})
+        self.assertEqual(cmd["fps"], 30.0)
 
     def test_danger_zone_force_never_reaches_the_socket(self):
         # The control-socket schema does not know 'force'; leaking it
@@ -622,9 +635,13 @@ class TestPage(unittest.TestCase):
         block = self.html.split("const MEAS_FPS")[1].split("};")[0]
         self.assertEqual(block.count("color:"), 3, "three res rows (color)")
         self.assertEqual(block.count("mono:"), 3, "three res rows (mono)")
-        # the matrix's measured ceilings (2026-08-18, each confirmed twice)
-        self.assertIn("28.07", block)
-        self.assertIn("7.40", block)
+        # the S22 wrap-fix ceilings (2026-08-18, 10-min soaks + ceiling
+        # rows on the fixed HE, receiver-ledger exact)
+        self.assertIn("28.23", block)
+        self.assertIn("7.41", block)
+        self.assertIn("30.30", block)
+        self.assertIn("13.27", block)
+        self.assertIn("3.10", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an

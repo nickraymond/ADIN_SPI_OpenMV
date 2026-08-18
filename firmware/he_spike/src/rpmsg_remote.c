@@ -292,7 +292,12 @@ uint32_t rr_poll_n(rpmsg_remote_t *rr, uint32_t max_msgs) {
     uint32_t n = 0;
 
     rr_dmb();
-    while (rr->consumed[0] != a->idx) {
+    // Wrap-safe compare (S22 bite 1): consumed is a u32 cursor, the
+    // vring index is u16. Without the cast, message 65,536 makes this
+    // loop see phantom work forever -- stale slots redelivered, the
+    // ring desyncs, and on-chain the HE goes permanently mute (4/4
+    // real events; regression = host_test section [8]).
+    while ((uint16_t)rr->consumed[0] != a->idx) {
         if (max_msgs && n >= max_msgs) {
             break;   // budget spent -- caller gets a turn (S19 bite 2)
         }

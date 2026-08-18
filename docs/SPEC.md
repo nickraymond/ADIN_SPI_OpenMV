@@ -134,6 +134,21 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **ANSWERED 2026-08-18 (S22 bite 2 desk check, vendor-sourced): the
+  Alif Ensemble E3 has NO hardware JPEG or video codec.** Its
+  image/graphics accelerators are the D/AVE 2D GPU (vector graphics),
+  2× Ethos-U55 NPUs, the LCD controller, and MIPI CSI-2/CPI camera
+  interfaces — no compression hardware of any kind. Source: Alif
+  Ensemble E3 series page + E3 datasheet v2.11 (alifsemi.com /
+  Mouser ADTS series). Consequence: HD color ≥5 fps has no hardware
+  path on the AE3 (software encoder is 299.2 ms/frame at q50 reef =
+  3.3 fps ceiling); hardware encode remains the N6/H.264 follow-on
+  (icebox). Software levers that DO exist, verified in the OpenMV
+  source at 7d4dbf7: `to_jpeg` exposes `subsampling=` (auto picks
+  4:2:2 at q50 — 4:2:0 is cheaper and one kwarg away), and jpege.c
+  has NO Helium/MVE vectorization despite the M55 build enabling
+  `+mve.fp` — a hand-vectorized encoder is real but unbounded work.
+
 - **A sensor re-init too soon after a capture throws
   `RuntimeError('Sensor control failed.')` and WEDGES the sensor for the
   rest of the bridge's life (measured 2026-08-16, S18 bite B trial
@@ -263,6 +278,45 @@ pair, USB carrying no video.
   (reset + re-bootstrap) as an instrumented backstop, unproven but
   strictly no worse than today's permanent wedge.
 
+- **ROOT-CAUSED 2026-08-18 (S22 bite 1 nibble 1, off-chain reproduction +
+  source read): the flood wedge below is a u16 vring-index wrap bug in
+  the hand-rolled rpmsg layer** — `rr_poll_n`
+  (firmware/he_spike/src/rpmsg_remote.c:295, built into bm_he via the
+  shared Makefile source) compares the u32 `consumed[0]` cursor against
+  the virtio ring's u16 `avail->idx` without a cast (`rr_send` HAS the
+  cast); at exactly **65,536 cumulative inbound rpmsg messages since HE
+  load** the comparison can never be equal again, the poll loop sees
+  phantom work forever, consumes stale ring slots, and redelivers
+  garbage. Reproduced by `bench/probes/s22_flood_probe.py` (no Pi, no
+  camera): clean below the boundary (control rung 60 s, frag=0; fatal
+  rung clean for exactly ~91 s), then `frag_errors` ignited in the
+  precise 10 s window containing message 65,536 and climbed ~80/s to
+  362,959 by run end, with `tx_frames` at ~450/s against a 126/s chunk
+  input (stale redelivery). **Rate was only ever a proxy — it sets how
+  fast a session reaches message 65,536.** All four real events match
+  the arithmetic (the 002807 trace crossed 65,536 mid-VGA-mono-stream,
+  exactly where its ledger broke; the demo event died at ~83k msgs;
+  every 315-clean run sat far below 65k cumulative). **Measured NOT the
+  mechanism: the heap** — heap_min held 17,704 B across the entire
+  22-min flood, tx_dropped=0, no hook fired (BP->err=0). Off-chain the
+  HE stays query-alive in the storm; the full on-chain mute is the
+  bridge-side openamp state being poisoned by the garbage used-ring
+  entries under bidirectional load. Fix shape: wrap-safe cast in
+  `rr_poll_n` + a host regression across the 65,536 boundary + ELF
+  rebuild; acceptance = the same probe ladder through 5+ wraps clean,
+  then the on-chain ceilings this bug blocked. Original record below.
+  **FIXED AND CONFIRMED ON-CHAIN same day (nibbles 2–3):** one
+  wrap-safe cast, ELF `fea65304…`; off-chain 507k msgs / 7.7 wraps
+  frag=0; on-chain 10-min soaks ledger-exact (QVGA color 28.23 fps at
+  ~565 msg/s — the exact demo-killing rate+duration; VGA color 7.41)
+  and first true ceilings QVGA mono 30.30 / VGA mono 13.27 (~717
+  msg/s) / HD mono 3.10 (990 msg/s commanded). **The wedge boundary is
+  retired; the burst variant is a SEPARATE, still-open bug:**
+  `capture 90 hd mono` on the fixed stack lost exactly 54 of ~83
+  chunks again — rpmsg arrival (~76 ms/frame) outruns the VCP relay
+  drain (~185 ms) and the HE's byte-bounded txq sheds the excess,
+  silently below bm_pub. Owns TRACKER S22 bite 1b (HE-side
+  backpressure); SAFE_BURST_CHUNKS=68 stands until it lands.
 - **Sustained camera publish above ~450–600 rpmsg msg/s silences the HE
   wire task permanently (measured 2026-08-18, S18 reef matrix, 3
   occurrences + mechanism traced).** First the receiver ledger breaks
