@@ -17,6 +17,30 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — S23 ladder setup: encoder fast path is the next sprint — docs only
+
+**Branch:** `sprint/23-encoder-ladder` from `sprint/22-he-flood` (which
+carries the bite-1b commits main is missing — PR #40 is the catch-up;
+this PR should merge after it). No code, no bench contact.
+
+**Done:** PRs #38/#39 merged by Nick (+#40 opened for the stranded
+bite-1b commits — merge-ordering artifact, zero new work). New sprint
+**S23 — encoder fast path** written into the ladder and sequenced
+FIRST (D42): bite 0 = 4:2:0-at-q50 · bite 1 = MVE-vectorized jpege
+(color-convert first, <1.5× stop-gate before DCT) · bite 2 = C publish
+path (profile the ~2 ms/KB tax first) · bite 3 = re-measure ceilings.
+Targets: VGA color ≥15 fps, HD mono ≥5–6, then true max. Kickoff
+prompt = PROMPTS.md §6. Tailscale side-door key installed by Nick
+(outages no longer block the bench).
+
+**Broke/surprised us:** the #38/#39 merge ordering stranded three
+commits — caught by checking main's content, not the PR states.
+
+**Next:** merge #40 then the S23 docs PR; fresh session runs S23
+bite 0 (prompt ready); Nick: PR #38 demo + fork instrumentation bite.
+
+---
+
 ## 2026-08-18 — Sprint S22 — bite 1b + bite 2 window: burst loss cornered INSIDE the telemetry fork; encoder matrix measured; two hardening layers shipped
 
 **Branch:** `sprint/22-burst-backpressure` (from the bite-1 branch).
