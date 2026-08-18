@@ -143,7 +143,14 @@ def rung_plan():
     """
     return [("control-315", 9198, 66, 60),
             ("fatal-513", 23831, 100, 300),
-            ("demo-560", 9198, 36, 600)]
+            ("demo-560", 9198, 36, 600),
+            # S22 bite 1b: the q90-class single-frame burst (83 chunks =
+            # 115,370 B, the size that lost 54 chunks on-chain), three
+            # times with 3 s gaps. Off-chain this is a smoke test -- the
+            # local drain is faster than the VCP relay, so the verdict
+            # rows are tx_dropped (must stay 0) and liveness; the real
+            # acceptance is `capture 90 hd mono` on the chain.
+            ("burst-83", 115370, 3000, 9)]
 
 
 def classify(err, tick_moved, answered):

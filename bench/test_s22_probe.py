@@ -58,7 +58,8 @@ def test_rung_rates():
     for (name, frame_bytes, period_ms, dwell_s) in p.rung_plan():
         per_frame = len(p.frame_msgs(0, frame_bytes))
         rates[name] = per_frame * 1000.0 / period_ms
-        check(dwell_s >= 60, "%s dwells >= 60 s" % name)
+        if name != "burst-83":          # the burst rung is 3 shots, not
+            check(dwell_s >= 60, "%s dwells >= 60 s" % name)  # a dwell
     check(290 <= rates["control-315"] <= 320,
           "control rung ~315 msg/s (got %.0f)" % rates["control-315"])
     check(500 <= rates["fatal-513"] <= 530,
