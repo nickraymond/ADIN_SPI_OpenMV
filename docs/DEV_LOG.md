@@ -17,6 +17,55 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S23 — bite 0 nibbles 1–3: 4:2:0 forced on color, VGA color 7.41→7.93 fps, A/B pair byte-exact to the model
+
+**Branch:** `sprint/23-encoder-fastpath` from `main` @ `a0171a0`
+(carries the S23 ladder commit cherry-picked from the unmerged
+`sprint/23-encoder-ladder` — the ladder was on no merged branch, found
+by searching the worktrees).
+
+**Done:**
+- Nibble 1 plan approved by Nick, incl. the decision: **force 4:2:0 at
+  EVERY q, color only** (one code path, one smooth qFactor curve; the
+  q90 eyeball is the check). Mono never gets the kwarg — the encoder
+  has no grayscale subsampling knob and the enc matrix deliberately
+  skipped it (unmeasured territory).
+- Code: `bm_bridge.py` `enc_420` resolved at `command()` from the
+  commanded pf; encode call passes `subsampling=JPEG_SUBSAMPLING_420`
+  (lazy `import image`, host-test-compatible). Page `MEAS` + server
+  `REEF_BYTES_Q50` moved to the measured 4:2:0 anchors in lockstep
+  (QVGA 8728/17.5, VGA 27021/66.4, HD 86120/258.5); predicted HD color
+  q50 chunks 68→62, clear of SAFE_BURST_CHUNKS=68. Bridge suite
+  288→292 (color+ref pass 420, mono never); bench_web 81 with pins
+  re-derived.
+- On-chain (scene=ref, bridge `552812ba…` byte-verified by demo_up's
+  sha-sync): **before-still 29,148 B/21 chunks (4:2:2, seq000207) vs
+  after-still 27,021 B/20 chunks (4:2:0, seq000000) — both byte-exact
+  to their model anchors.** Ceiling row `vga-color-15`: **7.93 fps
+  delivered (476 frames/60 s), gaps=0 dropped=0, pub_ok=9,540 =
+  476×20 chunks ledger-exact** (was 7.41; model said 8.0). MEAS_FPS
+  updated; QVGA/HD color annotated pre-420 floors for bite 3.
+
+**Broke/surprised us:** the deploy detour. The old bridge held the VCP
+through a quiet-exit wait AND a Pi reboot (Pi 5 never cuts VBUS). The
+missing mental piece, now proven twice: **a phase-1 bridge waits
+FOREVER for first VCP contact; only contact arms the 30 s quiet-exit
+clock.** So the recovery is: touch the port once (the failed attach IS
+step one), then 60–90 s of ZERO contact, then the one real attempt.
+Both demo_up runs landed first-try under that sequence. Also: demo_up
+defaults `--scene sensor` — the ref re-stage cost one extra cycle.
+
+**Bench state:** chain UP under units (bm-light + bm-telemetry active,
+stream stopped), scene=ref, 4:2:0 bridge staged, bench-web serving the
+new model on :8090. Session ledger still carries S22's experiment
+counters (gaps=216, dropped=4 — pre-existing).
+
+**Next:** Nick's 4:2:0-vs-4:2:2 eyeball on the reef pair (gallery
+compare view) → bite 0 PR → bite 1 (MVE color-convert first, STOP-gate
+if <1.5×).
+
+---
+
 ## 2026-08-18 — S23 ladder setup: encoder fast path is the next sprint — docs only
 
 **Branch:** `sprint/23-encoder-ladder` from `sprint/22-he-flood` (which

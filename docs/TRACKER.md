@@ -1,7 +1,16 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 latest+2 (**NEW SPRINT S23 — ENCODER FAST
+*Last updated: 2026-08-18 latest+3 (**S23 bite 0 nibbles 1–3 DONE —
+4:2:0 forced on every color encode (one kwarg, color only, Nick
+approved), delivered VGA color 7.41→7.93 fps ledger-exact.** Bridge
+`552812ba…` byte-verified on the bench via demo_up; the A/B reef pair
+is byte-exact to the model (29,148→27,021 B); page+server byte models
+moved to the 4:2:0 anchors in lockstep (HD color q50 68→62 chunks);
+bridge suite 292 / bench_web 81. Remaining: Nick's 4:2:0 quality
+eyeball (compare view, seq000207 vs seq000000) → PR. Then bite 1 (MVE
+color-convert, STOP-gate <1.5×). Previous:*
+*2026-08-18 latest+2 (**NEW SPRINT S23 — ENCODER FAST
 PATH — RUNS NEXT (Nick, D42).** PRs #38 + #39 MERGED (+ #40 catch-up
 pending: a merge-ordering artifact stranded the bite-1b commits on the
 sprint branch — it is exactly those commits, no new work). Nick's
@@ -1467,7 +1476,7 @@ SPEC). Facts base: enc matrix (`bench/probes/s22_enc_matrix.py` — the
 acceptance instrument for every encoder bite), measured ceilings
 (`bench/s22_ceiling_rows.py`), D23/D24 build loop, sticky-fb patch
 precedent for repo-carried firmware patches.
-- [ ] **Bite 0 — ship 4:2:0 at q50 (cheap, immediate).** One
+- [~] **Bite 0 — ship 4:2:0 at q50 (cheap, immediate).** One
       `to_jpeg(subsampling=...)` kwarg in the bridge encode call
       (bm_bridge.py:1093) + host tests + a page-model/bytes note
       (bytes drop ~7%, so chunk predictions shift). Measured buy:
@@ -1476,6 +1485,28 @@ precedent for repo-carried firmware patches.
       on-chain VGA color ceiling row re-run; MEAS_FPS/provenance
       updated. Decision recorded: refusal-vs-quality trade is Nick's
       to eyeball once on the reef refs (4:2:0 chroma cost at q50).
+      → **NIBBLES 1–3 DONE 2026-08-18 (plan + "force 420 at every q,
+      color only" approved by Nick; branch `sprint/23-encoder-fastpath`,
+      carries the S23 ladder commit).** Shipped: color-only
+      `subsampling=JPEG_SUBSAMPLING_420` resolved at `command()` (mono
+      NEVER gets the kwarg — no grayscale knob, unmeasured); page MEAS
+      + server `REEF_BYTES_Q50` moved to the 4:2:0 anchors in lockstep
+      (HD color q50 68→62 predicted chunks, clear of the burst guard);
+      bridge suite 288→**292**, bench_web **81** (pins re-derived).
+      **On-chain, scene=ref, bridge sha `552812ba…` byte-verified via
+      demo_up:** the A/B still pair is BYTE-EXACT to the model — VGA
+      color q50 = 29,148 B/21 chunks before (seq000207) vs **27,021 B/
+      20 chunks after** (seq000000); ceiling row `vga-color-15` =
+      **7.93 fps delivered (476 frames/60 s), gaps=0 dropped=0,
+      pub_ok=9,540 = 476×20 chunks ledger-exact** (was 7.41 on 4:2:2;
+      model predicted 8.0, delta 1.4%). MEAS_FPS updated (7.41→7.93;
+      QVGA/HD color annotated as pre-420 floors for bite 3).
+      Bench note: recovery detour recorded in DEV_LOG — a phase-1
+      bridge waits FOREVER until first VCP contact arms its 30 s
+      quiet-exit; the failed attach IS step one of the recovery.
+      **Remaining: Nick's 4:2:0-vs-4:2:2 eyeball on the reef pair
+      (gallery compare view, seq000207 vs seq000000) — the recorded
+      decision gate for force-420-at-every-q — then nibble 4 (PR).**
 - [ ] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
       lever).** jpege.c is plain C; `+mve.fp` is already in the Alif
       port CFLAGS. Ships as a repo-carried openmv patch (sticky-fb

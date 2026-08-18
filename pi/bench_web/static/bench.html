@@ -463,12 +463,14 @@ const MEAS = {
 // QVGA mono 30.30 (sensor-cadence-capped), VGA mono 13.27 @ ~717 msg/s,
 // HD mono 3.10 @ 6 commanded (186 frames, exact). HD color stays null:
 // its ceiling run is owed (expected ~1.5-2 fps, encoder-bound).
-// S23 bite 0 (forced 4:2:0 color): the color numbers below are
-// PRE-4:2:0 FLOORS (encode only got faster; bite 3 re-measures all).
-// VGA color gets re-measured first, in this bite's ceiling row.
+// S23 bite 0 (forced 4:2:0 color): VGA color is MEASURED on the 4:2:0
+// bridge (60 s ceiling row 2026-08-18: 476 frames / 7.93 fps, ledger
+// exact, 20 chunks/frame; was 7.41 on 4:2:2 — the 10-min soak lands in
+// bite 3). QVGA + HD color are PRE-4:2:0 FLOORS (encode only got
+// faster; bite 3 re-measures them).
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
-  2: { color: 7.41,  mono: 13.27 },
+  2: { color: 7.93,  mono: 13.27 },
   3: { color: null,  mono: 3.10 },
 };
 

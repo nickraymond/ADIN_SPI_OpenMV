@@ -640,7 +640,8 @@ class TestPage(unittest.TestCase):
         # the S22 wrap-fix ceilings (2026-08-18, 10-min soaks + ceiling
         # rows on the fixed HE, receiver-ledger exact)
         self.assertIn("28.23", block)
-        self.assertIn("7.41", block)
+        # VGA color re-measured on the S23 4:2:0 bridge (was 7.41 on 4:2:2)
+        self.assertIn("7.93", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
         self.assertIn("3.10", block)
