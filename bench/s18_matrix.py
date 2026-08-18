@@ -65,19 +65,22 @@ REEF_BYTES_MIN, REEF_BYTES_MAX = 6000, 14000
 # One visit per (res, pf); q rows inside a visit are free (no re-init).
 # Streams command fps ABOVE the predicted ceiling so the delivered rate
 # IS the ceiling; mbps 4.0 stays under the 5.26 measured relay ceiling.
-# HD color last: the certification rung then fires after the largest
-# published frames the bench can produce.
+#
+# ORDER IS RISK ORDER (runs 1-2, 2026-08-18): a 30-fps commanded QVGA
+# stream (~588 rpmsg msg/s, ~2x the proven S17 regime) wedged the HE
+# camera service both times, killing every later row. The QVGA color
+# ceiling was measured identically twice before the wedge (28.07 fps)
+# and is dropped here; the one remaining ceiling row (QVGA mono) runs
+# LAST, sacrificially, after the cert rung — if it wedges the camera
+# the matrix is already complete. The wedge itself is filed as its own
+# finding, not chased in this bite.
 PLAN = [
     ("still",  "qvga", "color", 50, None),
     ("still",  "qvga", "color", 35, None),
     ("still",  "qvga", "color", 90, None),
     ("stream", "qvga", "color", 50,
      {"mbps": 2.0, "fps": 15, "secs": 60, "tag": "regression-s17"}),
-    ("stream", "qvga", "color", 50,
-     {"mbps": 4.0, "fps": 30, "secs": 60, "tag": "ceiling"}),
     ("still",  "qvga", "mono",  50, None),
-    ("stream", "qvga", "mono",  50,
-     {"mbps": 4.0, "fps": 30, "secs": 60, "tag": "ceiling"}),
     ("still",  "vga",  "color", 50, None),
     ("stream", "vga",  "color", 50,
      {"mbps": 4.0, "fps": 10, "secs": 60, "tag": "ceiling"}),
@@ -92,6 +95,8 @@ PLAN = [
     ("stream", "hd",   "color", 50,
      {"mbps": 4.0, "fps": 3, "secs": 30, "tag": "ceiling-short"}),
     ("cert",   "qvga", "color", 50, None),
+    ("stream", "qvga", "mono",  50,
+     {"mbps": 4.0, "fps": 30, "secs": 60, "tag": "ceiling-sacrificial"}),
 ]
 
 

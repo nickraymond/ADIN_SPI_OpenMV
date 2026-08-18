@@ -56,14 +56,15 @@ except ValueError:
 
 stills, streams, changes = M.plan_stats(M.PLAN)
 check(stills == 9, "the plan has exactly 9 still rows (the 9-row table)")
-check(streams == 7,
-      "7 stream rows: the S17 regression run + 6 ceiling measurements")
-check(changes == 6, "one visit per mode: 6 changes incl. the cert rung")
+check(streams == 6,
+      "6 stream rows: regression + 5 ceilings (QVGA color ceiling was "
+      "measured twice in runs 1-2 and dropped)")
 check(M.PLAN[0][:4] == ("still", "qvga", "color", 50),
       "first row is the reef tripwire (qvga color q50)")
-check(M.PLAN[-1][0] == "cert", "the cert rung is last")
-check(M.PLAN[-2][:3] == ("stream", "hd", "color"),
-      "cert fires right after the HD color stream (largest publishes)")
+check(M.PLAN[-2][0] == "cert", "the cert rung runs before the sacrifice")
+check(M.PLAN[-1][4]["tag"] == "ceiling-sacrificial",
+      "the wedge-risky ceiling row is dead last — runs 1-2 showed it "
+      "kills the camera for everything after it")
 
 check(M.newest_sidecar(["cap_20260817T010101Z_seq1.json",
                         "cap_20260817T020202Z_seq2.json",
