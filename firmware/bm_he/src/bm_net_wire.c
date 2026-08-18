@@ -236,3 +236,25 @@ void bm_net_wire_link_state(uint8_t port, bool up) {
 }
 
 netwire_stats_t bm_net_wire_stats(void) { return WIRE.stats; }
+
+// S22 bite 1b -- see bm_net_wire.h. Wire task only; the latch is plain
+// static state because it has exactly one reader/writer.
+static struct {
+    bool paused;
+    uint32_t engages;
+} BP_GATE;
+
+bool bm_net_wire_rx_backpressure(void) {
+    uint32_t queued = WIRE.stats.txq_bytes_in - WIRE.stats.txq_bytes_out;
+    if (BP_GATE.paused) {
+        if (queued <= NETWIRE_TXQ_LOW_WATER) {
+            BP_GATE.paused = false;
+        }
+    } else if (queued >= NETWIRE_TXQ_HIGH_WATER) {
+        BP_GATE.paused = true;
+        BP_GATE.engages++;
+    }
+    return BP_GATE.paused;
+}
+
+uint32_t bm_net_wire_bp_engages(void) { return BP_GATE.engages; }

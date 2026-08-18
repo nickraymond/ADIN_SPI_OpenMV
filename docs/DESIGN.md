@@ -101,6 +101,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 
 | D40 | 2026-08-18 | **S22 bite 1 — the HE flood wedge was a u16 vring-index wrap in the hand-rolled rpmsg layer; fixed with one wrap-safe cast, and the "wedge boundary" is retired as a concept.** `rr_poll_n` (`firmware/he_spike/src/rpmsg_remote.c`, shared into bm_he) compared its u32 `consumed[0]` cursor against the virtio ring's u16 `avail->idx` without the cast `rr_send` already had, so at exactly **65,536 cumulative inbound rpmsg messages since HE load** the loop saw phantom work forever — stale slots redelivered (the frag_errors storm + duplicate TX), the used ring poisoned, and on-chain the HE went permanently mute. The measured 315/466/513 msg/s "boundary" was only time-to-65,536; all four real events match the arithmetic. Fix = `(uint16_t)` cast + host regression [8] (pre-wrapped ring indices; FAILS on pre-fix code with the exact live signature — 4 phantom messages, duplicated echoes) + ELF `fea65304…` (image +8 B, 94.1%). Acceptance: off-chain probe ladder (`bench/probes/s22_flood_probe.py`, 27 host checks) 507k msgs / 7.7 wraps / frag=0; on-chain 10-min soaks ledger-exact (QVGA color **28.23 fps**, 16,939 frames, pub_ok=frames×7 exact, ~565 msg/s across ~5 wraps; VGA color **7.41 fps**, 4,446 frames exact) + first true ceilings: **QVGA mono 30.30** (sensor-cadence-capped), **VGA mono 13.27 @ ~717 msg/s**, **HD mono 3.10 @ 990 msg/s commanded**. Guardrails re-derived from the new physics: `SAFE_STREAM_MSGS` 315 → **1200** and its refusal reworded as a *measured-clean-envelope* cap (predictions are at commanded fps and a 700-class cap would refuse the measured-clean VGA mono 15 command — the wrong cap); `SAFE_BURST_CHUNKS` stays **68** because the burst variant is NOT the wrap bug: `capture 90 hd mono` on the FIXED stack still lost exactly 54 of ~83 chunks — the burst arrives over rpmsg (~76 ms) about twice as fast as the VCP relay drains (~185 ms) and the HE's byte-bounded TX queue sheds the excess, silently below `bm_pub`. Fix candidate for that = HE-side backpressure (skip `rr_poll_n` while netwire txq bytes exceed a high-water mark, so the HP's `ept.send` blocks and its drain-while-pushing loop becomes end-to-end flow control) — **its own bite, deliberately not stacked into this one** (one variable at a time; deadlock history in this exact loop, D§S19 part 4). | The cast is one line but the decision content is the *envelope semantics*: post-fix there is no cliff to guard against, so the stream guard's job changed from "prevent a reboot" to "refuse unmeasured territory", and its constant is now anchored to the highest measured-clean command (990) with margin rather than to a failure point — the honest shape when no failure exists. The burst guard keeps its old constant because its failure is real, measured twice (pre- and post-fix), and mechanically understood. Keeping the backpressure fix out of this bite preserved a clean A/B: every delta in this bite's measurements is attributable to the cast alone. |
 
+| D41 | 2026-08-18 | **S22 bite 1b + bite 2 window — the burst loss is inside the telemetry fork (every other hop exonerated by artifact), and the encoder-headroom numbers are measured.** Bite 1b's opening model (HE txq sheds under rpmsg-vs-VCP rate mismatch) died by experiment along with four successors; what killed each: HE pub counters exact (not the HE) · preserved-trace `qdrops=0` + a cap raise that changed nothing (not the bridge queue) · zero uart decode errors (not the CDC) · **tcpdump with outer-IPv4-fragment reassembly: all 149 chunks on the wire, in order, inner UDP checksums all valid** (not the light, not the wire, not item 10's checksum kludge) · kernel UDP counters and every fork counter zero (not the sockets, not the l2 evt queue's logged path). Two ledger-semantics traps documented en route: the q90 ref frame is 149 chunks (not the dark-scene ~83), and `chunk_reasm` counts gaps as TAIL-LENGTH after a single-loss abandon — "gaps=54" always meant ONE lost chunk. Shipped as hardening, both measured harmless and neither the mechanism: HE netwire RX backpressure (NETWIRE_TXQ_HIGH/LOW_WATER hysteresis gate; the wire task never blocks — the S19 deadlock shape is designed out) and bridge RPMSG_QUEUE_CAP 256→1024 (sized to the largest legal burst). Encoder window (s22_enc_matrix.py, reef refs, §S22 detail): E3 has NO hardware JPEG (vendor datasheet); q50 color = 4:2:2 today, forcing 4:2:0 buys ~14% encode / ~7% bytes as a one-kwarg change; the binding constraint after that is the measured ~2 ms/KB non-encode tax; jpege.c is not MVE-vectorized. | The exoneration chain is the decision content: a fork-internal defect with every visible counter at zero cannot be fixed from this repo, so the bite's honest output is the narrowed suspect list (bm_ip Linux backend RX, pubsub cb delivery) plus instrumentation the fork owner can act on — pin discipline makes that Nick's push, and guessing further would violate rule 3. The hardening ships anyway because both layers are cheap, tested, and remove real (if not currently binding) overflow modes. The encoder verdict reshapes bite 2's follow-on: parameter changes alone cannot reach the VGA-15/HD-5–6 targets; the C-path/MVE combination is the only route on this SoC, and HD color is off the table entirely — an N6 fact, now sourced. |
+
 ## Verified-facts ledger
 
 See SPEC.md §Confirmed technical facts. Anything not there or here is
@@ -1789,3 +1791,44 @@ currently unstable on this stack** (findings 2–3), so the certification
 rung could not run at all. `REINIT_MIN_QUIET_MS = 20000` keeps its
 "NOT a daylight-HD certification" comment, now with the reason
 recorded.
+
+### S22 detail (2026-08-18) — encoder matrix (bite 2 window) and the burst-loss exoneration chain
+
+**Encoder matrix** (`bench/probes/s22_enc_matrix.py`, reef refs on
+/flash, `to_jpeg(quality, subsampling)` exactly as the bridge calls it,
+5 reps, median µs; artifact `/flash/s22_enc.txt`). Selected rows — the
+full table is in the probe log:
+
+| Mode | sub | q | enc ms | bytes | pure-enc fps |
+|---|---|---|---|---|---|
+| VGA color | auto(=422) | 50 | 77.0 | 29,148 | 13.0 |
+| VGA color | **420** | 50 | **66.4** | 27,021 | 15.1 |
+| VGA color | 420 | 35 | 64.6 | 21,554 | 15.5 |
+| VGA mono | auto | 50 | 31.2 | 23,831 | 32.0 |
+| HD color | auto(=422) | 50 | 300.7 | 93,253 | 3.3 |
+| HD color | **420** | 50 | **258.5** | 86,120 | 3.9 |
+| HD mono | auto | 50 | 118.4 | 75,324 | 8.5 |
+| QVGA color | 420 | 50 | 17.5 | 8,728 | 57.2 |
+
+Cross-checks: auto rows reproduce S0/matrix numbers within 1% (encoder
+timings stable across sessions); q50 auto = 4:2:2 confirmed byte-level
+(420/422/444 forced rows bracket it exactly).
+
+**The delivered-fps model, now closed-form from measured pairs:**
+`total ms/frame ≈ enc + ~2 ms/KB (publish/chunk CPU) + capture
+(0 double-buffered, 33 ms at HD single-fb)`. Measured taxes: QVGA-C
+15.6 ms, VGA-M 44, VGA-C 58, HD-M 204. Consequences: 4:2:0 alone moves
+VGA color 7.41 → only ~8 (the tax binds); Nick's VGA-color-15 and
+HD-mono-5–6 targets both need the C-path (attack the 2 ms/KB) plus
+MVE-vectorized encode (jpege.c is plain C; `+mve.fp` is already in the
+build flags); HD color ≥5 is impossible on this SoC (no hardware codec
+— vendor datasheet, SPEC entry).
+
+**Burst-loss exoneration chain** (bite 1b; full narrative in SPEC's
+flood/burst entry): HE exact → bridge qdrops=0 → uart clean → wire
+complete/ordered/checksum-valid (tcpdump + outer-fragment reassembly)
+→ kernel zero → fork counters zero → **loss is inside bm_sbc telemetry,
+1 chunk per ~149-chunk burst, usually idx ~95** (positions 95/95/41/95
+across four runs). q50 55-chunk stills deliver byte-exact throughout —
+burst scale required. Ledger semantics documented: `chunk_gaps` counts
+the abandoned TAIL, not lost chunks.

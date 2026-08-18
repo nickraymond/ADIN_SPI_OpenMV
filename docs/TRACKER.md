@@ -1347,23 +1347,29 @@ and a measured answer on how much fps headroom the encode path has.
       SEPARATE bug** (54 of ~83 chunks lost on the FIXED stack —
       rpmsg arrival ~2× VCP drain, byte-bounded txq sheds; SPEC).
       Remaining: nibble 4 (PR) + Nick's demo.
-- [ ] **Bite 1b — burst backpressure (NEW, fenced from bite 1; Nick to
-      size).** `capture 90 hd mono` (~83 chunks ≈ 125 KB) still loses
-      ~54 chunks on the wrap-fixed stack: the burst arrives over rpmsg
-      (~76 ms) about twice as fast as the VCP relay drains (~185 ms)
-      and the HE's `NETWIRE_TXQ_MAX_BYTES` bound sheds the excess —
-      counted, silent below bm_pub (`pub_errs=0`). Fix candidate,
-      HE-side (~15 LoC): skip `rr_poll_n` while netwire txq bytes are
-      above a high-water mark so the HP's `ept.send` blocks and its
-      existing drain-while-pushing loop (`send_chunk_msgs`) becomes
-      end-to-end flow control; delivery rate becomes the relay's
-      ~185 ms/frame. Deadlock history lives in exactly this loop
-      (S19 bite 2 part 4) — plan gate + off-chain probe first.
-      Verifiable: `capture 90 hd mono` ledger-exact; SAFE_BURST_CHUNKS
-      raised past 83 with the suite updated. NOTE: this closes the
-      LOSS, not the fps — the bridge still serializes capture/encode/
-      publish, so the HD mono ceiling stays ~3.1 until bite 2's
-      encoder/pipeline work; Nick's HD 5–6 target rides bite 2.
+- [~] **Bite 1b — the burst loss (Nick approved 2026-08-18).
+      INVESTIGATED same day: every hop EXONERATED except the telemetry
+      fork's internals — the fix now needs fork instrumentation (pin
+      discipline, Nick's push).** The opening model (HE txq sheds) was
+      falsified live along with four successors; the full chain, each
+      step artifact-proven (SPEC burst entry): the q90 ref frame is
+      really **149 chunks**; "gaps=54" was reassembler TAIL-LENGTH
+      (one chunk lost, usually idx ~95), NOT 54 lost; HE published all
+      (pub counters exact) · bridge relayed all (qdrops=0) · uart
+      clean · **tcpdump: all 149 on the UDP wire, in order, inner
+      checksums valid after outer-fragment reassembly** · kernel + all
+      fork counters zero. Loss = 1 chunk/burst inside bm_sbc telemetry
+      (suspects: bm_ip Linux backend RX, pubsub cb delivery), needs
+      burst scale (q50 55-chunk stills deliver byte-exact throughout).
+      SHIPPED as hardening (both measured harmless, neither the
+      mechanism): HE netwire RX backpressure (high/low-water gate,
+      +24 host checks, ELF `89cc92ff…` staged byte-verified, off-chain
+      fatal-513 clean through it) and bridge `RPMSG_QUEUE_CAP`
+      256→**1024** (`e50a34b8…` deployed via demo_up sha-sync, +1
+      host check sizing it to the largest legal burst).
+      SAFE_BURST_CHUNKS stays 68. Remaining: fork-side instrumentation
+      bite (Nick sizes/pushes) → then the acceptance rung
+      (`capture 90 hd mono` ledger-exact) closes.
       The HE wire task goes permanently mute under sustained camera
       publish ≥ ~513 rpmsg msg/s (4/4 fatal incl. a live demo at ~560;
       466 = 2/3 marginal; 315 = clean 4/4), and single-frame bursts of
@@ -1382,8 +1388,32 @@ and a measured answer on how much fps headroom the encode path has.
       measured boundary with the suite updated; the mono-ceiling
       matrix rows finding 1 blocked (true QVGA/VGA mono ceilings) run
       clean and land in MEAS_FPS.
-- [ ] **Bite 2 — encoder-headroom exploration (measure first, decide
-      second; AFTER bite 1 — Nick 2026-08-18).** Delivered fps is
+- [~] **Bite 2 — encoder-headroom exploration (measure first, decide
+      second; AFTER bite 1 — Nick 2026-08-18).**
+      → **MEASUREMENT WINDOW RUN 2026-08-18 (Nick approved; targets
+      set: VGA @ 15 fps, HD @ 5–6 fps).** Banked, all vendor-verified
+      or board-measured (DESIGN D41 + §S22 detail):
+      (d) **the E3 has NO hardware JPEG/video codec** (datasheet —
+      D/AVE 2D GPU + NPUs only) → HD color 5–6 is N6 territory, dead
+      on this SoC; (a) `bench/probes/s22_enc_matrix.py` measured the
+      full subsampling × quality × mode table on the reef refs —
+      to_jpeg at q50 rides 4:2:2 today; forcing **4:2:0 buys ~14%
+      encode + ~7% bytes** (VGA color 77.0→66.4 ms; HD color
+      300.7→258.5), one `to_jpeg` kwarg; (b) q35 adds little beyond
+      auto-420; **the binding constraint after (a) is the non-encode
+      tax, measured at ~2 ms/KB** (publish/chunk CPU + capture:
+      QVGA-C 15.6 ms, VGA-M 44, VGA-C 58, HD-M 204 incl. single-fb
+      capture 33) — subsampling alone moves VGA color only 7.4→~8;
+      (e) jpege.c has NO Helium/MVE vectorization though the M55
+      build enables `+mve.fp` — the 2–4× encode lever exists but is
+      real firmware work. **Recommendation for Nick's gate: VGA mono
+      13.27 is near the 15 target now; VGA color 15 and HD mono 5–6
+      both require the C-path/MVE combination (attack encode AND the
+      2 ms/KB tax); 4:2:0-at-q50 is a cheap immediate win worth
+      shipping regardless; HD color 5–6 impossible on this SoC.**
+      Remaining: Nick reviews the table → go/no-go on the C/MVE
+      follow-on bites.
+      *(original scope below)* Delivered fps is
       encode-bound, not transport-bound (28.07 fps QVGA uses 2.08 of
       the 5.26 Mbps relay): in-bridge encode 20.1 / 78.5 / 299.2 ms
       per frame (QVGA/VGA/HD color) on the one HP core, measured

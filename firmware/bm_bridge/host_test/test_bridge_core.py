@@ -673,5 +673,16 @@ del sys.modules["sensor"]
 del sys.modules["image"]
 bm_bridge.time = _real_time
 
+# -- S22 bite 1b: the HE->bridge queue must hold the largest legal burst.
+# 256 shed 54 of 83 chunks on-chain (each published chunk returns as ~4
+# rpmsg msgs while the drain stage -- the blocking VCP write -- is
+# mid-burst, and _rx recycles the vring buffer even when it drops, so no
+# upstream backpressure can save it). Largest legal burst = HD color q90,
+# ~183 chunks by the bench_web reef predictor = ~732 msgs; the cap needs
+# that plus service-traffic margin.
+check(bm_bridge.RPMSG_QUEUE_CAP >= 183 * 4 + 64,
+      "RPMSG_QUEUE_CAP %d smaller than the largest legal burst (~%d msgs)"
+      % (bm_bridge.RPMSG_QUEUE_CAP, 183 * 4 + 64))
+
 print("bm_bridge host tests: %d checks, %d failures" % (checks, fails))
 sys.exit(1 if fails else 0)
