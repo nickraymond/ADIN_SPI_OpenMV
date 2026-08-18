@@ -1,0 +1,21 @@
+diff --git a/lib/imlib/framebuffer.c b/lib/imlib/framebuffer.c
+index 2787d302..8a17302a 100644
+--- a/lib/imlib/framebuffer.c
++++ b/lib/imlib/framebuffer.c
+@@ -165,7 +165,15 @@ int framebuffer_resize(framebuffer_t *fb, size_t count, size_t frame_size) {
+     // Minimum total size including queue overhead.
+     size_t min_size = buf_size * count + queue_size * 2;
+
+-    if (fb->dynamic) {
++    if (fb->dynamic && (fb->raw_base == NULL || min_size > fb->raw_size)) {
++        // Reuse the existing block whenever it already fits: the block is
++        // sticky at its high-water size. Freeing and re-allocating on
++        // every resize makes each sensor mode change gamble on allocator
++        // state -- measured on OPENMV_AE3 with an OpenAMP remote core
++        // resident, transitions degrade until one fails politely (alloc
++        // returns NULL) or fatally. A board that claims its largest mode
++        // once at boot never touches the allocator again.
++        //
+         // If a buffer can't grow in place, a new block is allocated first before
+         // the old one gets free'd, which could easily fail with big allocations.
+         // Free the framebuffer first and use malloc to ensure this doesn't fail.

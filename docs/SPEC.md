@@ -277,22 +277,62 @@ pair, USB carrying no video.
   logging). Recovery = reboot nereus000 + demo_up (~4 min). Suspect
   territory: the HE netwire TX path under sustained load (S19 bite 2's
   pump). Blocks every true mono-ceiling measurement; owns a bite.
+  **New datum 2026-08-18 (S18 HD-stability session): the burst-loss
+  variant has a single-frame boundary.** An HD mono q90 still
+  (~115 KB ≈ 83 chunks ≈ 250 back-to-back rpmsg msgs) was published
+  COMPLETELY by the HE (`pub_errs=0`, pub_bytes accounts for it) but
+  the relay lost 54 chunks and the frame dropped; 55-chunk frames
+  delivered clean, ~68 chunks clean on a fresh leg. Stream caps must
+  be computed from REAL frame bytes: at reef sizes the old dark-byte
+  caps land at 412–432 msg/s (danger); the recapped rows (hd mono
+  1.5 fps = 247, hd color 1.5 = 301, vga mono 5 = 270 msg/s) all ran
+  ledger-exact.
 
-- **HD in ref-scene mode hard-faults the board; HD in sensor mode
-  wedges the leg — HD has never completed on any PublishGate bridge
-  (measured 2026-08-18, S18 reef matrix run 5 + discriminator).**
-  Ref mode: fresh chain, zero streams, the transition into HD mono
-  ended the bridge trace mid-run with no exit record (the D15/S18
-  crash class). Discriminator with `scene=sensor`, same transition:
-  survived and replied (`res=hd pf=mono`, state ok) — so the fault is
-  ref-mode-specific (suspect: the 1–2 MB ref-image heap load), and the
-  bridge now REFUSES HD ref commands. But the sensor-mode HD capture
-  then delivered no frame and the leg died within ~60 s: every prior
-  on-chain HD success (C1 demo, bite D acceptance) predates the B2
-  PublishGate build. Owns the matrix's missing HD rows AND the 20 s
-  certification rung — **`REINIT_MIN_QUIET_MS = 20000` remains
-  uncertified for HD because HD itself is currently unstable**, which
-  is a stronger caveat than the constant's comment assumed.
+- **RESOLVED 2026-08-18 (S18 HD-stability bite): the two HD findings
+  above/below were ONE fault — sensor mode transitions degrade the
+  board while the HE core is resident — root-caused to OpenMV's
+  per-resize framebuffer free+malloc and FIXED by the sticky-fb
+  firmware patch.** Original record (kept for history): ref-mode HD
+  "hard fault" and sensor-mode HD "leg wedge" (matrix run 5 +
+  discriminator) — both actually died inside the gated HD re-init;
+  the discriminator's "survived and replied" was the HE's ack ~15–20 s
+  BEFORE the re-init ran, and run 5 never loaded a ref byte (no trace
+  line). Measured (probes G–G5, `bench/probes/`): no-HE transitions
+  52/52 clean lifetime; HE-resident failed at #10 (board off bus) and
+  #22 (polite wedge, 289 µs refusal to allocate 64 KB from a 2512K
+  pool) with zero traffic; publish/barrier/HD/mono/grow each
+  individually exonerated; traffic accelerates onset (on-chain N≈2).
+  Mechanism source-confirmed: `framebuffer_resize`
+  (openmv lib/imlib/framebuffer.c:158) frees and re-mallocs the whole
+  block on every transition (`UMA_MAYBE` → the polite MemoryError;
+  corrupted-state free → the hard death; `raw_base=NULL` aftermath →
+  the 13 µs instant-refusal wedge). Fix =
+  `firmware/openmv_patches/0001-framebuffer-sticky-highwater.patch`
+  (+9/−1: reuse the block when it fits; the bridge's pre-HE HD claim
+  becomes a true reservation). **Acceptance: G3 soak 40/40 HE-loaded
+  (stock died at #22); on-chain `capture 50 hd color`/`hd mono` ×3
+  each, ledger exact; matrix HD stills byte-exact (75,324 / 93,253 B);
+  B2 cert rung PASS (delivery 20.02 s after a gated HD mode change) —
+  `REINIT_MIN_QUIET_MS = 20000` is now HD-CERTIFIED.** The exact
+  byte-level corruption path below the allocator API stays open
+  (upstream item 11, HELD; also on record: `OMV_GPU_MEMORY = SRAM9_B`
+  overlaps the HE ELF at 0x60080000 — unproven as the killer).
+  Two follow-ups fenced with artifact evidence: single-frame chunk
+  bursts ≥ ~83 chunks lose chunks in the relay (finding 1's bite —
+  see the flood entry); ref-mode HD COLOR reloads need 2,048,031 B
+  contiguous MP heap and fail in long fragmented sessions (preserved
+  trace: clean refusal) — fix candidate = preload/pin ref assets at
+  bridge boot in ref mode.
+
+- **The AE3 resolution ladder is closed by source, not sweep coverage
+  (2026-08-18):** the sensor is a PixArt PAG7936 (ID 0x7936,
+  omv_csi.h:97), native 1280×800; the driver supports exactly QVGA
+  320×200 / VGA 640×400 / HD 1280×800 (redefined 16:10 in
+  pag7936.c:933–940) and returns −1 for every other framesize key
+  (pag7936.c:691) unless `OMV_CSI_HW_SCALE_ENABLE`, which only
+  OPENMV_N6 defines. **No mode exists between VGA and HD on stock AE3
+  firmware**; the S0 sweep's untested keys would all have failed
+  identically.
 
 - **VGA capture hard-faults the AE3 when the HE stack + rpmsg + VCP
   bridge are live (measured 2026-08-15, S18 bite A nibble 3).** A

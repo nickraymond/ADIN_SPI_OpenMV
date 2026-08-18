@@ -278,9 +278,11 @@ class TestRequestValidation(unittest.TestCase):
     than the bridge's, which can be a wedged sensor."""
 
     def test_a_valid_capture_builds(self):
+        # q50, not q90: hd mono q90 is now (correctly) refused by the
+        # finding-1 burst guard -- see TestFindingOneGuardrails.
         cmd, res, pf, secs = build_camera_cmd(
-            "capture", {"q": 90, "res": "hd", "pf": "mono"})
-        self.assertEqual(cmd, {"cmd": "capture", "q": 90, "res": "hd", "pf": "mono"})
+            "capture", {"q": 50, "res": "hd", "pf": "mono"})
+        self.assertEqual(cmd, {"cmd": "capture", "q": 50, "res": "hd", "pf": "mono"})
         self.assertEqual((res, pf, secs), ("hd", "mono", None))
 
     def test_only_the_measured_geometries_are_offered(self):
@@ -306,11 +308,13 @@ class TestRequestValidation(unittest.TestCase):
         self.assertIn("q", str(e.exception))
 
     def test_stream_carries_its_own_three_numbers(self):
+        # 5 fps, not 15: vga color at 15 fps predicts 945 rpmsg msg/s and
+        # is now (correctly) refused -- see TestFindingOneGuardrails.
         cmd, _, _, secs = build_camera_cmd("stream", {
             "q": 50, "res": "vga", "pf": "color",
-            "mbps": 2.0, "fps": 15, "secs": 60})
+            "mbps": 2.0, "fps": 5, "secs": 60})
         self.assertEqual(cmd["mbps"], 2.0)
-        self.assertEqual(cmd["fps"], 15.0)
+        self.assertEqual(cmd["fps"], 5.0)
         self.assertEqual(cmd["secs"], 60)
         self.assertEqual(secs, 60)
 
@@ -320,6 +324,84 @@ class TestRequestValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_camera_cmd("stream", {"q": 50, "res": "vga", "pf": "color",
                                         "mbps": 2.0, "fps": 15})
+
+    def test_finding1_guard_chunk_predictions_are_exact(self):
+        # The same arithmetic as the page model: reef bytes @q50 x qFactor.
+        self.assertEqual(bench_web.predicted_chunks("qvga", "color", 50), 7)
+        self.assertEqual(bench_web.predicted_chunks("hd", "mono", 50), 55)
+        self.assertEqual(bench_web.predicted_chunks("hd", "color", 50), 68)
+
+    def test_finding1_measured_safe_commands_pass(self):
+        # Every one of these delivered ledger-exact on the bench 2026-08-18.
+        build_camera_cmd("capture", {"q": 50, "res": "hd", "pf": "mono"})
+        build_camera_cmd("capture", {"q": 50, "res": "hd", "pf": "color"})
+        # The 15 fps regression IS the 315 msg/s point: at the limit, allowed.
+        build_camera_cmd("stream", {"q": 50, "res": "qvga", "pf": "color",
+                                    "mbps": 2.0, "fps": 15, "secs": 60})
+        build_camera_cmd("stream", {"q": 50, "res": "hd", "pf": "mono",
+                                    "mbps": 4.0, "fps": 1.5, "secs": 60})
+        build_camera_cmd("stream", {"q": 50, "res": "hd", "pf": "color",
+                                    "mbps": 4.0, "fps": 1.5, "secs": 30})
+
+    def test_finding1_the_burst_that_broke_the_matrix_is_refused(self):
+        # hd mono q90 published completely and the relay lost 54 chunks
+        # (matrix 2026-08-18). Stills above 68 predicted chunks refuse.
+        with self.assertRaises(ValueError) as e:
+            build_camera_cmd("capture", {"q": 90, "res": "hd", "pf": "mono"})
+        self.assertIn("chunks", str(e.exception))
+
+    def test_finding1_the_stream_that_wedged_the_demo_is_refused(self):
+        # ~27 fps QVGA color ~= 560 msg/s wedged the HE live (bench reboot).
+        with self.assertRaises(ValueError) as e:
+            build_camera_cmd("stream", {"q": 50, "res": "qvga", "pf": "color",
+                                        "mbps": 2.0, "fps": 27, "secs": 600})
+        msg = str(e.exception)
+        self.assertIn("msg/s", msg)
+        self.assertIn("Max safe fps here is 15.0", msg)
+
+    def test_finding1_one_fps_over_the_line_is_refused(self):
+        with self.assertRaises(ValueError):
+            build_camera_cmd("stream", {"q": 50, "res": "qvga", "pf": "color",
+                                        "mbps": 2.0, "fps": 16, "secs": 60})
+
+    def test_finding1_page_mirrors_the_server_constants(self):
+        # The page only makes the refusal visible; if its numbers drift
+        # from the server's, the visible warning lies about the enforcement.
+        page = read(PAGE)
+        self.assertIn("SAFE_STREAM_MSGS: %d" % bench_web.SAFE_STREAM_MSGS, page)
+        self.assertIn("SAFE_BURST_CHUNKS: %d" % bench_web.SAFE_BURST_CHUNKS, page)
+        self.assertIn("MSGS_PER_CHUNK: %d" % bench_web.MSGS_PER_CHUNK, page)
+        self.assertIn("wedgeStream", page)
+        self.assertIn("wedgeBurst", page)
+
+    def test_danger_zone_force_bypasses_both_guards(self):
+        # The override is per command, never sticky: the same bodies
+        # without force refuse (covered above), with force they build.
+        cmd, _, _, _ = build_camera_cmd(
+            "capture", {"q": 90, "res": "hd", "pf": "mono", "force": True})
+        self.assertEqual(cmd["cmd"], "capture")
+        cmd, _, _, _ = build_camera_cmd(
+            "stream", {"q": 50, "res": "qvga", "pf": "color",
+                       "mbps": 2.0, "fps": 27, "secs": 600, "force": True})
+        self.assertEqual(cmd["fps"], 27.0)
+
+    def test_danger_zone_force_never_reaches_the_socket(self):
+        # The control-socket schema does not know 'force'; leaking it
+        # would make the bridge's parser the enforcement point.
+        cmd, _, _, _ = build_camera_cmd(
+            "capture", {"q": 90, "res": "hd", "pf": "mono", "force": True})
+        self.assertNotIn("force", cmd)
+
+    def test_danger_zone_force_false_still_refuses(self):
+        with self.assertRaises(ValueError):
+            build_camera_cmd(
+                "capture", {"q": 90, "res": "hd", "pf": "mono", "force": False})
+
+    def test_danger_zone_is_on_the_page(self):
+        page = read(PAGE)
+        self.assertIn("Danger Zone", page)
+        self.assertIn('id="dzForce"', page)
+        self.assertIn("force: true", page)   # camBody carries the flag
 
     def test_light_and_strobe_are_range_checked(self):
         self.assertEqual(build_light_cmd("light", {"level": 0})["level"], 0)
@@ -664,7 +746,7 @@ class TestUnitAndInstaller(unittest.TestCase):
 
     def test_server_is_stdlib_only(self):
         # Same rule as the frozen S3 stream server: nothing to install.
-        allowed = ("__future__", "argparse", "json", "os", "re", "sys",
+        allowed = ("__future__", "argparse", "json", "math", "os", "re", "sys",
                    "threading", "time", "urllib", "http", "bench_ctl")
         for line in read(os.path.join(HERE, "bench_web.py")).splitlines():
             if line.startswith("import ") or line.startswith("from "):

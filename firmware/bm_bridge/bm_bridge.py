@@ -1024,27 +1024,28 @@ class CaptureEngine:
             return
         res = cmd.get("res", CAP_DEFAULT_RES)
         pf = cmd.get("pf", CAP_DEFAULT_PF)
-        if not self._ensure_sensor(res, pf):
-            _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
-            return
+        # Refusals come BEFORE the sensor re-init. The transition itself
+        # is the measured hazard (S18 HD-stability nibble 1: transitions
+        # degrade the board while the HE core is resident), so a command
+        # this method is going to refuse must not pay one -- the shipped
+        # order ran the full HD re-init and then refused, which is the
+        # exact death the guard existed to prevent.
         if self.scene == "ref":
-            # HD in ref mode HARD-FAULTED the board on-chain (S18 matrix
-            # run 5, 2026-08-18): trace ends mid-transition, no exit
-            # record, board reset -- the D15/S18 crash class. QVGA/VGA
-            # ref ran clean across four runs. Until the mechanism is
-            # found (filed finding; suspect: the 1-2 MB ref image load
-            # against the HE-pinned heap), HD ref is refused loudly
-            # rather than risked. scene=sensor HD is unaffected by this
-            # guard.
-            if res == CAMERA_RES_HD:
-                _trace("camera: cmd mode %d REFUSED -- HD ref scene is "
-                       "known-fatal on-chain (S18 matrix finding); use "
-                       "scene=sensor for HD" % cmd["mode"])
-                return
+            # The HD-ref guard is LIFTED (S18 HD-stability, 2026-08-18).
+            # Matrix run 5's "HD ref hard fault" was the sensor
+            # TRANSITION dying under the stock firmware's per-resize
+            # realloc -- no ref byte was ever loaded (no trace line).
+            # On the sticky-fb build the transition soak runs 40/40 and
+            # probe G6 measured both HD refs loading AND encoding with
+            # the HE resident (color: 2 MB decoded, heap floor 1.92 MB,
+            # enc 300.8 ms / 93,253 B @ q50).
             if not self._load_ref(res, pf):
                 _trace("camera: cmd mode %d REFUSED -- no ref scene"
                        % cmd["mode"])
                 return
+        if not self._ensure_sensor(res, pf):
+            _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
+            return
         self.q = cmd["q"]
         self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
         self.rate_bps = cmd["rate_bps"]

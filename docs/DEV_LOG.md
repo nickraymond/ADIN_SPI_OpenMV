@@ -17,6 +17,155 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S18 — HD-stability nibbles 2–4: sticky-fb firmware ships, soak 40/40, HD certified and measured end to end
+
+**Branch:** `sprint/18-hd-stability`. Nick's calls: plan A (root fix),
+shape A2 (sticky high-water), keep the HD-ref guard until measured,
+upstream HELD. Mid-session hazard: the Mac revoked agent file access
+(TCC dialog denied unattended) — code rode the Pi checkouts + scratch
+until an app restart restored it; reconciled byte-exact before the PR.
+
+**Done:**
+- **The patch** (`firmware/openmv_patches/0001-framebuffer-sticky-highwater.patch`,
+  +9/−1 in openmv `lib/imlib/framebuffer.c`): `framebuffer_resize`
+  reuses the existing block whenever it already fits — free+malloc only
+  on a genuine grow. With the bridge's pre-HE HD ceiling claim, the
+  framebuffer never touches the allocator again after boot. Built with
+  the D23/D24 docker loop at pinned `7d4dbf7`+patch (label
+  `v5.0.0-52.g7d4dbf7ab2.dirty`, MANIFEST in `~/fw/sticky-fb-7d4dbf7/`
+  on nereus000; **rollback = stock set in `~/fw/development/`**).
+  Flashed via the S7 ladder, byte-level readback PASS.
+- **Acceptance:** G3 soak **40/40 with the HE loaded** (stock: fail at
+  #22); G5 PASS; **G6 (new probe)**: both ref-HD images load AND encode
+  with the HE resident (color 2 MB decoded, heap floor 1.92 MB, enc
+  300.8 ms / 93,253 B @ q50 — S0's 299.2 ms within 0.5%).
+- **Bridge `df82aa70…`:** refusals hoisted ABOVE `_ensure_sensor`
+  (the guard-order bug — a refused command never touches the sensor),
+  HD-ref guard LIFTED on G6's measurement. Host suite 436→**444**
+  checks green; negative control: the new order tests fail on the old
+  bridge (2 failures, exactly the hoist).
+- **On-chain:** `capture 50 hd color` ×3 + `capture 50 hd mono` ×3,
+  alternating (five gated transitions), all SOF-verified,
+  `frames_ok=7 gaps=0` — **HD's first completions on a PublishGate
+  build**. Then the matrix rows (ref mode, sidecar-verified, JSONs
+  `matrix_20260818T05{2415,3422}Z.json`): **HD mono q50 = 75,324 B and
+  HD color q50 = 93,253 B, both byte-exact vs the in-bridge encode**
+  (color ×2 identical) · **B2 cert rung PASS** (HD publish → gated mode
+  change delivered 20.02 s after command — **`REINIT_MIN_QUIET_MS =
+  20000` is now HD-certified**, retire the caveat) · first HD video
+  numbers: **ref HD mono 1.50 fps / 0.91 Mbps, 90 frames / 60 s,
+  ledger exact** · **sensor HD color ~1.4 fps at ~65 KB/frame, 42
+  frames / 30 s, exact** (S19 bite 4's owed number) · **VGA mono
+  4.98 fps / 0.96 Mbps, 299 frames, exact** (first clean run ever).
+  Stream caps recomputed FOR REEF BYTES into the proven-safe
+  ≤315 msg/s zone (dark-byte caps land at 412–432 msg/s = finding 1's
+  danger zone); rows are floors by design.
+
+**Broke/surprised us (fenced with artifact evidence, other bites):**
+- **HD mono q90 still (~83 chunks ≈ 250 rpmsg msgs/frame): the HE
+  published it completely (`pub_errs=0`, pub_bytes accounts for all
+  frames) but the relay lost 54 chunks and dropped the frame** —
+  finding 1's burst-loss variant, now with a single-frame boundary
+  (55-chunk frames clean, ~68 clean on a fresh leg, ~83 breaks).
+- **Ref-mode HD COLOR reloads fail in long sessions:** preserved trace
+  shows `MemoryError allocating 2,048,031 bytes` with ~3 MB free but
+  fragmented, then a clean refusal (the fixed guard order working as
+  designed). Fresh-boot loads fine. Fix candidate = preload/pin the
+  ref set at bridge boot in ref mode; small bridge bite, filed. The
+  q95 JPEG fallback does NOT help (decode needs the same 2 MB raw).
+- bench-web holds a dead control socket across a bm-telemetry restart
+  (bounce it after any telemetry restart) — spawn-task filed.
+- **Post-PR, Nick's live demo confirmed finding 1's boundary a fourth
+  time (now 4/4 fatal ≥ ~513 msg/s):** a QVGA color stream at
+  ~2.0 Mbps / ~27 fps = ~560 rpmsg msg/s delivered 4,148 frames over
+  ~5 min, then broke the ledger and muted the HE (`CAM_REPLY TIMEOUT`;
+  a restarted stream muted in <30 s). NOT the transition bug — the fix
+  held throughout; the demo simply ran long enough to reach bug #2 at
+  its filed rate. Recovery: reboot + relaunch, verified end to end.
+  **Guardrail gap named — and CLOSED the same session (Nick: UI-side
+  only, fast follow):** `bench_web.py` now predicts each command's
+  publish from the reef model (`predicted_chunks` — the page model's
+  exact arithmetic) and REFUSES streams above 315 msg/s (the measured
+  clean point; refusal names the max safe fps) and stills above 68
+  chunks/frame (the largest burst delivered clean; q90-class bursts
+  lost chunks). Server-enforced (400 + reason), mirrored in the page
+  (red warn-box item + dead buttons — the C1 rule: JS only makes the
+  refusal visible). Suite 70→**76**, incl. the two live regressions:
+  the demo's 27 fps command and the matrix's q90 still both refuse.
+  Verified against the running server: both refused with operator-
+  readable reasons, a safe HD capture accepted and delivered.
+  Refusal beats clamping (D31) — a silently substituted rate would
+  invalidate the comparison the operator thinks they are running.
+
+**Bench state:** chain UP under units and verified end to end
+(`chain_status.sh` PASS both Pis; page + `/api/status` + `/frame.jpg`
+all 200), `scene: sensor`, launcher `170e637c…` + bridge `df82aa70…`
+staged, patched firmware on the board. `bench/s18_matrix_noflood.py`
+(recapped driver copy) untracked on nereus001, documented here.
+
+**Next:** PR (this branch); page MEAS_FPS for the HD rows (deferred —
+the measured HD streams are FLOORS, and the page model's provenance
+labels have no floor semantics yet; do it with eyes open, not at
+close-out); upstream item 11 stays HELD; finding-1 bite and the
+ref-preload mini-bite for Nick to size.
+
+---
+
+## 2026-08-18 — Sprint S18 — HD-stability nibble 1: five probes kill every named suspect and corner the real one — transitions degrade only when the HE is resident
+
+**Branch:** `sprint/18-hd-stability` from `main` @ `0081b65`. All
+board work off-chain per `ae3-board-access`; chain restored + verified
+at session end. Two board crashes, two Pi reboots — both budgeted.
+
+**Done — the evidence chain (probes G→G5, `bench/probes/s18_hd_gate_probe*.py`):**
+- **Trace re-read first (no board contact):** both matrix HD deaths
+  died with NO trace line after the gate would have opened —
+  `_apply()` traces only after all steps, so both died mid-re-init.
+  The discriminator's "survived and replied res=hd ok" was measured
+  ~15–20 s BEFORE the gated re-init ran — findings 2 and 3 were one
+  fault wearing two hats.
+- **Probe G:** row 0 calibration QVGA→VGA PASS; **row 1 QVGA→HD mono
+  at 20 s quiet WITH NO BARRIER: MemoryError at first HD capture, then
+  recovery R2's `set_framebuffers` took the board off the bus.**
+  Reproduced in 4 minutes; the gate's barrier exonerated.
+- **Probe G2:** grow-at-color, flip-at-HD, grow-at-GRAYSCALE,
+  VGA-grow-at-mono all PASS with no publishes — then **row E died at a
+  routine QVGA shrink's `set_framebuffers`, zero publishes ever
+  sent.** Publish-proximity exonerated as cause.
+- **Probe G3** (soak, HE loaded, zero traffic): 21 clean, **#22 (a
+  QVGA mono flip) failed politely (289 µs — pool already gone),
+  recovery bootstrap ALSO threw.** In-session heal 0-for-6 lifetime.
+- **Probe G4** (CONTROL, no HE): **40/40 clean** (lifetime no-HE tally
+  52/52).
+- **Probe G5:** fresh boot → HE → ONE transition to HD mono → 3
+  captures with real chunk-burst publishes: **PASS 2/2 boots.**
+
+**The finding:** transitions degrade a below-MicroPython resource ONLY
+while the HE is resident (N≈2 on-chain under traffic, 10/22 quiet
+off-chain), politely or fatally, always at `set_framebuffers`/first
+capture; traffic accelerates onset. Source-corroborated (installed
+`7d4dbf7` == master in these files): `framebuffer_resize`
+(lib/imlib/framebuffer.c:158) frees + re-mallocs the whole fb block
+per transition into the 2512K SRAM1 UMA pool (fb hard-coded dynamic);
+`OMV_GPU_MEMORY = SRAM9_B` overlaps the HE ELF at 0x60080000 (on
+record, not proven the killer). Bite A's "fb grows into the HE region"
+story was wrong; its pin worked by reducing churn.
+
+**Also answered from source (Nick's question):** the sensor is a
+PixArt **PAG7936** (ID 0x7936), native 1280×800; the driver supports
+EXACTLY QVGA 320×200 / VGA 640×400 / HD 1280×800 (pag7936.c:933–940),
+everything else `return -1` (pag7936.c:691) without
+`OMV_CSI_HW_SCALE_ENABLE` (only OPENMV_N6 defines it). **Nothing
+exists between VGA and HD on stock AE3 firmware.**
+
+**Broke:** the shipped HD-ref guard was order-broken (`_ensure_sensor`
+ran before the refusal — fixed in the follow-on bite); the Mac's TCC
+revocation mid-session (memory note filed).
+
+**Next:** Nick's gate on the fix menu → chose A2; see the entry above.
+
+---
+
 ## 2026-08-18 — Sprint S18 — bench_ctl: reconnect once when bm-telemetry rebinds the control socket
 
 **Branch:** `sprint/18-benchctl-reconnect`. Pi-side only — no board
@@ -54,6 +203,8 @@ same code path on the Mac as on the Pi.
 
 **Next:** Nick's manual test (restart `bm-telemetry` under a running
 `bench-web`, `/api/status` answers without a bench-web restart) → PR.
+*(Merged as PR #35; the HD-stability session's "bounce bench-web after
+a telemetry restart" ops note above is retired by this fix.)*
 
 ---
 
