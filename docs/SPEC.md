@@ -317,6 +317,32 @@ pair, USB carrying no video.
   drain (~185 ms) and the HE's byte-bounded txq sheds the excess,
   silently below bm_pub. Owns TRACKER S22 bite 1b (HE-side
   backpressure); SAFE_BURST_CHUNKS=68 stands until it lands.
+  **BURST VARIANT LOCALIZED 2026-08-18 (bite 1b session) — it is
+  INSIDE the telemetry fork process, and everything else is
+  exonerated by artifact:** the q90 HD mono ref frame is actually
+  **149 chunks (206,759 B)**, and the ledger's "gaps=54" was
+  TAIL-LENGTH, not loss count — `chunk_reasm` abandons the frame at
+  the first unexpected idx and then counts every later chunk of that
+  frame as a gap, so gaps = chunks-after-the-loss (54 tail = ONE
+  chunk lost at idx 95; observed break positions 95, 95, 41, 95).
+  Exoneration chain, each step measured: HE published all chunks
+  (`pub_ok`/`pub_bytes` exact ×2) · bridge relayed all (`qdrops=0` in
+  the preserved trace; the RPMSG_QUEUE_CAP raise to 1024 changed
+  nothing) · uart_l2 clean (zero decode errors) · **tcpdump on the
+  UDP hop: all 149 chunks on the wire, in order, no dups, and all
+  149 inner UDP checksums VALID after outer-IP-fragment reassembly**
+  (full chunks fragment at the outer MTU: 1,523 B > 1,500) · kernel
+  UDP counters zero both Pis · fork l2 evt-queue drop logs absent,
+  `TEL_STAT q_drops=0`. Arrival pacing is smooth (~4.2 ms/frame), so
+  a 32-deep queue overflow needs a ~130 ms thread stall. What
+  remains: the fork's internal RX path (bm_ip Linux backend →
+  middleware/pubsub cb delivery → reassembler) with no visible
+  counter — localizing further needs fork-side instrumentation
+  (pin discipline: Nick's push). q50 HD mono (55 chunks) delivers
+  byte-exact throughout — the defect needs burst scale. Shipped as
+  hardening meanwhile, both proven harmless and neither the
+  mechanism: HE RX backpressure (netwire high/low-water gate) and
+  bridge RPMSG_QUEUE_CAP 256→1024.
 - **Sustained camera publish above ~450–600 rpmsg msg/s silences the HE
   wire task permanently (measured 2026-08-18, S18 reef matrix, 3
   occurrences + mechanism traced).** First the receiver ledger breaks
