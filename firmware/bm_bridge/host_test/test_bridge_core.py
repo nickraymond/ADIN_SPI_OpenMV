@@ -568,8 +568,11 @@ check(_FakeImageMod.loads > n_first, "ref mode: pf change reloads")
 check(eng.ref_key == (CAMERA_RES_QVGA, CAMERA_PF_MONO),
       "ref mode: loaded key tracks the commanded mode")
 
-# 6. HD in ref mode is refused BEFORE any asset load (known-fatal
-#    on-chain, S18 matrix run 5); sensor-scene HD is not guarded.
+# 6. HD in ref mode is ALLOWED -- the guard is LIFTED (2026-08-18).
+#    Matrix run 5's death was the sensor TRANSITION under the stock
+#    firmware's per-resize realloc, not the ref load; the sticky-fb
+#    build soaks 40/40 and probe G6 measured both HD refs loading and
+#    encoding with the HE resident.
 _FakeImageMod.available = ("ref_color_1280x800.bmp",)
 _FakeImageMod.loads = 0
 eng = bm_bridge.CaptureEngine(scene="ref")
@@ -579,14 +582,92 @@ eng.cur_res, eng.cur_pf = _HD, CAMERA_PF_COLOR
 hd_cmd = dict(_cmd)
 hd_cmd["res"] = _HD
 eng.command(hd_cmd)
-check(eng.mode == CAMERA_MODE_STOP, "ref mode: HD REFUSED (known-fatal)")
-check(_FakeImageMod.loads == 0, "ref mode: HD refused before any load")
+check(eng.mode == CAMERA_MODE_SINGLE, "ref mode: HD accepted (guard lifted)")
+check(_FakeImageMod.loads == 1, "ref mode: HD ref image loaded")
 eng2 = bm_bridge.CaptureEngine()          # sensor scene
 eng2.booted = True
 eng2.sensor_ok = True
 eng2.cur_res, eng2.cur_pf = _HD, CAMERA_PF_COLOR
 eng2.command(dict(hd_cmd))
 check(eng2.mode == CAMERA_MODE_SINGLE, "sensor mode: HD unaffected")
+
+# 7. Refusals precede the re-init (S18 HD-stability nibble 1). The
+#    transition itself is the measured hazard -- transitions degrade the
+#    board while the HE core is resident -- so a command that will be
+#    refused must never touch the sensor. Test 6 could not catch the
+#    shipped order bug because it parked cur_res at HD first (no delta);
+#    these start at QVGA so the refused command WOULD re-init, and count
+#    every mock sensor call to prove it did not.
+_sensor_calls = []
+
+
+def _counting(name, orig):
+    def f(*a, **k):
+        _sensor_calls.append(name)
+        return orig(*a, **k)
+    return f
+
+
+_orig_sensor = {n: getattr(_FakeSensor, n)
+                for n in ("set_pixformat", "set_framebuffers",
+                          "set_framesize", "skip_frames", "reset")}
+for _n, _o in _orig_sensor.items():
+    setattr(_FakeSensor, _n, staticmethod(_counting(_n, _o)))
+
+# 7a. Missing-asset HD-ref refusal, sensor parked at QVGA: zero sensor
+#     calls (the refusal-before-re-init rule, HD-flavored).
+_FakeImageMod.available = ()
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_sensor_calls.clear()
+eng.command(dict(hd_cmd))
+check(eng.mode == CAMERA_MODE_STOP, "guard order: HD ref w/o asset refused")
+check(_sensor_calls == [],
+      "guard order: HD-ref refusal makes ZERO sensor calls")
+# An ACCEPTED HD-ref command loads the asset AND re-inits.
+_FakeImageMod.available = ("ref_color_1280x800.bmp",)
+_FakeImageMod.loads = 0
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_sensor_calls.clear()
+eng.command(dict(hd_cmd))
+check(eng.mode == CAMERA_MODE_SINGLE, "guard order: staged HD ref accepted")
+check(_FakeImageMod.loads == 1 and "set_framesize" in _sensor_calls,
+      "guard order: accepted HD ref loads AND re-inits")
+
+# 7b. Missing-asset refusal, delta pending: zero sensor calls.
+_FakeImageMod.available = ()
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+mono_cmd = dict(_cmd)
+mono_cmd["pf"] = CAMERA_PF_MONO
+_sensor_calls.clear()
+eng.command(mono_cmd)
+check(eng.mode == CAMERA_MODE_STOP, "guard order: missing asset refused")
+check(_sensor_calls == [],
+      "guard order: missing-asset refusal makes ZERO sensor calls")
+
+# 7c. An ACCEPTED ref command still re-inits (the hoist must not have
+#     detached the sensor path).
+_FakeImageMod.available = ("ref_mono_320x200.pgm",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_sensor_calls.clear()
+eng.command(dict(mono_cmd))
+check(eng.mode == CAMERA_MODE_SINGLE, "guard order: staged mono accepted")
+check("set_pixformat" in _sensor_calls and "set_framesize" in _sensor_calls,
+      "guard order: accepted command still re-inits the sensor")
+
+for _n, _o in _orig_sensor.items():
+    setattr(_FakeSensor, _n, staticmethod(_o))
 
 del sys.modules["sensor"]
 del sys.modules["image"]
