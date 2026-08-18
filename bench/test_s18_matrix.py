@@ -66,6 +66,21 @@ check(M.PLAN[-1][4]["tag"] == "ceiling-sacrificial",
       "the wedge-risky ceiling row is dead last — runs 1-2 showed it "
       "kills the camera for everything after it")
 
+# The resume plan: HD stills + cert BEFORE any stream loads the HE;
+# every stream capped into the proven-safe rate zone except the
+# sacrificial tail. (Run 3's trace: the HE wire task silences after
+# sustained publish above ~450-500 rpmsg msg/s — an HE bug, filed.)
+r_stills, r_streams, _ = M.plan_stats(M.PLAN_RESUME)
+check(M.PLAN_RESUME[0][:4] == ("still", "qvga", "color", 50),
+      "resume: tripwire first")
+check([r[0] for r in M.PLAN_RESUME[:5]] == ["still"] * 4 + ["cert"],
+      "resume: all stills and the cert rung run before any stream")
+check(all(r[4]["tag"] in ("floor-capped", "ceiling-sacrificial")
+          for r in M.PLAN_RESUME if r[0] == "stream"),
+      "resume: streams are capped floors, except the sacrificial tail")
+check(M.PLAN_RESUME[-1][4]["tag"] == "ceiling-sacrificial",
+      "resume: sacrificial row still dead last")
+
 check(M.newest_sidecar(["cap_20260817T010101Z_seq1.json",
                         "cap_20260817T020202Z_seq2.json",
                         "cap_20260817T020202Z_seq2.jpg", "junk.txt"])

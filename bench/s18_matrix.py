@@ -105,6 +105,32 @@ PLAN = [
      {"mbps": 4.0, "fps": 30, "secs": 60, "tag": "ceiling-sacrificial"}),
 ]
 
+# --resume: the rows still owed after runs 1-4 banked the rest. Run 3's
+# preserved bridge trace showed the wedge mechanism: sustained publish
+# above ~450-500 rpmsg msg/s silences the HE wire task mid- or
+# post-stream (he2pi_frames freezes while the Pi keeps querying) — an
+# HE bug, filed separately, NOT the sensor race (re-inits after streams
+# trace clean). So the remaining streams are COMMAND-CAPPED into the
+# proven-safe zone (regression's 315 msg/s ran clean 4/4) and their
+# rows are floors, not ceilings; encoder ceilings come from the traced
+# enc-avg numbers instead. HD stills and the cert rung go FIRST, before
+# any stream has loaded the HE.
+PLAN_RESUME = [
+    ("still",  "qvga", "color", 50, None),      # tripwire
+    ("still",  "hd",   "mono",  50, None),
+    ("still",  "hd",   "mono",  90, None),
+    ("still",  "hd",   "color", 50, None),
+    ("cert",   "qvga", "color", 50, None),
+    ("stream", "hd",   "mono",  50,
+     {"mbps": 4.0, "fps": 2.5, "secs": 60, "tag": "floor-capped"}),
+    ("stream", "hd",   "color", 50,
+     {"mbps": 4.0, "fps": 1.5, "secs": 30, "tag": "floor-capped"}),
+    ("stream", "vga",  "mono",  50,
+     {"mbps": 4.0, "fps": 8, "secs": 60, "tag": "floor-capped"}),
+    ("stream", "qvga", "mono",  50,
+     {"mbps": 4.0, "fps": 30, "secs": 60, "tag": "ceiling-sacrificial"}),
+]
+
 
 # ---- pure helpers (host-tested) ------------------------------------------
 
@@ -517,13 +543,15 @@ class Matrix:
 
 def main():
     from bench_ctl import BenchCtl   # imported late: host tests fake it
-    stills, streams, changes = plan_stats(PLAN)
-    print("S18 reef matrix: %d stills, %d streams, %d mode changes"
-          % (stills, streams, changes))
+    plan = PLAN_RESUME if "--resume" in sys.argv[1:] else PLAN
+    stills, streams, changes = plan_stats(plan)
+    print("S18 reef matrix (%s): %d stills, %d streams, %d mode changes"
+          % ("resume" if plan is PLAN_RESUME else "full",
+             stills, streams, changes), flush=True)
     with BenchCtl() as ctl:
         m = Matrix(ctl)
         try:
-            rows = m.run()
+            rows = m.run(plan)
         finally:
             out = os.path.join(
                 CAPTURE_DIR, "matrix_%s.json"
