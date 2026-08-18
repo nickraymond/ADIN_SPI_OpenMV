@@ -17,6 +17,66 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S18 — reef matrix: QVGA+VGA measured exact, two new stream ceilings, and three findings that fence off HD
+
+**Branch:** `sprint/18-bench-matrix`. Five matrix runs, six scripted
+recovery cycles (reboot + demo_up ≈ 4 min each), all driven remotely
+per the handover rule — Nick installed nothing.
+
+**Done:**
+- **The instrument:** bridge `scene:"ref"` (encoder fed the S0 reef
+  reference; sensor path — re-inits, PublishGate, discarded snapshot —
+  UNCHANGED, so the numbers transfer), demo_up staging arm (idempotent,
+  size-checked, JPEG fallback, trace preservation, scene key written
+  every run), `bench/s18_matrix.py` (row isolation: stop + proven
+  quiescence before every row; 2 s cam-status keep-alive; sidecar+SOF
+  verification; reef tripwire). Host tests: bridge 262→**279**,
+  matrix driver **37**, bench_web 67→**70**.
+- **The table (DESIGN §S18 reef-matrix detail):** 6 of 9 stills
+  measured on-chain, **byte-identical to S0's encode table in all six**
+  (9,198 / 7,536 / 29,148 / 23,831 at q50) + the q-curve points
+  (7,097 @ q35, 28,819 @ q90 — model +18%/−7%). Streams: regression
+  **15.15 fps / 1.12 Mbps** (×3 clean), **QVGA color ceiling
+  28.07 fps / 2.08 Mbps** (×2 identical), **VGA color 7.40 fps /
+  1.74 Mbps** (×2 identical). In-bridge encode traced: 20.1 / 78.5 /
+  31.6 ms — S0 within ~2%. **Measured bridge derate 0.56–0.58; the
+  page's old extrapolation (0.295) was ~2× pessimistic.**
+- **The page now says MEASURED where it is measured:** `MEAS_FPS`
+  filled for QVGA/VGA color; provenance label rides the model.
+  Verified through the page's own endpoints on nereus001.
+
+**Broke/surprised us (each measured, none chased past its recording):**
+- **The HE flood wedge** (SPEC §Open questions): sustained publish
+  ≥ ~513 msg/s broke the ledger then silenced the HE permanently, 3/3;
+  mechanism traced in a preserved bridge trace (`he2pi_frames` frozen,
+  Pi still querying). Blocks true mono ceilings.
+- **Ref-mode HD hard-faults the board** (run 5: trace ends mid-
+  transition, no exit record). Discriminator proved sensor-mode HD
+  survives the same transition → my ref code at HD is implicated;
+  the bridge now REFUSES HD ref commands (tested), finding filed.
+- **Sensor-mode HD still wedges the leg on the B2 bridge** — HD has
+  never completed on any PublishGate build. So the 20 s constant's
+  daylight-HD certification could not run: **HD is unstable on this
+  stack**, a stronger statement than "20 s unproven". B2's comment
+  stands, reason now recorded.
+- Driver lessons paid for live: cam-status is ASYNC (ack now, reply in
+  the next status); rows must not share measurement windows (stop +
+  quiescence before every row); the S19 stdout trap works on the
+  driving side too (empty log for 5 min).
+
+**Bench state:** final recovery cycle run at session end — chain up
+under units, `scene: sensor`, bench-web serving the measured page at
+`http://nereus001:8090/`; launcher staged as `main.py` (fixture restore
+stays folded into the next demo_up, the standing pattern). Matrix JSONs
+in `~/bench_captures/matrix_*.json`; bridge traces preserved under
+`~/bridge_traces/` on nereus000.
+
+**Next:** nibble 4 (PR for the matrix bite), then bite D2 + the S18
+demo. The HD-stability and HE-flood findings need Nick to size as
+bites before the HD rows and the cert rung can be measured.
+
+---
+
 ## 2026-08-17 — Sprint S18 — bite B2 ladder run: VGA fails at 10 s and passes at 15 s → the constant is 20 s, flat, and HD stays flagged
 
 **Branch:** `sprint/18-reinit-race` @ `9666604`.

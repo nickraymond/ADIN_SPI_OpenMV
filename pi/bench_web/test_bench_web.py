@@ -533,6 +533,30 @@ class TestPage(unittest.TestCase):
         self.assertIn("extrapolated", self.html)
         self.assertNotIn(">estimate<", self.html)
 
+    # -- S18 reef matrix: measured fps beats the derate --------------------
+    def test_measured_fps_table_covers_every_mode(self):
+        # MEAS_FPS carries one slot per (res, pf); null = not measured yet.
+        self.assertIn("MEAS_FPS", self.html)
+        block = self.html.split("const MEAS_FPS")[1].split("};")[0]
+        self.assertEqual(block.count("color:"), 3, "three res rows (color)")
+        self.assertEqual(block.count("mono:"), 3, "three res rows (mono)")
+        # the matrix's measured ceilings (2026-08-18, each confirmed twice)
+        self.assertIn("28.07", block)
+        self.assertIn("7.40", block)
+
+    def test_the_label_comes_from_the_model_not_a_constant(self):
+        # Provenance rides the model (m.src), so a measured mode and an
+        # extrapolated mode label themselves differently on one page.
+        self.assertIn("const srcTag", self.html)
+        self.assertNotIn("${EST}", self.html)
+        for s in ('"measured"', '"measured @q50, q-scaled"',
+                  '"extrapolated"'):
+            self.assertIn(s, self.html, s)
+
+    def test_measured_fps_wins_over_the_derate(self):
+        self.assertIn("mfps !== null ? mfps * (enc50 / encMs)", self.html)
+        self.assertIn("encCeil * K.BRIDGE_DERATE", self.html)
+
     def test_the_measured_constants_carried_over_unchanged(self):
         for const in ("5.262e6", "15.0 / (1000 / 19.7)", "1400", "492",
                       "9198, 19.7", "93253, 299.2", "75324, 117.6"):

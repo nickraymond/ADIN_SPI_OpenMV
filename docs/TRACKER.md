@@ -1,7 +1,27 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-16 (**S18 bite C2 DEMO RUN AND PASSED BY NICK — the
+*Last updated: 2026-08-18 (**S18 reef-matrix bite: nibbles 1–3 done, PR
+pending.** Branch `sprint/18-bench-matrix`. The bench page's model is
+now MEASURED for QVGA/VGA: all six non-HD stills land **byte-identical
+to S0's reef encode table** through the real chain; streams measured
+clean = regression 15.15 fps / 1.12 Mbps (×3), **QVGA color ceiling
+28.07 fps / 2.08 Mbps**, **VGA color 7.40 fps / 1.74 Mbps** (each ×2
+identical); measured bridge derate 0.56–0.58 (the old extrapolation was
+~2× pessimistic). Machinery shipped: bridge `scene:"ref"` source,
+demo_up staging/trace-preservation/sha-sync arms, `bench/s18_matrix.py`
+row-isolated driver. **Three findings fence off the rest** (SPEC §Open
+questions + DESIGN §S18 reef-matrix detail): the HE wire task goes
+permanently mute under sustained publish ≥ ~513 rpmsg msg/s (blocks
+true mono ceilings); ref-mode HD hard-faults the board (bridge now
+REFUSES HD ref, guard tested); sensor-mode HD wedges the leg on the B2
+bridge — **HD has never completed on any PublishGate build, so the 20 s
+constant's daylight-HD certification rung could not run.** HD rows +
+cert stay owed behind those findings — Nick to size them as bites.
+Bench left healthy: chain up under units, scene=sensor, measured page
+live at nereus001:8090. NEXT = matrix PR (nibble 4), then bite D2 +
+the S18 demo. Previous:*
+*2026-08-16 (**S18 bite C2 DEMO RUN AND PASSED BY NICK — the
 gallery, compare view, histograms and the failure banner all work in a real
 browser; PR open (nibble 4).** Branch `sprint/18-bench-gallery` from `main` @
 `db82181`: gallery from bite B's **sidecars**, side-by-side compare,
@@ -760,9 +780,36 @@ the nodes are systemd units. Do the harness before the features.)*
       to 20 s to match. Bridge tests 262→419; bench_web 67.
       **New standing recovery (Nick):** camera stuck → reboot nereus000
       (USB teardown + quiet-exit + demo_up chip reset ≈ 2 min); uhubctl
-      remains measured-useless on Pi 5. **`/flash` still carries the 6 s
-      build — the 20 s build deploys at the next chain session.**
-      Remaining: nibble 4 (PR), then the matrix + stream numbers.
+      remains measured-useless on Pi 5. ~~**`/flash` still carries the 6 s
+      build — the 20 s build deploys at the next chain session.**~~
+      → deployed 2026-08-18 by the matrix session (demo_up now sha-syncs
+      the bridge every run). Remaining: nibble 4 (PR), then ~~the matrix
+      + stream numbers~~ → ran as bite B3 below; the HD certification
+      rung could NOT run (see B3's findings) — the constant keeps its
+      uncertified-for-HD caveat, reason now recorded.
+- [~] **Bite B3 — the reef-scene matrix** (Nick approved plan
+      2026-08-17; branch `sprint/18-bench-matrix`). **Nibbles 1–3 DONE
+      2026-08-18** — plan, code + tests (bridge `scene:"ref"` source,
+      demo_up staging/sha-sync/trace-preservation arms, row-isolated
+      `bench/s18_matrix.py`; bridge tests 419→**436**, driver **37**,
+      bench_web 67→**70**), five live runs driven end to end per the
+      handover rule. Measured: all six non-HD stills **byte-identical
+      to S0's reef table**, q-curve points, regression 15.15 fps ×3,
+      **QVGA color ceiling 28.07 fps / 2.08 Mbps**, **VGA color
+      7.40 fps / 1.74 Mbps** (each ×2 identical), in-bridge encode
+      corroborating S0 within ~2%, measured derate 0.56–0.58. Page
+      MEAS_FPS filled + provenance labels flipped where measured;
+      verified through the page's own endpoints. Full record: DESIGN
+      §S18 reef-matrix detail + D37, SPEC §Open questions, DEV_LOG.
+      **Still owed, fenced off by the findings (not by this bite):**
+      the 3 HD still rows, true mono/HD stream ceilings, and B2's 20 s
+      certification rung. Unblocking them = two candidate bites for
+      Nick to size: **(a) the HE flood wedge** (wire task goes mute
+      ≥ ~513 rpmsg msg/s, mechanism traced in a preserved trace),
+      **(b) HD stability on the PublishGate bridge** (ref-mode hard
+      fault — bridge now REFUSES HD ref, guard tested; sensor-mode leg
+      wedge; **HD has never completed on any post-B2 build**).
+      **Remaining: nibble 4 (PR).**
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and

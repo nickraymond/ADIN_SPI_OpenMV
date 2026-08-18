@@ -395,6 +395,19 @@ const MEAS = {
   2: { color: [29148, 76.7],  mono: [23831, 31.1]  },
   3: { color: [93253, 299.2], mono: [75324, 117.6] },
 };
+// MEASURED delivered fps at q50 per mode — reef reference scene through
+// the whole chain, receiver-ledger truth, ledger clean (S18 reef matrix
+// 2026-08-18, bench/s18_matrix.py; QVGA color ceiling and VGA color
+// each measured identically twice). null = not yet measured -> the
+// model extrapolates from BRIDGE_DERATE and says so. The unmeasured
+// modes sit behind two filed findings: the HE wire task goes silent
+// under sustained publish above ~450-600 rpmsg msg/s (mono ceilings),
+// and HD wedges the leg on the current bridge build (HD rows).
+const MEAS_FPS = {
+  1: { color: 28.07, mono: null },
+  2: { color: 7.40,  mono: null },
+  3: { color: null,  mono: null },
+};
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,
             note: null };
@@ -410,21 +423,30 @@ function modelFor(res, pf, q, fps) {
   const bytes = b50 * qFactor(q);
   const encMs = enc50 * (1 + (q - 50) / 400);
   const encCeil = 1000 / encMs;
-  const bridgeCeil = encCeil * K.BRIDGE_DERATE;
+  // Measured beats derived: when the matrix has a delivered-fps number
+  // for this mode, use it (q-scaled off q50 by the encode-cost ratio —
+  // scaling is the only arithmetic left). Otherwise fall back to the
+  // one-point derate and label the difference.
+  const mfps = MEAS_FPS[res][pf];
+  const bridgeCeil = mfps !== null ? mfps * (enc50 / encMs)
+                                   : encCeil * K.BRIDGE_DERATE;
+  const src = mfps === null ? "extrapolated"
+            : (q === 50 ? "measured" : "measured @q50, q-scaled");
   const chunks = Math.ceil(bytes / (K.CHUNK_MAX - K.CHUNK_HDR));
   const wireBytes = bytes + chunks * K.CHUNK_HDR;
   const effFps = Math.min(fps, bridgeCeil);
-  return { bytes, encMs, encCeil, bridgeCeil, chunks, wireBytes, effFps,
+  return { bytes, encMs, encCeil, bridgeCeil, chunks, wireBytes, effFps, src,
            bps: wireBytes * 8 * effFps, bpsAtCmd: wireBytes * 8 * fps,
            videoOk: bridgeCeil >= K.VIDEO_MIN_FPS };
 }
 const model = () => modelFor(S.res, S.pf, S.q, S.fps);
 
 // ---- warnings + gating -----------------------------------------------
-// EXTRAPOLATED, and labelled that way everywhere: the derate comes from one
-// measured point. S18 bite B2's 9-row matrix replaces these with measured
-// numbers, at which point the word can change.
-const EST = '<span class="est">extrapolated</span>';
+// Every prediction carries its provenance: "measured" when the S18 reef
+// matrix has a delivered-fps number for the mode, "extrapolated" when it
+// is still the one-point derate. The label comes from the model, so it
+// can never drift from the arithmetic that produced the number.
+const srcTag = m => `<span class="est">${m.src}</span>`;
 
 function renderWarnings() {
   const m = model(), r = RES[S.res], out = [];
@@ -432,7 +454,7 @@ function renderWarnings() {
   out.push(`<div class="warn-item info"><span class="icon">&asymp;</span><span>
       <b>${r.name} ${r.w}&times;${r.h} ${S.pf} q${S.q}</b> &rarr; est. ${(m.bytes/1024).toFixed(1)} KB/frame,
       ${m.chunks} chunk${m.chunks>1?"s":""}, encode &asymp; ${m.encMs.toFixed(0)} ms
-      <span class="est">(pure encode ${m.encCeil.toFixed(1)} fps &rarr; in-bridge &asymp; ${m.bridgeCeil.toFixed(1)} fps, extrapolated)</span></span></div>`);
+      <span class="est">(pure encode ${m.encCeil.toFixed(1)} fps &rarr; in-bridge &asymp; ${m.bridgeCeil.toFixed(1)} fps, ${m.src})</span></span></div>`);
 
   if (!m.videoOk) {
     out.push(`<div class="warn-item info"><span class="icon">&#9673;</span><span>
@@ -440,19 +462,19 @@ function renderWarnings() {
         ${K.VIDEO_MIN_FPS} fps floor for a usable live view.
         ${modelFor(S.res,"mono",S.q,S.fps).videoOk
           ? `Greyscale at this resolution does stream (&asymp; ${modelFor(S.res,"mono",S.q,S.fps).bridgeCeil.toFixed(1)} fps).` : ""}
-        ${EST}</span></div>`);
+        ${srcTag(m)}</span></div>`);
   } else if (m.bpsAtCmd > K.RELAY_CEILING) {
     out.push(`<div class="warn-item bad"><span class="icon">&times;</span><span>
         <b>Exceeds transport.</b> ${S.fps} fps needs &asymp; ${(m.bpsAtCmd/1e6).toFixed(2)} Mbps &mdash; over the
-        measured ${(K.RELAY_CEILING/1e6).toFixed(2)} Mbps relay ceiling. ${EST}</span></div>`);
+        measured ${(K.RELAY_CEILING/1e6).toFixed(2)} Mbps relay ceiling. ${srcTag(m)}</span></div>`);
   } else if (m.bridgeCeil < S.fps) {
     out.push(`<div class="warn-item warn"><span class="icon">!</span><span>
         <b>fps will cap at &asymp; ${m.bridgeCeil.toFixed(1)}</b> &mdash; encoder-bound, not transport.
-        You asked for ${S.fps}. ${EST}</span></div>`);
+        You asked for ${S.fps}. ${srcTag(m)}</span></div>`);
   } else {
     out.push(`<div class="warn-item ok"><span class="icon">&check;</span><span>
         Fits: est. ${(m.bps/1e6).toFixed(2)} Mbps at ${m.effFps.toFixed(1)} fps
-        (${((m.bps/K.RELAY_CEILING)*100).toFixed(0)}% of relay ceiling). ${EST}</span></div>`);
+        (${((m.bps/K.RELAY_CEILING)*100).toFixed(0)}% of relay ceiling). ${srcTag(m)}</span></div>`);
   }
   if (m.videoOk && S.mbps > 0 && m.bps > S.mbps*1e6) {
     out.push(`<div class="warn-item warn"><span class="icon">!</span><span>
@@ -469,7 +491,11 @@ function renderWarnings() {
     <div><span class="k">chunks/frame</span><span>${m.chunks}</span></div>
     <div><span class="k">rpmsg msgs/frame</span><span>${m.chunks*Math.ceil(K.CHUNK_MAX/K.RPMSG_PAYLOAD)}</span></div>
     <div><span class="k">relay ceiling</span><span>${(K.RELAY_CEILING/1e6).toFixed(3)} Mbps</span></div>
-    <div><span class="k">fps predictions</span><span>EXTRAPOLATED from one<br>measured point &mdash; QVGA<br>colour reef q50 = 15.00 fps<br>(S17 bite 0). S18 bite B2<br>replaces them.</span></div>`;
+    <div><span class="k">fps source</span><span>${
+      m.src === "extrapolated"
+        ? "EXTRAPOLATED &mdash; this mode<br>is not in the measured<br>matrix yet (bench/<br>s18_matrix.py fills it)"
+        : "MEASURED &mdash; S18 reef<br>matrix, delivered rate<br>through the chain" +
+          (m.src === "measured" ? "" : "<br>(q-scaled off q50)")}</span></div>`;
 }
 
 // A mode is video-capable when its in-bridge estimate clears the floor.
@@ -1055,7 +1081,7 @@ document.getElementById("btnBackLive").onclick = () => {
   renderWarnings(); renderReplies(); renderGate();
   document.getElementById("foot").innerHTML =
     `S18 bites C1 + C2 · controls drive <b>/run/bm/bench.sock</b> (bite B) · live view is the frozen S3 server on :${CFG.stream_port}
-     <br>fps and bandwidth predictions are <b>EXTRAPOLATED</b> from one measured point (QVGA colour reef q50 = 15.00 fps, S17 bite 0) — S18 bite B2 replaces them with a measured matrix
+     <br>fps predictions are <b>MEASURED</b> (S18 reef matrix, delivered rate through the chain) for modes present in MEAS_FPS, <b>EXTRAPOLATED</b> from the one-point derate for the rest — each number carries its own label
      <br>capture/stream are held for <b>${CFG.settle} s</b> after a capture when the next command changes resolution or pixel format: a sensor re-init too soon wedges the camera until the bridge restarts (SPEC §Open questions, bite B2 fixes it underneath)
      <br>the gallery lists <b>sidecars</b> from <b>${CFG.capture_dir || "~/bench_captures"}</b> — the JSON is written after the JPEG, so it is the commit record; histograms are computed in the browser from the decoded pixels, and are measurement, not model`;
   loadGallery();

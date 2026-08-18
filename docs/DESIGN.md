@@ -94,6 +94,7 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 | D33 | 2026-08-16 | **S18 bite D — the bench nodes run as systemd units** (Nick approved plan + 5 decision points). `bm-light` (nereus000) and `bm-telemetry` (nereus001) are systemd units installed **DISABLED** at boot; the telemetry role's operator CLI is fed by a FIFO the app opens **read-write itself** (`ExecStart=/bin/sh -c 'exec … 0<>/run/bm/telemetry.cmd'`), created under `RuntimeDirectory=bm`; `Restart=on-failure`; `ExecStop` pushes `stop` to the camera before the process dies. AE3 staging stays the manual `demo_up.sh` — a service start never rewrites board flash. Tooling: `bm-cmd.sh` (send one command), `chain_status.sh` (read-only PASS/FAIL preflight), `install_stream_service.sh` extended with `light\|telemetry`. | A unit is a **singleton by construction**, which is the whole point (D32): a second `systemctl start` is a silent no-op, so the two-Telemetry ingest wedge cannot be re-created, and `systemctl stop` kills the cgroup so "did it die?" stops being a question. Install-disabled because an enabled `bm-light` opens the AE3's CDC port at every boot and fights `mpremote`/`demo_up.sh`/flashing — the dev loop must win by default. **`0<>` rather than the sketched `tail -f` pipeline:** the fork's `cli_poll()` is already non-blocking (`poll(fd 0, 0)`, guarded on POLLIN, returns on EOF), and POSIX `<>` never blocks on open and never reaches EOF because the process holds its own writer — so `exec` leaves ONE process in the cgroup where a pipeline would put a second one back, re-creating the problem being solved. `on-failure` not `always` so a deliberate stop stays stopped, while still absorbing the fork's known ~1-in-4 startup segfault. `ExecStop` pushing `stop` closes S19's *other* contaminator (the AE3 keeps executing a 600 s `stream` after the app that asked for it dies). `chain_status.sh` finds processes by `/proc/<pid>/exe`, never by command-line pattern, because `pkill -f` patterns matched the driving SSH command line in S19 — the trap is removed structurally, not by care. Measured en route and retiring a planned mitigation: bm_sbc already sets `setvbuf(stdout, _IOLBF)` and `bm_log` fflushes, so S19's "stdout buffering hid a live log" was the driving side, not the app. |
 | D35 | 2026-08-16 | **S18 bite C1 — the bench page, and the click guard on the SERVER** (Nick approved plan + 5 decision points). `pi/bench_web/` is a stdlib `http.server` on **:8090** (the frozen S3 server owns :8080) driving bite B's socket through `bench_ctl.py`, so the web tool, `bench-ctl.sh` and the trial scripts cannot drift on framing. Layout and the feasibility model are carried from the mockup Nick approved 2026-08-16; the mockup's simulation is deleted, not ported. The live view is an `<img>` straight at the S3 server's `/stream` — **no frame bytes pass through this server** and the single-producer ingest on :8081 is untouched. **The click guard is enforced in Python and only mirrored in JavaScript**, with two independent holds: *busy* (one camera command at a time) and *settle* (8 s, applied **only** to a command that changes resolution or pixel format, because only a genuine delta re-inits the sensor — bite A). `stop` is never gated. Bite C splits: C1 drives the bench, C2 is gallery + compare + histograms. | A guard that lives in the browser is defeated by a reload or a second tab, and what it prevents is a camera wedged for the bridge's whole life (SPEC §Open questions) — so it belongs where it cannot be bypassed, and where an injected clock makes it testable on a laptop. Two facts forced the shape and are worth keeping: **`mode_active` in the camera reply is *last commanded*, not *currently busy*** (it stays 1 after a still completes; `camera_svc.c` only clears it on `stop`), so completion has to come from bite B's save counters; and **`save.state` still reads `saved` from the PREVIOUS capture at the moment of arming**, so gating on the string releases one poll after the click — the counters are monotonic, the string is not. 8 s is 2 beyond the only passing measurement (≥6 s, 3/3) and is a knob, because the required quiet time scales with the previous frame's size and **nothing has been measured at HD**; bite B2's matrix is what should replace it. |
 | D36 | 2026-08-16 | **S18 bite C2 — gallery, compare, histograms, and the loud-failure banner** (Nick approved plan + 5 decision points). The gallery **enumerates sidecars, never JPEGs** (`/api/captures`): bite B renames the image before writing the sidecar, so the sidecar is the commit record and a bare `.jpg` may be half-written; a sidecar whose image is missing is listed and MARKED rather than filtered out. Serving stored stills gave this server its first file-reading route, `/captures/<name>.jpg`, fenced three independent ways — URL-decode **then** whole-name match against `cap_\d{8}T\d{6}Z_seq\d{6}\.jpg`; a sidecar must exist, so the reachable set is exactly the committed captures; and `realpath` must land back on the assembled path, which is the only fence that catches a symlink planted *inside* the directory. The sidecar's own `file` field is never used to build a path. Histograms are canvas + client-side from decoded pixels, live and per-still, and **greyscale is decided by the pixels (R=G=B), not by the commanded pixel format**. The live panel required a same-origin `/api/frame.jpg` proxy of the frozen S3 server's cached frame — an `<img>` on :8080 taints the canvas and `getImageData` throws — on demand only, `:8081` still untouched. A `cam_reply.state` that is not `ok` raises a banner that clears only on a good reply. | Two rules the bite is built on. **The gallery's unit of truth is whatever the writer commits last**, which is why it lists sidecars: any other choice lists a file that is allowed to be incomplete. **The path fence must not be derivable from data**, which is why the root is a startup constant compared against the status reply's `save.dir` rather than assigned from it, and why file *contents* never construct a path. The banner exists because the C1 demo lost seven captures into a dead node while the page logged `200 ok` each time — the socket accepted them and the camera never answered; an honest-but-quiet stats row is a failure mode of its own. Related trap now surfaced: on a timeout the fork sets `cam_seen=true` and `cam_state="timeout"` but does **not** update the reply struct (`ctl_note_cam(nullptr, "timeout")`), so every other `cam_reply` field is the last GOOD reply and is labelled STALE instead of being printed as this command's answer. Measured en route, and the reason the route is verified against a running server rather than only in unit tests: a non-ASCII character in a `send_error` *message* lands in the HTTP status line, fails latin-1 encoding and **drops the connection instead of answering 404** — the reason now travels in the body. |
+| D37 | 2026-08-18 | **S18 reef-matrix bite — the ref-scene source, measured-beats-derived provenance, and the HD-ref guard** (Nick approved the plan 2026-08-17). The bridge gains `bridge_cfg.json "scene": "ref"`: the encoder is fed the stored S0 reef reference for the commanded (res, pf) from `/flash/ref_scene/` while the **sensor path runs unchanged** — bring-up, re-inits, PublishGate, and a discarded `sensor.snapshot()` per frame, so the B2 hazard and the capture cost stay in the measured pipeline; only the pixels handed to `to_jpeg` are swapped. A missing/unloadable asset **REFUSES the command loudly** — never a silent fall-through to the live scene, whose dark-room bytes would poison a table invisibly. Assets stage via `demo_up.sh` (idempotent, size-checked, raw BMP/PGM preferred, q95 JPEG set as the flash-tight fallback the loader finds by name), and the scene key is (re)written **every** demo_up run, default `sensor`, so ref mode cannot leak into a later session. The bench page's model gains `MEAS_FPS` — measured delivered fps per mode — and **provenance rides the model**: each prediction labels itself `measured` / `measured @q50, q-scaled` / `extrapolated` from whether its mode has a measured entry, so the label can never drift from the arithmetic. **HD in ref mode is refused outright** after matrix run 5 hard-faulted the board at the HD transition (trace ends mid-line, no exit record — the D15/S18 crash class); QVGA/VGA ref ran clean across four runs, and `scene=sensor` HD is not guarded. | The matrix exists to replace extrapolation with measurement, so its instrument must not be able to lie: the tripwire (first still must land reef-sized bytes, ~9.2 KB vs ~3.9 dark), the refusal-over-fallback rule, and sidecar+SOF verification are all the same principle — the artifact is the authority. Keeping the sensor in the loop in ref mode is what makes the stream numbers transferable to a real deployment: capture cadence, re-init hazards and publish behaviour are the real pipeline's, only the scene is standardised. The HD-ref guard ships instead of a fix because the mechanism is unestablished (suspect: the 1–2 MB ref-image heap load against the HE-pinned allocator) and the bench must stay safe from a web click meanwhile — the finding is filed, not silently absorbed. |
 
 ## Verified-facts ledger
 
@@ -1707,3 +1708,79 @@ separate those two effects. Bite 2 separates them properly — the last
 acceptance row above has the HP deliberately not draining and still
 delivers 26/26, which is the evidence that the HE-side fix is the load-
 bearing one.
+
+### S18 reef-matrix detail (2026-08-18) — the measured table, and what stopped the rest
+
+**Setup:** bridge `84f34aba…` (the 20 s B2 build + ref-scene source),
+`scene: ref`, raw BMP/PGM assets on `/flash/ref_scene/`, chain under
+systemd units, driver `bench/s18_matrix.py` on nereus001 (row isolation:
+stop + proven-quiescence before every row; every wait polls status +
+cam-status at 2 s — keep-alive and liveness). Five runs, four recovery
+cycles; every number below is sidecar/SOF-verified or receiver-ledger
+truth, with the run's JSON in `~/bench_captures/matrix_*.json` and
+bridge traces preserved under `~/bridge_traces/` on nereus000.
+
+**Stills (reef reference P7071008, on-chain, bytes exact):**
+
+| Mode | q | bytes | chunks | vs S0 encode table | runs |
+|---|---|---|---|---|---|
+| QVGA color | 50 | 9,198 | 7 | 9,198 — **exact** | 2,3,4,5 |
+| QVGA color | 35 | 7,097 | 6 | (q-curve point) | 1–4 |
+| QVGA color | 90 | 28,819 | 21 | (q-curve point) | 1–4 |
+| QVGA mono | 50 | 7,536 | 6 | 7,536 — **exact** | 1,3,4 |
+| VGA color | 50 | 29,148 | 21 | 29,148 — **exact** | 3,4 |
+| VGA mono | 50 | 23,831 | 18 | 23,831 — **exact** | 3 |
+| HD (×3 rows) | — | NOT RUN | — | S0 values stand, 6/6 pattern-corroborated | — |
+
+The q-curve vs the page's `qFactor(q) = 1.95^((q−50)/22)`: measured q35
+runs **+18%** over the model, q90 **−7%** — the model stays, labelled,
+with that error band known.
+
+**Streams (delivered, receiver ledger, reef scene):**
+
+| Mode | cmd | delivered | ledger | runs |
+|---|---|---|---|---|
+| QVGA color q50 | 15 fps / 2.0 Mbps | **15.15 fps / 1.12 Mbps** | clean | 2,3 (+15.03 w/ 1 startup-race drop, 4) |
+| QVGA color q50 | 30 fps / 4.0 | **28.07 fps / 2.08 Mbps** | clean | 2 runs, identical |
+| VGA color q50 | 10 fps / 4.0 | **7.40 fps / 1.74 Mbps** | clean | 2 runs, identical |
+| VGA mono q50 | 15 fps | 9.5 fps in-bridge (trace) | **BROKE: 2,137 dropped / 20,436 gaps** | 3 |
+| QVGA mono q50 | 30 fps | — | **BROKE: 874 / 6,711** | 1 |
+| HD (both) | capped | NOT RUN (see findings) | — | — |
+
+**In-bridge encode, traced in the real pipeline** (corroborates S0
+within ~2%): QVGA color 20.1 ms · VGA color 78.5 ms avg · VGA mono
+31.6 ms avg. **The measured bridge derate is ~0.56–0.58** (28.07/49.8,
+7.40/12.7) — the page's old one-point extrapolation (0.295) was ~2×
+pessimistic, which the MEAS_FPS table now corrects for the measured
+modes.
+
+**Finding 1 — the HE flood wedge (mechanism traced).** Sustained
+camera publish above ~450–600 rpmsg msg/s first breaks the receiver
+ledger (chunk gaps), then the **HE wire task goes permanently silent**:
+trace `20260818T002807_…prev` shows `he2pi_frames` frozen at 45,146
+while `pi2he_frames` keeps advancing (the Pi querying into a mute HE).
+Boundary by evidence: 315 msg/s clean 4/4 (the 15 fps regression),
+466 msg/s clean 2/3, ≥513 msg/s fatal 3/3. NOT the B2 sensor race —
+re-inits after streams trace clean. Recovery: reboot nereus000 +
+demo_up (~4 min). This blocks every true mono-ceiling measurement.
+
+**Finding 2 — ref-mode HD hard-faults the board.** Run 5, fresh chain,
+zero streams: the transition into HD mono with `scene: ref` ended the
+trace mid-run with no exit record (the D15/S18 crash class; board
+reset). The discriminator (`scene=sensor`, same transition) survived
+and replied. Guarded in the bridge: **HD ref commands are refused**;
+suspect is the 1–2 MB ref-image heap load, unestablished.
+
+**Finding 3 — HD wedges the leg on the PublishGate bridge even in
+sensor mode.** The discriminator's HD capture was accepted (reply
+`res=hd pf=mono`, state ok) but no frame delivered and the leg was dead
+within ~60 s. Every previous on-chain HD success (C1 demo, bite D
+acceptance) predates the B2 bridge — **HD has never completed on any
+PublishGate build.** Owns the missing HD rows and the cert rung.
+
+**The B2 constant's answer:** the matrix session owed "20 s certified
+for daylight HD". The answer is worse than uncertified: **HD itself is
+currently unstable on this stack** (findings 2–3), so the certification
+rung could not run at all. `REINIT_MIN_QUIET_MS = 20000` keeps its
+"NOT a daylight-HD certification" comment, now with the reason
+recorded.
