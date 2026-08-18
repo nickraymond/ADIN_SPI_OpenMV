@@ -85,8 +85,14 @@ PLAN = [
     ("stream", "vga",  "color", 50,
      {"mbps": 4.0, "fps": 10, "secs": 60, "tag": "ceiling"}),
     ("still",  "vga",  "mono",  50, None),
+    # fps 8, not the encoder's ~15: run 3 measured the CHAIN's wedge
+    # boundary at roughly 500-600 rpmsg msg/s, and VGA mono at 15 fps
+    # commands ~810 (54 msgs/frame) — it broke the ledger (20,436 chunk
+    # gaps) and wedged the camera. 8 fps ≈ 430 msg/s stays under it; if
+    # it delivers a flat 8.0 the row reports a command-capped floor,
+    # not the encoder ceiling, and says so via the tag.
     ("stream", "vga",  "mono",  50,
-     {"mbps": 4.0, "fps": 15, "secs": 60, "tag": "ceiling"}),
+     {"mbps": 4.0, "fps": 8, "secs": 60, "tag": "ceiling-capped"}),
     ("still",  "hd",   "mono",  50, None),
     ("still",  "hd",   "mono",  90, None),
     ("stream", "hd",   "mono",  50,
