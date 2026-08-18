@@ -1,0 +1,14 @@
+diff --git a/docker/Makefile b/docker/Makefile
+index 144b9ec5..31c09d1d 100644
+--- a/docker/Makefile
++++ b/docker/Makefile
+@@ -112,6 +112,9 @@ build-firmware-dev: _check-sdk-dev build-image
+ 	docker run --rm \
+         --user $(shell id -u):$(shell id -g) \
+         -e HOME=/tmp \
++        -e GIT_CONFIG_COUNT=1 \
++        -e GIT_CONFIG_KEY_0=safe.directory \
++        -e GIT_CONFIG_VALUE_0='*' \
+         -e TARGET=$(TARGET) \
+         -e SDK_DIR=$(DEV_SDK_DIR) \
+         -w $(DEV_REPO_ROOT) \

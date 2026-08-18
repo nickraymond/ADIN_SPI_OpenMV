@@ -1,0 +1,87 @@
+diff --git a/lib/imlib/jpege.c b/lib/imlib/jpege.c
+index 714785ed..f7ab726d 100644
+--- a/lib/imlib/jpege.c
++++ b/lib/imlib/jpege.c
+@@ -28,6 +28,13 @@
+ #include "imlib.h"
+ #include "file_utils.h"
+ 
++// Helium/MVE fast path for the RGB565 -> YCbCr MCU conversion (integer
++// MVE is enough; guarded so non-MVE ports keep the scalar code).
++#if defined(__ARM_FEATURE_MVE) && (__ARM_FEATURE_MVE & 1)
++#include <arm_mve.h>
++#define JPEG_MVE_COLOR_CONVERT    (1)
++#endif
++
+ // Expand 4 bits to 32 for binary to grayscale - process 4 pixels at a time
+ #if (OMV_JPEG_CODEC_ENABLE == 1)
+ #define JPEG_BINARY_0              0x00
+@@ -164,6 +171,68 @@ void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int dy,
+                 memset(CR, 0, JPEG_444_GS_MCU_SIZE);
+             }
+ 
++            #if defined(JPEG_MVE_COLOR_CONVERT)
++            if (dx == JPEG_MCU_W) {
++                // Full-width MCU rows: 8 RGB565 pixels per iteration.
++                // Arithmetic is BIT-IDENTICAL to the scalar SWAR below
++                // (same coefficients, same shifts, same low-8-bit
++                // truncation on store), so the encoded bytes must match
++                // the scalar build exactly -- that identity is the
++                // acceptance test for this patch.
++                for (int y = y_offset, yy = y + dy; y < yy; y++) {
++                    uint16_t *rp16 =
++                        (uint16_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
++                    uint16x8_t p = vld1q_u16(rp16);
++
++                    // r8 = ((p >> 8) & 0xf8) | (p >> 13)          [<= 0xff]
++                    // g8 = ((p >> 3) & 0xfc) | ((p >> 9) & 0x3)
++                    // b8 = ((p << 3) & 0xf8) | ((p >> 2) & 0x7)
++                    int16x8_t r8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshrq_n_u16(p, 8), vdupq_n_u16(0xf8)),
++                                  vshrq_n_u16(p, 13)));
++                    int16x8_t g8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshrq_n_u16(p, 3), vdupq_n_u16(0xfc)),
++                                  vandq_u16(vshrq_n_u16(p, 9), vdupq_n_u16(0x3))));
++                    int16x8_t b8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshlq_n_u16(p, 3), vdupq_n_u16(0xf8)),
++                                  vandq_u16(vshrq_n_u16(p, 2), vdupq_n_u16(0x7))));
++
++                    // y = (38r + 75g + 15b) >> 7; max sum 32,044 fits s16.
++                    int16x8_t yv = vmulq_n_s16(r8, 38);
++                    yv = vmlaq_n_s16(yv, g8, 75);
++                    yv = vmlaq_n_s16(yv, b8, 15);
++                    yv = vshrq_n_s16(yv, 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 0)
++                    yv = veorq_s16(yv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(Y0, yv);
++
++                    // u = (64b - (21r + 43g)) >> 7; |.| <= 16,044 fits s16.
++                    int16x8_t t = vmulq_n_s16(r8, 21);
++                    t = vmlaq_n_s16(t, g8, 43);
++                    int16x8_t uv = vshrq_n_s16(vsubq_s16(vmulq_n_s16(b8, 64), t), 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 1)
++                    uv = veorq_s16(uv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(CB, uv);
++
++                    // v = (64r - (54g + 10b)) >> 7; |.| <= 16,088 fits s16.
++                    t = vmulq_n_s16(g8, 54);
++                    t = vmlaq_n_s16(t, b8, 10);
++                    int16x8_t vv = vshrq_n_s16(vsubq_s16(vmulq_n_s16(r8, 64), t), 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 1)
++                    vv = veorq_s16(vv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(CR, vv);
++
++                    Y0 += JPEG_MCU_W;
++                    CB += JPEG_MCU_W;
++                    CR += JPEG_MCU_W;
++                }
++                break;
++            }
++            #endif // JPEG_MVE_COLOR_CONVERT
++
+             for (int y = y_offset, yy = y + dy, index = 0; y < yy; y++) {
+                 uint32_t *rp = (uint32_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
+ 
