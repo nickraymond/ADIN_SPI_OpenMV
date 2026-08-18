@@ -1,7 +1,20 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 latest+1 (**S22 bite 1 nibbles 1–3 DONE — the
+*Last updated: 2026-08-18 latest+2 (**NEW SPRINT S23 — ENCODER FAST
+PATH — RUNS NEXT (Nick, D42).** PRs #38 + #39 MERGED (+ #40 catch-up
+pending: a merge-ordering artifact stranded the bite-1b commits on the
+sprint branch — it is exactly those commits, no new work). Nick's
+targets: **VGA color q50 ≥ 15 fps and HD mono ≥ 5–6 fps delivered,
+then push to the hardware's true max**. Route measured in the S22
+window: bite 0 = ship 4:2:0-at-q50 (one kwarg, ~14% encode) · bite 1 =
+MVE/Helium-vectorize jpege (the big lever, 2–4×) · bite 2 = C publish
+path (kill the ~2 ms/KB tax) · bite 3 = re-measure ceilings. Execution
+order now **S23 → S21 (CV) → S20 (light)**; S22 leftovers (bite 1b
+fork instrumentation — Nick's push; PR #38 demo) interleave. Side-door
+key INSTALLED (Tailscale outages no longer block the bench). Kickoff
+prompt: PROMPTS.md §S23. Previous:*
+*2026-08-18 latest+1 (**S22 bite 1 nibbles 1–3 DONE — the
 HE flood wedge was a u16 vring-index wrap at message 65,536 in
 `rr_poll_n`, fixed with ONE cast (D40).** ELF `fea65304…` on the bench;
 10-min QVGA color soak 28.23 fps ledger-exact at the exact rate+duration
@@ -1300,6 +1313,11 @@ that basis. Prove the whole path or claim nothing.
 > really a product offering yet" — and CV is the product; the two
 > S22 bites come first because CV development wants a camera that
 > cannot be wedged and honest fps headroom numbers.
+>
+> **UPDATED same day (Nick, D42), after S22 delivered the fix and the
+> encoder numbers: S23 (encoder fast path) → S21 (CV) → S20 (light).**
+> S22's leftovers (bite 1b fork instrumentation, PR #38 demo)
+> interleave; they do not gate S23.
 
 ### S20 — Light intelligence (stub — was S19 in D30)  *(DELAYED behind S21 — Nick 2026-08-18, D39)*
 Camera self-detects dark scenes (HP luma stats) → camera node issues
@@ -1436,6 +1454,63 @@ and a measured answer on how much fps headroom the encode path has.
       follow-on bites only if a candidate clears the product bar.
 **Needs:** S18 closed enough to free the bench (D2 can interleave);
 no new hardware.
+
+### S23 — Encoder fast path: push delivered fps to the hardware's limit  `[ ]`  ← **NEXT (Nick, 2026-08-18 — D42)**
+**Goal:** VGA color q50 ≥ **15 fps** and HD mono ≥ **5–6 fps**
+delivered through the chain, ledger-exact — then find and record the
+true max fps per mode. The S22 window measured the route
+(DESIGN §S22 detail): `delivered ≈ 1000 / (enc_ms + ~2 ms/KB publish
+tax + capture)`; today VGA color = 7.41 (77 ms enc + 58 ms tax),
+HD mono = 3.10 (118 + 204 incl. 33 ms single-fb capture). HD color
+≥5 is OFF the table on this SoC (no hardware codec — vendor-verified,
+SPEC). Facts base: enc matrix (`bench/probes/s22_enc_matrix.py` — the
+acceptance instrument for every encoder bite), measured ceilings
+(`bench/s22_ceiling_rows.py`), D23/D24 build loop, sticky-fb patch
+precedent for repo-carried firmware patches.
+- [ ] **Bite 0 — ship 4:2:0 at q50 (cheap, immediate).** One
+      `to_jpeg(subsampling=...)` kwarg in the bridge encode call
+      (bm_bridge.py:1093) + host tests + a page-model/bytes note
+      (bytes drop ~7%, so chunk predictions shift). Measured buy:
+      color encode −14% (VGA 77.0→66.4 ms, HD 300.7→258.5), delivered
+      VGA color 7.4→~8. Acceptance: enc-matrix rows reproduce; one
+      on-chain VGA color ceiling row re-run; MEAS_FPS/provenance
+      updated. Decision recorded: refusal-vs-quality trade is Nick's
+      to eyeball once on the reef refs (4:2:0 chroma cost at q50).
+- [ ] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
+      lever).** jpege.c is plain C; `+mve.fp` is already in the Alif
+      port CFLAGS. Ships as a repo-carried openmv patch (sticky-fb
+      pattern, `firmware/openmv_patches/`), built via D23/D24,
+      S7-ladder flashed byte-verified, stock rollback kept. Order
+      inside the bite: (a) color-convert vectorization first (cheapest
+      ~30–40%), measure; (b) DCT second, measure; golden-image
+      regression (byte-exact where the algorithm is unchanged, PSNR
+      bound where rounding differs) BEFORE any on-chain use. Target:
+      ≥2× color encode (VGA 66→~30 ms, HD mono 118→~55). Gate: if (a)
+      lands <1.5× alone, STOP and re-plan with Nick before investing
+      in (b). Off-chain acceptance = the enc matrix on the patched
+      build; risk = SIMD correctness, contained by the golden tests.
+- [ ] **Bite 2 — C publish path (kill the tax).** Move the per-frame
+      chunk/publish CPU out of MicroPython: C-side capture→encode→
+      chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop
+      precedents). Target: tax ~2 → ≤0.5 ms/KB. Measured first
+      (profile WHERE the 2 ms/KB goes: chunk assembly vs ept.send vs
+      framing) — the bite may shrink to a C helper for the hot loop
+      only. Acceptance: ledger-exact streams at the new rates;
+      regression 15 fps QVGA untouched.
+- [ ] **Bite 3 — re-measure everything and raise the truth.** Full
+      ceiling rows + 10-min soaks at the new maxes (`s22_ceiling_rows`
+      + new max-rate rows), MEAS_FPS + guardrail envelope re-derived,
+      page provenance flipped. **Targets check: VGA color ≥15, HD
+      mono ≥5–6 — the sprint's pass/fail line.**
+**Demo (Nick):** bench page → VGA color q50 stream commanded 15+ fps →
+the pill shows ≥15 delivered, ledger exact · `capture 90 hd mono`-class
+HD mono stream ≥5 fps · the enc-matrix table re-printed on the patched
+build next to S22's baseline.
+**Interleaves:** S22 bite 1b fork instrumentation (Nick's push) — at
+S23's HD-mono rates the frames stay q50-sized (55 chunks, measured
+clean), so the burst defect does not block the targets; it still owes
+the q90-class stills rung. **Needs:** Mac docker loop, bench; no new
+hardware.
 
 ---
 
