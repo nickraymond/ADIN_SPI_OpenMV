@@ -85,9 +85,12 @@ PF_OK = ("color", "mono")
 # model; conservative for darker scenes, which is the right side to miss
 # on). Refusal beats clamping (D31): silently substituting a lower rate
 # would invalidate the comparison the operator believes they are running.
-REEF_BYTES_Q50 = {("qvga", "color"): 9198, ("qvga", "mono"): 7536,
-                  ("vga", "color"): 29148, ("vga", "mono"): 23831,
-                  ("hd", "color"): 93253, ("hd", "mono"): 75324}
+# Color rows = forced 4:2:0 (S23 bite 0: the bridge passes
+# subsampling=420 on every color encode; s22_enc_matrix reef numbers).
+# MUST match bench.html's MEAS bytes -- the two models cannot disagree.
+REEF_BYTES_Q50 = {("qvga", "color"): 8728, ("qvga", "mono"): 7536,
+                  ("vga", "color"): 27021, ("vga", "mono"): 23831,
+                  ("hd", "color"): 86120, ("hd", "mono"): 75324}
 CHUNK_DATA_MAX = 1390        # payload_max 1400 minus the 10 B chunk header
 MSGS_PER_CHUNK = 3           # ceil(1400 / 492): the rpmsg budget (REV-28)
 # S22 bite 1 (2026-08-18): the old 315 msg/s wedge boundary was a u16

@@ -848,6 +848,7 @@ class CaptureEngine:
         self.cur_res = None         # geometry the sensor is actually holding
         self.cur_pf = None          # (None = unknown -> next cmd re-applies)
         self.q = CAP_DEFAULT_Q
+        self.enc_420 = False        # force 4:2:0 chroma (color only, S23)
         self.interval_ms = 100
         self.rate_bps = 0
         self.payload_max = CAMERA_MAX_PAYLOAD
@@ -1058,6 +1059,12 @@ class CaptureEngine:
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
         self.q = cmd["q"]
+        # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
+        # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
+        # refs (s22_enc_matrix). Mono NEVER gets the kwarg -- the encoder
+        # has no subsampling knob for grayscale and forcing one there is
+        # unmeasured territory.
+        self.enc_420 = (pf == CAMERA_PF_COLOR)
         self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
         self.rate_bps = cmd["rate_bps"]
         self.payload_max = cmd["payload_max"]
@@ -1101,7 +1108,12 @@ class CaptureEngine:
                 return None          # command() refused; belt and braces
             img = self.ref_img
         t0 = _ticks_us()
-        jpg = img.to_jpeg(quality=self.q, copy=True)
+        if self.enc_420:
+            import image
+            jpg = img.to_jpeg(quality=self.q, copy=True,
+                              subsampling=image.JPEG_SUBSAMPLING_420)
+        else:
+            jpg = img.to_jpeg(quality=self.q, copy=True)
         self.enc_us += _elapsed(t0, _ticks_us())
         self.enc_frames += 1
         b = jpg.bytearray()          # proven idiom (s6_video_tx.py)

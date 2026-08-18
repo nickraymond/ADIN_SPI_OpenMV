@@ -457,10 +457,15 @@ class _FakeJpeg:
         return self._tag
 
 
+_NO_SUB = object()   # sentinel: to_jpeg called WITHOUT a subsampling kwarg
+_enc_calls = []      # (quality, subsampling-or-_NO_SUB) per to_jpeg call
+
+
 class _FakeImg:
     def __init__(self, tag):
         self.tag = tag
-    def to_jpeg(self, quality=50, copy=True):
+    def to_jpeg(self, quality=50, copy=True, **kw):
+        _enc_calls.append((quality, kw.get("subsampling", _NO_SUB)))
         return _FakeJpeg(b"jpeg-of-" + self.tag)
 
 
@@ -488,6 +493,7 @@ class _FakeSensor:
 
 class _FakeImageMod:
     """image module whose Image() succeeds only for `available` names."""
+    JPEG_SUBSAMPLING_420 = 420420   # sentinel; the bridge must pass THIS
     loads = 0
     available = ()
     def Image(self, path):
@@ -517,6 +523,18 @@ check(eng.mode == CAMERA_MODE_SINGLE, "sensor mode: command accepted")
 check(eng.poll(0) == b"jpeg-of-live", "sensor mode: encodes the live scene")
 check(eng.enc_frames == 1, "encode accounting counts the frame")
 
+# 1b. S23 bite 0: every COLOR encode forces 4:2:0; a MONO encode never
+#     gets the kwarg (grayscale has no subsampling knob -- passing one
+#     there is unmeasured territory, s22_enc_matrix skipped it too).
+check(_enc_calls[-1] == (50, _FakeImageMod.JPEG_SUBSAMPLING_420),
+      "S23: color encode passes subsampling=420")
+_s23_mono = dict(_cmd)
+_s23_mono["pf"] = CAMERA_PF_MONO
+eng.command(_s23_mono)
+check(eng.poll(0) == b"jpeg-of-live", "S23: mono command still encodes")
+check(_enc_calls[-1] == (50, _NO_SUB),
+      "S23: mono encode carries NO subsampling kwarg")
+
 # 2. ref mode with no asset staged: command REFUSED, mode stays STOP.
 _FakeImageMod.available = ()
 eng = bm_bridge.CaptureEngine(scene="ref")
@@ -538,6 +556,8 @@ eng.command(dict(_cmd))
 check(eng.mode == CAMERA_MODE_SINGLE, "ref mode: staged asset accepted")
 check(eng.poll(0) == b"jpeg-of-ref_color_320x200.bmp",
       "ref mode: encodes the reference, not the live scene")
+check(_enc_calls[-1][1] == _FakeImageMod.JPEG_SUBSAMPLING_420,
+      "S23: ref color encode passes subsampling=420 too")
 
 # 4. JPEG fallback: raw missing, .jpg staged -> loads the .jpg.
 _FakeImageMod.available = ("ref_color_320x200.jpg",)

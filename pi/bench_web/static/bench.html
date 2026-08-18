@@ -445,10 +445,13 @@ const RES = {
 };
 const RES_BY_CMD = { qvga: 1, vga: 2, hd: 3 };
 // Reef reference P7071008 @ q50: [bytes/frame, encode ms] measured per mode.
+// Color rows are the FORCED-4:2:0 numbers (S23 bite 0 -- the bridge now
+// passes subsampling=420 on every color encode; s22_enc_matrix measured
+// -14% encode / -7% bytes vs the old auto=4:2:2). Mono unchanged.
 const MEAS = {
-  1: { color: [9198, 19.7],   mono: [7536, 8.3]    },
-  2: { color: [29148, 76.7],  mono: [23831, 31.1]  },
-  3: { color: [93253, 299.2], mono: [75324, 117.6] },
+  1: { color: [8728, 17.5],   mono: [7536, 8.3]    },
+  2: { color: [27021, 66.4],  mono: [23831, 31.1]  },
+  3: { color: [86120, 258.5], mono: [75324, 117.6] },
 };
 // MEASURED delivered fps at q50 per mode — reef reference scene through
 // the whole chain, receiver-ledger truth, ledger clean. Ceilings
@@ -460,6 +463,9 @@ const MEAS = {
 // QVGA mono 30.30 (sensor-cadence-capped), VGA mono 13.27 @ ~717 msg/s,
 // HD mono 3.10 @ 6 commanded (186 frames, exact). HD color stays null:
 // its ceiling run is owed (expected ~1.5-2 fps, encoder-bound).
+// S23 bite 0 (forced 4:2:0 color): the color numbers below are
+// PRE-4:2:0 FLOORS (encode only got faster; bite 3 re-measures all).
+// VGA color gets re-measured first, in this bite's ceiling row.
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
   2: { color: 7.41,  mono: 13.27 },
