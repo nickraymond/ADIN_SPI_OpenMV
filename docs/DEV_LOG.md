@@ -17,6 +17,56 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-18 — Sprint S23 — bite 2: the tax was per-MESSAGE and then per-DRAIN — rpmsg 1544 shipped (wire shape proven), one-copy assembly, 9.50 fps; C-path remainder judged not worth it
+
+**Branch:** `sprint/23-encoder-fastpath`. Nick's gate: bite 2 before
+the DCT (the 1a stop-gate re-plan).
+
+**Profile (permanent bridge counters cap_asm_us/cap_send_us/cap_msgs):**
+VGA color 110.7 ms/frame split: enc 51.2 · send loop 33.4 (566 µs ×
+59 msgs) · snapshot cadence wait ~19 · assembly 5.4 · misc ~2. The
+"~2 ms/KB tax" was never per-KB.
+
+**Shipped + measured (each step its own 60 s row, ledger exact):**
+- **rpmsg buffers 512→1544 ×16** (he_spike.h + micropython submodule
+  patch `0004-micropython-rpmsg-1544.patch`; MSG_PAYLOAD 1524;
+  CHUNK_DRAIN_EVERY 1; MSGS_PER_CHUNK 1; SAFE_STREAM_MSGS 400 = the
+  old byte envelope). Pool fits the unchanged 64 KB SHM (2×16×1544 =
+  49,408 of 56,320). Mismatch-safe by construction (rr_send checks
+  each descriptor's capacity; RX is length-driven) — verified from
+  source, not assumed. HP fw `70ef9e0f…` flashed byte-verified (label
+  now `11852aa3d0-dirty`, fingerprinting the submodule edit); ELF
+  `fbe74b80…` staged sha-verified; old-budget frag coverage kept in
+  tests (a 492 B sender must still reassemble byte-exact).
+  **Wire shape PROVEN: cap_msgs 11,000 == cap_chunks 11,000.**
+  **Result honest and negative: +0.14 fps.** Per-msg wall time
+  tripled to 1.45 ms — the send loop is DRAIN-bound (HP blocks on the
+  HE/relay pace), the per-message-overhead model is falsified.
+- **One-copy assembly** (pack_into single bytearray per message,
+  legacy spill path kept): asm 7.1→~3 ms. **9.50 fps, 570 frames,
+  pub_ok 11,400 = 570×20 EXACT.**
+
+**Sprint ladder:** 7.41 → 7.93 (4:2:0) → 9.03 (MVE conv) → **9.50**.
+**Bite verdict:** the C-path's remaining target is ~3 ms of python —
+not worth the firmware surface. Remaining VGA color budget ≈ 105 ms =
+enc 51 + drain 28 + snapshot 19 + asm 3 + misc 4. **Route to 15:
+DCT vectorization (−21) then capture/encode overlap (re-opens D21's
+"cannot overlap" claim with today's stack).** HD mono target likely
+clears with DCT/luma alone (encoder is 118 of its 323 ms).
+
+**Ops note:** one demo_up ran against a stale nereus000 checkout and
+silently staged the OLD bridge — caught by the sha line (`e721a944` ≠
+expected). Pull before demo_up, always check the sha it prints.
+
+**Bench state:** chain UP under units, scene=ref, rpmsg-1544 stack
+live (fw `70ef9e0f…`, ELF `fbe74b80…`, bridge `4ede5fb1…`), bench-web
+serving 9.50. Suites: bridge 294, bm_he 256, he_spike 69, bench_web 81.
+
+**Next:** bite 1b (DCT MVE, golden harness ready) → overlap
+exploration → bite 3 re-measure + guardrail re-derivation.
+
+---
+
 ## 2026-08-18 — Sprint S23 — bite 1a: MVE color convert golden-passed byte-identical, VGA color 7.93→9.03 fps; STOPPED at the 1.5× gate with the re-plan
 
 **Branch:** `sprint/23-encoder-fastpath` (continues the bite-0 session).

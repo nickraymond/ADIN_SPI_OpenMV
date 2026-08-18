@@ -1542,7 +1542,7 @@ precedent for repo-carried firmware patches.
       the DCT; recommendation = bite 2 (C publish path, the 58 ms
       lever, helps mono too) BEFORE (b) (the 46 ms lever, color only
       at VGA). (b) waits on Nick's order call.**
-- [ ] **Bite 2 — C publish path (kill the tax).** Move the per-frame
+- [~] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop
       precedents). Target: tax ~2 → ≤0.5 ms/KB. Measured first
@@ -1550,6 +1550,34 @@ precedent for repo-carried firmware patches.
       framing) — the bite may shrink to a C helper for the hot loop
       only. Acceptance: ledger-exact streams at the new rates;
       regression 15 fps QVGA untouched.
+      → **RUN 2026-08-18 (Nick's go, sequenced BEFORE the DCT — the
+      1a stop-gate re-plan). Profile first (bridge cap_asm_us/
+      cap_send_us/cap_msgs counters, now permanent): the "2 ms/KB" was
+      per-MESSAGE (~0.57 ms × 59 msgs/frame at VGA color), plus a
+      ~19 ms sensor-cadence wait inside snapshot().** Shipped, all
+      measured on-chain (60 s rows, ledger exact):
+      (1) **one rpmsg message per chunk** — buffers 512→1544 ×16
+      (he_spike.h + micropython patch `0004`; pool arithmetic fits the
+      unchanged 64 KB SHM; rr_send's per-descriptor capacity check
+      makes ELF/host mismatch degrade loudly, never corrupt);
+      MSG_PAYLOAD 492→1524, CHUNK_DRAIN_EVERY 3→1, MSGS_PER_CHUNK
+      3→1, SAFE_STREAM_MSGS 1200→400 (same byte envelope; bite 3
+      re-derives). Wire shape proven: cap_msgs == cap_chunks exactly.
+      HP fw `70ef9e0f…` + ELF `fbe74b80…` flashed/staged byte-verified.
+      **Honest result: only +0.14 fps — the send loop is DRAIN-bound
+      (per-msg wall time tripled to 1.45 ms; the HP blocks on the HE/
+      relay pace), falsifying the per-message-overhead model.**
+      (2) **one-copy chunk assembly** (pack_into, no intermediate
+      payload objects): asm 7.1→~3 ms/frame. **Ceiling row: 9.50 fps
+      delivered, 570 frames/60 s, pub_ok 11,400 = 570×20 EXACT.**
+      Sprint ladder so far: 7.41 → 7.93 (bite 0) → 9.03 (1a) →
+      **9.50**. Remaining frame budget at VGA color ≈ 105 ms: enc 51
+      + send/drain ~28 + snapshot ~19 + asm ~3 + misc ~4. **The
+      C-path's remainder (moving the loop to C) attacks only the
+      ~3 ms python residue — NOT worth it; the real remaining levers are
+      the DCT (bite 1b, −21 ms) and capture/encode overlap (the
+      snapshot wait + drain interleave, re-opens D21). Re-planned
+      route to 15: DCT → ~12 fps, then overlap → 15+.**
 - [ ] **Bite 3 — re-measure everything and raise the truth.** Full
       ceiling rows + 10-min soaks at the new maxes (`s22_ceiling_rows`
       + new max-rate rows), MEAS_FPS + guardrail envelope re-derived,

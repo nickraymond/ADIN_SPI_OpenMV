@@ -473,11 +473,13 @@ const MEAS = {
 // exact, 20 chunks/frame; was 7.41 on 4:2:2 — the 10-min soak lands in
 // bite 3). QVGA + HD color are PRE-4:2:0 FLOORS (encode only got
 // faster; bite 3 re-measures them).
-// S23 bite 1a (MVE color convert, golden-passed): VGA color re-measured
-// 7.93 -> 9.03 (60 s row, 542 frames, pub ledger exact to the byte).
+// S23 measured ladder for VGA color (60 s rows, ledger exact): 7.41
+// (4:2:2 baseline) -> 7.93 (bite 0, forced 4:2:0) -> 9.03 (bite 1a,
+// MVE color convert) -> 9.50 (bite 2, one rpmsg msg/chunk + one-copy
+// assembly; 570 frames, pub_ok 11,400 = 570 x 20 exact).
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
-  2: { color: 9.03,  mono: 13.27 },
+  2: { color: 9.50,  mono: 13.27 },
   3: { color: null,  mono: 3.10 },
 };
 

@@ -642,7 +642,7 @@ class TestPage(unittest.TestCase):
         self.assertIn("28.23", block)
         # VGA color re-measured on the S23 MVE build (7.41 on 4:2:2,
         # 7.93 on 4:2:0 scalar, 9.03 on 4:2:0 + Helium color convert)
-        self.assertIn("9.03", block)
+        self.assertIn("9.50", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
         self.assertIn("3.10", block)
