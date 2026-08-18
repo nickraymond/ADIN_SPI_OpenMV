@@ -1,7 +1,21 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 (**S18 reef-matrix bite: nibbles 1–3 done, PR
+*Last updated: 2026-08-18 late (**S18 bite B4 HD-stability: nibbles 1–3
+done, PR opening.** HD root-caused to an OpenMV firmware defect
+(per-resize framebuffer free+malloc degrades under a resident HE core),
+FIXED by the sticky-fb patch (flashed, byte-verified, soak 40/40 vs
+fail-at-#22 stock), and measured: HD stills byte-exact through the
+chain (75,324 / 93,253 B), **B2's 20 s constant HD-CERTIFIED (cert rung
+20.02 s)**, first HD stream numbers (ref HD mono 1.50 fps / 0.91 Mbps
+exact; sensor HD color ~1.4 fps = S19 bite 4's number; VGA mono
+4.98 fps clean). HD-ref guard lifted on measurement; guard-order bug
+fixed (+ tests). Two artifact-evidenced follow-ups fenced: ≥ ~83-chunk
+single-frame bursts lose chunks in the relay (finding 1's bite) and
+ref-HD-color reloads fail on fragmented heaps (preload mini-bite).
+Bench healthy, chain up under units, scene=sensor. See bite B4.
+Previous:*
+*2026-08-18 (**S18 reef-matrix bite: nibbles 1–3 done, PR
 pending.** Branch `sprint/18-bench-matrix`. The bench page's model is
 now MEASURED for QVGA/VGA: all six non-HD stills land **byte-identical
 to S0's reef encode table** through the real chain; streams measured
@@ -810,6 +824,41 @@ the nodes are systemd units. Do the harness before the features.)*
       fault — bridge now REFUSES HD ref, guard tested; sensor-mode leg
       wedge; **HD has never completed on any post-B2 build**).
       **Remaining: nibble 4 (PR).**
+- [~] **Bite B4 — HD stability (branch `sprint/18-hd-stability`,
+      2026-08-18). NIBBLES 1–3 DONE — root-caused, FIXED in firmware,
+      certified and measured end to end; remaining: nibble 4 (PR).**
+      Nibble 1 (five probes G–G5, `bench/probes/s18_hd_gate_probe*`):
+      matrix findings 2+3 were ONE fault — **sensor transitions degrade
+      the board only while the HE core is resident** (no-HE control
+      52/52; HE-resident died at #10/#22 with zero traffic; publish/
+      barrier/HD/mono/grow each exonerated; in-session heal 0/6) —
+      source-corroborated to OpenMV's per-resize framebuffer
+      free+malloc (framebuffer.c:158). Also closed from source: the
+      PAG7936 ladder is exactly QVGA/VGA/HD — nothing between VGA and
+      HD exists (pag7936.c:691,933–940). Nibbles 2–3 (Nick: plan A,
+      shape A2, guard-until-measured, upstream HELD): **sticky-fb
+      firmware patch** (`firmware/openmv_patches/`, +9/−1) built via
+      D23/D24 at `7d4dbf7`+patch, S7-ladder flashed byte-verified
+      (rollback = `~/fw/development/`); **G3 soak 40/40 HE-loaded**
+      (stock died at #22); bridge `df82aa70…` = refusals hoisted above
+      the re-init (order bug) + HD-ref guard lifted on probe G6's
+      measurement (both HD refs load+encode, HE resident); host suite
+      436→**444**, negative control proves the new tests catch the old
+      order. **On-chain: `capture 50 hd color`/`hd mono` ×3 each,
+      SOF-verified, ledger exact — HD's first completions on a
+      PublishGate build. Matrix HD stills byte-exact (mono 75,324 B /
+      color 93,253 B vs the in-bridge encode); B2 CERT RUNG PASS
+      (20.02 s) — the 20 s constant is HD-certified; first HD stream
+      numbers: ref HD mono 1.50 fps / 0.91 Mbps ledger-exact, sensor
+      HD color ~1.4 fps (S19 bite 4's number), VGA mono 4.98 fps
+      clean.** Fenced to other bites, artifact-evidenced: HD q90-class
+      bursts (≥ ~83 chunks/frame) lose chunks in the relay (finding 1);
+      ref-mode HD-color reloads need 2 MB contiguous MP heap and fail
+      in long sessions (fix candidate: preload refs at bridge boot).
+      Page MEAS_FPS for HD deferred deliberately — the measured HD
+      streams are FLOORS and the page model has no floor label yet.
+      Session detail: DEV_LOG ×2 entries, SPEC §Open questions
+      (resolution + ladder), DESIGN D38.
 - [ ] **Bite C — NEXT (Nick, 2026-08-16). The page comes before the
       re-init fix.** Checked for a real blocker and there is none: the
       control socket bite C talks to is deployed and answering, and
