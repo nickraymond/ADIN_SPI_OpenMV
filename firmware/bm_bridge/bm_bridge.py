@@ -217,6 +217,10 @@ class BridgeCore:
             "unknown_cmds": 0,
             "cap_frames": 0, "cap_bytes": 0,         # JPEGs chunked (S17)
             "cap_chunks": 0,                         # WCMD_PUB payloads sent
+            # S23 bite 2 profile: WHERE the ~2 ms/KB publish tax goes.
+            # asm = capture_pub_msgs (python chunk/msg assembly),
+            # send = send_chunk_msgs (ept.send + interleaved pump).
+            "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0,
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -1349,9 +1353,15 @@ def main():
             jpeg = engine.poll(now) if pending_cmd is None else None
             if jpeg is not None:
                 idle = False
+                t0 = _ticks_us()
                 msgs = core.capture_pub_msgs(jpeg, engine.caps - 1,
                                              engine.payload_max)
+                t1 = _ticks_us()
                 send_chunk_msgs(msgs, he.send, pump_he_to_pi)
+                t2 = _ticks_us()
+                core.stats["cap_asm_us"] += _elapsed(t0, t1)
+                core.stats["cap_send_us"] += _elapsed(t1, t2)
+                core.stats["cap_msgs"] += len(msgs)
                 gate.note_chunks(len(msgs), now)
             if core.status is not None and core.status_seq != last_status_seq:
                 last_status_seq = core.status_seq
