@@ -227,6 +227,20 @@ class BridgeCore:
             # asm = capture_pub_msgs (python chunk/msg assembly),
             # send = send_chunk_msgs (ept.send + interleaved pump).
             "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0,
+            # S23 relay-leg profile: cap_send_us split three ways.
+            # ept = blocked in ept.send (rpmsg HP->HE); pump = the
+            # interleaved drain inside the send window; the remainder
+            # of cap_send_us is loop overhead. ept_slow counts sends
+            # over 1 ms -- a vring-full wait quantized to a ms poll
+            # shows up here as count x ~1000 us.
+            "cap_ept_us": 0, "cap_ept_max_us": 0, "cap_ept_slow": 0,
+            "cap_pump_us": 0,
+            # VCP write meter, GLOBAL (send-window and main-loop drains
+            # both land here): time inside usb.write vs bytes moved is
+            # the drain path's real throughput; pump batch stats say
+            # whether HE returns trickle (batch ~1) or burst.
+            "vcp_us": 0, "vcp_max_us": 0, "vcp_writes": 0, "vcp_bytes": 0,
+            "pump_calls": 0, "pump_msgs": 0, "pump_batch_max": 0,
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -412,7 +426,7 @@ class BridgeCore:
         return struct.pack("<BBH", WCMD_PING, 0, len(body)) + body
 
 
-def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY):
+def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY, stats=None):
     """Push one frame's WCMD_PUB messages, servicing the HE->HP direction
     every `every` messages. Returns the number of drain calls made.
 
@@ -423,15 +437,38 @@ def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY):
     is not draining `he.queue` meanwhile would stall both directions
     until the 1 s send timeout expires -- costing rpmsg drops and a
     broken frame. Draining as we push removes that.
+
+    With `stats` (S23 relay profile), each send and each drain is timed
+    into cap_ept_us / cap_pump_us so cap_send_us stops being a lump.
     """
     drains = 0
     for i, m in enumerate(msgs):
-        send(m)
+        if stats is None:
+            send(m)
+        else:
+            t0 = _ticks_us()
+            send(m)
+            dt = _elapsed(t0, _ticks_us())
+            stats["cap_ept_us"] += dt
+            if dt > stats["cap_ept_max_us"]:
+                stats["cap_ept_max_us"] = dt
+            if dt > 1000:
+                stats["cap_ept_slow"] += 1
         if every and (i + 1) % every == 0:
-            drain()
+            if stats is None:
+                drain()
+            else:
+                t0 = _ticks_us()
+                drain()
+                stats["cap_pump_us"] += _elapsed(t0, _ticks_us())
             drains += 1
     if not every or not msgs or len(msgs) % every:
-        drain()          # always finish on a drain
+        if stats is None:
+            drain()      # always finish on a drain
+        else:
+            t0 = _ticks_us()
+            drain()
+            stats["cap_pump_us"] += _elapsed(t0, _ticks_us())
         drains += 1
     return drains
 
@@ -502,12 +539,13 @@ def _dump_he_ring(tag):
 class UsbVcp:
     """USB CDC via the console streams (pattern: s14_relay_pump.py)."""
 
-    def __init__(self):
+    def __init__(self, stats=None):
         import select
         self._in = sys.stdin.buffer
         self._out = sys.stdout.buffer
         self._poll = select.poll()
         self._poll.register(self._in, 1)  # select.POLLIN
+        self._stats = stats     # S23 relay profile: BridgeCore.stats
 
     def any(self):
         return 1 if self._poll.poll(0) else 0
@@ -522,6 +560,8 @@ class UsbVcp:
         return bytes(out)
 
     def write(self, data):
+        stats = self._stats
+        t0 = _ticks_us() if stats is not None else 0
         mv = memoryview(data)
         total = 0
         n = len(mv)
@@ -529,6 +569,13 @@ class UsbVcp:
             w = self._out.write(mv[total:])
             if w:
                 total += w
+        if stats is not None:
+            dt = _elapsed(t0, _ticks_us())
+            stats["vcp_us"] += dt
+            if dt > stats["vcp_max_us"]:
+                stats["vcp_max_us"] = dt
+            stats["vcp_writes"] += 1
+            stats["vcp_bytes"] += n
 
 
 class HeWire:
@@ -1153,7 +1200,7 @@ class CaptureEngine:
 
 def main():
     core = BridgeCore()
-    usb = UsbVcp()
+    usb = UsbVcp(stats=core.stats)
     he = HeWire()
     cfg = _load_cfg()
     engine = CaptureEngine(
@@ -1249,6 +1296,11 @@ def main():
                 for wire in core.he_msg(he.queue.pop(0)):
                     usb.write(wire)
                 n += 1
+            stats = core.stats
+            stats["pump_calls"] += 1
+            stats["pump_msgs"] += n
+            if n > stats["pump_batch_max"]:
+                stats["pump_batch_max"] = n
             return n
 
         while True:
@@ -1377,7 +1429,8 @@ def main():
                 msgs = core.capture_pub_msgs(jpeg, engine.caps - 1,
                                              engine.payload_max)
                 t1 = _ticks_us()
-                send_chunk_msgs(msgs, he.send, pump_he_to_pi)
+                send_chunk_msgs(msgs, he.send, pump_he_to_pi,
+                                stats=core.stats)
                 t2 = _ticks_us()
                 core.stats["cap_asm_us"] += _elapsed(t0, t1)
                 core.stats["cap_send_us"] += _elapsed(t1, t2)

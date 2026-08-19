@@ -444,6 +444,57 @@ check(n == 26, "HD frame drains 26 times, once per chunk")
 check(bm_bridge.CHUNK_DRAIN_EVERY == 1,
       "default every matches the messages-per-chunk at 1400 B")
 
+# ---- S23 relay-leg profile: the cap_send_us split -----------------------
+# stats=None keeps the legacy path byte-for-byte; with stats, every send
+# and every drain is timed into cap_ept_us / cap_pump_us. Clock faked so
+# the split is deterministic: each _ticks_us() call advances 100 us.
+
+fake_now = [0]
+
+
+def fake_ticks():
+    fake_now[0] += 100
+    return fake_now[0]
+
+
+_real_ticks = bm_bridge._ticks_us
+bm_bridge._ticks_us = fake_ticks
+
+core = BridgeCore()
+for k in ("cap_ept_us", "cap_ept_max_us", "cap_ept_slow", "cap_pump_us",
+          "vcp_us", "vcp_max_us", "vcp_writes", "vcp_bytes",
+          "pump_calls", "pump_msgs", "pump_batch_max"):
+    check(core.stats.get(k) == 0, "stats key %s starts at 0" % k)
+
+del trace[:]
+n = bm_bridge.send_chunk_msgs([bytes([i]) for i in range(3)],
+                              fake_send, fake_drain, every=1,
+                              stats=core.stats)
+check(trace == ["s0", "D", "s1", "D", "s2", "D"],
+      "stats accounting does not change the drain cadence")
+check(n == 3, "3 msgs / every 1 = 3 drains under accounting")
+check(core.stats["cap_ept_us"] == 300 and core.stats["cap_pump_us"] == 300,
+      "each send and each drain timed (3 x 100 us fake clock)")
+check(core.stats["cap_ept_max_us"] == 100 and
+      core.stats["cap_ept_slow"] == 0,
+      "fast sends: max recorded, none counted slow")
+
+
+def slow_send(m):
+    fake_now[0] += 5000        # a send that blocks 5 ms on a full vring
+    trace.append("s%d" % m[0])
+
+
+del trace[:]
+core2 = BridgeCore()
+bm_bridge.send_chunk_msgs([b"\x00"], slow_send, fake_drain, every=1,
+                          stats=core2.stats)
+check(core2.stats["cap_ept_slow"] == 1 and
+      core2.stats["cap_ept_max_us"] == 5100,
+      "a blocked send lands in cap_ept_slow with its wall time in max")
+
+bm_bridge._ticks_us = _real_ticks
+
 # ---- S18 reef-matrix: ref-scene source -----------------------------------
 # Asset naming is a contract with demo_up.sh's staging arm and the S0
 # assets in bench/assets/ref_scene -- lock it with tests.
