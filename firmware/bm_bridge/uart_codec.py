@@ -194,6 +194,110 @@ def frame_encode_into(wire, payload_buf, l2, n, crc_fn=None):
     return w + 1
 
 
+def _cobs_crc_py(dst, src, n, st):
+    """COBS-encode src[0:n] into dst while accumulating CRC-32C, with
+    the encoder+CRC state carried in st = array('I', [code_idx, code,
+    w, crc_running]) so one wire frame can be fed in pieces (header,
+    body, CRC trailer). Python twin of the viper fast path -- byte-exact
+    by the shared golden vectors."""
+    t = _TABLE
+    code_idx = st[0]
+    code = st[1]
+    w = st[2]
+    c = st[3]
+    for i in range(n):
+        b = src[i]
+        c = t[(c ^ b) & 0xFF] ^ (c >> 8)
+        if b == 0:
+            dst[code_idx] = code
+            code_idx = w
+            w += 1
+            code = 1
+        else:
+            dst[w] = b
+            w += 1
+            code += 1
+            if code == 0xFF:
+                dst[code_idx] = code
+                code_idx = w
+                w += 1
+                code = 1
+    st[0] = code_idx
+    st[1] = code
+    st[2] = w
+    st[3] = c & 0xFFFFFFFF
+
+
+if _MP:
+    @micropython.viper
+    def _cobs_crc_v(dst, src, n: int, st):
+        d = ptr8(dst)
+        s = ptr8(src)
+        t = ptr32(_TABLE)
+        p = ptr32(st)
+        code_idx = int(p[0])
+        code = int(p[1])
+        w = int(p[2])
+        c = uint(p[3])
+        for i in range(n):
+            b = int(s[i])
+            c = uint(t[(c ^ uint(b)) & uint(0xFF)]) ^ (c >> 8)
+            if b == 0:
+                d[code_idx] = code
+                code_idx = w
+                w += 1
+                code = 1
+            else:
+                d[w] = b
+                w += 1
+                code += 1
+                if code == 0xFF:
+                    d[code_idx] = code
+                    code_idx = w
+                    w += 1
+                    code = 1
+        p[0] = code_idx
+        p[1] = code
+        p[2] = w
+        p[3] = int(c)
+
+
+_FUSE_STATE = array.array("I", [0, 0, 0, 0])
+_FUSE_HDR = bytearray(2)
+_FUSE_CRC = bytearray(4)
+
+
+def frame_encode_fused(wire, l2, n):
+    """One-pass encoder for the relay hot path (S23 GOLD): COBS-encode
+    and CRC the frame in the SAME traversal, feeding header / body /
+    CRC-trailer through the carried state -- no payload_buf copy, no
+    separate CRC pass. Byte-identical to frame_encode_into (goldens pin
+    it). NOT thread-safe (module-scope scratch state) -- the bridge's
+    single-core pump is the only caller."""
+    if n == 0 or n > MAX_L2_SIZE:
+        return 0
+    step = _cobs_crc_v if _MP else _cobs_crc_py
+    st = _FUSE_STATE
+    st[0] = 0          # code_idx
+    st[1] = 1          # code
+    st[2] = 1          # w
+    st[3] = 0xFFFFFFFF  # running CRC (crc32c seed)
+    _FUSE_HDR[0] = (n >> 8) & 0xFF
+    _FUSE_HDR[1] = n & 0xFF
+    step(wire, _FUSE_HDR, 2, st)
+    step(wire, l2, n, st)
+    c = (st[3] ^ 0xFFFFFFFF) & 0xFFFFFFFF   # CRC over header+frame, closed
+    _FUSE_CRC[0] = (c >> 24) & 0xFF
+    _FUSE_CRC[1] = (c >> 16) & 0xFF
+    _FUSE_CRC[2] = (c >> 8) & 0xFF
+    _FUSE_CRC[3] = c & 0xFF
+    step(wire, _FUSE_CRC, 4, st)            # trailer COBS-continues; CRC
+    w = st[2]                               # state now don't-care
+    wire[st[0]] = st[1]                     # close the open COBS block
+    wire[w] = 0
+    return w + 1
+
+
 def frame_encode(l2, crc_fn=None):
     """Convenience allocating encoder: returns the full wire bytes (with 0x00)."""
     n = len(l2)

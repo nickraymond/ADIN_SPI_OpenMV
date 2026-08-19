@@ -139,6 +139,31 @@ def test_into_variant():
     w2 = uc.frame_encode_into(wire, payload, memoryview(f), n)
     check("memoryview input == bytes input", bytes(wire[:w2]) ==
           uc.frame_encode(f))
+    # S23 GOLD: the one-pass fused COBS+CRC encoder must be
+    # byte-identical to the reference across every COBS shape --
+    # zero-heavy frames, 0xFF-code block boundaries (254-byte nonzero
+    # runs), tiny and MAX_L2 frames.
+    cases = [
+        b"\x01",
+        b"\x00",
+        bytes(range(1, 201)),
+        b"\x00" * 300,
+        bytes([7] * 253),
+        bytes([7] * 254),
+        bytes([7] * 255),
+        bytes([9] * 508) + b"\x00" + bytes([9] * 300),
+        bytes((i * 31 + 17) & 0xFF for i in range(uc.MAX_L2_SIZE)),
+        bytes(range(1, 60)) + b"\x00\x00" + bytes(range(60)),
+    ]
+    for f2 in cases:
+        n2 = len(f2)
+        wire2 = bytearray(uc.cobs_max_encoded(n2 + uc.FRAME_OVERHEAD) + 1)
+        wf = uc.frame_encode_fused(wire2, memoryview(f2), n2)
+        check("fused == reference (%d B)" % n2,
+              bytes(wire2[:wf]) == uc.frame_encode(f2))
+    check("fused rejects oversize",
+          uc.frame_encode_fused(bytearray(8), b"x" * (uc.MAX_L2_SIZE + 1),
+                                uc.MAX_L2_SIZE + 1) == 0)
     check("self_test()", uc.self_test())
 
 

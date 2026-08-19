@@ -160,7 +160,11 @@ CHUNK_DRAIN_EVERY = 1
 # sits inside every mode's vendor max (VGA 120/240, QVGA 240/470; the
 # driver clamps HD itself). Sensor-mode streams are NEVER capped: live
 # exposure is an honest scene cost.
-REF_STREAM_FRAMERATE = 60
+# 60 measured NO gain (2026-08-19 row: 12.00 vs 12.10 uncapped): the
+# residual is one-shot capture SYNC -- arm waits for the next frame
+# boundary (avg half a period) plus a full-frame readout. 120 halves
+# both (~12.5 ms arm-to-ready, under the send window it hides behind).
+REF_STREAM_FRAMERATE = 120
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
@@ -408,8 +412,10 @@ class BridgeCore:
         if (cmd != WCMD_FRAME_TX or self.reasm is not None
                 or ln > MAX_L2 or len(b) - 4 < ln):
             return None         # he_msg owns resync + error accounting
-        w = uc.frame_encode_into(self._wire, self._payload_buf,
-                                 memoryview(b)[4:4 + ln], ln)
+        # One-pass fused COBS+CRC (S23 GOLD): no payload copy, no
+        # separate CRC traversal -- the pump's measured per-message
+        # python cost is the VGA relay tax, and this is most of it.
+        w = uc.frame_encode_fused(self._wire, memoryview(b)[4:4 + ln], ln)
         self.stats["he2pi_frames"] += 1
         self.stats["he2pi_bytes"] += ln
         return memoryview(self._wire)[:w]
