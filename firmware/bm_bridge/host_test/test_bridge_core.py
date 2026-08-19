@@ -968,6 +968,91 @@ del _FakeSensor.set_framerate
 
 del _FakeSensor._csi
 
+# -- S23 GOLD capwait counters: name the invariant ~13 ms ----------------
+# The clock is _FakeTime._t (ms); ticks_us reads _t*1000, so advancing _t
+# advances both clocks and every duration below is exact.
+_fc6 = _FakeCsi()
+_FakeSensor._csi = _fc6
+_FakeImageMod.available = ("ref_color_320x200.bmp",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_FakeTime._t = 1000
+eng.command(dict(_ref_stream))          # t_start=1000, interval=100 ms
+check(eng.cstats["frames"] == 0 and eng.cstats["cw_polls"] == 0,
+      "capwait: command() resets the ledger")
+
+# Frame 1: two misses 3 ms apart, then the collect lands 10 ms after the
+# first attempt -- cw books the wait, the gap lands in the 2-4 ms bucket.
+_fc6.script = [None, None, _FakeImg(b"live")]
+_FakeTime._t = 1150
+check(eng.poll(1150) is None, "capwait: first miss opens the cw window")
+_FakeTime._t = 1153
+check(eng.poll(1153) is None, "capwait: second miss buckets its gap")
+_FakeTime._t = 1160
+out = eng.poll(1160)
+cs = eng.cstats
+check(out == b"jpeg-of-ref_color_320x200.bmp", "capwait: frame 1 lands")
+check(cs["cw_sum_us"] == 10000 and cs["cw_frames"] == 1
+      and cs["cw_max_us"] == 10000,
+      "capwait: cw = first failed attempt -> success (10 ms)")
+check(cs["cw_polls"] == 2 and cs["cw_polls_max"] == 2,
+      "capwait: failed attempts counted per frame")
+check(cs["gap_hist"][2] == 1 and sum(cs["gap_hist"]) == 1,
+      "capwait: a 3 ms poll gap lands in the 2-4 ms bucket")
+check(cs["frames"] == 1 and cs["kc_n"] == 0,
+      "capwait: no kick preceded frame 1 -- kc stays empty")
+
+# Frame 2: the ref-mode kick armed at frame 1's collect (t=1160); the
+# collect at t=1240 succeeds first try -> kc=80 ms, no cw, cyc=80 ms.
+_fc6.script = [_FakeImg(b"live")]
+_FakeTime._t = 1240
+out = eng.poll(1240)
+check(out == b"jpeg-of-ref_color_320x200.bmp", "capwait: frame 2 lands")
+check(cs["kc_n"] == 1 and cs["kc_sum_us"] == 80000
+      and cs["kc_min_us"] == 80000 and cs["kc_max_us"] == 80000,
+      "capwait: kc = kick -> image-in-hand (80 ms)")
+check(cs["cw_frames"] == 1 and cs["cw_sum_us"] == 10000,
+      "capwait: an instant collect adds NO cw")
+check(cs["cyc_sum_us"] == 80000 and cs["cyc_hist"][3] == 1,
+      "capwait: cycle = collect-to-collect, 80 ms in the 80-90 bucket")
+
+# Frame 3: the kick completes instantly -> parked, kc books ZERO (the
+# whole encode+send window must not masquerade as capture latency).
+_fc6.script = [_FakeImg(b"live"), _FakeImg(b"live")]  # collect + ready kick
+_FakeTime._t = 1340
+eng.poll(1340)
+check(cs["park"] == 1 and eng._img_ready is not None,
+      "capwait: instantly-complete kick counted as park")
+check(cs["kc_n"] == 2 and cs["kc_max_us"] == 100000,
+      "capwait: frame 3's collect closed frame 2's kick (100 ms)")
+_FakeTime._t = 1420
+eng.poll(1420)
+check(cs["kc_n"] == 2,
+      "capwait: a parked frame adds NO kc sample")
+check(cs["frames"] == 4 and cs["cyc_sum_us"] == 80000 + 100000 + 80000,
+      "capwait: every collected frame advances the cycle ledger")
+
+# enc_qin: rpmsg arrivals during to_jpeg (scheduled-callback proxy).
+_qvals = [0, 3]                       # before-encode, after-encode
+eng.q_probe = lambda: _qvals.pop(0)
+_fc6.script = [_FakeImg(b"live")]
+_FakeTime._t = 1550
+eng.poll(1550)
+check(cs["enc_qin"] == 3,
+      "capwait: queue growth across the encode lands in enc_qin")
+eng.q_probe = None
+
+# A new command starts a fresh ledger.
+_FakeTime._t = 2000
+eng.command(dict(_ref_stream))
+check(eng.cstats["frames"] == 0 and eng.cstats["kc_n"] == 0
+      and sum(eng.cstats["cyc_hist"]) == 0,
+      "capwait: next command resets every counter")
+
+del _FakeSensor._csi
+
 del sys.modules["sensor"]
 del sys.modules["image"]
 bm_bridge.time = _real_time
