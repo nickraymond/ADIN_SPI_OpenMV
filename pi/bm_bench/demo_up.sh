@@ -58,16 +58,28 @@ fi
 # quiet-exit, so wait it out untouched and retry ONCE. Two timeouts on
 # one step = a genuinely sick board -> fail loudly, hands off.
 MPR_T_DEFAULT=30
+_mpr_lost_race() {   # rc + captured stderr -> did this attach lose the race?
+  local rc=$1 err=$2
+  (( rc == 124 )) && return 0                       # hung forever, timed out
+  (( rc != 0 )) && grep -q "could not enter raw repl" "$err" && return 0
+  return 1                                          # success, or a real error
+}
 mpr() {
-  local t="${MPR_T:-$MPR_T_DEFAULT}" rc=0
-  timeout "$t" mpremote connect "$P" "$@" || rc=$?
-  if (( rc == 124 )); then
-    echo "attach timed out (bridge won the boot race) — 45 s untouched, one retry" >&2
+  local t="${MPR_T:-$MPR_T_DEFAULT}" rc=0 err
+  err=$(mktemp)
+  timeout "$t" mpremote connect "$P" "$@" 2>"$err" || rc=$?
+  if _mpr_lost_race "$rc" "$err"; then
+    echo "attach lost the boot race (rc=$rc) — 45 s untouched, one retry" >&2
     sleep 45
     rc=0
-    timeout "$t" mpremote connect "$P" "$@" || rc=$?
-    (( rc == 124 )) && fail "board attach timed out twice — recovery: sudo uhubctl -l 3 -p 1 -a cycle -d 3, then 5 min of zero port contact"
+    timeout "$t" mpremote connect "$P" "$@" 2>"$err" || rc=$?
+    if _mpr_lost_race "$rc" "$err"; then
+      cat "$err" >&2; rm -f "$err"
+      fail "board attach failed twice on one step — recovery: sudo uhubctl -l 3 -p 1 -a cycle -d 3, then 5 min of zero port contact, then one run"
+    fi
   fi
+  cat "$err" >&2
+  rm -f "$err"
   return $rc
 }
 
@@ -182,6 +194,11 @@ need_bytes() {   # bytes still to copy for the given set
   done
   echo "$total"
 }
+
+# FREE=0 means the inventory PROBE failed, not that flash is full — the
+# 2026-08-19 hunt saw exactly that misread ("/flash too tight (free 0)"
+# on a healthy board whose attach flaked). Refuse to reason from it.
+(( FREE > 0 )) || fail "ref-scene inventory returned nothing (attach flake?) — flash state UNKNOWN, not full"
 
 NEED_RAW=$(need_bytes "$RAW_SET")
 NEED_JPG=$(need_bytes "$JPG_SET")
