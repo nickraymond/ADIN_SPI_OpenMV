@@ -138,10 +138,21 @@ AE3 were not involved, so S23 bite R is re-ordered, not displaced.
   the board blinking and not streaming. The host viewer is what
   restarts — now automatically.
 
-**Next:** Nick replugs the N6, then points it at the four purple balls,
-reads a threshold off `--tune`, and confirms the labelled overlay tracks
-them (bite 1's demo). Then bite 2 — the N6-vs-AE3 tiled-coverage
-comparison, carrying the model-variant confound explicitly.
+**DEMO PASSED (Nick, same evening).** Live in a browser with labelled
+tracking boxes. His readings, banked in DESIGN §S24: **six balls
+detected simultaneously at ~2 m** indoors under room lighting, and
+**~1 W board draw** (method not recorded — order-of-magnitude, not
+instrumented; ST's published figure is <0.75 W for YOLOv8n at 30 fps,
+not directly comparable since ours is the whole board also capturing at
+VGA, JPEG-encoding and streaming over USB). Nick also threw **pink**
+balls into a purple-tuned scene and they were correctly ignored — pink's
+`b` channel sits outside the purple LAB box. That is the threshold
+working, not a fault; matching several colours at once is fenced as
+bite 1b rather than smuggled into the demo.
+
+**Next:** nibble 4 (PR) for bite 1, then bite 2 — the N6-vs-AE3
+tiled-coverage comparison, carrying the model-variant confound
+explicitly.
 
 **Bench state:** untouched. The N6's `/flash/main.py` is still its stock
 LED blinker; no firmware written; no ADIN, no Pi, no AE3 contact. The N6

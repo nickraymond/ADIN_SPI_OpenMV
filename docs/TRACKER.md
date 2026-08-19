@@ -1892,8 +1892,23 @@ unowned side quest.
       Caught only by forcing a wide-open blob threshold to make the
       draw path run — an exit code and a flowing stream proved nothing
       (CLAUDE.md rule 4).
-      **Remaining:** Nick points it at the purple balls, reads a
-      threshold off `--tune`, and confirms the overlay tracks them.
+      → **DEMO RUN BY NICK 2026-08-19 — PASS.** Live in a browser,
+      tracking balls with labelled boxes. His bench readings, recorded
+      in DESIGN §S24: **six balls detected simultaneously at ~2 m**
+      indoors under room lighting, and **~1 W board draw** during the
+      test (method not recorded — an order-of-magnitude reading, not an
+      instrumented figure; re-measure deliberately before relying on
+      it). Remaining: nibble 4 (PR).
+- [ ] **Bite 1b — match more than one colour at once (NEW, from the
+      demo).** Nick threw pink balls into a purple-tuned scene and they
+      were correctly ignored — the threshold is a single LAB box, and
+      pink's `b` sits outside the purple range. `find_blobs` already
+      accepts a LIST of thresholds; the board script passes exactly one
+      and the host exposes a single `--blob-thresh`. Small change:
+      repeatable `--blob-thresh`, one colour per box, each drawn in its
+      own colour. Until then `--tune` reads a threshold off whatever
+      object is actually in front of the lens, which is the honest way
+      to get one anyway.
 - [ ] **Bite 2 — the number that decides the board.** Re-run S8's HD
       tiled-coverage arithmetic on these N6 latencies and put it next
       to the AE3's, so "N6 vs AE3 for edge CV" is a measured comparison

@@ -929,6 +929,36 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+**Bench observations from Nick's live demo (2026-08-19).** Measured by
+Nick at the bench during bite 1's demo, recorded here as his readings:
+
+- **Six balls detected simultaneously at ~2 m, indoors under room
+  lighting.** This is the *blob* detector, not the NPU — colour
+  threshold plus connected components — so it is a statement about
+  colour separability at that range and lighting, not about detection
+  intelligence. It does establish that the capture path resolves
+  ball-sized objects at 2 m at VGA well enough to segment them.
+- **~1 W board draw during the test.** Method not recorded; treat as an
+  order-of-magnitude bench reading, not an instrumented figure. For
+  context, ST's published claim for the N6 is *under 0.75 W* running
+  YOLOv8n at 30 fps — not directly comparable, because this 1 W is the
+  whole board while also driving the sensor at VGA, JPEG-encoding every
+  frame and streaming over USB CDC. The two numbers are consistent in
+  scale, and the delta is roughly what the non-NPU work should cost.
+  **If this figure is ever load-bearing, re-measure it deliberately**
+  (idle vs inference-only vs full stream) rather than citing this line.
+
+**Colour blobs find one colour range at a time (bite 1 demo finding).**
+The default threshold is a purple/violet LAB box, so purple balls are
+found and **pink ones are not**: pink sits at a different `b` (roughly
+neutral-to-positive) while the purple box requires `b` in −75..−10, the
+blue side. Nothing is wrong when that happens — it is the threshold
+doing exactly what it was given. `--tune` exists for precisely this:
+point the object at the centre box and read a threshold off the HUD.
+Matching several colours at once needs `find_blobs` to take a LIST of
+thresholds, which the board script does not yet expose — a small
+follow-up, fenced as bite 1b rather than smuggled into the demo.
+
 **`mpremote run` is not a transport (measured, and it cost the first
 working stream).** The viewer initially spawned `mpremote run` and read
 its stdout. It started near 20 fps and decayed to under 2 fps after a
