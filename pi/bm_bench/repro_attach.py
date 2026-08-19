@@ -326,8 +326,11 @@ def pull_traces(mpr, log, cycle):
         path = log.blob("cycle%02d_traces.txt" % cycle, out)
         kind = exit_kind_from_trace(out)
         cap = bench_chain.cap_frames_from_trace(out)
-        log.say("cycle %d traces pulled (exit=%s cap_frames=%s) -> %s"
-                % (cycle, kind, cap, path))
+        sram = bench_chain.sram_state_at_boot(out)
+        log.event("boot-state", cycle=cycle, sram=sram, exit_kind=kind,
+                  cap_frames=cap)
+        log.say("cycle %d traces pulled (exit=%s cap_frames=%s "
+                "sram=%s) -> %s" % (cycle, kind, cap, sram, path))
         return kind, cap
     log.say("cycle %d trace pull FAILED rc=%d" % (cycle, rc))
     return None, None

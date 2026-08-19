@@ -174,6 +174,41 @@ def load_delta(before, after):
                                        after["cam_state"]))
 
 
+# The HE's status-page magic, "BMHE" (bm_bridge.BM_STATUS_PAGE gate).
+HE_MAGIC = "424d4845"
+
+
+def sram_state_at_boot(text):
+    """'warm' | 'cold' | 'unknown' from a boot_report.
+
+    Measured 2026-08-19 (bite R): after `mpremote reset` the SHM probes
+    come up carrying the PREVIOUS generation's structures -- rsc=1,
+    vring/pool offsets, and the HE magic already at the status page
+    BEFORE he.start ever runs. After a physical unplug the same
+    addresses read as non-repeating garbage with no magic.
+
+    So a warm reset does NOT clear SRAM9 and a physical unplug does:
+    the two are not the same boot, whatever the ops recipe says. This
+    reads the FIRST (pre-he-start) dump only -- after he.start the
+    live HE writes the magic on every boot, warm or cold.
+    """
+    text = text.replace(chr(13), "")
+    section, seen_boot = [], False
+    for line in text.splitlines():
+        if line.startswith("== boot_report "):
+            if seen_boot:
+                break
+            seen_boot = "boot_report boot" in line
+            continue
+        if seen_boot:
+            section.append(line)
+    for line in section:
+        if "probe status_page" in line and "=" in line:
+            val = line.rsplit("=", 1)[1].strip().lower()
+            return "warm" if val == HE_MAGIC else "cold"
+    return "unknown"
+
+
 def cap_frames_from_trace(text):
     """Board-side load proof: cap_frames out of the bridge's own exit
     stats line. Returns None when no exit stats are present (a trace we

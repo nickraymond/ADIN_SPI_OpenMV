@@ -403,6 +403,46 @@ class TestLoadProof(unittest.TestCase):
         self.assertFalse(clean)
 
 
+WARM_BOOT = """== boot_report boot t=1228 ==
+mpu r07 rbar=8047e007 rlar=00000000
+probe shm_rsc @60000000 = 00000001
+probe status_page @600bfe00 = 424d4845
+== boot_report post-he-start t=2816 ==
+probe status_page @600bfe00 = 424d4845"""
+
+COLD_BOOT = """== boot_report boot t=1229 ==
+mpu r07 rbar=8047e007 rlar=00000000
+probe shm_rsc @60000000 = 65fa40b9
+probe status_page @600bfe00 = 3e0b5418
+== boot_report post-he-start t=2761 ==
+probe status_page @600bfe00 = 424d4845"""
+
+
+class TestSramDiscriminator(unittest.TestCase):
+    """Pins the 2026-08-19 measurement: warm reset retains SRAM9, a
+    physical unplug clears it."""
+
+    def test_retained_magic_before_he_start_is_a_warm_boot(self):
+        self.assertEqual("warm", bc.sram_state_at_boot(WARM_BOOT))
+
+    def test_garbage_before_he_start_is_a_cold_boot(self):
+        self.assertEqual("cold", bc.sram_state_at_boot(COLD_BOOT))
+
+    def test_the_post_he_start_magic_never_decides_it(self):
+        # both samples carry the magic AFTER he.start -- if that dump
+        # were read, every boot would look warm and the distinction
+        # this function exists for would vanish
+        self.assertIn("424d4845", COLD_BOOT.split("post-he-start")[1])
+        self.assertEqual("cold", bc.sram_state_at_boot(COLD_BOOT))
+
+    def test_survives_crlf(self):
+        self.assertEqual("warm", bc.sram_state_at_boot(
+            WARM_BOOT.replace("\n", "\r\n")))
+
+    def test_unknown_when_no_report(self):
+        self.assertEqual("unknown", bc.sram_state_at_boot("nothing here"))
+
+
 class TestChainDriver(unittest.TestCase):
     """Chain with an injected runner -- no bench, no ssh."""
 
