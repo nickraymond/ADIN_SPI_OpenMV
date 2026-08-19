@@ -173,3 +173,45 @@ GOLD or after my stop call.
 
 Nibble 1 = plan first, my gate before code. Short actionable replies.
 ```
+
+## 8 — Ready to paste: S23 bite R — the two unexplained board states (written 2026-08-19, Nick's pivot call)
+
+```
+Run /agent-entry. Sprint S23 bite R on a fresh branch from main --
+root-cause the two REMAINING unexplained AE3 board states. GOLD is
+parked at 12.53 CLEAN (bite S, the overlap feed, is specced in the
+TRACKER and waits behind this).
+
+Context that is SETTLED -- do not re-derive: uhubctl on the Pi 5
+NEVER cuts VBUS (no cold boot; MCU state survives), so most of
+2026-08-19's "attach refusals" were state confusion, not sickness.
+Cold-boot recipe = mpremote reset or physical unplug. demo_up now
+carries the mpr timeout/armed-retry wrapper.
+
+The two states that survive that explanation (= this bite):
+1. Repeated "could not enter raw repl" through PROPERLY-ARMED 45 s
+   quiet-exit windows (the v3 demo_up silent-fail, ~17:20). The
+   armed-exit model says the retry MUST find a REPL; it didn't, twice.
+2. Incident #2's boot (DEV_LOG 2026-08-19 "relay regression" entry):
+   linked, then ZERO VCP bytes for 30 s while bm-light demonstrably
+   heartbeated, HE ring dump EMPTY, then attach refusals a Pi reboot
+   could not clear.
+
+Ladder (TRACKER bite R has detail): (1) reproducer -- scripted
+mpremote-reset cold boot + repeated bridge lifecycles, count
+attaches-to-refusal; distinguish state-confusion refusals (explained)
+from true ones (screen each refusal against the state machine before
+counting it). (2) instrument boots: MPU/cache region config + SHM
+pool state to flash; on refusal, CDC endpoint state vs HE-ring
+readability. (3) bisect: same reproducer on pre-SHM-128K firmware
+(7d4dbf7+sticky-fb) -- vanishes = patches 0004/0005 cache attributes;
+persists = Alif ROM/TinyUSB, mitigate + document.
+
+Stack on the bench: bridge 5071cecd + fw 1e56071e + ELF 39717d44,
+scene=ref cfg intact, units DOWN, board at REPL. Board access per
+ae3-board-access; one command then hands off. Traces banked:
+nereus000 ~/trace_row1.txt ~/trace_row2.txt ~/bridge_traces/.
+Cross-cable side door DOWN since the Pi move (reseat = calm-day item).
+
+Nibble 1 = plan first, my gate before code. Short actionable replies.
+```

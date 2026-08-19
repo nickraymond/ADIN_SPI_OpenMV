@@ -341,8 +341,8 @@ class TestControlSocketPlumbing(unittest.TestCase):
         for line in read(CTL_PY).splitlines():
             if line.startswith("import ") or line.startswith("from "):
                 mod = line.split()[1].split(".")[0]
-                self.assertIn(mod, ("__future__", "json", "os", "socket",
-                                    "sys", "tempfile"), line)
+                self.assertIn(mod, ("__future__", "errno", "json", "os",
+                                    "socket", "sys", "tempfile"), line)
 
 
 if __name__ == "__main__":

@@ -146,6 +146,15 @@ BM_STATUS_PAGE = 0x600BFE00
 # bounded, still counted, just no longer smaller than the product's own
 # frames.
 RPMSG_QUEUE_CAP = 1024
+# S23 GOLD capwait finding (2026-08-19 row): _rx's per-message
+# bytes(data) alloc was ~21 MB/min of heap garbage at VGA stream rates
+# -- half the measured gc tail -- and it ran as a scheduled callback
+# INSIDE to_jpeg (enc_qin = 12.5 arrivals/frame; enc_us read ~8 ms over
+# the desk encode). The RX pool below recycles fixed-size buffers so
+# steady-state RX allocates nothing: warmup allocs grow the pool to the
+# live high-water mark (~30 msgs -- measured pump_batch_max 29), capped.
+RPMSG_SLOT_B = 1544         # one vring buffer (openmv patch 0004 size)
+RPMSG_POOL_MAX = 64         # recycled buffers kept (~99 KB ceiling)
 # Service the HE->HP direction every N messages while pushing a frame's
 # chunks. S23 bite 2: one 1400 B chunk is now ONE rpmsg message, so 1 =
 # "drain after every chunk" -- the same interleave cadence S19 bite 2
@@ -627,8 +636,16 @@ class HeWire:
 
     def __init__(self):
         self.ept = None
-        self.queue = []
         self.q_drops = 0
+        # RX ring of buffer REFERENCES (8 KB of pointers, not payload)
+        # + a recycling pool of fixed-size bytearrays. See the
+        # RPMSG_SLOT_B comment: steady-state RX must not allocate.
+        self.count = 0
+        self._bufs = [None] * RPMSG_QUEUE_CAP
+        self._lens = [0] * RPMSG_QUEUE_CAP
+        self._rd = 0
+        self._wr = 0
+        self._free = []
 
     def _ns(self, src, name):
         if name == "bm-wire":
@@ -636,10 +653,42 @@ class HeWire:
             self.ept = openamp.Endpoint("bm-wire", self._rx, dest=src)
 
     def _rx(self, src, data):
-        if len(self.queue) >= RPMSG_QUEUE_CAP:
+        if self.count >= RPMSG_QUEUE_CAP:
             self.q_drops += 1
             return
-        self.queue.append(bytes(data))
+        n = len(data)
+        free = self._free
+        if free and n <= RPMSG_SLOT_B:
+            buf = free.pop()
+            buf[:n] = data          # copy into a recycled slot: no alloc
+        else:
+            # Pool warmup (full-size so it recycles) or oversize spill.
+            if n <= RPMSG_SLOT_B:
+                buf = bytearray(RPMSG_SLOT_B)
+                buf[:n] = data
+            else:
+                buf = bytearray(data)
+        wr = self._wr
+        self._bufs[wr] = buf
+        self._lens[wr] = n
+        self._wr = (wr + 1) % RPMSG_QUEUE_CAP
+        self.count += 1
+
+    def peek(self):
+        """Oldest message as a memoryview. Valid until advance()."""
+        return memoryview(self._bufs[self._rd])[:self._lens[self._rd]]
+
+    def advance(self):
+        """Consume the oldest message; recycle its buffer. Callers must
+        be DONE with the peek()ed view -- the slot may be rewritten by
+        the next scheduled _rx the moment this returns."""
+        rd = self._rd
+        buf = self._bufs[rd]
+        self._bufs[rd] = None
+        self._rd = (rd + 1) % RPMSG_QUEUE_CAP
+        self.count -= 1
+        if len(buf) == RPMSG_SLOT_B and len(self._free) < RPMSG_POOL_MAX:
+            self._free.append(buf)
 
     def start(self):
         """Load the HE ELF once per service boot (README lifecycle rules).
@@ -1000,6 +1049,98 @@ class CaptureEngine:
         # contends with the MVE encoder for memory bandwidth -- S3's old
         # "set_framebuffers(2) makes everything worse" verdict holds on
         # the modern stack for a new reason. Streams stay at fb=1.
+        #
+        # S23 GOLD "name the 13 ms" counters (the invariant that survived
+        # five levers). All ints; reset per command(); printed on the
+        # stream-done trace + the 30 s stats snapshot. ~8 ticks_us calls
+        # per frame -- three orders under the thing being measured.
+        #   kc  = kick -> image-in-hand (what the kick must hide)
+        #   cw  = first FAILED collect -> success (the visible wait);
+        #         parked/instant collects contribute nothing
+        #   gap = spacing of failed collect attempts (main-loop service
+        #         granularity: sleep_ms(1) x pass cost shows up here)
+        #   cyc = collect-to-collect wall (histogram splits a uniform
+        #         tax from occasional gc/callback spikes averaging out)
+        #   enc_qin = he.queue growth across to_jpeg (scheduled-callback
+        #         time hiding inside enc_us)
+        self.q_probe = None         # main() wires: lambda: len(he.queue)
+        self.cstats = None
+        self._cstats_reset()
+        self._t_kick = None         # us stamp of the arming kick
+        self._t_cw0 = None          # us stamp of first failed collect
+        self._t_att = 0             # us stamp of last failed collect
+        self._t_prev_col = None     # us stamp of previous collect success
+        self._polls = 0             # failed collects this frame
+
+    # bucket edges, us. cyc spans VGA (~82 ms) and HD (~280 ms) rows.
+    _GAP_EDGES = (1000, 2000, 4000, 8000)
+    _CYC_EDGES = (50000, 70000, 80000, 90000, 120000, 200000, 400000)
+
+    def _cstats_reset(self):
+        self.cstats = {
+            "frames": 0, "park": 0,
+            "kc_sum_us": 0, "kc_max_us": 0, "kc_min_us": -1, "kc_n": 0,
+            "cw_sum_us": 0, "cw_max_us": 0, "cw_frames": 0,
+            "cw_polls": 0, "cw_polls_max": 0,
+            "gap_hist": [0] * 5,
+            "cyc_sum_us": 0, "cyc_max_us": 0, "cyc_hist": [0] * 8,
+            "enc_qin": 0,
+            # round 2 (the 14 ms outside enc/asm/send): kick = time inside
+            # _kick (sensor streams only now); out = frame-return -> next
+            # poll entry, the untimed main-loop residue between frames.
+            "kick_us": 0, "kick_max_us": 0,
+            "out_us": 0, "out_max_us": 0,
+        }
+        self._t_ret = None
+        self._t_kick = None
+        self._t_cw0 = None
+        self._t_prev_col = None
+        self._polls = 0
+
+    @staticmethod
+    def _bucket(hist, edges, v):
+        i = 0
+        for e in edges:
+            if v < e:
+                break
+            i += 1
+        hist[i] += 1
+
+    def _note_collect(self):
+        """One image just landed in hand -- close out this frame's
+        kick/wait/cycle ledgers. Runs on every collect path (parked,
+        non-block success, blocking fallback)."""
+        cs = self.cstats
+        t = _ticks_us()
+        if self._t_kick is not None:
+            kc = _elapsed(self._t_kick, t)
+            cs["kc_sum_us"] += kc
+            cs["kc_n"] += 1
+            if kc > cs["kc_max_us"]:
+                cs["kc_max_us"] = kc
+            if cs["kc_min_us"] < 0 or kc < cs["kc_min_us"]:
+                cs["kc_min_us"] = kc
+            self._t_kick = None
+        if self._t_cw0 is not None:
+            cw = _elapsed(self._t_cw0, t)
+            cs["cw_sum_us"] += cw
+            cs["cw_frames"] += 1
+            if cw > cs["cw_max_us"]:
+                cs["cw_max_us"] = cw
+            self._t_cw0 = None
+        if self._polls:
+            cs["cw_polls"] += self._polls
+            if self._polls > cs["cw_polls_max"]:
+                cs["cw_polls_max"] = self._polls
+            self._polls = 0
+        if self._t_prev_col is not None:
+            cyc = _elapsed(self._t_prev_col, t)
+            cs["cyc_sum_us"] += cyc
+            if cyc > cs["cyc_max_us"]:
+                cs["cyc_max_us"] = cyc
+            self._bucket(cs["cyc_hist"], self._CYC_EDGES, cyc)
+        self._t_prev_col = t
+        cs["frames"] += 1
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -1027,12 +1168,24 @@ class CaptureEngine:
     def _kick(self, csi):
         """Arm the next capture; an instantly-complete frame is parked,
         never dropped."""
+        t = _ticks_us()
         k = csi.snapshot(blocking=False)
+        cs = self.cstats
+        dt = _elapsed(t, _ticks_us())
+        cs["kick_us"] += dt
+        if dt > cs["kick_max_us"]:
+            cs["kick_max_us"] = dt
         if k is not None:
+            # Frame was already in the fb at kick time: kc for that frame
+            # is ZERO (nothing to hide), counted here so a parked frame
+            # doesn't book the whole encode+send window as capture.
             self._img_ready = k
             self.cap_pending = False
+            self.cstats["park"] += 1
+            self._t_kick = None
         else:
             self.cap_pending = True
+            self._t_kick = t
 
     def _quiesce(self):
         """Collect (and discard) any in-flight capture BEFORE the sensor
@@ -1216,6 +1369,8 @@ class CaptureEngine:
             if self.mode != CAMERA_MODE_STOP:
                 _trace("camera: stop (%d frames, %d B this stream)"
                        % (self.slots, self.sent_bytes))
+                if self.cstats["frames"]:
+                    _trace("camera: capwait %s" % json.dumps(self.cstats))
             self.mode = CAMERA_MODE_STOP
             self._quiesce()          # don't leave a kicked capture behind
             return
@@ -1304,6 +1459,7 @@ class CaptureEngine:
         self.sent_bytes = 0
         self.enc_us = 0
         self.enc_frames = 0
+        self._cstats_reset()         # per-command capture-wait ledger
         w, h = RES_GEOM.get(res, (0, 0))
         _trace("camera: mode %d %dx%d %s q=%d %dms/frame rate=%d secs=%d pmax=%d"
                % (self.mode, w, h, PF_NAME.get(pf, "?"), self.q,
@@ -1314,6 +1470,13 @@ class CaptureEngine:
         """Capture+encode one frame if due; returns JPEG bytes or None."""
         if self.mode == CAMERA_MODE_STOP:
             return None
+        if self._t_ret is not None:
+            cs = self.cstats
+            o = _elapsed(self._t_ret, _ticks_us())
+            cs["out_us"] += o
+            if o > cs["out_max_us"]:
+                cs["out_max_us"] = o
+            self._t_ret = None
         if self.mode == CAMERA_MODE_STREAM:
             if time.ticks_diff(self.until, now) <= 0:
                 # enc avg is the matrix's encode column, measured in the
@@ -1323,6 +1486,9 @@ class CaptureEngine:
                        "%d us/frame)"
                        % (self.slots, self.sent_bytes,
                           self.enc_us // max(1, self.enc_frames)))
+                # The 13 ms hunt ledger, one line per stream. cyc - (cw +
+                # enc + asm + send) named offline from the row's numbers.
+                _trace("camera: capwait %s" % json.dumps(self.cstats))
                 self.mode = CAMERA_MODE_STOP
                 return None
             el = time.ticks_diff(now, self.t_start)
@@ -1332,7 +1498,22 @@ class CaptureEngine:
                 return None          # over the byte budget, skip the slot
         import sensor
         csi = self._nb_handle()
-        if csi is None:
+        ref_stream = (self.scene == "ref"
+                      and self.mode == CAMERA_MODE_STREAM
+                      and csi is not None)
+        if ref_stream:
+            # Ref STREAMS never touch the sensor (S23 GOLD capwait row,
+            # 2026-08-19): park=729/729 proved the per-frame csi call
+            # never armed a capture -- at fb=1 the stale readable frame
+            # blocks arming -- so it was a pure acquire+invalidate tax
+            # on the very cycle the row measures. Ref rows price
+            # ENCODE+RELAY; the capture column belongs to sensor-mode
+            # rows (which keep the real shadow+kick path). Ref SINGLES
+            # keep the old path so matrix stills stay comparable.
+            if self.ref_img is None:
+                return None          # command() refused; belt and braces
+            img = self.ref_img
+        elif csi is None:
             img = sensor.snapshot()  # ref mode still pays the capture cost
         elif self._img_ready is not None:
             img = self._img_ready    # a kick completed before we returned
@@ -1342,18 +1523,31 @@ class CaptureEngine:
             # Collect the kicked capture -- or, first frame of a stream,
             # arm one. None = WOULD_BLOCK: the capture runs in hardware
             # while the main loop keeps draining; poll again next pass.
+            t_att = _ticks_us()
             img = csi.snapshot(blocking=False)
             if img is None:
+                # The wait ledger: first miss stamps cw0; later misses
+                # bucket their spacing (loop service granularity).
+                if self._t_cw0 is None:
+                    self._t_cw0 = t_att
+                else:
+                    self._bucket(self.cstats["gap_hist"], self._GAP_EDGES,
+                                 _elapsed(self._t_att, t_att))
+                self._t_att = t_att
+                self._polls += 1
                 self.cap_pending = True
                 return None
             self.cap_pending = False
+        self._note_collect()
         # Early kick (S23 GOLD): free the fb BEFORE the encode so the
         # next capture runs under it. Ref mode discards the sensor frame
         # -- kick outright; sensor mode copies to the shadow first. On
         # any mismatch (fake sensors, geometry drift) fall back to the
         # post-encode kick rather than encode a torn frame.
         early_kicked = False
-        if csi is not None and self.mode == CAMERA_MODE_STREAM:
+        if ref_stream:
+            early_kicked = True      # bypass: no capture in flight at all
+        elif csi is not None and self.mode == CAMERA_MODE_STREAM:
             if self.scene == "ref":
                 self._kick(csi)
                 early_kicked = True
@@ -1367,10 +1561,12 @@ class CaptureEngine:
                         early_kicked = True
                 except Exception:
                     pass             # post-encode kick covers it
-        if self.scene == "ref":
+        if self.scene == "ref" and not ref_stream:
             if self.ref_img is None:
                 return None          # command() refused; belt and braces
             img = self.ref_img
+        qp = self.q_probe
+        q0 = qp() if qp is not None else 0
         t0 = _ticks_us()
         if self.enc_420:
             import image
@@ -1379,6 +1575,13 @@ class CaptureEngine:
         else:
             jpg = img.to_jpeg(quality=self.q, copy=True)
         self.enc_us += _elapsed(t0, _ticks_us())
+        if qp is not None:
+            # rpmsg arrivals DURING the encode = scheduled-callback time
+            # hiding inside enc_us (the 42.4 ms desk vs ~50 ms on-chain
+            # discrepancy this counter exists to explain).
+            dq = qp() - q0
+            if dq > 0:
+                self.cstats["enc_qin"] += dq
         self.enc_frames += 1
         b = jpg.bytearray()          # proven idiom (s6_video_tx.py)
         self.slots += 1
@@ -1395,6 +1598,7 @@ class CaptureEngine:
             # slot either way (image taken earlier than encoded) -- fine
             # for this product, stated here rather than hidden.
             self._kick(csi)
+        self._t_ret = _ticks_us()
         return b
 
 
@@ -1450,6 +1654,8 @@ def main():
 
     rp = he.start()
     _trace("he loaded, bm-wire announced")
+    # capwait counter probe: rpmsg arrivals during encode (enc_qin).
+    engine.q_probe = lambda: he.count
 
     # Above the try: the finally traces the gate's ledger, and a phase-1
     # timeout returns THROUGH that finally -- an unbound name there would
@@ -1470,8 +1676,8 @@ def main():
             if time.ticks_diff(time.ticks_ms(), t0) > PHASE1_TIMEOUT_MS:
                 _trace("phase 1 timeout -- no Pi attach, exiting")
                 return
-            if he.queue:
-                he.queue.pop(0)
+            if he.count:
+                he.advance()
             time.sleep_ms(20)
 
         he.send(core.link_msg(True))
@@ -1493,8 +1699,8 @@ def main():
             loop so the chunk sender can call it too (S19 bite 2)."""
             n = 0
             stats = core.stats
-            while he.queue:
-                m = he.queue.pop(0)
+            while he.count:
+                m = he.peek()                  # borrowed view, no copy
                 t0 = _ticks_us()
                 wire = core.he_frame_wire(m)   # zero-alloc fast path
                 dt = _elapsed(t0, _ticks_us())
@@ -1502,11 +1708,14 @@ def main():
                 if dt > stats["relay_enc_max_us"]:
                     stats["relay_enc_max_us"] = dt
                 if wire is not None:
+                    he.advance()               # encode copied it out
                     usb.write(wire)            # consume before next encode
                 else:
                     # Non-frame or spill shapes: the allocating general
                     # path (untimed by relay_enc -- rare by design).
-                    for w2 in core.he_msg(m):
+                    msgs2 = core.he_msg(m)     # copies what it keeps
+                    he.advance()
+                    for w2 in msgs2:
                         usb.write(w2)
                 n += 1
             stats["pump_calls"] += 1
@@ -1519,7 +1728,7 @@ def main():
             idle = True
 
             # HE -> Pi
-            if he.queue:
+            if he.count:
                 idle = False
                 pump_he_to_pi()
 
@@ -1658,6 +1867,8 @@ def main():
                 _trace("stats %s splitter f=%d e=%d qdrops=%d"
                        % (json.dumps(core.stats), core.splitter.frames,
                           core.splitter.errors, he.q_drops))
+                if engine.cstats["frames"]:
+                    _trace("capwait %s" % json.dumps(engine.cstats))
 
             if idle:
                 time.sleep_ms(1)
