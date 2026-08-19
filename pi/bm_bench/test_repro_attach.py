@@ -29,6 +29,7 @@ BRIDGE_DIR = os.path.join(REPO, "firmware", "bm_bridge")
 
 sys.path.insert(0, HERE)
 import repro_attach as ra  # noqa: E402
+import bench_chain as bc  # noqa: E402
 
 DEMO_UP = os.path.join(HERE, "demo_up.sh")
 REPRO = os.path.join(HERE, "repro_attach.py")
@@ -266,6 +267,14 @@ if kind == "hang":
 if kind == "trace-quiet":
     print("==== /flash/bridge_trace.txt (100 bytes) ====")
     print("vcp quiet 30000 ms -- pi side gone, exiting")
+if kind == "trace-load":
+    print("==== /flash/bridge_trace.txt (100 bytes) ====")
+    print("vcp quiet 30000 ms -- pi side gone, exiting")
+    print('9 exit stats {"cap_frames": 602, "cap_chunks": 12040} sp')
+if kind == "trace-noload":
+    print("==== /flash/bridge_trace.txt (100 bytes) ====")
+    print("vcp quiet 30000 ms -- pi side gone, exiting")
+    print('9 exit stats {"cap_frames": 0, "cap_chunks": 0} sp')
 if kind == "trace-p1":
     print("==== /flash/bridge_trace.txt (100 bytes) ====")
     print("phase 1 timeout -- no Pi attach, exiting")
@@ -276,8 +285,8 @@ sys.exit(0)
 
 
 class TestEndToEnd(unittest.TestCase):
-    """One scripted run: cycle 1 clean, cycle 2 wedges into the
-    state2 discriminator and lands state2-reproduced -> exit 3."""
+    """v1 (no-load) lifecycle, still supported for A/B: cycle 1 clean,
+    cycle 2 wedges into the state2 discriminator -> exit 3."""
 
     def _run(self, outcomes, cycles=2, ladder=2):
         d = tempfile.mkdtemp()
@@ -301,7 +310,7 @@ class TestEndToEnd(unittest.TestCase):
         env = dict(os.environ)
         env.update(FAKE_MPR_DIR=d, REPRO_PORT=port,
                    REPRO_REPO=REPO, REPRO_LOG_DIR=os.path.join(d, "logs"),
-                   REPRO_TIME_SCALE="10000",
+                   REPRO_TIME_SCALE="10000", REPRO_LOAD="0",
                    REPRO_CYCLES=str(cycles), REPRO_LADDER=str(ladder),
                    PATH=bindir + os.pathsep + env.get("PATH", ""),
                    HOME=d)
@@ -348,6 +357,233 @@ class TestEndToEnd(unittest.TestCase):
         end = [e for e in events if e["kind"] == "run-end"]
         self.assertIsNone(end[0]["stopped_on"])
         self.assertEqual(["clean", "clean"], end[0]["verdicts"])
+
+
+REAL_EXIT_STATS = (
+    '129870 exit stats {"pump_batch_max": 1, "cap_chunks": 12040, '
+    '"cap_frames": 602, "cap_msgs": 12040, "vcp_writes": 5} '
+    'splitter f=0 e=0 qdrops=0\r\n'
+    '129930 exit gate opens=0 refusals=0 worst_wait=0 ms')
+
+
+class TestLoadProof(unittest.TestCase):
+    def test_cap_frames_parsed_from_a_real_exit_stats_line(self):
+        self.assertEqual(602, bc.cap_frames_from_trace(REAL_EXIT_STATS))
+
+    def test_cap_frames_none_when_no_exit_stats(self):
+        self.assertIsNone(bc.cap_frames_from_trace("boot: launcher start"))
+
+    def test_cap_frames_zero_is_reported_not_swallowed(self):
+        t = '1 exit stats {"cap_frames": 0} splitter f=0'
+        self.assertEqual(0, bc.cap_frames_from_trace(t))
+
+    def test_last_exit_stats_wins(self):
+        t = ('1 exit stats {"cap_frames": 5} x\n'
+             '2 exit stats {"cap_frames": 9} x')
+        self.assertEqual(9, bc.cap_frames_from_trace(t))
+
+    def test_load_delta_counts_frames_and_flags_dirt(self):
+        before = {"frames_ok": 10, "gaps": 0, "dropped": 0, "pub_errs": 0,
+                  "cam_state": "ok"}
+        after = {"frames_ok": 610, "gaps": 0, "dropped": 0, "pub_errs": 0,
+                 "cam_state": "ok"}
+        frames, clean, _ = bc.load_delta(before, after)
+        self.assertEqual(600, frames)
+        self.assertTrue(clean)
+        after2 = dict(after, gaps=3)
+        frames2, clean2, _ = bc.load_delta(before, after2)
+        self.assertEqual(600, frames2)
+        self.assertFalse(clean2)   # dirty, but still load
+
+    def test_zero_delta_is_not_load(self):
+        z = {"frames_ok": 10, "gaps": 0, "dropped": 0, "pub_errs": 0,
+             "cam_state": "ok"}
+        frames, clean, _ = bc.load_delta(z, dict(z))
+        self.assertEqual(0, frames)
+        self.assertFalse(clean)
+
+
+class TestChainDriver(unittest.TestCase):
+    """Chain with an injected runner -- no bench, no ssh."""
+
+    def _chain(self, handler):
+        self.calls = []
+
+        def run(cmd, timeout):
+            self.calls.append(cmd)
+            return handler(cmd)
+        return bc.Chain(run, lambda m: None, sleep=lambda s: None)
+
+    def test_up_starts_light_before_telemetry(self):
+        def h(cmd):
+            if "status" in cmd:
+                return 0, json.dumps({"ledger": {"frames_ok": 0},
+                                      "cam_reply": {"state": "ok"}}), ""
+            return 0, "", ""
+        self._chain(h).up()
+        starts = [c for c in self.calls if "start" in c]
+        self.assertIn(bc.LIGHT_UNIT, starts[0])
+        self.assertIn(bc.TELEM_UNIT, starts[1])
+
+    def test_up_raises_and_cleans_up_when_the_socket_never_answers(self):
+        def h(cmd):
+            if "status" in cmd:
+                return 1, "not json", ""
+            return 0, "", ""
+        with self.assertRaises(bc.ChainError):
+            self._chain(h).up()
+        self.assertTrue([c for c in self.calls if "stop" in c],
+                        "a failed up() must still stop the units")
+
+    def test_up_raises_when_light_will_not_start(self):
+        with self.assertRaises(bc.ChainError):
+            self._chain(lambda cmd: (1, "", "unit not found")).up()
+
+    def test_down_stops_telemetry_before_light(self):
+        self._chain(lambda cmd: (0, "", "")).down()
+        stops = [c for c in self.calls if "stop" in c]
+        self.assertIn(bc.TELEM_UNIT, stops[0])
+        self.assertIn(bc.LIGHT_UNIT, stops[1])
+
+    def test_stream_sends_the_row_geometry_then_stops(self):
+        def h(cmd):
+            return 0, json.dumps({"ledger": {"frames_ok": 1},
+                                  "cam_reply": {"state": "ok"}}), ""
+        self._chain(h).stream("hd-mono", secs=0)
+        sent = [c for c in self.calls if "stream" in c][0]
+        self.assertEqual(["4.0", "6", "0", "50", "hd", "mono"],
+                         sent[sent.index("stream") + 1:])
+        self.assertTrue([c for c in self.calls if "stop" in c])
+
+
+FAKE_TOOLS = r"""#!/usr/bin/env python3
+import json, os, sys
+d = os.environ["FAKE_MPR_DIR"]
+who = os.path.basename(sys.argv[0])
+argv = sys.argv[1:]
+with open(os.path.join(d, "chain.log"), "a") as f:
+    f.write(who + " " + " ".join(argv) + "\n")
+if who == "sudo":
+    argv = [a for a in argv if a != "-n"]
+    who = os.path.basename(argv[0]); argv = argv[1:]
+if who == "ssh":
+    argv = argv[argv.index("pi@nereus001") + 1:]
+    if argv and argv[0] == "sudo":
+        argv = [a for a in argv[1:] if a != "-n"]
+    who = os.path.basename(argv[0]) if argv else ""
+    argv = argv[1:]
+if who == "systemctl":
+    if argv and argv[0] == "is-active":
+        print("inactive")
+    sys.exit(0 if os.environ.get("FAKE_UNITS_OK", "1") == "1" else 1)
+if who == "bench-ctl.sh":
+    cmd = argv[0] if argv else ""
+    n_path = os.path.join(d, "frames.txt")
+    n = int(open(n_path).read()) if os.path.exists(n_path) else 0
+    if cmd == "status":
+        if os.environ.get("FAKE_SOCKET_DEAD") == "1":
+            print("node mute"); sys.exit(1)
+        # frames advance only once a stream has been commanded
+        if os.path.exists(os.path.join(d, "streaming")):
+            n += int(os.environ.get("FAKE_FPS", "200"))
+            open(n_path, "w").write(str(n))
+        print(json.dumps({"ledger": {"frames_ok": n, "gaps": 0,
+                                     "dropped": 0, "bytes_ok": n * 27000},
+                          "cam_reply": {"state": "ok", "pub_ok": n * 20,
+                                        "pub_errs": 0}}))
+    elif cmd == "stream":
+        open(os.path.join(d, "streaming"), "w").write("1")
+        print(json.dumps({"accepted": True}))
+    elif cmd == "stop":
+        p = os.path.join(d, "streaming")
+        os.path.exists(p) and os.remove(p)
+        print(json.dumps({"stopped": True}))
+    sys.exit(0)
+sys.exit(0)
+"""
+
+
+class TestEndToEndLoad(unittest.TestCase):
+    """v2 load lifecycle against fake systemctl/ssh/bench-ctl."""
+
+    def _run(self, outcomes, env_extra=None, cycles=1, ladder=2):
+        d = tempfile.mkdtemp()
+        bindir = os.path.join(d, "bin")
+        os.makedirs(bindir)
+        for name, body in (("mpremote", FAKE_MPREMOTE),
+                           ("sudo", FAKE_TOOLS), ("ssh", FAKE_TOOLS),
+                           ("systemctl", FAKE_TOOLS),
+                           ("bench-ctl.sh", FAKE_TOOLS)):
+            path = os.path.join(bindir, name)
+            with open(path, "w") as f:
+                f.write(body)
+            os.chmod(path, 0o755)
+        port = os.path.join(d, "port")
+        open(port, "w").write("")
+        launcher_sha = hashlib.sha256(
+            open(MAIN_BRIDGE, "rb").read()).hexdigest()[:16]
+        with open(os.path.join(d, "outcomes.txt"), "w") as f:
+            f.write("\n".join(outcomes).replace(
+                "PREFLIGHT", "print:MAIN:%s|BOOTREP:yes" % launcher_sha)
+                + "\n")
+        env = dict(os.environ)
+        env.update(FAKE_MPR_DIR=d, REPRO_PORT=port, REPRO_REPO=REPO,
+                   REPRO_LOG_DIR=os.path.join(d, "logs"),
+                   REPRO_TIME_SCALE="10000", REPRO_LOAD="1",
+                   REPRO_STREAM_S="1", REPRO_ROWS="vga-color",
+                   REPRO_CYCLES=str(cycles), REPRO_LADDER=str(ladder),
+                   PATH=bindir + os.pathsep + "/usr/bin:/bin", HOME=d)
+        env.update(env_extra or {})
+        # bench_chain hardcodes the deployed bench-ctl path; point it at
+        # the fake for the test
+        env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+        p = subprocess.run([sys.executable, REPRO], env=env,
+                           capture_output=True, text=True, timeout=180)
+        events = []
+        for root, _, files in os.walk(os.path.join(d, "logs")):
+            for fn in files:
+                if fn == "events.jsonl":
+                    with open(os.path.join(root, fn)) as f:
+                        events = [json.loads(l) for l in f]
+        return p, events, d
+
+    LOAD_TRACE = ("trace-load")
+
+    def test_a_loaded_cycle_is_clean_and_records_frames(self):
+        p, events, d = self._run(
+            ["PREFLIGHT", "ok", "ok", "trace-load", "ok"])
+        self.assertEqual(0, p.returncode, p.stdout + p.stderr)
+        loads = [e for e in events if e["kind"] == "load"]
+        self.assertEqual(1, len(loads))
+        self.assertGreater(loads[0]["frames"], 0)
+        chain = read(os.path.join(d, "chain.log"))
+        self.assertIn("stream 4.0 15 1 50 vga color", chain)
+        # the teardown that matters: units stopped, light last
+        self.assertIn("stop bm-light.service", chain)
+
+    def test_a_cycle_that_streams_nothing_is_void_not_clean(self):
+        p, events, _ = self._run(
+            ["PREFLIGHT", "ok", "ok", "trace-load", "ok"],
+            env_extra={"FAKE_FPS": "0"})
+        self.assertEqual(3, p.returncode, p.stdout + p.stderr)
+        v = [e["verdict"] for e in events if e["kind"] == "verdict"]
+        self.assertIn("no-load", v)
+
+    def test_board_side_zero_overrides_a_receiver_side_delta(self):
+        p, events, _ = self._run(
+            ["PREFLIGHT", "ok", "ok", "trace-noload", "ok"])
+        self.assertEqual(3, p.returncode, p.stdout + p.stderr)
+        v = [e for e in events if e.get("verdict") == "no-load"]
+        self.assertTrue(v)
+        self.assertEqual("board-cap_frames", v[-1].get("via"))
+
+    def test_a_dead_control_socket_is_chain_failed(self):
+        p, events, _ = self._run(
+            ["PREFLIGHT", "ok", "ok", "trace-load", "ok"],
+            env_extra={"FAKE_SOCKET_DEAD": "1"})
+        self.assertEqual(3, p.returncode, p.stdout + p.stderr)
+        v = [e["verdict"] for e in events if e["kind"] == "verdict"]
+        self.assertIn("chain-failed", v)
 
 
 if __name__ == "__main__":

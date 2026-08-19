@@ -14,6 +14,15 @@
 #   state 2: a linked boot whose VCP RX is dead (bytes sent, bridge
 #            never sees them -> it sits in phase 1 to its own timeout).
 #
+# v2 (2026-08-19): each cycle now STREAMS before the teardown. v1 ran
+# 8/8 clean and its own exit stats said why -- cap_frames=0: it tore
+# down bridges that had never carried traffic, while all six incidents
+# followed lifecycles that had. Load is driven through the real chain
+# (bench_chain.py) and proven from both ends -- receiver ledger delta
+# AND the board's own cap_frames -- because a cycle that silently
+# streamed nothing would look exactly like a clean one. REPRO_LOAD=0
+# restores the v1 (no-load) lifecycle for an A/B.
+#
 # State machine (sources: bm_bridge.py PHASE1_TIMEOUT_MS/QUIET_EXIT_MS,
 # demo_up.sh mpr discipline, DEV_LOG 2026-08-19 evening):
 #   reset -> launcher boots the bridge -> phase 1 (holds VCP, kbd_intr
@@ -25,7 +34,12 @@
 #
 # Verdict table (each refusal gets exactly one):
 #   explained-arm        arming touch refused -- that is its job
+#                        (no-load mode only; under load the chain does
+#                        the linking and the units do the teardown)
 #   degenerate-no-bridge arming touch SUCCEEDED -- bridge never ran
+#   chain-failed         units/socket would not drive -- cycle VOID
+#   no-load              chain ran but delivered no frames -- VOID, and
+#                        never counted as a load cycle
 #   explained-late-exit  ladder refusal, 45 s + one retry landed
 #   state2-candidate     retry failed inside the phase-1 horizon
 #   state2-reproduced    ...and the post-horizon attach landed with a
@@ -42,6 +56,9 @@ import os
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bench_chain  # noqa: E402
 
 PORT = os.environ.get(
     "REPRO_PORT",
@@ -68,6 +85,17 @@ MAX_WALL_S = int(os.environ.get("REPRO_WALL", "5400"))
 
 # Test hook: divides every sleep and timeout. 1 on the bench.
 TIME_SCALE = float(os.environ.get("REPRO_TIME_SCALE", "1"))
+
+# v2 load. Rows alternate so a run covers both incident shapes: VGA
+# color (20 chunks/frame, the GOLD row) and HD mono (55 chunks/frame --
+# overflows the 32-slot vring, maximum pressure on the SHM/rpmsg
+# neighborhood patches 0004/0005 touched).
+LOAD = os.environ.get("REPRO_LOAD", "1") != "0"
+LOAD_ROWS = os.environ.get("REPRO_ROWS", "vga-color,hd-mono").split(",")
+STREAM_S = int(os.environ.get("REPRO_STREAM_S", "50"))
+# After the units stop, the VCP goes silent and the bridge needs its
+# full quiet-exit plus teardown before a REPL exists.
+TEARDOWN_WAIT_S = QUIET_EXIT_S + 20
 
 # The one place the recovery recipe is spelled out; the code itself
 # never runs it (preserve-the-wedge rule -- test-pinned).
@@ -290,15 +318,63 @@ def settle_by_id(log):
 
 
 def pull_traces(mpr, log, cycle):
+    """-> (exit_kind, cap_frames). cap_frames is the BOARD's own count
+    of streamed frames; None means the trace carried no exit stats (an
+    unreadable trace must not pass as proof of anything)."""
     rc, out, _ = mpr.run("exec", TRACE_TAIL_CODE)
     if rc == 0:
         path = log.blob("cycle%02d_traces.txt" % cycle, out)
         kind = exit_kind_from_trace(out)
-        log.say("cycle %d traces pulled (exit kind: %s) -> %s"
-                % (cycle, kind, path))
-        return kind
+        cap = bench_chain.cap_frames_from_trace(out)
+        log.say("cycle %d traces pulled (exit=%s cap_frames=%s) -> %s"
+                % (cycle, kind, cap, path))
+        return kind, cap
     log.say("cycle %d trace pull FAILED rc=%d" % (cycle, rc))
-    return None
+    return None, None
+
+
+def _run_cmd(cmd, timeout):
+    """Command runner handed to bench_chain (bounded, never raises)."""
+    t = timeout / TIME_SCALE
+    if TIME_SCALE != 1:
+        t = max(t, 2.0)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out after %g s" % t
+    except OSError as e:
+        return 127, "", str(e)
+
+
+def drive_load(log, cycle, row):
+    """Chain up -> stream one row -> chain down. The chain-down IS the
+    teardown the incidents followed (units stop -> VCP silent -> the
+    bridge's own quiet-exit -> rp.stop). Returns (void_verdict|None,
+    frames): a void verdict means the cycle proved nothing and must not
+    be counted as a load cycle."""
+    chain = bench_chain.Chain(_run_cmd, log.say, sleep=_sleep)
+    try:
+        chain.up()
+        before, after = chain.stream(row, secs=STREAM_S)
+    except bench_chain.ChainError as exc:
+        log.event("verdict", cycle=cycle, verdict="chain-failed",
+                  row=row, err=str(exc)[:200])
+        log.say("chain FAILED (%s): %s -- cycle VOID" % (row, exc))
+        chain.down()
+        return "chain-failed", 0
+    frames, clean, detail = bench_chain.load_delta(before, after)
+    log.event("load", cycle=cycle, row=row, frames=frames, clean=clean,
+              detail=detail)
+    log.say("load %s: %s%s" % (row, detail, "" if clean else "  (NOT "
+                               "clean -- still counts as load)"))
+    chain.down()
+    if frames <= 0:
+        log.event("verdict", cycle=cycle, verdict="no-load", row=row)
+        log.say("chain delivered ZERO frames -- cycle VOID. Check "
+                "journalctl -u bm-telemetry on nereus001")
+        return "no-load", 0
+    return None, frames
 
 
 def stop_requested():
@@ -309,10 +385,16 @@ def preflight(mpr, log):
     """Board must be at a REPL carrying demo_up's staged launcher +
     boot_report. A refused preflight is NOT counted -- its provenance
     is unknown; report and hand off."""
+    if LOAD:
+        # Load mode drives the units itself, so a leftover chain is
+        # ours to clear -- but only here, before any cycle starts.
+        bench_chain.Chain(_run_cmd, log.say, sleep=_sleep).down()
+        _sleep(3)
     for p in subprocess.run(["ps", "-eo", "args"], capture_output=True,
                             text=True).stdout.splitlines():
         if "bm_sbc_s15/build/all" in p:
-            log.say("FATAL: a bm_sbc app is running -- it owns the tty")
+            log.say("FATAL: a bm_sbc app is still running -- it owns "
+                    "the tty (stop bm-light/bm-telemetry first)")
             return False
     if not os.path.exists(PORT):
         log.say("FATAL: AE3 not on USB at %s" % PORT)
@@ -369,6 +451,23 @@ def run_cycle(mpr, log, cycle):
     def elapsed():
         return CLOCK.now() - reset_t
 
+    if LOAD:
+        # The REAL incident lifecycle: the chain links the bridge,
+        # streams, and its shutdown (not an mpremote byte) is what
+        # arms the quiet-exit and drives the teardown.
+        row = LOAD_ROWS[(cycle - 1) % len(LOAD_ROWS)]
+        log.say("cycle %d load row: %s (%d s)" % (cycle, row, STREAM_S))
+        void, frames = drive_load(log, cycle, row)
+        if void is not None:
+            snapshot(log, "cycle%02d_%s" % (cycle, void))
+            return void
+        log.say("teardown wait %d s (VCP silent -> quiet-exit -> "
+                "rp.stop -> REPL)" % TEARDOWN_WAIT_S)
+        _sleep(TEARDOWN_WAIT_S)
+        bridge_ran = True
+        return run_ladder(mpr, log, cycle, elapsed, bridge_ran,
+                          want_load=True)
+
     # Arming touch: MUST fail against a live phase-1 bridge.
     rc, _, err = mpr.run("exec", "print('arm')")
     if lost_race(rc, err):
@@ -391,7 +490,13 @@ def run_cycle(mpr, log, cycle):
     if bridge_ran:
         log.say("armed window: %d s untouched" % ARMED_WINDOW_S)
         _sleep(ARMED_WINDOW_S)
+    return run_ladder(mpr, log, cycle, elapsed, bridge_ran,
+                      want_load=False)
 
+
+def run_ladder(mpr, log, cycle, elapsed, bridge_ran, want_load):
+    """Serialized attach ladder against what the state machine says is
+    a REPL. Every refusal is screened before it may count."""
     # Attach ladder: every serialized attach must now land.
     traces_pulled = False
     for i in range(1, LADDER_ATTACHES + 1):
@@ -402,8 +507,18 @@ def run_cycle(mpr, log, cycle):
         if rc == 0:
             log.event("attach-ok", cycle=cycle, attach=i)
             if not traces_pulled:
-                kind = pull_traces(mpr, log, cycle)
+                kind, cap = pull_traces(mpr, log, cycle)
                 traces_pulled = True
+                if want_load and cap is not None and cap <= 0:
+                    # The receiver counted frames but the board says it
+                    # streamed none -- the two ends disagree, so this
+                    # cycle proves nothing about a loaded teardown.
+                    log.event("verdict", cycle=cycle,
+                              verdict="no-load", via="board-cap_frames")
+                    log.say("board reports cap_frames=%s despite a "
+                            "receiver-side delta -- cycle VOID" % cap)
+                    snapshot(log, "cycle%02d_no-load" % cycle)
+                    return "no-load"
                 if bridge_ran and kind == "phase1-timeout":
                     # Cannot legally happen this early in one boot
                     # generation (600 s has not elapsed) -- flag it
@@ -451,7 +566,7 @@ def run_cycle(mpr, log, cycle):
                 _sleep(wait)
             rc3, _, err3 = mpr.run("exec", "print('post-horizon')")
             if rc3 == 0:
-                kind = pull_traces(mpr, log, cycle)
+                kind, _cap = pull_traces(mpr, log, cycle)
                 verdict = ("state2-reproduced"
                            if kind == "phase1-timeout"
                            else "late-recovery-unexplained")
@@ -482,11 +597,21 @@ def main():
     log = Log(LOG_DIR)
     log.say("repro_attach start: port=%s cycles=%d ladder=%d scale=%g"
             % (PORT, MAX_CYCLES, LADDER_ATTACHES, TIME_SCALE))
+    log.say("mode: %s" % ("LOAD (rows %s, %d s each)"
+                          % (",".join(LOAD_ROWS), STREAM_S)
+                          if LOAD else "NO-LOAD (v1 lifecycle)"))
     if os.path.exists(STOP_FILE):
         os.remove(STOP_FILE)
     mpr = Mpr(log)
     if not preflight(mpr, log):
         return 2
+    if LOAD:
+        # Whatever happens below -- anomaly, crash, budget -- the units
+        # must not be left holding the tty over a preserved specimen.
+        import atexit
+        atexit.register(
+            lambda: bench_chain.Chain(_run_cmd, log.say,
+                                      sleep=time.sleep).down())
     t0 = CLOCK.now()
     verdicts = []
     for cycle in range(1, MAX_CYCLES + 1):
