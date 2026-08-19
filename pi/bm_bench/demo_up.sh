@@ -71,11 +71,17 @@ mpr() {
   return $rc
 }
 
-# If a previous bridge is still alive, mpremote can't attach; the fix is
-# 30+ s of zero port contact (its quiet-exit), so don't retry in a loop
-# (mpr already carries the one sanctioned retry).
+# If a previous bridge is still alive, mpremote can't attach — fast
+# ("could not enter raw repl") or hanging (mpr times it out). Either
+# way that failed attach ARMED the bridge's 30 s quiet-exit, so the
+# remedy is identical: 45 s of zero contact, then ONE more attempt.
+# Bounded at two attempts total; a third failure is a sick board and
+# the uhubctl recipe, not more retries.
 if ! mpr exec "print(1)" >/dev/null 2>&1; then
-  fail "board busy (bridge still running?) — wait 40 s untouched, run again"
+  echo "preflight attach refused — its bytes armed the quiet-exit; 45 s untouched, one retry" >&2
+  sleep 45
+  mpr exec "print(1)" >/dev/null 2>&1 || \
+    fail "board busy after the armed-exit window — recovery: sudo uhubctl -l 3 -p 1 -a cycle -d 3, then 5 min of zero port contact, then one run"
 fi
 
 # Board must carry the staged S17 files (bm_he.elf etc. stay resident).
