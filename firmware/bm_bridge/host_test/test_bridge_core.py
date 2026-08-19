@@ -843,13 +843,28 @@ class _FakeCsi:
 _stream_cmd = dict(_cmd)
 _stream_cmd["mode"] = CAMERA_MODE_STREAM
 
+# fb2 sizing rule: strictly inside the claimed ceiling, 64 KB slack.
+eng = bm_bridge.CaptureEngine()
+check(eng._fb2_fits(CAMERA_RES_VGA, CAMERA_PF_COLOR) and
+      eng._fb2_fits(CAMERA_RES_VGA, CAMERA_PF_MONO) and
+      eng._fb2_fits(CAMERA_RES_QVGA, CAMERA_PF_COLOR),
+      "fb2: QVGA/VGA fit strictly inside the HD ceiling")
+check(not eng._fb2_fits(CAMERA_RES_HD, CAMERA_PF_MONO) and
+      not eng._fb2_fits(CAMERA_RES_HD, CAMERA_PF_COLOR),
+      "fb2: HD never doubles (2x mono == the claim exactly; too tight)")
+
+# fb=1 regime (HD mono stream -- fb2 refused): kick-after-encode.
 _fc = _FakeCsi()
 _FakeSensor._csi = _fc
 eng = bm_bridge.CaptureEngine()
 eng.booted = True
 eng.sensor_ok = True
-eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
-eng.command(dict(_stream_cmd))          # t_start=1000, interval=100ms
+eng.cur_res, eng.cur_pf = CAMERA_RES_HD, CAMERA_PF_MONO
+_hd_stream = dict(_stream_cmd)
+_hd_stream["res"] = CAMERA_RES_HD
+_hd_stream["pf"] = CAMERA_PF_MONO
+eng.command(dict(_hd_stream))           # t_start=1000, interval=100ms
+check(eng.fb_count == 1, "fb=1 regime: HD mono stream keeps one buffer")
 _fc.script = [None, _FakeImg(b"live")]  # first poll blocks, second collects
 check(eng.poll(1150) is None and eng.cap_pending,
       "overlap: WOULD_BLOCK returns None with the capture in flight")
@@ -857,7 +872,7 @@ out = eng.poll(1160)
 check(out == b"jpeg-of-live",
       "overlap: the armed capture is collected and encoded")
 check(_fc.nb_calls == 3 and eng.cap_pending,
-      "overlap: a stream frame KICKS the next capture after encode")
+      "overlap fb=1: a stream frame KICKS the next capture after encode")
 # A kick that completes instantly is kept, never dropped: next poll must
 # encode it WITHOUT another csi call.
 _fc.script = [_FakeImg(b"live"), _FakeImg(b"live")]   # collect + ready kick
@@ -868,6 +883,7 @@ calls_before = _fc.nb_calls
 out = eng.poll(1400)
 check(out == b"jpeg-of-live" and _fc.nb_calls == calls_before + 1,
       "overlap: parked frame encoded; only the kick touches the csi")
+
 # STOP quiesces: the in-flight capture is collected and discarded.
 eng.cap_pending = True
 eng.command({"mode": CAMERA_MODE_STOP})
@@ -901,6 +917,32 @@ _fc3.script = [_FakeImg(b"live")]
 check(eng.poll(1150) == b"jpeg-of-live" and _fc3.nb_calls == 1
       and not eng.cap_pending,
       "overlap: single capture collects once and never kicks")
+
+# fb=2 regime (QVGA color stream): two buffers pinned, NO kick -- the
+# collect itself arms the next capture at the C layer.
+_fs_calls = []
+_orig_sfb = _FakeSensor.set_framebuffers
+_FakeSensor.set_framebuffers = staticmethod(lambda n: _fs_calls.append(n))
+_fc2b = _FakeCsi()
+_FakeSensor._csi = _fc2b
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_stream_cmd))
+check(eng.fb_count == 2 and _fs_calls == [2],
+      "fb=2 regime: stream command doubles the buffers")
+_fc2b.script = [_FakeImg(b"live")]
+out = eng.poll(1150)
+check(out == b"jpeg-of-live" and _fc2b.nb_calls == 1
+      and not eng.cap_pending,
+      "fb=2 regime: one collect per frame, NO kick")
+# Stop then a SINGLE command drops back to one buffer.
+eng.command({"mode": CAMERA_MODE_STOP})
+eng.command(dict(_cmd))
+check(eng.fb_count == 1 and _fs_calls == [2, 1],
+      "fb=2 regime: a non-stream command re-pins one buffer")
+_FakeSensor.set_framebuffers = _orig_sfb
 
 del _FakeSensor._csi
 

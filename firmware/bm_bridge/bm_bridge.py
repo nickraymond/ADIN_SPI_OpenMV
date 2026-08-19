@@ -969,6 +969,16 @@ class CaptureEngine:
         self._nb = None             # None=unprobed, False=fallback, True=on
         self._img_ready = None      # frame collected early by a kick
         self.cap_pending = False    # a kicked capture is in flight
+        # Double-buffer overlap (S23 GOLD): with 2 framebuffers the kick
+        # moves BEFORE encode -- capture N+1 fills the free buffer while
+        # buffer N is encoded, hiding the measured ~33 ms capture behind
+        # the ~49 ms VGA encode. Enabled ONLY when 2 buffers fit inside
+        # the bootstrap ceiling's high-water block WITH slack: the
+        # sticky-fb allocator (patch 0001) reuses the block when the
+        # request fits, so the S18 grow-off-bus hazard cannot fire; a
+        # request at/over the block would gamble, so HD mono (2x
+        # 1,024,000 = exactly the 2,048,000 claim) stays at 1.
+        self.fb_count = 1           # what set_framebuffers currently holds
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -992,6 +1002,26 @@ class CaptureEngine:
                    % ("ENABLED" if self._nb
                       else "unavailable -- blocking snapshot fallback"))
         return self._csi
+
+    def _fb2_fits(self, res, pf):
+        """True when TWO buffers of (res, pf) sit strictly inside the
+        bootstrap ceiling's high-water block, with 64 KB slack for the
+        allocator's queue/metadata overhead (which this side cannot
+        see exactly -- strictly-inside is the whole safety argument)."""
+        w, h = RES_GEOM.get(res, (0, 0))
+        cw, ch = RES_GEOM.get(self.ceiling, (0, 0))
+        frame = w * h * (1 if pf == CAMERA_PF_MONO else 2)
+        return frame > 0 and 2 * frame + 65536 <= cw * ch * 2
+
+    def _set_fb_count(self, n):
+        """Change the buffer count, quiesced. No-op when already there."""
+        if self.fb_count == n:
+            return
+        self._quiesce()              # never resize with a capture in flight
+        import sensor
+        sensor.set_framebuffers(n)
+        self.fb_count = n
+        _trace("camera: framebuffers -> %d" % n)
 
     def _quiesce(self):
         """Collect (and discard) any in-flight capture BEFORE the sensor
@@ -1029,6 +1059,7 @@ class CaptureEngine:
             sensor.set_pixformat(sensor.RGB565)
             sensor.set_framesize(sensor.QVGA)    # small: legalises the pin
             sensor.set_framebuffers(1)           # pin BEFORE the big alloc
+            self.fb_count = 1
             sensor.set_framesize(self._framesize(sensor, self.ceiling))
             sensor.skip_frames(time=300)
             self.cur_res, self.cur_pf = self.ceiling, CAMERA_PF_COLOR
@@ -1123,6 +1154,7 @@ class CaptureEngine:
                                      else sensor.RGB565)
             elif step == "framebuffers":
                 sensor.set_framebuffers(1)   # pin: stops the pool reflow
+                self.fb_count = 1
             elif step == "framesize":
                 sensor.set_framesize(self._framesize(sensor, res))
             elif step == "settle":
@@ -1202,6 +1234,15 @@ class CaptureEngine:
         if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
+        # Double-buffer when it fits strictly inside the claimed ceiling
+        # (sticky-fb reuses the block: no allocator touch, no S18 grow
+        # hazard). Streams only; stills gain nothing from a second fb.
+        if (cmd["mode"] == CAMERA_MODE_STREAM
+                and self._nb_handle() is not None
+                and self._fb2_fits(res, pf)):
+            self._set_fb_count(2)
+        else:
+            self._set_fb_count(1)
         self.q = cmd["q"]
         # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
         # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
@@ -1283,13 +1324,17 @@ class CaptureEngine:
             self.mode = CAMERA_MODE_STOP
             _trace("camera: single enc %d us, %d B, q=%d"
                    % (self.enc_us, len(b), self.q))
-        elif csi is not None:
-            # The overlap: kick the NEXT capture now (copy=True above
+        elif csi is not None and self.fb_count < 2:
+            # fb=1 overlap: kick the NEXT capture now (copy=True above
             # freed the fb) so exposure/readout runs under the send of
-            # THIS jpeg. A rare instantly-complete frame is kept for the
-            # next poll, never dropped. Frame latency grows by up to one
-            # pacing slot (image taken earlier than encoded) -- fine for
-            # this product, stated here rather than hidden.
+            # THIS jpeg. At fb>=2 there is NO kick: the collect call
+            # itself releases the just-encoded buffer, arms the next
+            # capture into it, and returns the frame captured during the
+            # previous cycle -- capture rides fully under encode. A rare
+            # instantly-complete frame is kept for the next poll, never
+            # dropped. Frame latency grows by up to one cycle (image
+            # taken earlier than encoded) -- fine for this product,
+            # stated here rather than hidden.
             k = csi.snapshot(blocking=False)
             if k is not None:
                 self._img_ready = k      # complete already: nothing in flight
