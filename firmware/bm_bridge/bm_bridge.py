@@ -241,6 +241,11 @@ class BridgeCore:
             # whether HE returns trickle (batch ~1) or burst.
             "vcp_us": 0, "vcp_max_us": 0, "vcp_writes": 0, "vcp_bytes": 0,
             "pump_calls": 0, "pump_msgs": 0, "pump_batch_max": 0,
+            # Second-stage split (the ~1.25 ms/msg pump cost): time
+            # inside core.he_msg (parse + frame_encode_into + copies)
+            # vs the loop glue around it. A GC pause landing in he_msg
+            # shows as a relay_enc_max_us spike.
+            "relay_enc_us": 0, "relay_enc_max_us": 0,
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -1292,11 +1297,18 @@ def main():
             """Drain the HE->HP queue into the VCP. Hoisted out of the
             loop so the chunk sender can call it too (S19 bite 2)."""
             n = 0
+            stats = core.stats
             while he.queue:
-                for wire in core.he_msg(he.queue.pop(0)):
+                m = he.queue.pop(0)
+                t0 = _ticks_us()
+                wires = core.he_msg(m)
+                dt = _elapsed(t0, _ticks_us())
+                stats["relay_enc_us"] += dt
+                if dt > stats["relay_enc_max_us"]:
+                    stats["relay_enc_max_us"] = dt
+                for wire in wires:
                     usb.write(wire)
                 n += 1
-            stats = core.stats
             stats["pump_calls"] += 1
             stats["pump_msgs"] += n
             if n > stats["pump_batch_max"]:

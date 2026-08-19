@@ -463,7 +463,8 @@ bm_bridge._ticks_us = fake_ticks
 core = BridgeCore()
 for k in ("cap_ept_us", "cap_ept_max_us", "cap_ept_slow", "cap_pump_us",
           "vcp_us", "vcp_max_us", "vcp_writes", "vcp_bytes",
-          "pump_calls", "pump_msgs", "pump_batch_max"):
+          "pump_calls", "pump_msgs", "pump_batch_max",
+          "relay_enc_us", "relay_enc_max_us"):
     check(core.stats.get(k) == 0, "stats key %s starts at 0" % k)
 
 del trace[:]
