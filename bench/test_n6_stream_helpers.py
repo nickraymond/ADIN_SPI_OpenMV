@@ -62,11 +62,9 @@ class TestStats(unittest.TestCase):
         self.assertEqual(s.snapshot()["suggest"], "")
 
 
-class _FakeProc:
-    """Stands in for the mpremote subprocess: just a stdout to read."""
-
-    def __init__(self, data):
-        self.stdout = io.BytesIO(data)
+def _stream(data):
+    """Stands in for a SerialBoard: anything with a bytes readline()."""
+    return io.BytesIO(data)
 
 
 def _frame_bytes(seq, jpeg):
@@ -85,7 +83,7 @@ class TestReaderLoop(unittest.TestCase):
     def _run(self, data):
         latest, stats = H.Latest(), H.Stats()
         state = {"alive": True}
-        H.reader_loop(_FakeProc(data), latest, stats, state)
+        H.reader_loop(_stream(data), latest, stats, state)
         return latest, stats
 
     def test_decodes_a_frame(self):
@@ -126,7 +124,7 @@ class TestReaderLoop(unittest.TestCase):
     def test_marks_process_dead_at_eof(self):
         latest, stats = H.Latest(), H.Stats()
         state = {"alive": True}
-        H.reader_loop(_FakeProc(b""), latest, stats, state)
+        H.reader_loop(_stream(b""), latest, stats, state)
         self.assertFalse(state["alive"])
 
 

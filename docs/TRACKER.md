@@ -1813,6 +1813,15 @@ unowned side quest.
   `st.l_mean`). Found the hard way — see bite 1's latent-bug note.
 - Model load is **~2.2 ms**: the tflite is memory-mapped from ROM, not
   copied into the heap. Loading is not a cost worth optimizing.
+- **`mpremote run` is fine for bounded output and unusable as a
+  continuous transport** — it accumulates and rescans the script's whole
+  output, so a stream decays with total bytes (measured: ~20 fps → <2
+  fps, wedged by frame ~703, board-side work flat at 38.5 ms
+  throughout). The stream viewer drives the raw REPL over **pyserial**
+  instead; the sweep tables were collected with mpremote and are fine.
+  Firmware is **v5.0.0, the current stable release** (published
+  2026-07-02, matching the board's build date; the newer `development`
+  tag is explicitly unstable). Not updated, per scope.
 
 - [~] **Bite 1 — headless live detection stream + first sweep.**
       Board side `bench/n6_stream_board.py` runs under `mpremote run`

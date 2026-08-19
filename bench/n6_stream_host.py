@@ -23,10 +23,7 @@ import base64
 import binascii
 import json
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,7 +41,8 @@ text-align:center}img{max-width:100%;image-rendering:pixelated}
 <pre id="s">connecting&hellip;</pre>
 <script>setInterval(async()=>{try{const r=await fetch('/stats.json');const j=await r.json();
 document.getElementById('s').textContent=
- 'fps '+j.fps+'   frames '+j.frames+'   det '+j.det+'   blobs '+j.blobs+'\\n'+
+ 'fps '+j.fps+'   frames '+j.frames+'   det '+j.det+'   blobs '+j.blobs+
+ '   resyncs '+j.resyncs+'\\n'+
  'capture '+j.cap_ms+' ms   inference '+j.inf_ms+' ms   blobs '+j.blob_ms+
  ' ms   encode '+j.enc_ms+' ms\\n'+
  (j.lab ? 'centre patch LAB  L='+j.lab[0]+'  A='+j.lab[1]+'  B='+j.lab[2]+
@@ -104,6 +102,7 @@ class Stats:
         self.info = ""
         self.junk = []
         self.lab = None
+        self.resyncs = 0        # frames dropped to a framing/length fault
         self._acc = {"cap_us": 0, "inf_us": 0, "blob_us": 0, "enc_us": 0}
 
     def note(self, hdr, nbytes):
@@ -135,6 +134,7 @@ class Stats:
             "blobs": self.blobs,
             "lab": self.lab,
             "suggest": suggest_threshold(self.lab) if self.lab else "",
+            "resyncs": self.resyncs,
             "cap_ms": self._mean_ms("cap_us"),
             "inf_ms": self._mean_ms("inf_us"),
             "blob_ms": self._mean_ms("blob_us"),
@@ -143,25 +143,30 @@ class Stats:
         }
 
 
-def build_board_script(cfg, dest_dir):
-    """Write the board script with a ``_CFG`` prelude injected. Returns its path."""
+def build_board_script_text(cfg):
+    """The board script with a ``_CFG`` prelude injected. Returns source text."""
     with open(BOARD_SCRIPT) as fh:
-        body = fh.read()
+        return "_CFG = %r\n" % (cfg,) + fh.read()
+
+
+def build_board_script(cfg, dest_dir):
+    """Same, written to a file -- handy for inspecting what actually ran."""
     path = os.path.join(dest_dir, "n6_stream_run.py")
     with open(path, "w") as fh:
-        fh.write("_CFG = %r\n" % (cfg,))
-        fh.write(body)
+        fh.write(build_board_script_text(cfg))
     return path
 
 
-def reader_loop(proc, latest, stats, state):
-    """Consume the board's stdout: ``#I`` banner, ``#F`` header + base64 payload.
+def reader_loop(out, latest, stats, state):
+    """Consume the board's output: ``#I`` banner, ``#F`` header + base64 payload.
+
+    ``out`` is anything with a bytes ``readline()`` -- a ``SerialBoard`` or a
+    plain stream in the tests.
 
     Junk lines are surfaced rather than swallowed -- a board that is unwell
     prints tracebacks, and silently dropping them is how a dead stream looks
     like an idle one (CLAUDE.md rule 6).
     """
-    out = proc.stdout
     while True:
         line = out.readline()
         if not line:
@@ -175,8 +180,12 @@ def reader_loop(proc, latest, stats, state):
             except (ValueError, UnicodeDecodeError):
                 stats.junk.append(line[:120])
                 continue
+            # The board writes "\n"; the CDC/mpremote path returns "\r\n", so
+            # the payload line carries a trailing CR that is NOT part of the
+            # base64 (the CRLF trap in CLAUDE.md rule 4, seen again here).
             payload = out.readline().rstrip(b"\r\n")
             if len(payload) != hdr.get("b64", -1):
+                stats.resyncs += 1
                 stats.junk.append(b"short payload seq %d: %d of %d"
                                   % (hdr.get("seq", -1), len(payload),
                                      hdr.get("b64", -1)))
@@ -202,7 +211,7 @@ def reader_loop(proc, latest, stats, state):
             stats.junk.append(line[:120])
             print("board: %s" % text, flush=True)
     state["alive"] = False
-    print("board: stdout closed", flush=True)
+    print("board: stream ended", flush=True)
 
 
 def make_handler(latest, stats):
@@ -258,12 +267,111 @@ def make_handler(latest, stats):
     return Handler
 
 
+class SerialBoard:
+    """Own the N6's serial port directly and run a script in the raw REPL.
+
+    This replaces ``mpremote run`` **in the data path**, and the reason is
+    measured, not stylistic: ``mpremote run`` accumulates the script's whole
+    output and rescans that buffer for the end-of-execution marker, so a
+    long-running stream degrades as total output grows. It started at ~20 fps
+    and decayed to under 2 fps after a few thousand frames, while the board's
+    own per-stage timings stayed flat at 38.5 ms/frame -- the board was never
+    the problem. mpremote is a fine tool for bounded benchmark output; it is
+    not a transport. Driving the port ourselves is also what
+    ``pi/stream/usb_frame_source.py`` already does for the AE3.
+
+    Nothing is written to the board: the script is pushed into the raw REPL
+    and executed from RAM, exactly as ``mpremote run`` would.
+    """
+
+    #: pyboard.py chunks raw-REPL writes so the board's input buffer keeps up.
+    CHUNK = 256
+    CHUNK_PAUSE_S = 0.01
+
+    def __init__(self, port, baudrate=115200):
+        import serial                      # lazy: unit tests need no pyserial
+        self._serial = serial
+        self.port = port
+        self.ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
+        self._buf = bytearray()
+
+    def _read_until(self, token, timeout_s=5.0):
+        deadline = time.monotonic() + timeout_s
+        seen = bytearray()
+        while time.monotonic() < deadline:
+            seen += self.ser.read(256)
+            if token in seen:
+                return bytes(seen)
+        raise TimeoutError("N6 %s: never sent %r during raw-REPL entry "
+                           "(saw %r)" % (self.port, token, bytes(seen[-80:])))
+
+    def start(self, script_text):
+        """Interrupt whatever is running, enter the raw REPL, run the script."""
+        self.ser.write(b"\r\x03\x03")       # Ctrl-C twice: stop main.py
+        time.sleep(0.2)
+        self.ser.reset_input_buffer()
+        self.ser.write(b"\r\x01")           # Ctrl-A: raw REPL
+        self._read_until(b"raw REPL; CTRL-B to exit")
+        payload = script_text.encode("utf-8")
+        for i in range(0, len(payload), self.CHUNK):
+            self.ser.write(payload[i:i + self.CHUNK])
+            time.sleep(self.CHUNK_PAUSE_S)
+        self.ser.write(b"\x04")             # Ctrl-D: execute
+        self._read_until(b"OK")
+        return self
+
+    def readline(self):
+        """One line, or b'' at end of execution. Buffered over raw reads."""
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl >= 0:
+                line = bytes(self._buf[:nl])
+                del self._buf[:nl + 1]
+                # The raw REPL emits 0x04 when the script finishes.
+                if line.startswith(b"\x04"):
+                    return b""
+                return line + b"\n"
+            chunk = self.ser.read(65536)
+            if chunk:
+                self._buf += chunk
+            elif not self.ser.is_open:
+                return b""
+
+    def stop(self):
+        try:
+            self.ser.write(b"\r\x03\x03")   # interrupt the running script
+            time.sleep(0.1)
+            self.ser.write(b"\r\x02")       # Ctrl-B: back to the friendly REPL
+            time.sleep(0.1)
+        except self._serial.SerialException:
+            pass
+        finally:
+            try:
+                self.ser.close()
+            except self._serial.SerialException:
+                pass
+
+
+class QuietServer(ThreadingHTTPServer):
+    """A browser closing an MJPEG tab resets the connection, which is normal.
+
+    socketserver's default dumps a full traceback for it, which buries the
+    board's own messages -- the ones that matter -- in the log.
+    """
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", default=None,
-                    help="serial device (default: mpremote's auto-connect)")
-    ap.add_argument("--mpremote", default=None,
-                    help="path to the mpremote executable (default: found on PATH)")
+                    help="serial device (default: the sole /dev/cu.usbmodem*)")
     ap.add_argument("--http-port", type=int, default=8090)
     ap.add_argument("--framesize", default="VGA",
                     help="csi framesize NAME, e.g. QVGA VGA HD SXGAM (default VGA)")
@@ -307,32 +415,45 @@ def cfg_from_args(args):
     return cfg
 
 
+def find_port(explicit=None):
+    """Resolve the N6's serial device, failing with something actionable."""
+    if explicit:
+        return explicit
+    import glob
+    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
+    if not ports:
+        raise SystemExit("no /dev/cu.usbmodem* found -- is the N6 plugged in? "
+                         "(name it explicitly with --port)")
+    if len(ports) > 1:
+        raise SystemExit("several boards present (%s) -- choose one with --port"
+                         % ", ".join(ports))
+    return ports[0]
+
+
 def main(argv=None):
     args = parse_args(argv)
-    mpremote = args.mpremote or shutil.which("mpremote")
-    if not mpremote:
-        raise SystemExit("mpremote not found on PATH -- pip install mpremote, "
-                         "or pass --mpremote /path/to/mpremote")
-
     cfg = cfg_from_args(args)
-    tmpdir = tempfile.mkdtemp(prefix="n6stream-")
-    script = build_board_script(cfg, tmpdir)
+    port = find_port(args.port)
+    script_text = build_board_script_text(cfg)
 
-    cmd = [mpremote]
-    if args.port:
-        cmd += ["connect", args.port]
-    cmd += ["run", script]
-    print("running: %s" % " ".join(cmd), flush=True)
+    print("connecting to %s" % port, flush=True)
+    try:
+        board = SerialBoard(port).start(script_text)
+    except ImportError:
+        raise SystemExit("pyserial missing -- pip3 install --user pyserial")
+    except (OSError, TimeoutError) as exc:
+        raise SystemExit(
+            "could not start the board script on %s: %s\nNothing else may hold "
+            "the port -- close any mpremote session or serial monitor, then "
+            "retry." % (port, exc))
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, bufsize=0)
     latest, stats = Latest(), Stats()
     state = {"alive": True}
-    threading.Thread(target=reader_loop, args=(proc, latest, stats, state),
+    threading.Thread(target=reader_loop, args=(board, latest, stats, state),
                      daemon=True).start()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", args.http_port),
-                                make_handler(latest, stats))
+    httpd = QuietServer(("127.0.0.1", args.http_port),
+                        make_handler(latest, stats))
     url = "http://localhost:%d/" % args.http_port
     print("open %s  (Ctrl-C to stop)" % url, flush=True)
     try:
@@ -341,15 +462,11 @@ def main(argv=None):
         print("\nstopping...", flush=True)
     finally:
         httpd.server_close()
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
-            proc.kill()
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        board.stop()
         s = stats.snapshot()
-        print("frames %d  mean fps %.1f  inference %.1f ms  encode %.1f ms"
-              % (s["frames"], s["fps"], s["inf_ms"], s["enc_ms"]), flush=True)
+        print("frames %d  mean fps %.1f  resyncs %d  inference %.1f ms  "
+              "encode %.1f ms" % (s["frames"], s["fps"], s["resyncs"],
+                                  s["inf_ms"], s["enc_ms"]), flush=True)
         if stats.junk:
             print("junk lines seen (last 5): %r" % (stats.junk[-5:],), flush=True)
     return 0

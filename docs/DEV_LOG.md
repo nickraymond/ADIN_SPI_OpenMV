@@ -48,6 +48,23 @@ AE3 were not involved, so S23 bite R is re-ordered, not displaced.
   blob overlay on.
 
 **Broke/surprised us:**
+- **`mpremote run` is not a transport — Nick caught it as "a still
+  image, not a live stream".** The viewer decayed from ~20 fps to under
+  2 and wedged. The per-frame counters settled it: **board-side work was
+  flat at 38.5 ms/frame first-to-last**, so the board was fine and the
+  output path was losing data. Two faults: `bufsize=0` made pipe
+  `readline()` read a byte per syscall, and — the real one — the decay
+  scales with *total output*, i.e. `mpremote run` accumulating and
+  rescanning its raw-REPL buffer. Proven by piping `mpremote run`
+  straight to a file (fastest possible consumer) and still getting
+  ~1.5 fps. **Fixed by owning the port with pyserial and driving the raw
+  REPL directly** (`SerialBoard`), the same shape as
+  `pi/stream/usb_frame_source.py`. Result: **1,020 frames / 11.3 MB at
+  23.3 fps, zero resyncs**, vs a wedge by frame ~703 before. mpremote is
+  still the right tool for the bounded sweep runs.
+- **The failure mode was a plausible still image** — indistinguishable
+  from a live stream of a stationary scene. A `resyncs` counter now sits
+  next to fps in the HUD so it announces itself.
 - **The stream ran 324 clean frames with every draw call wrong.** The
   scene was a ceiling — zero detections, zero blobs — so no draw path
   ever executed. It would have crashed the instant it saw anything to

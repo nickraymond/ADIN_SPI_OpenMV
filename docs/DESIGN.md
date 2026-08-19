@@ -929,6 +929,41 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+**`mpremote run` is not a transport (measured, and it cost the first
+working stream).** The viewer initially spawned `mpremote run` and read
+its stdout. It started near 20 fps and decayed to under 2 fps after a
+few thousand frames, ending wedged with every payload arriving short —
+a still image in the browser. The diagnosis came from the per-stage
+counters already in each frame header: **board-side work was FLAT at
+38.5 ms/frame from the first frame to the last** (cap 0.24 · inference
+23.5 · blobs 10.7 · encode 3.9), so the board was healthy the whole
+time and the loss was entirely in the output path. Two contributing
+faults, in order of discovery:
+
+1. `subprocess.Popen(..., bufsize=0)` makes the pipe a *raw* stream
+   whose `readline()` reads one byte per syscall — ~300k syscalls/s at
+   15 KB/frame. Buffering it helped but did not fix the decay.
+2. The decay itself scales with *total output*, not time or frame
+   count, which is `mpremote run` accumulating the script's whole
+   output and rescanning it for the end-of-execution marker. Confirmed
+   by redirecting `mpremote run` straight to a file — the fastest
+   possible consumer — and still measuring ~1.5 fps at 300 frames with
+   the framing otherwise intact (180 of 181 payloads byte-exact).
+
+**Fix: drive the raw REPL over pyserial and drop mpremote from the data
+path** (`SerialBoard` in `n6_stream_host.py`) — the same shape as
+`pi/stream/usb_frame_source.py`, which already owns the port directly
+for the AE3. Nothing is written to the board either way: the script is
+pushed into the raw REPL and runs from RAM. **Result: 1,020 frames /
+11.3 MB at 23.3 fps with ZERO resyncs**, versus a wedge by frame ~703
+before. `mpremote` remains the right tool for the bounded benchmark
+runs in this sprint — the sweep tables above were all collected with
+it — and the wrong tool for a continuous stream.
+
+A `resyncs` counter now sits next to `fps` in the HUD, because the
+failure mode this class of bug produces is *a plausible still image*,
+which is indistinguishable from a live stream of a stationary scene.
+
 **Process note worth keeping (CLAUDE.md rule 4).** The first live
 stream ran 324 frames, 22.6 fps, valid JPEGs verified against their own
 SOF headers — while *every draw call in it was wrong*. The scene (a
