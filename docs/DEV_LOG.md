@@ -17,7 +17,7 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
-## 2026-08-19 — Sprint S23 — relay regression resolved-as-explained: clean-boot HD mono 3.15 ×2 (above stock), and the "VCP floor" was python all along
+## 2026-08-19 — Sprint S23 — relay regression resolved-as-explained (clean-boot HD 3.15×2, above stock) + drain fast path shipped: VGA color 12.30, HD mono 3.37, ledger-exact
 
 **Branch:** `sprint/23-encoder-fastpath` (ff'd to main @ e3bc81e; PR #42
 is MERGED). Nick's gates this session: Phase-A plan approved; 4:2:0
@@ -64,21 +64,53 @@ still REQUIRED for VGA-15: even a free relay leaves 68 ms > 66.7);
 (3) ept pacing/batching at HD. HD-mono-5 plausibly = (1) + (2)
 without firmware.
 
-**Broke/surprised us:** nothing on the bench — both demo_ups and both
-row sessions landed first-try under the serialized-port discipline.
-The surprise was the data: the regression we came to fix does not
-exist on a clean boot, and the VCP-floor model died by measurement.
+**Done — drain fast path (Nick's "go for it"; the fix's own A/B was
+the stage-3 profile, per the 1a lesson):**
+- Stage-2 counter first: `relay_enc_us` timed core.he_msg inside the
+  pump — **he_msg = 1.10 of the 1.26 ms/msg pump cost (87%)**, on a
+  3.17 fps CLEAN row (190×55 exact). Viper CRC+COBS only plausibly
+  ~0.2 ms → suspects = the three ~1.5 KB per-message allocations.
+- Shipped `he_frame_wire` (zero-alloc fast path for complete
+  WCMD_FRAME_TX: encodes into the preallocated `_wire`, returns an
+  aliasing memoryview consumed before the next encode) + killed the
+  `bytes(l2[:n])` detour in `frame_encode_into` (slice-assign straight
+  from the memoryview). `he_msg` stays the allocating reference path;
+  equivalence/fallback/reasm-ownership/aliasing pinned in tests
+  (bridge suite 310→312→328, codec 37→38).
+- **Measured (60 s rows, CLEAN, ledger-exact): VGA color 10.73→12.30
+  (738 frames, pub_ok 738×20 exact) · HD mono 3.15→3.37 (202×55
+  exact).** Split after: enc/msg 1102→~680 µs (−38%), pump/msg
+  1259→~825. VGA send leg now 17.5 ms/frame (ept 0.5 — 20 chunks
+  never block the 32-slot ring); HD send 120 ms = ept-block 72 + pump
+  47 — **half the pump saving converted to ept blocking: HD is now
+  HE-round-trip-bound, not HP-python-bound.**
 
-**Bench state:** chain UP under units, scene=ref, instrumented bridge
-`b3543cc7…` on /flash, fw `1e56071e…` + ELF `39717d44…` unchanged.
-Health-proven post-restart (capture landed, frames_ok+1, gaps=0).
-MEAS_FPS 2.72→3.15 deployed with the investigation note replaced by
-the resolution (bench_web suite 81).
+**Sprint ladder (VGA color q50, 60 s rows, ledger-exact):**
+7.41 → 7.93 (4:2:0) → 9.03 (MVE conv) → 9.50 (rpmsg) → 10.73 (DCT) →
+**12.30 (drain fast path)**.
 
-**Next:** overlap re-test (D21 is about the dead SPI path — re-measure
-on this stack: non-blocking frame-ready poll or set_framebuffers(2)
-A/B on sticky-fb) + the viper-COBS drain bite (Nick sizes/orders) →
-bite 3 full re-measure + guardrails + PR.
+**Broke/surprised us:** nothing on the bench — every demo_up and row
+session landed first-try under the serialized-port discipline (one
+expected phase-1 armed-attach recovery, by the book). The surprises
+were the data: the regression we came to fix does not exist on a clean
+boot; the VCP-floor model died by measurement; and the remaining
+~680 µs/msg python encode cost is far above what the viper loops
+should cost — unattributed, noted for the next profile if it matters.
+
+**Bench state:** chain UP under units, scene=ref, fast-path bridge
+`b4a6beee…` + codec `67aaecf1…` on /flash (sha-synced by demo_up), fw
+`1e56071e…` + ELF `39717d44…` unchanged. MEAS_FPS 12.30 / 3.37
+deployed (bench_web suite 81).
+
+**Next:** capture/encode overlap re-test — the arithmetic says VGA-15
+falls to it alone (81.3 − ~19 ms snapshot wait ≈ 62 ms ⇒ ~16 fps):
+needs a non-blocking frame-ready poll (openmv-tree desk check, likely
+a small C patch under the sticky-fb precedent) — `set_framebuffers(2)`
+A/B is deliberately NOT run without Nick (S18: growing the fb with the
+HE loaded takes the board off the USB bus). HD-mono-5 outlook honest:
+overlap alone reaches only ~3.8; the 72 ms/frame ept-block (HE
+round-trip pace at 55 chunks) is the wall — HE-side batching or the
+C path, Nick sizes. Then bite 3 re-measure + guardrails + PR.
 
 ---
 

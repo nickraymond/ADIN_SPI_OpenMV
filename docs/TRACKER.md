@@ -1,7 +1,18 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-19 (**S23 relay regression RESOLVED-AS-
+*Last updated: 2026-08-19 latest (**S23 drain fast path SHIPPED —
+VGA color 12.30 fps / HD mono 3.37, 60 s rows CLEAN ledger-exact
+(738×20, 202×55); sprint ladder 7.41→…→10.73→12.30.** Zero-alloc
+relay (`he_frame_wire` + memoryview encode; suite 328) after the
+split counters measured he_msg at 87% of the 1.26 ms/msg pump cost;
+enc/msg 1102→~680 µs. VGA send leg now 17.5 ms/frame — **VGA-15 is
+one snapshot-wait overlap away (~16 fps predicted)**; HD is now
+HE-round-trip-bound (ept-block 72 ms/frame), overlap alone reaches
+only ~3.8 — HD-5 needs HE-side batching or the C path. NEXT =
+overlap re-test (frame-ready poll; set_framebuffers(2) A/B gated on
+Nick — S18 off-bus hazard) → bite 3. Previous:*
+*2026-08-19 (**S23 relay regression RESOLVED-AS-
 EXPLAINED — clean-boot HD mono 3.15 fps ×2 ledger-exact, ABOVE the
 3.10 stock baseline; the 2.72 was a boot-state anomaly.** Relay-split
 counters shipped (bridge `b3543cc7…`, suite 310); measured: VCP is
@@ -1592,6 +1603,20 @@ precedent for repo-carried firmware patches.
       levers ranked: (1) cut the per-msg python drain (viper/native
       COBS — helps every mode), (2) overlap, (3) ept pacing. MEAS_FPS
       2.72→3.15 (page + suite 81).
+      → **LEVER (1) SHIPPED same day (Nick's "go for it"): the drain
+      fast path.** Stage-2 counter measured he_msg = 87% of the pump
+      cost (1.10 of 1.26 ms/msg) → the three ~1.5 KB per-message
+      allocations were the suspects → `he_frame_wire` zero-alloc path
+      (aliasing memoryview of `_wire`, consumed before next encode) +
+      memoryview slice-assign in `frame_encode_into` (the `bytes()`
+      detour deleted). Equivalence/fallback/aliasing pinned (suite
+      328, codec 38). **Measured: VGA color 12.30 fps (738×20 exact)
+      · HD mono 3.37 (202×55 exact), both CLEAN; enc/msg 1102→~680 µs.
+      VGA send leg 17.5 ms/frame, ept 0.5 (never blocks); HD send 120
+      = ept-block 72 + pump 47 — HD is now HE-round-trip-bound.**
+      Route from here: VGA-15 = overlap the ~19 ms snapshot wait
+      (predicted ~16); HD-5 = the HE round trip (batching or C path),
+      overlap alone reaches only ~3.8.
 - [~] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop

@@ -477,15 +477,17 @@ const MEAS = {
 // (4:2:2 baseline) -> 7.93 (bite 0, forced 4:2:0) -> 9.03 (bite 1a,
 // MVE color convert) -> 9.50 (bite 2, one rpmsg msg/chunk) -> 10.73
 // (bite 1b, MVE DCT+quant, golden-passed; 644 frames, pub_ok exact).
-// HD mono re-measured 2026-08-19 on a clean boot: 3.15 (twice, 189
-// frames/60 s each, pub_ok 189x55 ledger-exact) -- ABOVE the 3.10
-// stock baseline. The 2.72 was a boot-state anomaly (steady within
-// its run, gone on reboot), not the rpmsg-1544/MVE stack; the relay
-// split counters (cap_ept/cap_pump/vcp) now attribute any recurrence.
+// HD mono re-measured 2026-08-19 on a clean boot: 3.15/3.17 (189-190
+// frames/60 s, pub_ok x55 ledger-exact) -- ABOVE the 3.10 stock
+// baseline; the old 2.72 was a boot-state anomaly. Same session, the
+// S23 drain fast path (zero-alloc relay: he_frame_wire + memoryview
+// encode) moved the 60 s rows to VGA color 12.30 (738x20 exact) and
+// HD mono 3.37 (202x55 exact), both CLEAN. VGA ladder: 7.41 -> 7.93
+// -> 9.03 -> 9.50 -> 10.73 -> 12.30.
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
-  2: { color: 10.73, mono: 13.27 },
-  3: { color: null,  mono: 3.15 },
+  2: { color: 12.30, mono: 13.27 },
+  3: { color: null,  mono: 3.37 },
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,
