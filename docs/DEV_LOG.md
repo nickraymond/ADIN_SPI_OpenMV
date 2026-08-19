@@ -97,31 +97,32 @@ boot; the VCP-floor model died by measurement; and the remaining
 ~680 µs/msg python encode cost is far above what the viper loops
 should cost — unattributed, noted for the next profile if it matters.
 
-**Bench state: CHAIN DOWN — board wedged, needs Nick's hands.** After
-the fast-path rows (which ran clean and exited clean — trace shows
-quiet-exit + full ledger), the NEXT bridge boot (03:17 demo_up, same
-`b4a6beee…` artifacts that had just run the rows) wedged BELOW the
-phase-1 loop: bm-light ran attached 03:19:58–03:22:41 and the bridge
-never linked; it never phase-1-timed-out (10 min); three properly-
-serialized attach attempts over ~15 min all "board busy"; a nereus000
-reboot (standing recovery — Pi 5 never cuts VBUS) changed nothing;
-USB still enumerates (by-id present) so the CDC IRQ path is alive
-while python is stuck — consistent with a hang inside `he.start()`
-(remoteproc ELF load), kbd_intr already off. Suspect territory: HE
-core state left by the previous session's stop (the S23 SHM/MPU saga
-neighborhood), NOT the new bridge python (boot path untouched by the
-fast path; identical artifacts booted fine at ~03:14).
-**Recovery = Nick: physically replug the AE3 USB** (or try
-`sudo uhubctl -l 3 -p 1 -a cycle -d 3` on nereus000 first, measured
-unreliable on Pi 5), then:
-`~/ADIN_SPI_OpenMV/pi/bm_bench/demo_up.sh --scene ref` on nereus000,
-then `sudo systemctl start bm-light` (n000) and
-`sudo systemctl start bm-telemetry` (n001), then verify with
-`bench-ctl.sh capture 50 qvga color` + status (frames_ok moves).
-Units left STOPPED on both Pis. Everything else is deployed: fast-path
-bridge + codec staged sha-verified on /flash, fw `1e56071e…` + ELF
-`39717d44…` unchanged, MEAS_FPS 12.30 / 3.37 live on :8090, both Pi
-checkouts at 9efe1b8.
+**Bench incident (RESOLVED by Nick's uhubctl cold cycle; ~50 min):**
+after the clean fast-path rows, the next bridge boot went into a sick
+state. The wedge model written mid-incident ("hung in he.start") was
+WRONG — the preserved trace, read post-recovery, shows the boot DID
+link (t=39003 = bm-light's start to the second) and then received
+ZERO VCP bytes for 30 s while bm-light demonstrably heartbeated →
+clean quiet-exit at t=69131 whose **HE ring dump came back EMPTY**
+(the healthy boots dump content). After that exit, three serialized
+mpremote attaches over ~15 min all failed "board busy" and a
+nereus000 reboot changed nothing (Pi 5 never cuts VBUS) — NOT fully
+explained: the launcher has no relaunch loop, so something below
+python kept refusing the port. `sudo uhubctl -l 3 -p 1 -a cycle -d 3`
+(a true power cycle) cleared everything; demo_up then landed
+first-try and the chain health-checked clean (capture landed,
+frames_ok+1, gaps=0). **Pattern flag for bite 3's soaks: this is the
+SECOND boot-state anomaly on the fw `1e56071e…`/ELF `39717d44…`
+stack in one day** (the steady-slow 2.72 boot, now a CDC-RX-stall +
+empty-HE-ring + attach-refusal boot). Not attributable to the
+fast-path python (boot path untouched; same artifacts booted clean
+before and after). If a third appears, suspect the SHM-128K/MPU
+neighborhood on cold boots and instrument there.
+
+**Bench state: chain UP under units, scene=ref**, fast-path bridge
+`b4a6beee…` + codec `67aaecf1…` on /flash sha-verified, fw
+`1e56071e…` + ELF `39717d44…` unchanged, MEAS_FPS 12.30 / 3.37 live
+on :8090, both Pi checkouts at 0049e5a+.
 
 **Next:** capture/encode overlap re-test — the arithmetic says VGA-15
 falls to it alone (81.3 − ~19 ms snapshot wait ≈ 62 ms ⇒ ~16 fps):
