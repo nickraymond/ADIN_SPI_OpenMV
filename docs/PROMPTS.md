@@ -129,3 +129,47 @@ demo) are mine and do not gate you.
 Nibble 1 = plan first, my gate before code. ~300 LoC bites, short
 actionable replies, 10-min status updates.
 ```
+
+## 7 — Ready to paste: S23 GOLD — hunt the invariant ~13 ms to VGA 15+ (written 2026-08-19)
+
+```
+Run /agent-entry. Continue Sprint S23 on sprint/23-encoder-fastpath —
+GOLD: VGA color q50 >= 15 fps delivered, ledger-exact.
+
+State: VGA is PINNED at 12.2-12.3 across five measured levers (four
+falsified — DEV_LOG 2026-08-19 "GOLD arc" entry has the full table).
+The VGA cycle is ~81.7 ms = enc ~50 + asm ~3 + send ~15 + an INVARIANT
+~13 ms that survived: exposure caps (engaged per trace), framerate
+120, the fused COBS+CRC viper (wire cost 676->499 us/msg measured),
+and the early capture kick. Do NOT re-try those; the falsifications
+are banked.
+
+Bite: NAME the 13 ms by measurement, then kill it.
+1. Instrument first (bridge-only, no flash): per-frame kick->collect
+   wall time, poll-gap histogram, and a cycle split traced per stream.
+   One 60 s VGA row. The counters from the relay bite are the pattern
+   (cap_ept/cap_pump/relay_enc splits).
+2. Fix what the numbers name. Known suspects, in order: the collect
+   not finding the frame ready despite the early kick (CPI one-shot
+   semantics); main-loop service granularity (sleep_ms(1) quantization
+   x N passes); enc_us hiding scheduled-callback time. Firmware levers
+   ONLY if the counters point there: OMV_CSI_CLK_FREQUENCY 24 MHz
+   (~21 ms/VGA frame readout — board_config, flash spin, my gate) or
+   Huffman/bitstream MVE (the last scalar encoder stage).
+3. Acceptance: vga-color-15 row >= 15.0 CLEAN ledger-exact, HD mono
+   >= 3.5 held, then a 10-min soak at the new number.
+
+Known-good stack on the bench: bridge 79c9ab4f + codec ebcfb87d, fw
+1e56071e, ELF 39717d44. fb=2 is FALSIFIED (slower — DMA/encoder
+contention); do not revisit without new evidence.
+
+Ops (matters — three boot-state anomalies in one day): git pull on the
+Pi BEFORE demo_up, check the sha it prints. Attach-refusal recovery,
+proven twice: sudo uhubctl -l 3 -p 1 -a cycle -d 3 on nereus000, then
+>= 5 MINUTES of ZERO port contact (the silence is load-bearing), then
+one demo_up. Board access per ae3-board-access, one command then hands
+off the port. Bite 3 (full re-measure + guardrails + PR) runs after
+GOLD or after my stop call.
+
+Nibble 1 = plan first, my gate before code. Short actionable replies.
+```

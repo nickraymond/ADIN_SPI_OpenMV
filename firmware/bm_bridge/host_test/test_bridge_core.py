@@ -444,6 +444,105 @@ check(n == 26, "HD frame drains 26 times, once per chunk")
 check(bm_bridge.CHUNK_DRAIN_EVERY == 1,
       "default every matches the messages-per-chunk at 1400 B")
 
+# ---- S23 relay-leg profile: the cap_send_us split -----------------------
+# stats=None keeps the legacy path byte-for-byte; with stats, every send
+# and every drain is timed into cap_ept_us / cap_pump_us. Clock faked so
+# the split is deterministic: each _ticks_us() call advances 100 us.
+
+fake_now = [0]
+
+
+def fake_ticks():
+    fake_now[0] += 100
+    return fake_now[0]
+
+
+_real_ticks = bm_bridge._ticks_us
+bm_bridge._ticks_us = fake_ticks
+
+core = BridgeCore()
+for k in ("cap_ept_us", "cap_ept_max_us", "cap_ept_slow", "cap_pump_us",
+          "vcp_us", "vcp_max_us", "vcp_writes", "vcp_bytes",
+          "pump_calls", "pump_msgs", "pump_batch_max",
+          "relay_enc_us", "relay_enc_max_us"):
+    check(core.stats.get(k) == 0, "stats key %s starts at 0" % k)
+
+del trace[:]
+n = bm_bridge.send_chunk_msgs([bytes([i]) for i in range(3)],
+                              fake_send, fake_drain, every=1,
+                              stats=core.stats)
+check(trace == ["s0", "D", "s1", "D", "s2", "D"],
+      "stats accounting does not change the drain cadence")
+check(n == 3, "3 msgs / every 1 = 3 drains under accounting")
+check(core.stats["cap_ept_us"] == 300 and core.stats["cap_pump_us"] == 300,
+      "each send and each drain timed (3 x 100 us fake clock)")
+check(core.stats["cap_ept_max_us"] == 100 and
+      core.stats["cap_ept_slow"] == 0,
+      "fast sends: max recorded, none counted slow")
+
+
+def slow_send(m):
+    fake_now[0] += 5000        # a send that blocks 5 ms on a full vring
+    trace.append("s%d" % m[0])
+
+
+del trace[:]
+core2 = BridgeCore()
+bm_bridge.send_chunk_msgs([b"\x00"], slow_send, fake_drain, every=1,
+                          stats=core2.stats)
+check(core2.stats["cap_ept_slow"] == 1 and
+      core2.stats["cap_ept_max_us"] == 5100,
+      "a blocked send lands in cap_ept_slow with its wall time in max")
+
+bm_bridge._ticks_us = _real_ticks
+
+# ---- S23 drain fast path: he_frame_wire == he_msg, byte for byte ---------
+# The pump's zero-alloc path aliases core._wire, so its result must be
+# consumed (or copied) before the next encode. The slow path stays the
+# reference implementation; equivalence is pinned here.
+
+for size in (1, 200, 1414, MAX_L2):
+    frame = bytes((i * 7 + size) & 0xFF for i in range(size))
+    msg = struct.pack("<BBH", WCMD_FRAME_TX, 1, size) + frame
+    fast_core = BridgeCore()
+    slow_core = BridgeCore()
+    mv = fast_core.he_frame_wire(msg)
+    got_fast = bytes(mv) if mv is not None else None
+    got_slow = slow_core.he_msg(msg)
+    check(got_fast is not None and len(got_slow) == 1 and
+          got_fast == got_slow[0],
+          "fast path == slow path for a %d B frame" % size)
+    check(fast_core.stats["he2pi_frames"] == slow_core.stats["he2pi_frames"]
+          == 1 and fast_core.stats["he2pi_bytes"] ==
+          slow_core.stats["he2pi_bytes"] == size,
+          "fast path counters match slow path (%d B)" % size)
+
+core = BridgeCore()
+check(core.he_frame_wire(b"\x01") is None, "short msg -> fallback")
+check(core.he_frame_wire(struct.pack("<BBH", WCMD_FRAG, 1, 4) + b"abcd")
+      is None, "WCMD_FRAG -> fallback (reasm accounting stays in he_msg)")
+big = struct.pack("<BBH", WCMD_FRAME_TX, 1, MAX_L2 + 1) + bytes(MAX_L2 + 1)
+check(core.he_frame_wire(big) is None, "oversize -> fallback")
+frag_start = struct.pack("<BBH", WCMD_FRAME_TX, 1, 100) + bytes(40)
+check(core.he_frame_wire(frag_start) is None,
+      "fragmented FRAME_TX -> fallback, fast path never starts reasm")
+check(core.reasm is None, "fast path did not touch reasm state")
+core.he_msg(frag_start)                     # slow path starts assembly
+check(core.reasm is not None, "slow path owns the assembly")
+whole = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(8)
+check(core.he_frame_wire(whole) is None,
+      "mid-reasm complete frame -> fallback so he_msg can resync")
+
+# Aliasing contract: the second encode overwrites the first's buffer.
+core = BridgeCore()
+m1 = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(range(8))
+m2 = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(range(8, 16))
+w1 = core.he_frame_wire(m1)
+w1_copy = bytes(w1)
+w2 = core.he_frame_wire(m2)
+check(bytes(w1) == bytes(w2) and w1_copy != bytes(w2),
+      "returned memoryview aliases _wire -- consume before next encode")
+
 # ---- S18 reef-matrix: ref-scene source -----------------------------------
 # Asset naming is a contract with demo_up.sh's staging arm and the S0
 # assets in bench/assets/ref_scene -- lock it with tests.
@@ -718,6 +817,156 @@ check("set_pixformat" in _sensor_calls and "set_framesize" in _sensor_calls,
 
 for _n, _o in _orig_sensor.items():
     setattr(_FakeSensor, _n, staticmethod(_o))
+
+# -- S23 capture/encode overlap: the non-block path via sensor._csi ------
+# The engine probes getattr(sensor, "_csi", None) ONCE; everything above
+# ran without _csi and exercised the blocking fallback. Here the shim
+# grows the handle and the overlap contract is pinned: WOULD_BLOCK
+# returns None and leaves cap_pending; a stream frame kicks the next
+# capture after encode; re-inits and stops quiesce the in-flight capture.
+
+
+class _FakeCsi:
+    def __init__(self):
+        self.script = []            # per nb call: None=WOULD_BLOCK or image
+        self.nb_calls = 0
+        self.blocking_calls = 0
+
+    def snapshot(self, blocking=True):
+        if blocking:
+            self.blocking_calls += 1
+            return _FakeImg(b"live")
+        self.nb_calls += 1
+        return self.script.pop(0) if self.script else None
+
+
+_stream_cmd = dict(_cmd)
+_stream_cmd["mode"] = CAMERA_MODE_STREAM
+
+_fc = _FakeCsi()
+_FakeSensor._csi = _fc
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_HD, CAMERA_PF_MONO
+_hd_stream = dict(_stream_cmd)
+_hd_stream["res"] = CAMERA_RES_HD
+_hd_stream["pf"] = CAMERA_PF_MONO
+eng.command(dict(_hd_stream))           # t_start=1000, interval=100ms
+_fc.script = [None, _FakeImg(b"live")]  # first poll blocks, second collects
+check(eng.poll(1150) is None and eng.cap_pending,
+      "overlap: WOULD_BLOCK returns None with the capture in flight")
+out = eng.poll(1160)
+check(out == b"jpeg-of-live",
+      "overlap: the armed capture is collected and encoded")
+check(_fc.nb_calls == 3 and eng.cap_pending,
+      "overlap: a stream frame KICKS the next capture after encode")
+# A kick that completes instantly is kept, never dropped: next poll must
+# encode it WITHOUT another csi call.
+_fc.script = [_FakeImg(b"live"), _FakeImg(b"live")]   # collect + ready kick
+eng.poll(1300)
+check(eng._img_ready is not None and not eng.cap_pending,
+      "overlap: an instantly-complete kick parks in _img_ready")
+calls_before = _fc.nb_calls
+out = eng.poll(1400)
+check(out == b"jpeg-of-live" and _fc.nb_calls == calls_before + 1,
+      "overlap: parked frame encoded; only the kick touches the csi")
+
+# STOP quiesces: the in-flight capture is collected and discarded.
+eng.cap_pending = True
+eng.command({"mode": CAMERA_MODE_STOP})
+check(_fc.blocking_calls == 1 and not eng.cap_pending
+      and eng._img_ready is None,
+      "overlap: STOP collects the in-flight capture (quiesce)")
+# A geometry delta quiesces BEFORE the sensor is touched.
+_fc2 = _FakeCsi()
+_FakeSensor._csi = _fc2
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng._nb_handle()
+eng.cap_pending = True
+mono_vga = dict(_stream_cmd)
+mono_vga["res"] = CAMERA_RES_VGA
+mono_vga["pf"] = CAMERA_PF_MONO
+eng.command(mono_vga)
+check(_fc2.blocking_calls == 1 and not eng.cap_pending,
+      "overlap: a re-init quiesces the in-flight capture first")
+# Single mode never kicks (no stream to overlap into).
+_fc3 = _FakeCsi()
+_FakeSensor._csi = _fc3
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))                 # MODE_SINGLE
+_fc3.script = [_FakeImg(b"live")]
+check(eng.poll(1150) == b"jpeg-of-live" and _fc3.nb_calls == 1
+      and not eng.cap_pending,
+      "overlap: single capture collects once and never kicks")
+
+# Early kick: a REF stream discards the sensor frame, so the kick moves
+# to right-after-collect -- capture rides under the encode.
+_fc4 = _FakeCsi()
+_FakeSensor._csi = _fc4
+_FakeImageMod.available = ("ref_color_320x200.bmp",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_ref_stream = dict(_cmd)
+_ref_stream["mode"] = CAMERA_MODE_STREAM
+eng.command(dict(_ref_stream))
+_fc4.script = [_FakeImg(b"live")]
+out = eng.poll(1150)
+check(out == b"jpeg-of-ref_color_320x200.bmp" and _fc4.nb_calls == 2
+      and eng.cap_pending,
+      "early kick: ref stream kicks at collect, encodes the ref")
+# Sensor-mode stream WITHOUT a usable shadow (fake image module cannot
+# build one; fake frames are the wrong size anyway): the guard falls
+# back to the post-encode kick instead of encoding a torn frame.
+_fc5 = _FakeCsi()
+_FakeSensor._csi = _fc5
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_stream_cmd))
+check(eng._shadow_img is None,
+      "shadow: unbuildable shadow falls back loudly, command accepted")
+_fc5.script = [_FakeImg(b"live")]
+out = eng.poll(1150)
+check(out == b"jpeg-of-live" and _fc5.nb_calls == 2 and eng.cap_pending,
+      "shadow fallback: sensor stream still kicks post-encode")
+
+# Ref-mode STREAMS cap the sensor framerate (the dark-bench exposure
+# fix); sensor-mode streams and ref-mode singles never touch it.
+_fr_calls = []
+_FakeSensor.set_framerate = staticmethod(lambda n: _fr_calls.append(n))
+_FakeImageMod.available = ("ref_color_320x200.bmp",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_stream_cmd))
+check(_fr_calls == [bm_bridge.REF_STREAM_FRAMERATE],
+      "ref stream caps the framerate (dark-bench exposure fix)")
+eng2 = bm_bridge.CaptureEngine(scene="ref")
+eng2.booted = True
+eng2.sensor_ok = True
+eng2.cur_res, eng2.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng2.command(dict(_cmd))                # SINGLE: no cap
+eng3 = bm_bridge.CaptureEngine()        # sensor scene: no cap
+eng3.booted = True
+eng3.sensor_ok = True
+eng3.cur_res, eng3.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng3.command(dict(_stream_cmd))
+check(_fr_calls == [bm_bridge.REF_STREAM_FRAMERATE],
+      "singles and sensor-mode streams never touch the framerate")
+del _FakeSensor.set_framerate
+
+del _FakeSensor._csi
 
 del sys.modules["sensor"]
 del sys.modules["image"]

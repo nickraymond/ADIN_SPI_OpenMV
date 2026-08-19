@@ -477,12 +477,19 @@ const MEAS = {
 // (4:2:2 baseline) -> 7.93 (bite 0, forced 4:2:0) -> 9.03 (bite 1a,
 // MVE color convert) -> 9.50 (bite 2, one rpmsg msg/chunk) -> 10.73
 // (bite 1b, MVE DCT+quant, golden-passed; 644 frames, pub_ok exact).
-// HD mono is 2.72 on this stack (was 3.10) -- the relay leg regressed
-// and is under investigation; bite 3 re-measures everything.
+// S23 GOLD arc (2026-08-19, all 60 s rows CLEAN ledger-exact): the
+// deployed stack (drain fast path + fused one-pass COBS+CRC viper +
+// early capture kick + ref framerate cap) measures VGA color 12.23
+// (734x20 exact) and HD mono 3.62 best / 3.57 repeat (x55 exact).
+// VGA ladder: 7.41 -> 7.93 -> 9.03 -> 9.50 -> 10.73 -> 12.2-12.3
+// plateau: an invariant ~13 ms/frame survives every send/capture
+// lever (open question, instrumented next); fb=2 measured SLOWER
+// (11.47, capture-DMA/encoder contention). HD gained steadily from
+// the same levers (3.15 -> 3.62).
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
-  2: { color: 10.73, mono: 13.27 },
-  3: { color: null,  mono: 2.72 },
+  2: { color: 12.23, mono: 13.27 },
+  3: { color: null,  mono: 3.62 },
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,

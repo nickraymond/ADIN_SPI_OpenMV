@@ -1,7 +1,44 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 latest+3 (**S23 bite 0 nibbles 1–3 DONE —
+*Last updated: 2026-08-19 latest+1 (**S23 GOLD arc: VGA color
+PLATEAUS at 12.2–12.3 — five levers measured, four falsified** (fb=2
+SLOWER at 11.47 = capture-DMA/encoder contention; exposure caps
+engaged+flat; fused one-pass COBS+CRC viper cut wire cost 676→499
+µs/msg with cycle unchanged; early capture kick flat at VGA) — **an
+invariant ~13 ms/frame is the open question** (next: kick→collect
+wall-time counters; firmware levers = CSI pixclk 24 MHz, Huffman MVE).
+**HD mono climbed 3.15→3.62** from the same send-path levers, all rows
+CLEAN ledger-exact. Bench: attach-refusal struck twice more; recovery
+proven = uhubctl cycle + ≥5 min ZERO contact + one demo_up. Deployed:
+bridge `79c9ab4f…` + codec `ebcfb87d…`, MEAS_FPS 12.23/3.62. VGA-15
+NOT closed — Nick's call: GOLD CONTINUES (the ~13 ms hunt, kickoff
+prompt = PROMPTS.md §7). **PR for the whole relay+GOLD arc OPEN for
+Nick's review; interim-state PR, sprint stays open behind GOLD +
+bite 3.** Previous:*
+*2026-08-19 latest (**S23 drain fast path SHIPPED —
+VGA color 12.30 fps / HD mono 3.37, 60 s rows CLEAN ledger-exact
+(738×20, 202×55); sprint ladder 7.41→…→10.73→12.30.** Zero-alloc
+relay (`he_frame_wire` + memoryview encode; suite 328) after the
+split counters measured he_msg at 87% of the 1.26 ms/msg pump cost;
+enc/msg 1102→~680 µs. VGA send leg now 17.5 ms/frame — **VGA-15 is
+one snapshot-wait overlap away (~16 fps predicted)**; HD is now
+HE-round-trip-bound (ept-block 72 ms/frame), overlap alone reaches
+only ~3.8 — HD-5 needs HE-side batching or the C path. NEXT =
+overlap re-test (frame-ready poll; set_framebuffers(2) A/B gated on
+Nick — S18 off-bus hazard) → bite 3. Previous:*
+*2026-08-19 (**S23 relay regression RESOLVED-AS-
+EXPLAINED — clean-boot HD mono 3.15 fps ×2 ledger-exact, ABOVE the
+3.10 stock baseline; the 2.72 was a boot-state anomaly.** Relay-split
+counters shipped (bridge `b3543cc7…`, suite 310); measured: VCP is
+~24 MB/s on a HIGH-SPEED USB link — the "675 KB/s floor" is the
+~1.25 ms/msg python drain (he_msg+COBS), and at HD ept.send blocks
+1.14 ms/msg avg on the 32-slot vring. Nick's 4:2:0 eyeball PASSED →
+bite 0 CLOSED (PR #42 merged). MEAS_FPS HD mono 2.72→3.15. NEXT:
+capture/encode overlap re-test (D21) with the python-drain lever
+(viper COBS) as the new top HD candidate → bite 3 re-measure + PR.
+Previous:*
+*2026-08-18 latest+3 (**S23 bite 0 nibbles 1–3 DONE —
 4:2:0 forced on every color encode (one kwarg, color only, Nick
 approved), delivered VGA color 7.41→7.93 fps ledger-exact.** Bridge
 `552812ba…` byte-verified on the bench via demo_up; the A/B reef pair
@@ -1507,6 +1544,9 @@ precedent for repo-carried firmware patches.
       **Remaining: Nick's 4:2:0-vs-4:2:2 eyeball on the reef pair
       (gallery compare view, seq000207 vs seq000000) — the recorded
       decision gate for force-420-at-every-q — then nibble 4 (PR).**
+      → **DONE 2026-08-19: Nick ran the visual review — quality
+      satisfactory; force-420 stands. PR #42 MERGED (e3bc81e).
+      Bite 0 CLOSED.**
 - [~] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
       lever).** jpege.c is plain C; `+mve.fp` is already in the Alif
       port CFLAGS. Ships as a repo-carried openmv patch (sticky-fb
@@ -1558,6 +1598,40 @@ precedent for repo-carried firmware patches.
       full saga in DEV_LOG 2026-08-19). **OPEN: HD mono 2.72 vs 3.10
       stock — the relay leg regressed (~3.1 ms/msg at HD sizes,
       profiled); next session's first job.**
+      → **RESOLVED-AS-EXPLAINED 2026-08-19 (relay-profile session,
+      Nick's Phase-A gate): the 2.72 did NOT reproduce — clean-boot
+      HD mono = 3.15 fps TWICE (189 frames/60 s each, pub_ok 189×55
+      ledger-exact), ABOVE the 3.10 stock baseline; VGA color control
+      10.62 held.** The old run's own trace shows it steady-slow from
+      its first HD snapshot (181/174/175 ms/frame send) — a boot-state
+      anomaly, not the rpmsg-1544/MVE geometry. Relay-split counters
+      shipped (bridge `b3543cc7…`, suite 294→310): cap_send_us =
+      ept.send + pump split, VCP writes metered globally. **Measured
+      physics rewrite: VCP throughput is ~24 MB/s (USB enumerates
+      HIGH-SPEED, 480M, lsusb) — the "~675 KB/s VCP floor" was never
+      USB; it is the ~1.25 ms/message PYTHON drain cost (he_msg + COBS
+      _encode; usb.write itself ~55–61 µs). At HD, ept.send additionally
+      blocks (avg 1.14 ms/msg, 26% >1 ms, max 30.8 ms — 55 chunks
+      overflow the 32-slot vring and ride HE pace); at VGA it is free
+      (23 µs, 20 chunks fit).** HD budget at 3.15 = enc ~96 + capture
+      ~33 + pump-python ~69 + ept-block ~63 + asm ~12 + misc. New
+      levers ranked: (1) cut the per-msg python drain (viper/native
+      COBS — helps every mode), (2) overlap, (3) ept pacing. MEAS_FPS
+      2.72→3.15 (page + suite 81).
+      → **LEVER (1) SHIPPED same day (Nick's "go for it"): the drain
+      fast path.** Stage-2 counter measured he_msg = 87% of the pump
+      cost (1.10 of 1.26 ms/msg) → the three ~1.5 KB per-message
+      allocations were the suspects → `he_frame_wire` zero-alloc path
+      (aliasing memoryview of `_wire`, consumed before next encode) +
+      memoryview slice-assign in `frame_encode_into` (the `bytes()`
+      detour deleted). Equivalence/fallback/aliasing pinned (suite
+      328, codec 38). **Measured: VGA color 12.30 fps (738×20 exact)
+      · HD mono 3.37 (202×55 exact), both CLEAN; enc/msg 1102→~680 µs.
+      VGA send leg 17.5 ms/frame, ept 0.5 (never blocks); HD send 120
+      = ept-block 72 + pump 47 — HD is now HE-round-trip-bound.**
+      Route from here: VGA-15 = overlap the ~19 ms snapshot wait
+      (predicted ~16); HD-5 = the HE round trip (batching or C path),
+      overlap alone reaches only ~3.8.
 - [~] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop

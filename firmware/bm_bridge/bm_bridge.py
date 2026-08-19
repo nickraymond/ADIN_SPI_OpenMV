@@ -151,6 +151,20 @@ RPMSG_QUEUE_CAP = 1024
 # "drain after every chunk" -- the same interleave cadence S19 bite 2
 # established, in the new message geometry (see send_chunk_msgs).
 CHUNK_DRAIN_EVERY = 1
+# REF-mode stream capture cap (S23 GOLD). The dark bench pushes the
+# PAG7936's auto-exposure to ~33 ms, which becomes the fb=1 cycle floor;
+# ref-mode frames are DISCARDED (the encoder eats canned reef images) so
+# their exposure is pure dead time. set_framerate clamps AE max exposure
+# to the frame time in the vendor driver (pag7936.c configure()), so 60
+# caps capture at ~16.7 ms -- under the send window it overlaps -- and
+# sits inside every mode's vendor max (VGA 120/240, QVGA 240/470; the
+# driver clamps HD itself). Sensor-mode streams are NEVER capped: live
+# exposure is an honest scene cost.
+# 60 measured NO gain (2026-08-19 row: 12.00 vs 12.10 uncapped): the
+# residual is one-shot capture SYNC -- arm waits for the next frame
+# boundary (avg half a period) plus a full-frame readout. 120 halves
+# both (~12.5 ms arm-to-ready, under the send window it hides behind).
+REF_STREAM_FRAMERATE = 120
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
@@ -227,6 +241,25 @@ class BridgeCore:
             # asm = capture_pub_msgs (python chunk/msg assembly),
             # send = send_chunk_msgs (ept.send + interleaved pump).
             "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0,
+            # S23 relay-leg profile: cap_send_us split three ways.
+            # ept = blocked in ept.send (rpmsg HP->HE); pump = the
+            # interleaved drain inside the send window; the remainder
+            # of cap_send_us is loop overhead. ept_slow counts sends
+            # over 1 ms -- a vring-full wait quantized to a ms poll
+            # shows up here as count x ~1000 us.
+            "cap_ept_us": 0, "cap_ept_max_us": 0, "cap_ept_slow": 0,
+            "cap_pump_us": 0,
+            # VCP write meter, GLOBAL (send-window and main-loop drains
+            # both land here): time inside usb.write vs bytes moved is
+            # the drain path's real throughput; pump batch stats say
+            # whether HE returns trickle (batch ~1) or burst.
+            "vcp_us": 0, "vcp_max_us": 0, "vcp_writes": 0, "vcp_bytes": 0,
+            "pump_calls": 0, "pump_msgs": 0, "pump_batch_max": 0,
+            # Second-stage split (the ~1.25 ms/msg pump cost): time
+            # inside core.he_msg (parse + frame_encode_into + copies)
+            # vs the loop glue around it. A GC pause landing in he_msg
+            # shows as a relay_enc_max_us spike.
+            "relay_enc_us": 0, "relay_enc_max_us": 0,
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -362,6 +395,31 @@ class BridgeCore:
         self.stats["he2pi_bytes"] += n
         return bytes(self._wire[:w])
 
+    def he_frame_wire(self, b):
+        """S23 drain fast path: a COMPLETE `WCMD_FRAME_TX` message ->
+        a memoryview of the encoded wire, or None = caller must fall
+        back to he_msg (frags, replies, resync, oversize).
+
+        Zero ~1.5 KB allocations: the returned memoryview aliases
+        self._wire and is valid only until the NEXT encode on this
+        core -- write it to the VCP before touching the core again.
+        he_msg stays the allocating general path (host tests, spill
+        shapes); test_bridge_core pins the two paths byte-identical.
+        """
+        if len(b) < 4:
+            return None
+        cmd, _port, ln = struct.unpack_from("<BBH", b, 0)
+        if (cmd != WCMD_FRAME_TX or self.reasm is not None
+                or ln > MAX_L2 or len(b) - 4 < ln):
+            return None         # he_msg owns resync + error accounting
+        # One-pass fused COBS+CRC (S23 GOLD): no payload copy, no
+        # separate CRC traversal -- the pump's measured per-message
+        # python cost is the VGA relay tax, and this is most of it.
+        w = uc.frame_encode_fused(self._wire, memoryview(b)[4:4 + ln], ln)
+        self.stats["he2pi_frames"] += 1
+        self.stats["he2pi_bytes"] += ln
+        return memoryview(self._wire)[:w]
+
     # ---- Pi -> HE ---------------------------------------------------------
 
     def vcp_bytes(self, chunk):
@@ -412,7 +470,7 @@ class BridgeCore:
         return struct.pack("<BBH", WCMD_PING, 0, len(body)) + body
 
 
-def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY):
+def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY, stats=None):
     """Push one frame's WCMD_PUB messages, servicing the HE->HP direction
     every `every` messages. Returns the number of drain calls made.
 
@@ -423,15 +481,38 @@ def send_chunk_msgs(msgs, send, drain, every=CHUNK_DRAIN_EVERY):
     is not draining `he.queue` meanwhile would stall both directions
     until the 1 s send timeout expires -- costing rpmsg drops and a
     broken frame. Draining as we push removes that.
+
+    With `stats` (S23 relay profile), each send and each drain is timed
+    into cap_ept_us / cap_pump_us so cap_send_us stops being a lump.
     """
     drains = 0
     for i, m in enumerate(msgs):
-        send(m)
+        if stats is None:
+            send(m)
+        else:
+            t0 = _ticks_us()
+            send(m)
+            dt = _elapsed(t0, _ticks_us())
+            stats["cap_ept_us"] += dt
+            if dt > stats["cap_ept_max_us"]:
+                stats["cap_ept_max_us"] = dt
+            if dt > 1000:
+                stats["cap_ept_slow"] += 1
         if every and (i + 1) % every == 0:
-            drain()
+            if stats is None:
+                drain()
+            else:
+                t0 = _ticks_us()
+                drain()
+                stats["cap_pump_us"] += _elapsed(t0, _ticks_us())
             drains += 1
     if not every or not msgs or len(msgs) % every:
-        drain()          # always finish on a drain
+        if stats is None:
+            drain()      # always finish on a drain
+        else:
+            t0 = _ticks_us()
+            drain()
+            stats["cap_pump_us"] += _elapsed(t0, _ticks_us())
         drains += 1
     return drains
 
@@ -502,12 +583,13 @@ def _dump_he_ring(tag):
 class UsbVcp:
     """USB CDC via the console streams (pattern: s14_relay_pump.py)."""
 
-    def __init__(self):
+    def __init__(self, stats=None):
         import select
         self._in = sys.stdin.buffer
         self._out = sys.stdout.buffer
         self._poll = select.poll()
         self._poll.register(self._in, 1)  # select.POLLIN
+        self._stats = stats     # S23 relay profile: BridgeCore.stats
 
     def any(self):
         return 1 if self._poll.poll(0) else 0
@@ -522,6 +604,8 @@ class UsbVcp:
         return bytes(out)
 
     def write(self, data):
+        stats = self._stats
+        t0 = _ticks_us() if stats is not None else 0
         mv = memoryview(data)
         total = 0
         n = len(mv)
@@ -529,6 +613,13 @@ class UsbVcp:
             w = self._out.write(mv[total:])
             if w:
                 total += w
+        if stats is not None:
+            dt = _elapsed(t0, _ticks_us())
+            stats["vcp_us"] += dt
+            if dt > stats["vcp_max_us"]:
+                stats["vcp_max_us"] = dt
+            stats["vcp_writes"] += 1
+            stats["vcp_bytes"] += n
 
 
 class HeWire:
@@ -883,6 +974,32 @@ class CaptureEngine:
         self.sent_bytes = 0         # JPEG bytes this stream (rate cap)
         self.enc_us = 0             # encode time this command (matrix column)
         self.enc_frames = 0
+        # S23 capture/encode overlap (re-opens D21 -- that verdict was
+        # about the dead per-byte-polled SPI TX path, not this stack).
+        # The csi module's snapshot(blocking=False) returns None on
+        # WOULD_BLOCK and leaves the one-shot capture ARMED (verified in
+        # ports/alif/omv_csi.c: CAM_CTRL_SNAPSHOT started before the
+        # wait loop), so the sensor exposes/reads out while the main
+        # loop chunk-and-sends the previous JPEG.
+        self._csi = None            # csi handle behind the sensor shim
+        self._nb = None             # None=unprobed, False=fallback, True=on
+        self._img_ready = None      # frame collected early by a kick
+        self.cap_pending = False    # a kicked capture is in flight
+        # S23 GOLD early kick: the capture is CPI-pixclk-bound (~21 ms
+        # for a VGA frame at 24 MHz) and at fb=1 it serializes against
+        # everything after the fb is consumed. Ref mode DISCARDS the
+        # sensor frame, so the kick moves to right-after-collect for
+        # free; sensor mode buys the same shape by copying the frame to
+        # a shadow buffer (~1-3 ms memcpy, image.Image(buffer=) wraps it
+        # zero-copy) so the fb is free before the encode starts. Both
+        # ways the capture rides under the ~49 ms encode.
+        self._shadow = None         # bytearray behind the shadow image
+        self._shadow_img = None     # image.Image wrapping self._shadow
+        # fb=2 was tried for this overlap and MEASURED SLOWER (VGA color
+        # 11.47 vs 12.10 fb=1, 2026-08-19): continuous capture DMA
+        # contends with the MVE encoder for memory bandwidth -- S3's old
+        # "set_framebuffers(2) makes everything worse" verdict holds on
+        # the modern stack for a new reason. Streams stay at fb=1.
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -890,6 +1007,47 @@ class CaptureEngine:
         if res == CAMERA_RES_HD:
             return sensor.HD
         return sensor.QVGA
+
+    def _nb_handle(self):
+        """The csi object behind the sensor shim, or None -> blocking
+        fallback (old firmware / host fakes without _csi). Probed once;
+        the verdict is traced so a fallback never hides silently."""
+        if self._nb is None:
+            try:
+                import sensor
+                self._csi = getattr(sensor, "_csi", None)
+            except Exception:
+                self._csi = None
+            self._nb = self._csi is not None
+            _trace("camera: non-block capture %s"
+                   % ("ENABLED" if self._nb
+                      else "unavailable -- blocking snapshot fallback"))
+        return self._csi
+
+    def _kick(self, csi):
+        """Arm the next capture; an instantly-complete frame is parked,
+        never dropped."""
+        k = csi.snapshot(blocking=False)
+        if k is not None:
+            self._img_ready = k
+            self.cap_pending = False
+        else:
+            self.cap_pending = True
+
+    def _quiesce(self):
+        """Collect (and discard) any in-flight capture BEFORE the sensor
+        is touched. A geometry/format change with the CSI DMA mid-frame
+        is the S18 hazard class; every re-init must enter with the
+        capture pipeline idle so the B2 model stays intact."""
+        if not self.cap_pending and self._img_ready is None:
+            return
+        try:
+            if self.cap_pending and self._csi is not None:
+                self._csi.snapshot()        # blocking collect, discarded
+        except Exception as e:
+            _trace("camera: quiesce snapshot failed: %r" % e)
+        self.cap_pending = False
+        self._img_ready = None
 
     def bootstrap(self):
         """Claim the framebuffer CEILING. MUST run before the HE loads.
@@ -997,6 +1155,8 @@ class CaptureEngine:
         """Apply the planned sensor steps; raises on failure."""
         import sensor
         steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
+        if steps:
+            self._quiesce()          # never re-init with a capture in flight
         for step in steps:
             if step == "pixformat":
                 sensor.set_pixformat(sensor.GRAYSCALE
@@ -1057,6 +1217,7 @@ class CaptureEngine:
                 _trace("camera: stop (%d frames, %d B this stream)"
                        % (self.slots, self.sent_bytes))
             self.mode = CAMERA_MODE_STOP
+            self._quiesce()          # don't leave a kicked capture behind
             return
         res = cmd.get("res", CAP_DEFAULT_RES)
         pf = cmd.get("pf", CAP_DEFAULT_PF)
@@ -1082,6 +1243,50 @@ class CaptureEngine:
         if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
+        # REF-MODE stream capture-time fix (S23 GOLD): the sensor stares
+        # at the DARK bench while the encoder eats canned reef frames, so
+        # auto-exposure stretches to ~33 ms and becomes the fb=1 cycle
+        # floor (measured: the nb kick hid the whole send window inside
+        # it for zero fps gain). set_framerate clamps AE max exposure to
+        # the frame time in the pag7936 driver (configure(): AE_MAXEXPO
+        # <= frame_time - margin, vendor source), so 60 fps caps capture
+        # at ~16.7 ms -- under the send window it overlaps. The DISCARDED
+        # ref-mode frames just get darker; sensor-mode scenes are never
+        # touched (their exposure is the honest scene cost). If the
+        # bench's capture column should keep pricing dark-bench exposure
+        # instead of deployment-light capture, delete this block -- the
+        # decision is recorded in TRACKER/DEV_LOG for Nick's veto.
+        if self.scene == "ref" and cmd["mode"] == CAMERA_MODE_STREAM:
+            self._quiesce()          # a sensor touch; never mid-capture
+            try:
+                import sensor
+                sensor.set_framerate(REF_STREAM_FRAMERATE)
+                _trace("camera: ref stream framerate capped at %d"
+                       % REF_STREAM_FRAMERATE)
+            except Exception as e:
+                _trace("camera: set_framerate unavailable (%r) -- "
+                       "dark-bench exposure stays the capture floor" % e)
+        # Shadow buffer for sensor-scene streams (see __init__): frees
+        # the fb before encode so the early kick is corruption-safe.
+        # Allocation failure (heap-tight HD color) falls back loudly to
+        # the post-encode kick -- slower, never wrong.
+        self._shadow = self._shadow_img = None
+        if (cmd["mode"] == CAMERA_MODE_STREAM and self.scene != "ref"
+                and self._nb_handle() is not None):
+            try:
+                import image
+                w, h = RES_GEOM[res]
+                buf = bytearray(w * h * (1 if pf == CAMERA_PF_MONO else 2))
+                self._shadow_img = image.Image(
+                    w, h, image.GRAYSCALE if pf == CAMERA_PF_MONO
+                    else image.RGB565, buffer=buf)
+                self._shadow = buf
+                _trace("camera: shadow buffer %d B -- capture rides "
+                       "under encode" % len(buf))
+            except Exception as e:
+                self._shadow = self._shadow_img = None
+                _trace("camera: no shadow buffer (%r) -- post-encode "
+                       "kick" % e)
         self.q = cmd["q"]
         # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
         # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
@@ -1126,7 +1331,42 @@ class CaptureEngine:
             if self.rate_bps and self.sent_bytes * 8000 > self.rate_bps * el:
                 return None          # over the byte budget, skip the slot
         import sensor
-        img = sensor.snapshot()      # ref mode still pays the capture cost
+        csi = self._nb_handle()
+        if csi is None:
+            img = sensor.snapshot()  # ref mode still pays the capture cost
+        elif self._img_ready is not None:
+            img = self._img_ready    # a kick completed before we returned
+            self._img_ready = None
+            self.cap_pending = False
+        else:
+            # Collect the kicked capture -- or, first frame of a stream,
+            # arm one. None = WOULD_BLOCK: the capture runs in hardware
+            # while the main loop keeps draining; poll again next pass.
+            img = csi.snapshot(blocking=False)
+            if img is None:
+                self.cap_pending = True
+                return None
+            self.cap_pending = False
+        # Early kick (S23 GOLD): free the fb BEFORE the encode so the
+        # next capture runs under it. Ref mode discards the sensor frame
+        # -- kick outright; sensor mode copies to the shadow first. On
+        # any mismatch (fake sensors, geometry drift) fall back to the
+        # post-encode kick rather than encode a torn frame.
+        early_kicked = False
+        if csi is not None and self.mode == CAMERA_MODE_STREAM:
+            if self.scene == "ref":
+                self._kick(csi)
+                early_kicked = True
+            elif self._shadow_img is not None:
+                try:
+                    mv = img.bytearray()
+                    if len(mv) == len(self._shadow):
+                        self._shadow[:] = mv
+                        img = self._shadow_img
+                        self._kick(csi)
+                        early_kicked = True
+                except Exception:
+                    pass             # post-encode kick covers it
         if self.scene == "ref":
             if self.ref_img is None:
                 return None          # command() refused; belt and braces
@@ -1148,12 +1388,19 @@ class CaptureEngine:
             self.mode = CAMERA_MODE_STOP
             _trace("camera: single enc %d us, %d B, q=%d"
                    % (self.enc_us, len(b), self.q))
+        elif csi is not None and not early_kicked:
+            # Post-encode kick (the fallback overlap): copy=True above
+            # freed the fb, so exposure/readout at least runs under the
+            # send of THIS jpeg. Frame latency grows by up to one pacing
+            # slot either way (image taken earlier than encoded) -- fine
+            # for this product, stated here rather than hidden.
+            self._kick(csi)
         return b
 
 
 def main():
     core = BridgeCore()
-    usb = UsbVcp()
+    usb = UsbVcp(stats=core.stats)
     he = HeWire()
     cfg = _load_cfg()
     engine = CaptureEngine(
@@ -1245,10 +1492,27 @@ def main():
             """Drain the HE->HP queue into the VCP. Hoisted out of the
             loop so the chunk sender can call it too (S19 bite 2)."""
             n = 0
+            stats = core.stats
             while he.queue:
-                for wire in core.he_msg(he.queue.pop(0)):
-                    usb.write(wire)
+                m = he.queue.pop(0)
+                t0 = _ticks_us()
+                wire = core.he_frame_wire(m)   # zero-alloc fast path
+                dt = _elapsed(t0, _ticks_us())
+                stats["relay_enc_us"] += dt
+                if dt > stats["relay_enc_max_us"]:
+                    stats["relay_enc_max_us"] = dt
+                if wire is not None:
+                    usb.write(wire)            # consume before next encode
+                else:
+                    # Non-frame or spill shapes: the allocating general
+                    # path (untimed by relay_enc -- rare by design).
+                    for w2 in core.he_msg(m):
+                        usb.write(w2)
                 n += 1
+            stats["pump_calls"] += 1
+            stats["pump_msgs"] += n
+            if n > stats["pump_batch_max"]:
+                stats["pump_batch_max"] = n
             return n
 
         while True:
@@ -1377,7 +1641,8 @@ def main():
                 msgs = core.capture_pub_msgs(jpeg, engine.caps - 1,
                                              engine.payload_max)
                 t1 = _ticks_us()
-                send_chunk_msgs(msgs, he.send, pump_he_to_pi)
+                send_chunk_msgs(msgs, he.send, pump_he_to_pi,
+                                stats=core.stats)
                 t2 = _ticks_us()
                 core.stats["cap_asm_us"] += _elapsed(t0, t1)
                 core.stats["cap_send_us"] += _elapsed(t1, t2)

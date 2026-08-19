@@ -17,6 +17,187 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 (later) — Sprint S23 GOLD arc: VGA plateaus at 12.2–12.3 across five falsified levers (an invariant ~13 ms/frame is the open question); HD mono climbs 3.37→3.62; two more bench incidents, recovery recipe nailed
+
+**Branch:** `sprint/23-encoder-fastpath`. Nick's directive: "keep the
+improvements coming till we get 15fps or better on VGA."
+
+**Shipped this arc (each measured on 60 s CLEAN ledger-exact rows):**
+- **Non-blocking capture machinery** (`csi.snapshot(blocking=False)` —
+  the csi module has it; D21's "cannot overlap" was about the dead SPI
+  path): collect-on-poll, kick-after-encode, quiesce before every
+  sensor touch (suite 328→336). VGA 12.10 (flat), HD 3.43 (+).
+- **fb=2 double-buffering**: measured **SLOWER — VGA 11.47.** S3's old
+  verdict reproduces on the sticky-fb stack for a new reason: the
+  continuous capture DMA contends with the MVE encoder for memory
+  bandwidth. REVERTED; finding recorded in the code.
+- **Ref-stream framerate cap** (dark-bench exposure theory — the
+  PAG7936 driver clamps AE max exposure to frame time): cap 60
+  ENGAGED per trace and measured flat (12.00); raised to 120, still
+  flat. Exposure was NOT the wait.
+- **Fused one-pass COBS+CRC viper encoder** (`frame_encode_fused`,
+  goldens incl. 0xFF-code boundaries; codec suite 38→49): per-message
+  relay enc **676→499 µs on the wire** — and VGA cycle unchanged.
+- **Early capture kick** (ref streams kick at collect since the frame
+  is discarded; sensor streams copy to a shadow buffer wrapped by
+  `image.Image(buffer=)` so bench and deployment keep the same
+  pipeline shape; suite 341): VGA 12.23 (flat), HD 3.57–3.62.
+
+**The open question, precisely:** VGA cycle ≈ 81.7 ms = enc ~50 +
+asm ~3 + send ~15 + **~13 ms that survives every lever** (not send —
+fused encoder moved the wire cost, not the cycle; not exposure — caps
+engaged and did nothing; not capture-arm timing — early kick did
+nothing; capture itself is CPI-pixclk-bound ~21 ms/VGA frame at the
+24 MHz OMV_CSI_CLK_FREQUENCY but the kick should hide it under the
+49 ms encode). Next instrument: per-frame kick→collect wall-time and
+poll-gap counters in the engine — measure, don't model. Firmware-side
+levers if the 13 ms is real capture: raise CSI pixclk (board config,
+flash spin); encoder-side: Huffman/bitstream is the remaining scalar
+stage. HD keeps gaining from every send-path lever because its send
+(~90 ms) dwarfs capture: **3.15 → 3.62 across the arc.**
+
+**Bench incidents #2 and #3 (same signature as #1):** attach-refusal
+after clean bridge exits; incident #3 survived one uhubctl cycle
+because the first touch came too soon. **Recovery recipe now proven
+twice: `sudo uhubctl -l 3 -p 1 -a cycle -d 3`, then ≥5 minutes of
+ZERO port contact, then one demo_up.** The silence is load-bearing.
+Three boot-state anomalies in one day on fw `1e56071e…`/ELF
+`39717d44…` — bite 3's soaks must watch for this; if it recurs,
+instrument the SHM-128K/MPU neighborhood on cold boots.
+
+**Bench state:** chain UP under units, scene=ref, health-proven
+(capture landed, gaps=0). Deployed: bridge `79c9ab4f…` + codec
+`ebcfb87d…` (fast path + fusion + early kick + cap 120), fw/ELF
+unchanged. MEAS_FPS: VGA 12.23 / HD mono 3.62 (deployed-config
+numbers, bench_web 81). All commits pushed.
+
+**Next:** the ~13 ms hunt (capture-wait counters, fresh session) →
+Nick's call on firmware levers (CSI pixclk / Huffman MVE) vs calling
+12.3 the MicroPython-path ceiling → bite 3 re-measure + guardrails +
+PR. VGA-15 is NOT closed; HD-mono-5 needs the HE round trip cut
+(ept-block ~62 ms/frame at HD) — HE-side batching or the C path.
+
+---
+
+## 2026-08-19 — Sprint S23 — relay regression resolved-as-explained (clean-boot HD 3.15×2, above stock) + drain fast path shipped: VGA color 12.30, HD mono 3.37, ledger-exact
+
+**Branch:** `sprint/23-encoder-fastpath` (ff'd to main @ e3bc81e; PR #42
+is MERGED). Nick's gates this session: Phase-A plan approved; 4:2:0
+eyeball run — quality satisfactory → **bite 0 CLOSED**.
+
+**Done — desk facts first (no board contact):**
+- **The AE3 enumerates USB HIGH-SPEED** (lsusb -t on nereus000: 480M,
+  dev 37c5:16e3). The "~675 KB/s VCP floor" (D40's ~185 ms/126 KB
+  burst-drain measurement) is ~1% of line rate — software, not USB.
+- The VCP write pattern is IDENTICAL between stock and rpmsg-1544
+  stacks (both drain per chunk) — the regression suspects were narrowed
+  to the rpmsg leg/interleave before any instrumentation ran.
+
+**Done — relay-split counters (bridge-only, no flash; suite 294→310):**
+cap_send_us split into cap_ept_us (+max/slow>1ms) and cap_pump_us;
+usb.write metered globally (vcp_us/writes/bytes); pump batch stats.
+`stats=None` keeps every legacy path unchanged. Bridge `b3543cc7…`
+SYNCED by demo_up first-try (sha checked), scene=ref.
+
+**Measured (60 s rows, scene=ref, all CLEAN ledger-exact):**
+- **VGA color 10.62 fps** (637 frames, pub_ok 637×20 exact) — control
+  holds the 10.73 stack number (~1% run variance).
+- **HD mono 3.15 fps TWICE** (189 frames each, pub_ok 189×55 exact) —
+  **ABOVE the 3.10 stock baseline. The 2.72 did not reproduce.** Its
+  own preserved trace shows steady-slow from the first HD snapshot
+  (181/174/175 ms/frame send, no degradation curve) → boot-state
+  anomaly, not the geometry. Any recurrence is now attributable in one
+  trace snapshot.
+- **The split, per message:** pump ~1.25 ms at BOTH resolutions — and
+  inside it **usb.write is only ~55–61 µs (measured VCP throughput
+  ~24 MB/s)**. The relay tax is the ~1.19 ms of PYTHON per message
+  (he_msg dispatch + COBS _encode). ept.send: free at VGA (23 µs —
+  20 chunks fit the 32-slot vring), blocking at HD (avg 1.14 ms, 26%
+  of sends >1 ms, max 30.8 ms — 55 chunks overflow the ring and ride
+  the HE's pace, which is itself drain-coupled).
+- **HD mono frame budget at 3.15 (317 ms):** enc ~96 + capture ~33 +
+  pump-python ~69 + ept-block ~63 + asm ~12 + misc ~44.
+
+**Lever ranking rewritten by the numbers:** (1) cut the per-message
+python drain — viper/native COBS encode path; at HD −50 ms/frame if
+3–5× lands (3.15→~3.8), at VGA −20 ms (10.6→~13.3); helps every mode,
+bridge-only; (2) capture/encode overlap (the ~19 ms snapshot wait —
+still REQUIRED for VGA-15: even a free relay leaves 68 ms > 66.7);
+(3) ept pacing/batching at HD. HD-mono-5 plausibly = (1) + (2)
+without firmware.
+
+**Done — drain fast path (Nick's "go for it"; the fix's own A/B was
+the stage-3 profile, per the 1a lesson):**
+- Stage-2 counter first: `relay_enc_us` timed core.he_msg inside the
+  pump — **he_msg = 1.10 of the 1.26 ms/msg pump cost (87%)**, on a
+  3.17 fps CLEAN row (190×55 exact). Viper CRC+COBS only plausibly
+  ~0.2 ms → suspects = the three ~1.5 KB per-message allocations.
+- Shipped `he_frame_wire` (zero-alloc fast path for complete
+  WCMD_FRAME_TX: encodes into the preallocated `_wire`, returns an
+  aliasing memoryview consumed before the next encode) + killed the
+  `bytes(l2[:n])` detour in `frame_encode_into` (slice-assign straight
+  from the memoryview). `he_msg` stays the allocating reference path;
+  equivalence/fallback/reasm-ownership/aliasing pinned in tests
+  (bridge suite 310→312→328, codec 37→38).
+- **Measured (60 s rows, CLEAN, ledger-exact): VGA color 10.73→12.30
+  (738 frames, pub_ok 738×20 exact) · HD mono 3.15→3.37 (202×55
+  exact).** Split after: enc/msg 1102→~680 µs (−38%), pump/msg
+  1259→~825. VGA send leg now 17.5 ms/frame (ept 0.5 — 20 chunks
+  never block the 32-slot ring); HD send 120 ms = ept-block 72 + pump
+  47 — **half the pump saving converted to ept blocking: HD is now
+  HE-round-trip-bound, not HP-python-bound.**
+
+**Sprint ladder (VGA color q50, 60 s rows, ledger-exact):**
+7.41 → 7.93 (4:2:0) → 9.03 (MVE conv) → 9.50 (rpmsg) → 10.73 (DCT) →
+**12.30 (drain fast path)**.
+
+**Broke/surprised us:** nothing on the bench — every demo_up and row
+session landed first-try under the serialized-port discipline (one
+expected phase-1 armed-attach recovery, by the book). The surprises
+were the data: the regression we came to fix does not exist on a clean
+boot; the VCP-floor model died by measurement; and the remaining
+~680 µs/msg python encode cost is far above what the viper loops
+should cost — unattributed, noted for the next profile if it matters.
+
+**Bench incident (RESOLVED by Nick's uhubctl cold cycle; ~50 min):**
+after the clean fast-path rows, the next bridge boot went into a sick
+state. The wedge model written mid-incident ("hung in he.start") was
+WRONG — the preserved trace, read post-recovery, shows the boot DID
+link (t=39003 = bm-light's start to the second) and then received
+ZERO VCP bytes for 30 s while bm-light demonstrably heartbeated →
+clean quiet-exit at t=69131 whose **HE ring dump came back EMPTY**
+(the healthy boots dump content). After that exit, three serialized
+mpremote attaches over ~15 min all failed "board busy" and a
+nereus000 reboot changed nothing (Pi 5 never cuts VBUS) — NOT fully
+explained: the launcher has no relaunch loop, so something below
+python kept refusing the port. `sudo uhubctl -l 3 -p 1 -a cycle -d 3`
+(a true power cycle) cleared everything; demo_up then landed
+first-try and the chain health-checked clean (capture landed,
+frames_ok+1, gaps=0). **Pattern flag for bite 3's soaks: this is the
+SECOND boot-state anomaly on the fw `1e56071e…`/ELF `39717d44…`
+stack in one day** (the steady-slow 2.72 boot, now a CDC-RX-stall +
+empty-HE-ring + attach-refusal boot). Not attributable to the
+fast-path python (boot path untouched; same artifacts booted clean
+before and after). If a third appears, suspect the SHM-128K/MPU
+neighborhood on cold boots and instrument there.
+
+**Bench state: chain UP under units, scene=ref**, fast-path bridge
+`b4a6beee…` + codec `67aaecf1…` on /flash sha-verified, fw
+`1e56071e…` + ELF `39717d44…` unchanged, MEAS_FPS 12.30 / 3.37 live
+on :8090, both Pi checkouts at 0049e5a+.
+
+**Next:** capture/encode overlap re-test — the arithmetic says VGA-15
+falls to it alone (81.3 − ~19 ms snapshot wait ≈ 62 ms ⇒ ~16 fps):
+needs a non-blocking frame-ready poll (openmv-tree desk check, likely
+a small C patch under the sticky-fb precedent) — `set_framebuffers(2)`
+A/B is deliberately NOT run without Nick (S18: growing the fb with the
+HE loaded takes the board off the USB bus). HD-mono-5 outlook honest:
+overlap alone reaches only ~3.8; the 72 ms/frame ept-block (HE
+round-trip pace at 55 chunks) is the wall — HE-side batching or the
+C path, Nick sizes. Then bite 3 re-measure + guardrails + PR.
+
+---
+
 ## 2026-08-19 — Sprint S23 — bite 1b: MVE DCT golden-passed, VGA color 10.73 fps (+45% on the sprint); the SHM growth ate two firmware spins (16-slot starvation, then the hardcoded MPU window); HD mono relay regression profiled and OPEN
 
 **Branch:** `sprint/23-encoder-fastpath`. Nick's "Go for it" on the DCT.

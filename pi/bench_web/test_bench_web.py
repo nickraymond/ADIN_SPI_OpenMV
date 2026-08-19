@@ -640,12 +640,14 @@ class TestPage(unittest.TestCase):
         # the S22 wrap-fix ceilings (2026-08-18, 10-min soaks + ceiling
         # rows on the fixed HE, receiver-ledger exact)
         self.assertIn("28.23", block)
-        # VGA color re-measured on the S23 MVE build (7.41 on 4:2:2,
-        # 7.93 on 4:2:0 scalar, 9.03 on 4:2:0 + Helium color convert)
-        self.assertIn("10.73", block)
+        # VGA color 12.23 = the deployed S23 GOLD-arc stack (ladder
+        # 7.41 -> ... -> 10.73 -> 12.2-12.3 plateau, ledger-exact).
+        self.assertIn("12.23", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
-        self.assertIn("2.72", block)
+        # HD mono 3.62 = best of the GOLD-arc rows (3.15 clean-boot
+        # floor -> 3.62 via kick overlap + fused encoder).
+        self.assertIn("3.62", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an
