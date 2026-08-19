@@ -1,7 +1,24 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-19 latest+2 (**S23 GOLD bounded + PIVOT
+*Last updated: 2026-08-19 latest+3 (**S23 GOLD: the invariant is
+NAMED — it is the serialized HE round-trip, not capture and not a
+fixed 13 ms.** Two instrumented CLEAN rows: 12.15 (counters) → 12.53
+(round-2 build: zero-alloc RX ring+pool, ref-stream sensor bypass;
+bridge `5071cecd…`, suite 373). Round-2 ledger: enc ~44 + asm 1.6 +
+send 33.4 — **ept.send blocks 21.2 ms/frame (was 0.5); the HE clears
+20 chunks in ~33 ms then idles through the 44 ms encode (~41%
+utilized)**. Route to 15+: overlap the feed (non-blocking chunk
+pusher clocked off _rx callbacks; predicted ~48–52 ms cycle = 19–20
+fps) — NEW bite below, also attacks HD's 72 ms ept-block. **Ops
+rewrite: uhubctl NEVER cuts VBUS on Pi 5 → no cold boot; every
+working "recovery" was demo_up's final `mpremote reset`. Cold-boot
+recipe = mpremote reset or physical unplug.** Bite R SHRINKS to the
+two still-unexplained states (raw-repl refusal through armed windows;
+the CDC-RX-stall/empty-ring boot). Nick's 3 GOLD attempts SPENT
+(12.53 < 15) — pivot per his standing call, or the overlap bite; his
+gate. Previous:*
+*2026-08-19 latest+2 (**S23 GOLD bounded + PIVOT
 ORDERED (Nick): GOLD gets THREE more bench attempts, then the
 attach-refusal/boot-state anomaly becomes the next priority as S23
 bite R (below) — a fresh session tackles it.** The 13 ms hunt's
@@ -1683,6 +1700,21 @@ precedent for repo-carried firmware patches.
       the DCT (bite 1b, −21 ms) and capture/encode overlap (the
       snapshot wait + drain interleave, re-opens D21). Re-planned
       route to 15: DCT → ~12 fps, then overlap → 15+.**
+- [ ] **Bite S — overlap the HE feed (the named route to VGA-15; NEW
+      2026-08-19, awaiting Nick's gate).** Round-2 capwait ledger: the
+      HP burst-feeds 20 chunks then waits — ept.send blocks 21.2
+      ms/frame, the HE clears its work in ~33 ms (1.65 ms/chunk) and
+      idles through the 44 ms encode (~41% utilized). Ship a
+      non-blocking chunk pusher: stash the frame's msgs after asm;
+      push with `ept.send(timeout=0)` from the `_rx` callback (each
+      inbound echo = a freed vring slot, and _rx provably interleaves
+      with to_jpeg); main-loop tail drain; re-entrancy guard between
+      pusher and control sends (barrier queries — streams never
+      re-init, so contention is rare but must be fenced). Predicted
+      cycle max(enc 44, HE 33) + residue ≈ 48–52 ms = **19–20 fps**;
+      HD's 72 ms/frame ept-block is the same disease. Acceptance:
+      vga-color-15 ≥ 15.0 CLEAN ledger-exact, HD mono ≥ 3.5 held,
+      10-min soak.
 - [ ] **Bite R — attach-refusal / boot-state anomaly root cause
       (NEW 2026-08-19, Nick: NEXT PRIORITY after GOLD's three bounded
       attempts; fresh session, own branch).** Six incidents, all on fw
