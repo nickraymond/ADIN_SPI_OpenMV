@@ -1,21 +1,33 @@
 #!/usr/bin/env python3
 """n6_stream_host.py -- watch the N6's detection stream in a browser (S24 bite 1).
 
-Headless replacement for the OpenMV IDE's framebuffer view: runs
-``bench/n6_stream_board.py`` on the N6 via ``mpremote``, decodes the frames it
-prints, and serves them as multipart MJPEG so any browser can watch live.
+Headless replacement for the OpenMV IDE's framebuffer view: pushes
+``bench/n6_stream_board.py`` into the N6's raw REPL over the serial port,
+decodes the frames it prints, and serves them as multipart MJPEG so any
+browser can watch live.
 
     python3 bench/n6_stream_host.py                 # then open http://localhost:8090/
+    python3 bench/n6_stream_host.py --tune          # centre LAB readout
+    python3 bench/n6_stream_host.py --blob-thresh 20,70,10,50,-60,-15 \
+                                    --blob-label ball
 
-Nothing is written to the board -- the board script is executed from the host
-and ``/flash`` is never touched. Stdlib only apart from ``mpremote`` itself.
+Nothing is written to the board -- the script runs from RAM and ``/flash`` is
+never touched. Needs pyserial; stdlib otherwise.
+
+**Ctrl-C to stop, never ``kill -9``.** The clean path interrupts the board and
+leaves the raw REPL; SIGTERM/SIGHUP are handled and unwind the same way. A
+SIGKILL cannot be caught, and leaving the board streaming into a closed
+endpoint has taken it off the USB bus entirely -- which needs a physical
+replug, because a Mac cannot power-cycle the port.
 
 Why base64 rather than the project's framed-binary wire format (S3's
-``StreamParser``): ``mpremote run`` returns the script's stdout through the raw
-REPL, which ends on byte 0x04, and JPEG payloads contain 0x04. Base64 costs
-~33% bandwidth and removes the whole class of problem. The MJPEG/stats half of
-this server follows ``pi/stream/stream_server.py`` deliberately, so the two
-viewers behave the same way.
+``StreamParser``): the raw REPL ends its output on byte 0x04 and JPEG payloads
+contain 0x04. Base64 costs ~33% bandwidth and removes the whole class of
+problem. Why the port is driven directly rather than through ``mpremote run``:
+mpremote accumulates and rescans the script's entire output, so a long stream
+decays with total bytes (~20 fps -> <2 fps, measured -- see DESIGN S24). The
+MJPEG/stats half follows ``pi/stream/stream_server.py`` deliberately, so the
+two viewers behave the same way.
 """
 
 import argparse
@@ -23,6 +35,7 @@ import base64
 import binascii
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -387,6 +400,9 @@ def parse_args(argv=None):
     ap.add_argument("--blob-thresh", default=None,
                     help="LAB threshold L_lo,L_hi,A_lo,A_hi,B_lo,B_hi")
     ap.add_argument("--blob-pixels", type=int, default=150)
+    ap.add_argument("--blob-label", default="blob",
+                    help="what to call a colour blob in the overlay "
+                         "(e.g. --blob-label ball)")
     ap.add_argument("--tune", action="store_true",
                     help="draw a centre target and report its mean LAB, so you "
                          "can read a --blob-thresh off a real object")
@@ -406,6 +422,7 @@ def cfg_from_args(args):
         "blob_pixels": args.blob_pixels,
         "blob_area": args.blob_pixels,
         "tune": args.tune,
+        "blob_label": args.blob_label,
     }
     if args.blob_thresh:
         parts = [int(p) for p in args.blob_thresh.split(",")]
@@ -456,6 +473,18 @@ def main(argv=None):
                         make_handler(latest, stats))
     url = "http://localhost:%d/" % args.http_port
     print("open %s  (Ctrl-C to stop)" % url, flush=True)
+
+    # SIGTERM must unwind through the same path as Ctrl-C. A stop that skips
+    # board.stop() leaves the board streaming into a closed endpoint from
+    # inside the raw REPL, and it can drop off the USB bus entirely -- which
+    # then needs a physical replug, because a Mac cannot power-cycle the port.
+    # (Measured the hard way: a `kill -9` did exactly that. SIGKILL still
+    # cannot be caught, so `kill -9` remains the one thing not to do.)
+    def _term(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
+    signal.signal(signal.SIGHUP, _term)
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

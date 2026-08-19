@@ -84,13 +84,43 @@ AE3 were not involved, so S23 bite R is re-ordered, not displaced.
 - `os.uname()` does not carry the OpenMV build (only MicroPython
   `1.28.0`); `sys.version` does. The S7 lesson, re-confirmed.
 
-**Next:** Nick points the camera at the four purple balls, reads a
-threshold off `--tune`, and confirms the overlay tracks them (bite 1's
-demo). Then bite 2 — the N6-vs-AE3 tiled-coverage comparison, carrying
-the model-variant confound explicitly.
+**Late additions (same session), from Nick's questions at the bench:**
+- **"Can it detect sports ball?" — No, and the output tensor settles
+  it.** `/rom/yolov8n_192.tflite` reports `output_shape (1, 5, 756)`.
+  A YOLOv8 detect head is `(batch, 4 + num_classes, anchors)`, so 5 = 4
+  box coords + **one** class, where an 80-class COCO export would be
+  `(1, 84, …)`; 756 = 24²+12²+6² accounts for the anchors at 192 px.
+  The ROM model was exported single-class. No threshold, label file or
+  postprocessor change can reach the other 79 classes. Promoted bite 3
+  to "ship a real multi-class detector" with ST's int8 COCO yolov8n
+  (192 px variant) as the concrete candidate; the unverified part —
+  whether `ml.Model` takes a stock int8 tflite on the NPU or needs an
+  `stedgeai` compile — is flagged, not guessed, with a cheap experiment
+  written down to settle it.
+- **"What is a blob?"** Not ML at all: `find_blobs()` thresholds pixels
+  in LAB colour space and groups touching in-range pixels into
+  connected components. It found the balls because they are a distinct
+  colour, and it has no concept of what a ball is. Labels were being
+  drawn but unreadable — cyan text on a bright scene — so blob labels
+  are now outlined (1 px black offset, `draw_label`), numbered, and
+  named via `--blob-label ball`.
+- **Took the N6 off the USB bus with `kill -9`.** SIGKILL skipped
+  `board.stop()`, leaving the board streaming into a closed endpoint
+  from inside the raw REPL; the device node vanished and it went
+  missing from `system_profiler` entirely. **A Mac cannot power-cycle
+  the port** — no uhubctl equivalent — so it needed a physical replug
+  from Nick. SIGTERM/SIGHUP now unwind through the Ctrl-C path; SIGKILL
+  is uncatchable and is simply the thing not to do. This is the Mac-side
+  cousin of the bench's AE3 enumeration lesson.
+
+**Next:** Nick replugs the N6, then points it at the four purple balls,
+reads a threshold off `--tune`, and confirms the labelled overlay tracks
+them (bite 1's demo). Then bite 2 — the N6-vs-AE3 tiled-coverage
+comparison, carrying the model-variant confound explicitly.
 
 **Bench state:** untouched. The N6's `/flash/main.py` is still its stock
-LED blinker; no firmware written; no ADIN, no Pi, no AE3 contact.
+LED blinker; no firmware written; no ADIN, no Pi, no AE3 contact. The N6
+itself is off the USB bus pending a replug (above).
 
 ---
 

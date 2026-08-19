@@ -43,6 +43,20 @@ BLOB_THRESH = tuple(_CFG.get("blob_thresh", (10, 80, 10, 65, -75, -10)))
 BLOB_PIXELS = _CFG.get("blob_pixels", 150)    # reject sensor noise
 BLOB_AREA = _CFG.get("blob_area", 150)
 TUNE = _CFG.get("tune", False)                # centre-patch LAB readout
+BLOB_LABEL = _CFG.get("blob_label", "blob")   # what to call a colour blob
+
+
+def draw_label(img, xy, text, colour):
+    """Text with a 1 px black offset behind it, so it reads on any background.
+
+    Deliberately built from draw_string alone: every drawing call in this file
+    is one measured to exist on this firmware. A filled backing rectangle
+    would be prettier and is one more unverified kwarg (`fill=`) than this
+    bite has earned.
+    """
+    x, y = xy
+    img.draw_string((x + 1, y + 1), text, color=(0, 0, 0), scale=2)
+    img.draw_string((x, y), text, color=colour, scale=2)
 
 
 def centre_roi(w, h, frac=8):
@@ -101,8 +115,8 @@ def draw_detections(img, out, labels, colour=(255, 0, 0)):
             # draw_* call -- the older x, y, w, h spelling raises TypeError
             # ("object 'int' isn't a tuple or list"). Measured on this board.
             img.draw_rectangle((x, y, w, h), color=colour, thickness=2)
-            img.draw_string((x + 2, max(0, y - 12)), "%s %.2f" % (name, score),
-                            color=colour, scale=2)
+            draw_label(img, (x + 2, max(0, y - 18)),
+                       "%s %.2f" % (name, score), colour)
             n += 1
     return n
 
@@ -121,8 +135,8 @@ def draw_blobs(img, thresh, pixels, area, colour=(0, 255, 255)):
         img.draw_rectangle(b.rect, color=colour, thickness=2)
         img.draw_cross((b.cx, b.cy), color=colour, size=8)
         n += 1
-        img.draw_string((b.x, max(0, b.y - 12)), "%d px" % b.pixels,
-                        color=colour, scale=2)
+        draw_label(img, (b.x, max(0, b.y - 18)),
+                   "%s %d  %dpx" % (BLOB_LABEL, n, b.pixels), colour)
     return n
 
 

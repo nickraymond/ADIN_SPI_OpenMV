@@ -1813,6 +1813,25 @@ unowned side quest.
   `st.l_mean`). Found the hard way — see bite 1's latent-bug note.
 - Model load is **~2.2 ms**: the tflite is memory-mapped from ROM, not
   copied into the heap. Loading is not a cost worth optimizing.
+- **`/rom/yolov8n_192.tflite` is a ONE-CLASS model, and the output
+  tensor proves it**: `output_shape` is `(1, 5, 756)`. A YOLOv8 detect
+  head emits `(batch, 4 + num_classes, anchors)`, so 5 = 4 box coords +
+  **1 class**; an 80-class COCO export would be `(1, 84, …)`. (756 =
+  24²+12²+6², the anchor count for a 192 px input at strides 8/16/32 —
+  the shape is fully accounted for.) **"sports ball" is therefore
+  unreachable by any configuration change** — there is no channel for
+  it. An 80-class detector means shipping a different model: ST
+  publishes an int8 COCO `yolov8n` for STM32N6 at 192/256/320/416 —
+  that is bite 3's subject, and whether OpenMV loads it directly or it
+  needs an `stedgeai` compile pass is UNVERIFIED (sources conflict) —
+  flag, don't guess.
+- **Stop the stream viewer with Ctrl-C, never `kill -9`.** A SIGKILL
+  skips the board teardown and leaves it streaming into a closed
+  endpoint from inside the raw REPL; measured once, it took the N6 off
+  the USB bus completely (device node gone, absent from
+  `system_profiler`) and needed a **physical replug** — a Mac cannot
+  power-cycle the port the way `uhubctl` can on the Pi. SIGTERM/SIGHUP
+  are now handled and unwind through the clean path.
 - **`mpremote run` is fine for bounded output and unusable as a
   continuous transport** — it accumulates and rescans the script's whole
   output, so a stream decays with total bytes (measured: ~20 fps → <2
@@ -1864,12 +1883,22 @@ unowned side quest.
       rather than two tables from different sessions. Must carry the
       model-variant confound explicitly (the two boards ship different
       yolov8n binaries). Feeds Nick's board decision; no new hardware.
-- [ ] **Bite 3 — custom-detector feasibility.** Every stock detector is
-      person-only, so any real target detection needs a custom
-      Vela-compiled model either way (S8's standing finding). Scope
-      what that costs on the N6 toolchain specifically. **Do not start
-      before Nick sizes it** — this is where the sprint could quietly
-      become a machine-learning project.
+- [ ] **Bite 3 — a real multi-class detector on the N6.** Promoted from
+      "feasibility" by Nick's question 2026-08-19 (he wants "sports
+      ball", a COCO class): the ROM model's `(1, 5, 756)` output proves
+      it carries **one** class, so no configuration reaches the other
+      79. Concrete first target: ST's int8 COCO `yolov8n` for STM32N6
+      (192 px variant matches the ROM model's input exactly), which
+      would give all 80 classes including `sports ball`.
+      **Open question to settle FIRST, by test not by reading:** does
+      OpenMV's `ml.Model` load a stock int8 `.tflite` and run it on the
+      Neural-ART NPU, or must it be compiled with `stedgeai` first?
+      Sources conflict, and the answer decides whether this is an
+      afternoon or a toolchain bite. Cheap experiment: put one
+      candidate on `/flash`, load it, print `output_shape`, time
+      `predict` against the ROM model's 23.7 ms — a CPU fallback will
+      be obvious in the number. **Needs Nick's go: it is the first bite
+      that writes to the board and the first that downloads a model.**
 **Demo (Nick):** `python3 bench/n6_stream_host.py --tune` → open
 `http://localhost:8090/` → the live feed shows the scene with the
 centre LAB readout; re-run with the suggested `--blob-thresh` and the
