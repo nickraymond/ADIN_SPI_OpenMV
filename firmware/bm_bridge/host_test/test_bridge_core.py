@@ -906,6 +906,40 @@ check(eng.poll(1150) == b"jpeg-of-live" and _fc3.nb_calls == 1
       and not eng.cap_pending,
       "overlap: single capture collects once and never kicks")
 
+# Early kick: a REF stream discards the sensor frame, so the kick moves
+# to right-after-collect -- capture rides under the encode.
+_fc4 = _FakeCsi()
+_FakeSensor._csi = _fc4
+_FakeImageMod.available = ("ref_color_320x200.bmp",)
+eng = bm_bridge.CaptureEngine(scene="ref")
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+_ref_stream = dict(_cmd)
+_ref_stream["mode"] = CAMERA_MODE_STREAM
+eng.command(dict(_ref_stream))
+_fc4.script = [_FakeImg(b"live")]
+out = eng.poll(1150)
+check(out == b"jpeg-of-ref_color_320x200.bmp" and _fc4.nb_calls == 2
+      and eng.cap_pending,
+      "early kick: ref stream kicks at collect, encodes the ref")
+# Sensor-mode stream WITHOUT a usable shadow (fake image module cannot
+# build one; fake frames are the wrong size anyway): the guard falls
+# back to the post-encode kick instead of encoding a torn frame.
+_fc5 = _FakeCsi()
+_FakeSensor._csi = _fc5
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_stream_cmd))
+check(eng._shadow_img is None,
+      "shadow: unbuildable shadow falls back loudly, command accepted")
+_fc5.script = [_FakeImg(b"live")]
+out = eng.poll(1150)
+check(out == b"jpeg-of-live" and _fc5.nb_calls == 2 and eng.cap_pending,
+      "shadow fallback: sensor stream still kicks post-encode")
+
 # Ref-mode STREAMS cap the sensor framerate (the dark-bench exposure
 # fix); sensor-mode streams and ref-mode singles never touch it.
 _fr_calls = []

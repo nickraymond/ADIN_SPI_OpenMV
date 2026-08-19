@@ -985,6 +985,16 @@ class CaptureEngine:
         self._nb = None             # None=unprobed, False=fallback, True=on
         self._img_ready = None      # frame collected early by a kick
         self.cap_pending = False    # a kicked capture is in flight
+        # S23 GOLD early kick: the capture is CPI-pixclk-bound (~21 ms
+        # for a VGA frame at 24 MHz) and at fb=1 it serializes against
+        # everything after the fb is consumed. Ref mode DISCARDS the
+        # sensor frame, so the kick moves to right-after-collect for
+        # free; sensor mode buys the same shape by copying the frame to
+        # a shadow buffer (~1-3 ms memcpy, image.Image(buffer=) wraps it
+        # zero-copy) so the fb is free before the encode starts. Both
+        # ways the capture rides under the ~49 ms encode.
+        self._shadow = None         # bytearray behind the shadow image
+        self._shadow_img = None     # image.Image wrapping self._shadow
         # fb=2 was tried for this overlap and MEASURED SLOWER (VGA color
         # 11.47 vs 12.10 fb=1, 2026-08-19): continuous capture DMA
         # contends with the MVE encoder for memory bandwidth -- S3's old
@@ -1013,6 +1023,16 @@ class CaptureEngine:
                    % ("ENABLED" if self._nb
                       else "unavailable -- blocking snapshot fallback"))
         return self._csi
+
+    def _kick(self, csi):
+        """Arm the next capture; an instantly-complete frame is parked,
+        never dropped."""
+        k = csi.snapshot(blocking=False)
+        if k is not None:
+            self._img_ready = k
+            self.cap_pending = False
+        else:
+            self.cap_pending = True
 
     def _quiesce(self):
         """Collect (and discard) any in-flight capture BEFORE the sensor
@@ -1246,6 +1266,27 @@ class CaptureEngine:
             except Exception as e:
                 _trace("camera: set_framerate unavailable (%r) -- "
                        "dark-bench exposure stays the capture floor" % e)
+        # Shadow buffer for sensor-scene streams (see __init__): frees
+        # the fb before encode so the early kick is corruption-safe.
+        # Allocation failure (heap-tight HD color) falls back loudly to
+        # the post-encode kick -- slower, never wrong.
+        self._shadow = self._shadow_img = None
+        if (cmd["mode"] == CAMERA_MODE_STREAM and self.scene != "ref"
+                and self._nb_handle() is not None):
+            try:
+                import image
+                w, h = RES_GEOM[res]
+                buf = bytearray(w * h * (1 if pf == CAMERA_PF_MONO else 2))
+                self._shadow_img = image.Image(
+                    w, h, image.GRAYSCALE if pf == CAMERA_PF_MONO
+                    else image.RGB565, buffer=buf)
+                self._shadow = buf
+                _trace("camera: shadow buffer %d B -- capture rides "
+                       "under encode" % len(buf))
+            except Exception as e:
+                self._shadow = self._shadow_img = None
+                _trace("camera: no shadow buffer (%r) -- post-encode "
+                       "kick" % e)
         self.q = cmd["q"]
         # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
         # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
@@ -1306,6 +1347,26 @@ class CaptureEngine:
                 self.cap_pending = True
                 return None
             self.cap_pending = False
+        # Early kick (S23 GOLD): free the fb BEFORE the encode so the
+        # next capture runs under it. Ref mode discards the sensor frame
+        # -- kick outright; sensor mode copies to the shadow first. On
+        # any mismatch (fake sensors, geometry drift) fall back to the
+        # post-encode kick rather than encode a torn frame.
+        early_kicked = False
+        if csi is not None and self.mode == CAMERA_MODE_STREAM:
+            if self.scene == "ref":
+                self._kick(csi)
+                early_kicked = True
+            elif self._shadow_img is not None:
+                try:
+                    mv = img.bytearray()
+                    if len(mv) == len(self._shadow):
+                        self._shadow[:] = mv
+                        img = self._shadow_img
+                        self._kick(csi)
+                        early_kicked = True
+                except Exception:
+                    pass             # post-encode kick covers it
         if self.scene == "ref":
             if self.ref_img is None:
                 return None          # command() refused; belt and braces
@@ -1327,19 +1388,13 @@ class CaptureEngine:
             self.mode = CAMERA_MODE_STOP
             _trace("camera: single enc %d us, %d B, q=%d"
                    % (self.enc_us, len(b), self.q))
-        elif csi is not None:
-            # The overlap: kick the NEXT capture now (copy=True above
-            # freed the fb) so exposure/readout runs under the send of
-            # THIS jpeg. A rare instantly-complete frame is kept for the
-            # next poll, never dropped. Frame latency grows by up to one
-            # pacing slot (image taken earlier than encoded) -- fine for
-            # this product, stated here rather than hidden.
-            k = csi.snapshot(blocking=False)
-            if k is not None:
-                self._img_ready = k      # complete already: nothing in flight
-                self.cap_pending = False
-            else:
-                self.cap_pending = True
+        elif csi is not None and not early_kicked:
+            # Post-encode kick (the fallback overlap): copy=True above
+            # freed the fb, so exposure/readout at least runs under the
+            # send of THIS jpeg. Frame latency grows by up to one pacing
+            # slot either way (image taken earlier than encoded) -- fine
+            # for this product, stated here rather than hidden.
+            self._kick(csi)
         return b
 
 
