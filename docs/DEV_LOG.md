@@ -79,9 +79,10 @@ fw `1e56071e…`/ELF `39717d44…` unchanged. Chain bring-up from here:
 Traces banked on nereus000: ~/trace_row1.txt, ~/trace_row2.txt.
 
 **Nick's 3-attempt budget: spent** (1 = uhubctl dead boot -- explained
-by #1; 2 = row 1; 3 = row 2). GOLD at 12.53, not closed; the pivot to
-a fresh session is Nick's standing call, with the overlap-sender bite
-now specced as the named route to 15+.
+by #1; 2 = row 1; 3 = row 2). GOLD at 12.53, not closed; the overlap
+sender is specced as TRACKER bite S. **Nick's pivot call, end of
+session: BITE R runs next** (fresh session, kickoff = PROMPTS.md §8);
+bite S waits behind it.
 
 ---
 

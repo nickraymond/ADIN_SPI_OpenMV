@@ -1701,7 +1701,9 @@ precedent for repo-carried firmware patches.
       snapshot wait + drain interleave, re-opens D21). Re-planned
       route to 15: DCT → ~12 fps, then overlap → 15+.**
 - [ ] **Bite S — overlap the HE feed (the named route to VGA-15; NEW
-      2026-08-19, awaiting Nick's gate).** Round-2 capwait ledger: the
+      2026-08-19). SEQUENCED BEHIND bite R — Nick's pivot call
+      2026-08-19 evening ("Bite R"): the root-cause hunt runs first,
+      fresh session, kickoff = PROMPTS.md §8.** Round-2 capwait ledger: the
       HP burst-feeds 20 chunks then waits — ept.send blocks 21.2
       ms/frame, the HE clears its work in ~33 ms (1.65 ms/chunk) and
       idles through the 44 ms encode (~41% utilized). Ship a
@@ -1716,8 +1718,11 @@ precedent for repo-carried firmware patches.
       vga-color-15 ≥ 15.0 CLEAN ledger-exact, HD mono ≥ 3.5 held,
       10-min soak.
 - [ ] **Bite R — attach-refusal / boot-state anomaly root cause
-      (NEW 2026-08-19, Nick: NEXT PRIORITY after GOLD's three bounded
-      attempts; fresh session, own branch).** Six incidents, all on fw
+      ← NEXT (Nick's pivot call 2026-08-19 evening; fresh session,
+      own branch, kickoff = PROMPTS.md §8). SCOPE SHRUNK by the
+      uhubctl-VBUS discovery — only two states remain unexplained
+      (the §8 prompt lists them); screen every observed refusal
+      against the state machine before counting it as anomalous.** Six incidents, all on fw
       `1e56071e…`/ELF `39717d44…` (the SHM-128K/MPU-patch stack).
       **Measured shape:** after a bridge lifecycle ends (he.start()
       … quiet-exit teardown with rp.stop()), the board tolerates ~4–6
