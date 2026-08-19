@@ -30,7 +30,7 @@ P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00
 REPO="$HOME/ADIN_SPI_OpenMV"
 LAUNCHER="$REPO/firmware/bm_bridge/main_bridge.py"
 # sha16 of firmware/bm_bridge/main_bridge.py (the bridge launcher)
-WANT_MAIN="170e637ce5d8c8bb"
+WANT_MAIN="a74280262c9122df"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -112,7 +112,8 @@ print("MISSING:" + ",".join(missing) if missing else "staged-files-ok")
 # have confirmed the B2 mechanism was destroyed by exactly this).
 mkdir -p "$HOME/bridge_traces"
 STAMP=$(date +%Y%m%dT%H%M%S)
-for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt; do
+for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt \
+             boot_report.txt boot_report.prev.txt; do
   mpr cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
     >/dev/null 2>&1 || true
 done
@@ -126,7 +127,7 @@ board_sha() {
     "import hashlib; h=hashlib.sha256(); h.update(open('/flash/$1','rb').read()); print(h.digest().hex()[:16])" \
     2>/dev/null || echo "missing"
 }
-for f in bm_bridge.py uart_codec.py; do
+for f in bm_bridge.py uart_codec.py boot_report.py; do
   WANT=$(sha256sum "$REPO/firmware/bm_bridge/$f" | cut -c1-16)
   GOT=$(board_sha "$f")
   if [[ "$GOT" != *"$WANT"* ]]; then
