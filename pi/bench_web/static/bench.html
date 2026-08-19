@@ -477,12 +477,15 @@ const MEAS = {
 // (4:2:2 baseline) -> 7.93 (bite 0, forced 4:2:0) -> 9.03 (bite 1a,
 // MVE color convert) -> 9.50 (bite 2, one rpmsg msg/chunk) -> 10.73
 // (bite 1b, MVE DCT+quant, golden-passed; 644 frames, pub_ok exact).
-// HD mono is 2.72 on this stack (was 3.10) -- the relay leg regressed
-// and is under investigation; bite 3 re-measures everything.
+// HD mono re-measured 2026-08-19 on a clean boot: 3.15 (twice, 189
+// frames/60 s each, pub_ok 189x55 ledger-exact) -- ABOVE the 3.10
+// stock baseline. The 2.72 was a boot-state anomaly (steady within
+// its run, gone on reboot), not the rpmsg-1544/MVE stack; the relay
+// split counters (cap_ept/cap_pump/vcp) now attribute any recurrence.
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
   2: { color: 10.73, mono: 13.27 },
-  3: { color: null,  mono: 2.72 },
+  3: { color: null,  mono: 3.15 },
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,

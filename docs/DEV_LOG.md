@@ -17,6 +17,71 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 — Sprint S23 — relay regression resolved-as-explained: clean-boot HD mono 3.15 ×2 (above stock), and the "VCP floor" was python all along
+
+**Branch:** `sprint/23-encoder-fastpath` (ff'd to main @ e3bc81e; PR #42
+is MERGED). Nick's gates this session: Phase-A plan approved; 4:2:0
+eyeball run — quality satisfactory → **bite 0 CLOSED**.
+
+**Done — desk facts first (no board contact):**
+- **The AE3 enumerates USB HIGH-SPEED** (lsusb -t on nereus000: 480M,
+  dev 37c5:16e3). The "~675 KB/s VCP floor" (D40's ~185 ms/126 KB
+  burst-drain measurement) is ~1% of line rate — software, not USB.
+- The VCP write pattern is IDENTICAL between stock and rpmsg-1544
+  stacks (both drain per chunk) — the regression suspects were narrowed
+  to the rpmsg leg/interleave before any instrumentation ran.
+
+**Done — relay-split counters (bridge-only, no flash; suite 294→310):**
+cap_send_us split into cap_ept_us (+max/slow>1ms) and cap_pump_us;
+usb.write metered globally (vcp_us/writes/bytes); pump batch stats.
+`stats=None` keeps every legacy path unchanged. Bridge `b3543cc7…`
+SYNCED by demo_up first-try (sha checked), scene=ref.
+
+**Measured (60 s rows, scene=ref, all CLEAN ledger-exact):**
+- **VGA color 10.62 fps** (637 frames, pub_ok 637×20 exact) — control
+  holds the 10.73 stack number (~1% run variance).
+- **HD mono 3.15 fps TWICE** (189 frames each, pub_ok 189×55 exact) —
+  **ABOVE the 3.10 stock baseline. The 2.72 did not reproduce.** Its
+  own preserved trace shows steady-slow from the first HD snapshot
+  (181/174/175 ms/frame send, no degradation curve) → boot-state
+  anomaly, not the geometry. Any recurrence is now attributable in one
+  trace snapshot.
+- **The split, per message:** pump ~1.25 ms at BOTH resolutions — and
+  inside it **usb.write is only ~55–61 µs (measured VCP throughput
+  ~24 MB/s)**. The relay tax is the ~1.19 ms of PYTHON per message
+  (he_msg dispatch + COBS _encode). ept.send: free at VGA (23 µs —
+  20 chunks fit the 32-slot vring), blocking at HD (avg 1.14 ms, 26%
+  of sends >1 ms, max 30.8 ms — 55 chunks overflow the ring and ride
+  the HE's pace, which is itself drain-coupled).
+- **HD mono frame budget at 3.15 (317 ms):** enc ~96 + capture ~33 +
+  pump-python ~69 + ept-block ~63 + asm ~12 + misc ~44.
+
+**Lever ranking rewritten by the numbers:** (1) cut the per-message
+python drain — viper/native COBS encode path; at HD −50 ms/frame if
+3–5× lands (3.15→~3.8), at VGA −20 ms (10.6→~13.3); helps every mode,
+bridge-only; (2) capture/encode overlap (the ~19 ms snapshot wait —
+still REQUIRED for VGA-15: even a free relay leaves 68 ms > 66.7);
+(3) ept pacing/batching at HD. HD-mono-5 plausibly = (1) + (2)
+without firmware.
+
+**Broke/surprised us:** nothing on the bench — both demo_ups and both
+row sessions landed first-try under the serialized-port discipline.
+The surprise was the data: the regression we came to fix does not
+exist on a clean boot, and the VCP-floor model died by measurement.
+
+**Bench state:** chain UP under units, scene=ref, instrumented bridge
+`b3543cc7…` on /flash, fw `1e56071e…` + ELF `39717d44…` unchanged.
+Health-proven post-restart (capture landed, frames_ok+1, gaps=0).
+MEAS_FPS 2.72→3.15 deployed with the investigation note replaced by
+the resolution (bench_web suite 81).
+
+**Next:** overlap re-test (D21 is about the dead SPI path — re-measure
+on this stack: non-blocking frame-ready poll or set_framebuffers(2)
+A/B on sticky-fb) + the viper-COBS drain bite (Nick sizes/orders) →
+bite 3 full re-measure + guardrails + PR.
+
+---
+
 ## 2026-08-19 — Sprint S23 — bite 1b: MVE DCT golden-passed, VGA color 10.73 fps (+45% on the sprint); the SHM growth ate two firmware spins (16-slot starvation, then the hardcoded MPU window); HD mono relay regression profiled and OPEN
 
 **Branch:** `sprint/23-encoder-fastpath`. Nick's "Go for it" on the DCT.

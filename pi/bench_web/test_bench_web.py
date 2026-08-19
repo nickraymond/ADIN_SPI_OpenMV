@@ -645,7 +645,9 @@ class TestPage(unittest.TestCase):
         self.assertIn("10.73", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
-        self.assertIn("2.72", block)
+        # HD mono 3.15 = the 2026-08-19 clean-boot re-measure (2.72 was
+        # a boot-state anomaly; above the 3.10 stock baseline).
+        self.assertIn("3.15", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an

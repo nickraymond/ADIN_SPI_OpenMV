@@ -1,7 +1,18 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-18 latest+3 (**S23 bite 0 nibbles 1–3 DONE —
+*Last updated: 2026-08-19 (**S23 relay regression RESOLVED-AS-
+EXPLAINED — clean-boot HD mono 3.15 fps ×2 ledger-exact, ABOVE the
+3.10 stock baseline; the 2.72 was a boot-state anomaly.** Relay-split
+counters shipped (bridge `b3543cc7…`, suite 310); measured: VCP is
+~24 MB/s on a HIGH-SPEED USB link — the "675 KB/s floor" is the
+~1.25 ms/msg python drain (he_msg+COBS), and at HD ept.send blocks
+1.14 ms/msg avg on the 32-slot vring. Nick's 4:2:0 eyeball PASSED →
+bite 0 CLOSED (PR #42 merged). MEAS_FPS HD mono 2.72→3.15. NEXT:
+capture/encode overlap re-test (D21) with the python-drain lever
+(viper COBS) as the new top HD candidate → bite 3 re-measure + PR.
+Previous:*
+*2026-08-18 latest+3 (**S23 bite 0 nibbles 1–3 DONE —
 4:2:0 forced on every color encode (one kwarg, color only, Nick
 approved), delivered VGA color 7.41→7.93 fps ledger-exact.** Bridge
 `552812ba…` byte-verified on the bench via demo_up; the A/B reef pair
@@ -1507,6 +1518,9 @@ precedent for repo-carried firmware patches.
       **Remaining: Nick's 4:2:0-vs-4:2:2 eyeball on the reef pair
       (gallery compare view, seq000207 vs seq000000) — the recorded
       decision gate for force-420-at-every-q — then nibble 4 (PR).**
+      → **DONE 2026-08-19: Nick ran the visual review — quality
+      satisfactory; force-420 stands. PR #42 MERGED (e3bc81e).
+      Bite 0 CLOSED.**
 - [~] **Bite 1 — MVE/Helium-vectorize the JPEG encoder (the big
       lever).** jpege.c is plain C; `+mve.fp` is already in the Alif
       port CFLAGS. Ships as a repo-carried openmv patch (sticky-fb
@@ -1558,6 +1572,26 @@ precedent for repo-carried firmware patches.
       full saga in DEV_LOG 2026-08-19). **OPEN: HD mono 2.72 vs 3.10
       stock — the relay leg regressed (~3.1 ms/msg at HD sizes,
       profiled); next session's first job.**
+      → **RESOLVED-AS-EXPLAINED 2026-08-19 (relay-profile session,
+      Nick's Phase-A gate): the 2.72 did NOT reproduce — clean-boot
+      HD mono = 3.15 fps TWICE (189 frames/60 s each, pub_ok 189×55
+      ledger-exact), ABOVE the 3.10 stock baseline; VGA color control
+      10.62 held.** The old run's own trace shows it steady-slow from
+      its first HD snapshot (181/174/175 ms/frame send) — a boot-state
+      anomaly, not the rpmsg-1544/MVE geometry. Relay-split counters
+      shipped (bridge `b3543cc7…`, suite 294→310): cap_send_us =
+      ept.send + pump split, VCP writes metered globally. **Measured
+      physics rewrite: VCP throughput is ~24 MB/s (USB enumerates
+      HIGH-SPEED, 480M, lsusb) — the "~675 KB/s VCP floor" was never
+      USB; it is the ~1.25 ms/message PYTHON drain cost (he_msg + COBS
+      _encode; usb.write itself ~55–61 µs). At HD, ept.send additionally
+      blocks (avg 1.14 ms/msg, 26% >1 ms, max 30.8 ms — 55 chunks
+      overflow the 32-slot vring and ride HE pace); at VGA it is free
+      (23 µs, 20 chunks fit).** HD budget at 3.15 = enc ~96 + capture
+      ~33 + pump-python ~69 + ept-block ~63 + asm ~12 + misc. New
+      levers ranked: (1) cut the per-msg python drain (viper/native
+      COBS — helps every mode), (2) overlap, (3) ept pacing. MEAS_FPS
+      2.72→3.15 (page + suite 81).
 - [~] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop
