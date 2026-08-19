@@ -97,10 +97,31 @@ boot; the VCP-floor model died by measurement; and the remaining
 ~680 µs/msg python encode cost is far above what the viper loops
 should cost — unattributed, noted for the next profile if it matters.
 
-**Bench state:** chain UP under units, scene=ref, fast-path bridge
-`b4a6beee…` + codec `67aaecf1…` on /flash (sha-synced by demo_up), fw
-`1e56071e…` + ELF `39717d44…` unchanged. MEAS_FPS 12.30 / 3.37
-deployed (bench_web suite 81).
+**Bench state: CHAIN DOWN — board wedged, needs Nick's hands.** After
+the fast-path rows (which ran clean and exited clean — trace shows
+quiet-exit + full ledger), the NEXT bridge boot (03:17 demo_up, same
+`b4a6beee…` artifacts that had just run the rows) wedged BELOW the
+phase-1 loop: bm-light ran attached 03:19:58–03:22:41 and the bridge
+never linked; it never phase-1-timed-out (10 min); three properly-
+serialized attach attempts over ~15 min all "board busy"; a nereus000
+reboot (standing recovery — Pi 5 never cuts VBUS) changed nothing;
+USB still enumerates (by-id present) so the CDC IRQ path is alive
+while python is stuck — consistent with a hang inside `he.start()`
+(remoteproc ELF load), kbd_intr already off. Suspect territory: HE
+core state left by the previous session's stop (the S23 SHM/MPU saga
+neighborhood), NOT the new bridge python (boot path untouched by the
+fast path; identical artifacts booted fine at ~03:14).
+**Recovery = Nick: physically replug the AE3 USB** (or try
+`sudo uhubctl -l 3 -p 1 -a cycle -d 3` on nereus000 first, measured
+unreliable on Pi 5), then:
+`~/ADIN_SPI_OpenMV/pi/bm_bench/demo_up.sh --scene ref` on nereus000,
+then `sudo systemctl start bm-light` (n000) and
+`sudo systemctl start bm-telemetry` (n001), then verify with
+`bench-ctl.sh capture 50 qvga color` + status (frames_ok moves).
+Units left STOPPED on both Pis. Everything else is deployed: fast-path
+bridge + codec staged sha-verified on /flash, fw `1e56071e…` + ELF
+`39717d44…` unchanged, MEAS_FPS 12.30 / 3.37 live on :8090, both Pi
+checkouts at 9efe1b8.
 
 **Next:** capture/encode overlap re-test — the arithmetic says VGA-15
 falls to it alone (81.3 − ~19 ms snapshot wait ≈ 62 ms ⇒ ~16 fps):
