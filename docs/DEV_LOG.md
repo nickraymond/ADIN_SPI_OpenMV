@@ -17,6 +17,64 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 — Sprint S23 — bite 1b: MVE DCT golden-passed, VGA color 10.73 fps (+45% on the sprint); the SHM growth ate two firmware spins (16-slot starvation, then the hardcoded MPU window); HD mono relay regression profiled and OPEN
+
+**Branch:** `sprint/23-encoder-fastpath`. Nick's "Go for it" on the DCT.
+
+**Done — the DCT (patch 0002 now = the full jpege vectorization):**
+- AAN butterflies in int32x4: row pass via widening byte GATHERS
+  (4 rows/group, `vldrbq_gather_offset_s32` stride 8) + word scatters;
+  column pass contiguous; quantization = one float multiply + `VCVTN`,
+  which is exactly `fast_roundf`'s VCVTR under the default FPSCR RN
+  mode; zigzag scatter + reverse-scan end0pos (same result as the
+  inline tracker). Every operation is the scalar op in lanes.
+- **GOLDEN PASS: all 44 rows byte-identical** on the full stack (color
+  convert + DCT + quant). Encoder vs stock: VGA color 65.9→42.4 ms
+  (**1.55×**), HD color 256.8→164.3 (1.56×), QVGA color 1.53×, mono
+  1.23× (DCT+quant only — no color convert to win back).
+
+**The SHM saga (two extra spins, both lessons banked):**
+1. First DCT flash ran on the 64 K SHM / 16-slot vring from bite 2 —
+   VGA color 10.25 CLEAN but **HD mono 3.10→2.50: 16 slots starve
+   55-chunk bursts.** Depth matters at HD scale.
+2. Grew SHM 64K→128K (`OMV_OPENAMP_SIZE`, both cores' config) with 32
+   slots — **chain broke outright** (gaps by the thousand, cam
+   timeouts, HE restarts): `METAL_MPU_REGION_SIZE` in mpmetalport.h is
+   **hardcoded 0x10000**, so the HP's non-cacheable MPU window covered
+   only the lower half of the grown region — vring RINGS stayed
+   coherent (low 64 K) while buffer PAYLOADS above 64 K went through
+   the HP D-cache. Classic split-brain cacheability; found by reading
+   the metal port, fixed as one line in patch 0004 (now also carries
+   mpmetalport.h; 0005 = board_config SHM growth).
+3. Fixed stack: **VGA color 10.73 fps CLEAN, pub_ok 12,880 = 644×20
+   exact** — the sprint's best. **HD mono 2.72 CLEAN (163×55 exact) —
+   still BELOW the 3.10 stock baseline despite a 1.23× faster
+   encoder.** Profile split (both rows in one trace): HD mono spends
+   ~172 ms/frame in send/relay (~3.1 ms per 1414 B message, ~2.3
+   ms/KB) vs VGA's ~1.3 ms/msg — **the HD wall is the relay leg
+   (rpmsg→VCP→light→UDP round trip), and it got slightly SLOWER with
+   fewer, bigger messages. OPEN: next session profiles the relay leg
+   itself** (suspects: VCP write blocking inline with drain-every-1 at
+   1544-B chunks; HE per-message memcpy scaling; the ~675 KB/s VCP
+   floor at 76 KB/frame ≈ 113 ms is over a third of the HD budget).
+
+**Sprint ladder (VGA color q50, 60 s rows, all ledger-exact):**
+7.41 → 7.93 (4:2:0) → 9.03 (MVE conv) → 9.50 (rpmsg) → **10.73 (DCT)**.
+Encoder anchors on the page moved to the MVE numbers; MEAS_FPS carries
+10.73 and the honest 2.72 with its investigation note.
+
+**Bench state:** chain UP under units, scene=ref. Flashed: HP fw
+`1e56071e…` (rpmsg-1544 ×32, SHM 128 K, MPU fix), ELF `39717d44…`,
+bridge `4ede5fb1…`. Rollbacks: stock sticky-fb set `~/fw/
+sticky-fb-7d4dbf7/` + every intermediate set named in `~/fw/`.
+
+**Next:** HD relay-leg profile (the open regression) → capture/encode
+overlap (the ~19 ms snapshot wait; D21 re-test) → bite 3 full
+re-measure + guardrail re-derivation → PR. VGA-15 needs the overlap;
+HD-mono-5 needs the relay understood first.
+
+---
+
 ## 2026-08-18 — Sprint S23 — bite 2: the tax was per-MESSAGE and then per-DRAIN — rpmsg 1544 shipped (wire shape proven), one-copy assembly, 9.50 fps; C-path remainder judged not worth it
 
 **Branch:** `sprint/23-encoder-fastpath`. Nick's gate: bite 2 before

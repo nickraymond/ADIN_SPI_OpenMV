@@ -16,7 +16,7 @@
 //   vring1 (remote->host) @ +0x1400   (VRING_TX_ADDR = +0x1000)
 //   buffer pool @ +0x2400 .. 0x10000  (VRING_BUFF_ADDR)
 #define SHM_BASE        0x60000000u
-#define SHM_SIZE        0x00010000u
+#define SHM_SIZE        0x00020000u  // S23: 128K (32x1544 pool)
 #define RSC_ADDR        (SHM_BASE)
 #define METAL_RSC_SIZE  1024u
 // Ring direction, MEASURED live 2026-08-12 (ring dump while the host was
@@ -32,15 +32,18 @@
 // S23 bite 2 (2026-08-18): buffers resized 512 -> 1544 so one 1400 B
 // camera chunk (or one full 1514 B L2 frame + 4 B wire header) rides ONE
 // rpmsg message -- the measured tax was ~0.57 ms PER MESSAGE, not per
-// byte. Lockstep with the HP firmware patch 0004 (extmod.mk
-// RPMSG_BUFFER_SIZE=1544, modopenamp.c VRING_NUM_BUFFS=16). Pool
-// arithmetic for the unchanged 64 KB SHM: rsc 1 K + rings 2x4 K +
-// 2x16x1544 = 49,408 B of the 56,320 B pool (6.9 K slack). VRING_NUM is
-// a VALIDATION BOUND here (rsc rejects >1024); the real count arrives in
-// the host's rsc table. A stale-ELF/new-host mismatch is safe by
-// construction: rr_send checks the descriptor's own capacity per message
-// (dbg_reason 3) and RX reads actual lengths -- degraded, never corrupt.
-#define VRING_NUM       16u          // VRING_NUM_BUFFS, modopenamp.c
+// byte. Lockstep with the HP firmware patches (extmod.mk
+// RPMSG_BUFFER_SIZE=1544, modopenamp.c VRING_NUM_BUFFS=32,
+// board_config.h OMV_OPENAMP_SIZE=128K). Pool arithmetic at 128 KB SHM:
+// rsc 1 K + rings 2x4 K + 2x32x1544 = 98,816 B of the 120,832 B pool.
+// (The first cut kept SHM at 64 K with 16 slots; 16 measurably starved
+// HD's 55-chunk bursts -- 3.10 -> 2.50 fps -- so depth came back.)
+// VRING_NUM is a VALIDATION BOUND here (rsc rejects >1024); the real
+// count arrives in the host's rsc table. A stale-ELF/new-host mismatch
+// is safe by construction: rr_send checks the descriptor's own capacity
+// per message (dbg_reason 3) and RX reads actual lengths -- degraded,
+// never corrupt.
+#define VRING_NUM       32u          // VRING_NUM_BUFFS, modopenamp.c
 #define VRING_ALIGN     32u          // VRING_ALIGNMENT, modopenamp.c
 #define RPMSG_BUF_SIZE  1544u        // lockstep: RPMSG_BUFFER_SIZE (0004)
 

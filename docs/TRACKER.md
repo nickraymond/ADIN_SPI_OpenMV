@@ -1542,6 +1542,22 @@ precedent for repo-carried firmware patches.
       the DCT; recommendation = bite 2 (C publish path, the 58 ms
       lever, helps mono too) BEFORE (b) (the 46 ms lever, color only
       at VGA). (b) waits on Nick's order call.**
+      → **(b) DONE 2026-08-19 (Nick's "Go for it", after bite 2):
+      MVE DCT + quantization, GOLDEN PASS 44/44 byte-identical.**
+      Row pass via widening byte gathers (4 rows/group), column pass
+      contiguous, quant = float mul + VCVTN (== fast_roundf's VCVTR
+      under FPSCR RN). Encoder vs stock: **VGA color 1.55×
+      (65.9→42.4 ms), HD color 1.56×, mono 1.23×** (no color convert
+      to win back). Patch 0002 is now the FULL jpege vectorization.
+      On-chain: **VGA color 10.73 fps CLEAN, pub_ok 644×20 exact**
+      (sprint ladder 7.41→7.93→9.03→9.50→10.73). En route the SHM
+      grew 64K→128K with 32 vring slots after 16 slots measurably
+      starved HD bursts — which broke the chain until the HARDCODED
+      `METAL_MPU_REGION_SIZE` (mpmetalport.h) was found leaving the
+      grown pool's upper half cacheable on the HP (patches 0004/0005;
+      full saga in DEV_LOG 2026-08-19). **OPEN: HD mono 2.72 vs 3.10
+      stock — the relay leg regressed (~3.1 ms/msg at HD sizes,
+      profiled); next session's first job.**
 - [~] **Bite 2 — C publish path (kill the tax).** Move the per-frame
       chunk/publish CPU out of MicroPython: C-side capture→encode→
       chunk→rpmsg on the HP (custom-firmware module; S9/S17 loop

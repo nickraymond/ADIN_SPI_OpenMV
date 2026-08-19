@@ -12,10 +12,10 @@ index 961699f..1837b22 100644
  # OpenAMP's source files.
  SRC_OPENAMP_C += $(addprefix $(OPENAMP_DIR)/lib/,\
 diff --git a/extmod/modopenamp.c b/extmod/modopenamp.c
-index e7ae2c1..343f356 100644
+index e7ae2c1..8bec114 100644
 --- a/extmod/modopenamp.c
 +++ b/extmod/modopenamp.c
-@@ -69,8 +69,11 @@
+@@ -69,8 +69,13 @@
  
  #define VRING_COUNT             2
  #define VRING_ALIGNMENT         32
@@ -24,8 +24,23 @@ index e7ae2c1..343f356 100644
 +// Note the number of buffers must be a power of 2.
 +// S23 (ADIN bench): 16 x 1544 B buffers per direction (RPMSG_BUFFER_SIZE
 +// in extmod.mk) -- one full 1514 B L2 frame or 1400 B camera chunk per
-+// message. Pool: 2 x 16 x 1544 = 49,408 B of the 56,320 B buffer region.
-+#define VRING_NUM_BUFFS         16
++// message. Pool: 2 x 32 x 1544 = 98,816 B of the 120,832 B buffer
++// region (OMV_OPENAMP_SIZE 128K). 16 slots measurably starved HD's
++// 55-chunk bursts (3.10 -> 2.50 fps); 32 restores in-flight depth.
++#define VRING_NUM_BUFFS         32
  
  // The following config should be enough for about 128 descriptors.
  // See lib/include/openamp/virtio_ring.h for the layout of vrings
+diff --git a/ports/alif/mpmetalport.h b/ports/alif/mpmetalport.h
+index c11725a..6f52123 100644
+--- a/ports/alif/mpmetalport.h
++++ b/ports/alif/mpmetalport.h
+@@ -55,7 +55,7 @@
+ 
+ #define METAL_MPU_REGION_ID         (MP_MPU_REGION_OPENAMP)
+ #define METAL_MPU_REGION_BASE       ((uint32_t)_openamp_shm_region_start)
+-#define METAL_MPU_REGION_SIZE       (0x00010000U)
++#define METAL_MPU_REGION_SIZE       (0x00020000U) // S23: match OMV_OPENAMP_SIZE 128K
+ 
+ extern const char _openamp_shm_region_start[];
+ extern const char _openamp_shm_region_end[];

@@ -642,10 +642,10 @@ class TestPage(unittest.TestCase):
         self.assertIn("28.23", block)
         # VGA color re-measured on the S23 MVE build (7.41 on 4:2:2,
         # 7.93 on 4:2:0 scalar, 9.03 on 4:2:0 + Helium color convert)
-        self.assertIn("9.50", block)
+        self.assertIn("10.73", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
-        self.assertIn("3.10", block)
+        self.assertIn("2.72", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an
@@ -664,7 +664,7 @@ class TestPage(unittest.TestCase):
         # Color MEAS rows are the S23 forced-4:2:0 numbers (s22_enc_matrix);
         # mono rows and the derate anchor carried over from the S18 matrix.
         for const in ("5.262e6", "15.0 / (1000 / 19.7)", "1400", "492",
-                      "8728, 13.8", "86120, 197.7", "75324, 117.6"):
+                      "8728, 11.4", "86120, 164.3", "75324, 96.0"):
             self.assertIn(const, self.html, const)
 
     def test_the_live_view_is_the_frozen_s3_server(self):
