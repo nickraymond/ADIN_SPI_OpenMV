@@ -151,6 +151,16 @@ RPMSG_QUEUE_CAP = 1024
 # "drain after every chunk" -- the same interleave cadence S19 bite 2
 # established, in the new message geometry (see send_chunk_msgs).
 CHUNK_DRAIN_EVERY = 1
+# REF-mode stream capture cap (S23 GOLD). The dark bench pushes the
+# PAG7936's auto-exposure to ~33 ms, which becomes the fb=1 cycle floor;
+# ref-mode frames are DISCARDED (the encoder eats canned reef images) so
+# their exposure is pure dead time. set_framerate clamps AE max exposure
+# to the frame time in the vendor driver (pag7936.c configure()), so 60
+# caps capture at ~16.7 ms -- under the send window it overlaps -- and
+# sits inside every mode's vendor max (VGA 120/240, QVGA 240/470; the
+# driver clamps HD itself). Sensor-mode streams are NEVER capped: live
+# exposure is an honest scene cost.
+REF_STREAM_FRAMERATE = 60
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
@@ -969,16 +979,11 @@ class CaptureEngine:
         self._nb = None             # None=unprobed, False=fallback, True=on
         self._img_ready = None      # frame collected early by a kick
         self.cap_pending = False    # a kicked capture is in flight
-        # Double-buffer overlap (S23 GOLD): with 2 framebuffers the kick
-        # moves BEFORE encode -- capture N+1 fills the free buffer while
-        # buffer N is encoded, hiding the measured ~33 ms capture behind
-        # the ~49 ms VGA encode. Enabled ONLY when 2 buffers fit inside
-        # the bootstrap ceiling's high-water block WITH slack: the
-        # sticky-fb allocator (patch 0001) reuses the block when the
-        # request fits, so the S18 grow-off-bus hazard cannot fire; a
-        # request at/over the block would gamble, so HD mono (2x
-        # 1,024,000 = exactly the 2,048,000 claim) stays at 1.
-        self.fb_count = 1           # what set_framebuffers currently holds
+        # fb=2 was tried for this overlap and MEASURED SLOWER (VGA color
+        # 11.47 vs 12.10 fb=1, 2026-08-19): continuous capture DMA
+        # contends with the MVE encoder for memory bandwidth -- S3's old
+        # "set_framebuffers(2) makes everything worse" verdict holds on
+        # the modern stack for a new reason. Streams stay at fb=1.
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -1002,26 +1007,6 @@ class CaptureEngine:
                    % ("ENABLED" if self._nb
                       else "unavailable -- blocking snapshot fallback"))
         return self._csi
-
-    def _fb2_fits(self, res, pf):
-        """True when TWO buffers of (res, pf) sit strictly inside the
-        bootstrap ceiling's high-water block, with 64 KB slack for the
-        allocator's queue/metadata overhead (which this side cannot
-        see exactly -- strictly-inside is the whole safety argument)."""
-        w, h = RES_GEOM.get(res, (0, 0))
-        cw, ch = RES_GEOM.get(self.ceiling, (0, 0))
-        frame = w * h * (1 if pf == CAMERA_PF_MONO else 2)
-        return frame > 0 and 2 * frame + 65536 <= cw * ch * 2
-
-    def _set_fb_count(self, n):
-        """Change the buffer count, quiesced. No-op when already there."""
-        if self.fb_count == n:
-            return
-        self._quiesce()              # never resize with a capture in flight
-        import sensor
-        sensor.set_framebuffers(n)
-        self.fb_count = n
-        _trace("camera: framebuffers -> %d" % n)
 
     def _quiesce(self):
         """Collect (and discard) any in-flight capture BEFORE the sensor
@@ -1059,7 +1044,6 @@ class CaptureEngine:
             sensor.set_pixformat(sensor.RGB565)
             sensor.set_framesize(sensor.QVGA)    # small: legalises the pin
             sensor.set_framebuffers(1)           # pin BEFORE the big alloc
-            self.fb_count = 1
             sensor.set_framesize(self._framesize(sensor, self.ceiling))
             sensor.skip_frames(time=300)
             self.cur_res, self.cur_pf = self.ceiling, CAMERA_PF_COLOR
@@ -1154,7 +1138,6 @@ class CaptureEngine:
                                      else sensor.RGB565)
             elif step == "framebuffers":
                 sensor.set_framebuffers(1)   # pin: stops the pool reflow
-                self.fb_count = 1
             elif step == "framesize":
                 sensor.set_framesize(self._framesize(sensor, res))
             elif step == "settle":
@@ -1234,15 +1217,29 @@ class CaptureEngine:
         if not self._ensure_sensor(res, pf):
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
-        # Double-buffer when it fits strictly inside the claimed ceiling
-        # (sticky-fb reuses the block: no allocator touch, no S18 grow
-        # hazard). Streams only; stills gain nothing from a second fb.
-        if (cmd["mode"] == CAMERA_MODE_STREAM
-                and self._nb_handle() is not None
-                and self._fb2_fits(res, pf)):
-            self._set_fb_count(2)
-        else:
-            self._set_fb_count(1)
+        # REF-MODE stream capture-time fix (S23 GOLD): the sensor stares
+        # at the DARK bench while the encoder eats canned reef frames, so
+        # auto-exposure stretches to ~33 ms and becomes the fb=1 cycle
+        # floor (measured: the nb kick hid the whole send window inside
+        # it for zero fps gain). set_framerate clamps AE max exposure to
+        # the frame time in the pag7936 driver (configure(): AE_MAXEXPO
+        # <= frame_time - margin, vendor source), so 60 fps caps capture
+        # at ~16.7 ms -- under the send window it overlaps. The DISCARDED
+        # ref-mode frames just get darker; sensor-mode scenes are never
+        # touched (their exposure is the honest scene cost). If the
+        # bench's capture column should keep pricing dark-bench exposure
+        # instead of deployment-light capture, delete this block -- the
+        # decision is recorded in TRACKER/DEV_LOG for Nick's veto.
+        if self.scene == "ref" and cmd["mode"] == CAMERA_MODE_STREAM:
+            self._quiesce()          # a sensor touch; never mid-capture
+            try:
+                import sensor
+                sensor.set_framerate(REF_STREAM_FRAMERATE)
+                _trace("camera: ref stream framerate capped at %d"
+                       % REF_STREAM_FRAMERATE)
+            except Exception as e:
+                _trace("camera: set_framerate unavailable (%r) -- "
+                       "dark-bench exposure stays the capture floor" % e)
         self.q = cmd["q"]
         # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
         # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
@@ -1324,17 +1321,13 @@ class CaptureEngine:
             self.mode = CAMERA_MODE_STOP
             _trace("camera: single enc %d us, %d B, q=%d"
                    % (self.enc_us, len(b), self.q))
-        elif csi is not None and self.fb_count < 2:
-            # fb=1 overlap: kick the NEXT capture now (copy=True above
+        elif csi is not None:
+            # The overlap: kick the NEXT capture now (copy=True above
             # freed the fb) so exposure/readout runs under the send of
-            # THIS jpeg. At fb>=2 there is NO kick: the collect call
-            # itself releases the just-encoded buffer, arms the next
-            # capture into it, and returns the frame captured during the
-            # previous cycle -- capture rides fully under encode. A rare
-            # instantly-complete frame is kept for the next poll, never
-            # dropped. Frame latency grows by up to one cycle (image
-            # taken earlier than encoded) -- fine for this product,
-            # stated here rather than hidden.
+            # THIS jpeg. A rare instantly-complete frame is kept for the
+            # next poll, never dropped. Frame latency grows by up to one
+            # pacing slot (image taken earlier than encoded) -- fine for
+            # this product, stated here rather than hidden.
             k = csi.snapshot(blocking=False)
             if k is not None:
                 self._img_ready = k      # complete already: nothing in flight
