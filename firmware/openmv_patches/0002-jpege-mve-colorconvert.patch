@@ -1,0 +1,283 @@
+diff --git a/lib/imlib/jpege.c b/lib/imlib/jpege.c
+index 714785ed..8bac5acc 100644
+--- a/lib/imlib/jpege.c
++++ b/lib/imlib/jpege.c
+@@ -28,6 +28,13 @@
+ #include "imlib.h"
+ #include "file_utils.h"
+ 
++// Helium/MVE fast path for the RGB565 -> YCbCr MCU conversion (integer
++// MVE is enough; guarded so non-MVE ports keep the scalar code).
++#if defined(__ARM_FEATURE_MVE) && (__ARM_FEATURE_MVE & 1)
++#include <arm_mve.h>
++#define JPEG_MVE_COLOR_CONVERT    (1)
++#endif
++
+ // Expand 4 bits to 32 for binary to grayscale - process 4 pixels at a time
+ #if (OMV_JPEG_CODEC_ENABLE == 1)
+ #define JPEG_BINARY_0              0x00
+@@ -164,6 +171,68 @@ void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int dy,
+                 memset(CR, 0, JPEG_444_GS_MCU_SIZE);
+             }
+ 
++            #if defined(JPEG_MVE_COLOR_CONVERT)
++            if (dx == JPEG_MCU_W) {
++                // Full-width MCU rows: 8 RGB565 pixels per iteration.
++                // Arithmetic is BIT-IDENTICAL to the scalar SWAR below
++                // (same coefficients, same shifts, same low-8-bit
++                // truncation on store), so the encoded bytes must match
++                // the scalar build exactly -- that identity is the
++                // acceptance test for this patch.
++                for (int y = y_offset, yy = y + dy; y < yy; y++) {
++                    uint16_t *rp16 =
++                        (uint16_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
++                    uint16x8_t p = vld1q_u16(rp16);
++
++                    // r8 = ((p >> 8) & 0xf8) | (p >> 13)          [<= 0xff]
++                    // g8 = ((p >> 3) & 0xfc) | ((p >> 9) & 0x3)
++                    // b8 = ((p << 3) & 0xf8) | ((p >> 2) & 0x7)
++                    int16x8_t r8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshrq_n_u16(p, 8), vdupq_n_u16(0xf8)),
++                                  vshrq_n_u16(p, 13)));
++                    int16x8_t g8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshrq_n_u16(p, 3), vdupq_n_u16(0xfc)),
++                                  vandq_u16(vshrq_n_u16(p, 9), vdupq_n_u16(0x3))));
++                    int16x8_t b8 = vreinterpretq_s16_u16(
++                        vorrq_u16(vandq_u16(vshlq_n_u16(p, 3), vdupq_n_u16(0xf8)),
++                                  vandq_u16(vshrq_n_u16(p, 2), vdupq_n_u16(0x7))));
++
++                    // y = (38r + 75g + 15b) >> 7; max sum 32,044 fits s16.
++                    int16x8_t yv = vmulq_n_s16(r8, 38);
++                    yv = vmlaq_n_s16(yv, g8, 75);
++                    yv = vmlaq_n_s16(yv, b8, 15);
++                    yv = vshrq_n_s16(yv, 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 0)
++                    yv = veorq_s16(yv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(Y0, yv);
++
++                    // u = (64b - (21r + 43g)) >> 7; |.| <= 16,044 fits s16.
++                    int16x8_t t = vmulq_n_s16(r8, 21);
++                    t = vmlaq_n_s16(t, g8, 43);
++                    int16x8_t uv = vshrq_n_s16(vsubq_s16(vmulq_n_s16(b8, 64), t), 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 1)
++                    uv = veorq_s16(uv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(CB, uv);
++
++                    // v = (64r - (54g + 10b)) >> 7; |.| <= 16,088 fits s16.
++                    t = vmulq_n_s16(g8, 54);
++                    t = vmlaq_n_s16(t, b8, 10);
++                    int16x8_t vv = vshrq_n_s16(vsubq_s16(vmulq_n_s16(r8, 64), t), 7);
++                    #if (OMV_JPEG_CODEC_ENABLE == 1)
++                    vv = veorq_s16(vv, vdupq_n_s16(0x80));
++                    #endif
++                    vstrbq_s16(CR, vv);
++
++                    Y0 += JPEG_MCU_W;
++                    CB += JPEG_MCU_W;
++                    CR += JPEG_MCU_W;
++                }
++                break;
++            }
++            #endif // JPEG_MVE_COLOR_CONVERT
++
+             for (int y = y_offset, yy = y + dy, index = 0; y < yy; y++) {
+                 uint32_t *rp = (uint32_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
+ 
+@@ -654,15 +723,144 @@ static inline void jpeg_calc_bits(int val, uint16_t bits[2]) {
+ 
+ static int jpeg_processDU(jpeg_buf_t *jpeg_buf, int8_t *CDU, float *fdtbl, int DC, const uint16_t (*HTDC)[2],
+                           const uint16_t (*HTAC)[2]) {
+-    int DU[64];
+-    int DUQ[64];
++    int32_t DU[64];
++    int32_t DUQ[64];
++    #if !defined(JPEG_MVE_COLOR_CONVERT)
+     int z1, z2, z3, z4, z5, z11, z13;
+     int t0, t1, t2, t3, t4, t5, t6, t7, t10, t11, t12, t13;
++    #endif
+     const uint16_t EOB[2] = { HTAC[0x00][0], HTAC[0x00][1] };
+     const uint16_t M16zeroes[2] = { HTAC[0xF0][0], HTAC[0xF0][1] };
+ 
++    #if defined(JPEG_MVE_COLOR_CONVERT)
++    // Helium DCT: same AAN dataflow as the scalar code below, in
++    // int32x4 lanes -- every add/sub/(x*FIX)>>8 is the identical int32
++    // operation, so the output must be BIT-IDENTICAL (the golden gate).
++    //
++    // Row pass, 4 rows per group: lane r = row (g*4 + r). Columns of
++    // CDU arrive via widening byte gathers (row stride 8), results
++    // leave via word scatters (row stride 32 B).
++    const uint32x4_t row_off8 = { 0, 8, 16, 24 };     // CDU byte stride
++    const uint32x4_t row_off32 = { 0, 8, 16, 24 };    // DU word stride
++    for (int g = 0; g < 2; g++) {
++        const int8_t *cb = CDU + g * 32;
++        int32_t *pb = DU + g * 32;
++        int32x4_t c0 = vldrbq_gather_offset_s32(cb + 0, row_off8);
++        int32x4_t c1 = vldrbq_gather_offset_s32(cb + 1, row_off8);
++        int32x4_t c2 = vldrbq_gather_offset_s32(cb + 2, row_off8);
++        int32x4_t c3 = vldrbq_gather_offset_s32(cb + 3, row_off8);
++        int32x4_t c4 = vldrbq_gather_offset_s32(cb + 4, row_off8);
++        int32x4_t c5 = vldrbq_gather_offset_s32(cb + 5, row_off8);
++        int32x4_t c6 = vldrbq_gather_offset_s32(cb + 6, row_off8);
++        int32x4_t c7 = vldrbq_gather_offset_s32(cb + 7, row_off8);
++
++        int32x4_t vt0 = vaddq_s32(c0, c7);
++        int32x4_t vt1 = vaddq_s32(c1, c6);
++        int32x4_t vt2 = vaddq_s32(c2, c5);
++        int32x4_t vt3 = vaddq_s32(c3, c4);
++        int32x4_t vt7 = vsubq_s32(c0, c7);
++        int32x4_t vt6 = vsubq_s32(c1, c6);
++        int32x4_t vt5 = vsubq_s32(c2, c5);
++        int32x4_t vt4 = vsubq_s32(c3, c4);
++
++        int32x4_t vt10 = vaddq_s32(vt0, vt3);
++        int32x4_t vt13 = vsubq_s32(vt0, vt3);
++        int32x4_t vt11 = vaddq_s32(vt1, vt2);
++        int32x4_t vt12 = vsubq_s32(vt1, vt2);
++        int32x4_t vz1 = vshrq_n_s32(
++            vmulq_n_s32(vaddq_s32(vt12, vt13), FIX_0_707106781), 8);
++
++        vstrwq_scatter_shifted_offset_s32(pb + 0, row_off32,
++                                          vaddq_s32(vt10, vt11));
++        vstrwq_scatter_shifted_offset_s32(pb + 4, row_off32,
++                                          vsubq_s32(vt10, vt11));
++        vstrwq_scatter_shifted_offset_s32(pb + 2, row_off32,
++                                          vaddq_s32(vt13, vz1));
++        vstrwq_scatter_shifted_offset_s32(pb + 6, row_off32,
++                                          vsubq_s32(vt13, vz1));
++
++        vt10 = vaddq_s32(vt4, vt5);
++        vt11 = vaddq_s32(vt5, vt6);
++        vt12 = vaddq_s32(vt6, vt7);
++
++        int32x4_t vz5 = vshrq_n_s32(
++            vmulq_n_s32(vsubq_s32(vt10, vt12), FIX_0_382683433), 8);
++        int32x4_t vz2 = vaddq_s32(vshrq_n_s32(
++            vmulq_n_s32(vt10, FIX_0_541196100), 8), vz5);
++        int32x4_t vz4 = vaddq_s32(vshrq_n_s32(
++            vmulq_n_s32(vt12, FIX_1_306562965), 8), vz5);
++        int32x4_t vz3 = vshrq_n_s32(
++            vmulq_n_s32(vt11, FIX_0_707106781), 8);
++        int32x4_t vz11 = vaddq_s32(vt7, vz3);
++        int32x4_t vz13 = vsubq_s32(vt7, vz3);
++
++        vstrwq_scatter_shifted_offset_s32(pb + 5, row_off32,
++                                          vaddq_s32(vz13, vz2));
++        vstrwq_scatter_shifted_offset_s32(pb + 3, row_off32,
++                                          vsubq_s32(vz13, vz2));
++        vstrwq_scatter_shifted_offset_s32(pb + 1, row_off32,
++                                          vaddq_s32(vz11, vz4));
++        vstrwq_scatter_shifted_offset_s32(pb + 7, row_off32,
++                                          vsubq_s32(vz11, vz4));
++    }
++
++    // Column pass, 4 columns per group: lane c = column (h*4 + c),
++    // rows are contiguous int32x4 loads/stores at stride 8 words.
++    for (int h = 0; h < 2; h++) {
++        int32_t *pb = DU + h * 4;
++        int32x4_t r0 = vldrwq_s32(pb + 0);
++        int32x4_t r1 = vldrwq_s32(pb + 8);
++        int32x4_t r2 = vldrwq_s32(pb + 16);
++        int32x4_t r3 = vldrwq_s32(pb + 24);
++        int32x4_t r4 = vldrwq_s32(pb + 32);
++        int32x4_t r5 = vldrwq_s32(pb + 40);
++        int32x4_t r6 = vldrwq_s32(pb + 48);
++        int32x4_t r7 = vldrwq_s32(pb + 56);
++
++        int32x4_t vt0 = vaddq_s32(r0, r7);
++        int32x4_t vt1 = vaddq_s32(r1, r6);
++        int32x4_t vt2 = vaddq_s32(r2, r5);
++        int32x4_t vt3 = vaddq_s32(r3, r4);
++        int32x4_t vt7 = vsubq_s32(r0, r7);
++        int32x4_t vt6 = vsubq_s32(r1, r6);
++        int32x4_t vt5 = vsubq_s32(r2, r5);
++        int32x4_t vt4 = vsubq_s32(r3, r4);
++
++        int32x4_t vt10 = vaddq_s32(vt0, vt3);
++        int32x4_t vt13 = vsubq_s32(vt0, vt3);
++        int32x4_t vt11 = vaddq_s32(vt1, vt2);
++        int32x4_t vt12 = vsubq_s32(vt1, vt2);
++        int32x4_t vz1 = vshrq_n_s32(
++            vmulq_n_s32(vaddq_s32(vt12, vt13), FIX_0_707106781), 8);
++
++        vst1q_s32(pb + 0, vaddq_s32(vt10, vt11));
++        vst1q_s32(pb + 32, vsubq_s32(vt10, vt11));
++        vst1q_s32(pb + 16, vaddq_s32(vt13, vz1));
++        vst1q_s32(pb + 48, vsubq_s32(vt13, vz1));
++
++        vt10 = vaddq_s32(vt4, vt5);
++        vt11 = vaddq_s32(vt5, vt6);
++        vt12 = vaddq_s32(vt6, vt7);
++
++        int32x4_t vz5 = vshrq_n_s32(
++            vmulq_n_s32(vsubq_s32(vt10, vt12), FIX_0_382683433), 8);
++        int32x4_t vz2 = vaddq_s32(vshrq_n_s32(
++            vmulq_n_s32(vt10, FIX_0_541196100), 8), vz5);
++        int32x4_t vz4 = vaddq_s32(vshrq_n_s32(
++            vmulq_n_s32(vt12, FIX_1_306562965), 8), vz5);
++        int32x4_t vz3 = vshrq_n_s32(
++            vmulq_n_s32(vt11, FIX_0_707106781), 8);
++        int32x4_t vz11 = vaddq_s32(vt7, vz3);
++        int32x4_t vz13 = vsubq_s32(vt7, vz3);
++
++        vst1q_s32(pb + 40, vaddq_s32(vz13, vz2));
++        vst1q_s32(pb + 24, vsubq_s32(vz13, vz2));
++        vst1q_s32(pb + 8, vaddq_s32(vz11, vz4));
++        vst1q_s32(pb + 56, vsubq_s32(vz11, vz4));
++    }
++    #else
+     // DCT rows
+-    for (int i = 8, *p = DU; i > 0; i--, p += 8, CDU += 8) {
++    for (int32_t i = 8, *p = DU; i > 0; i--, p += 8, CDU += 8) {
+         t0 = CDU[0] + CDU[7];
+         t1 = CDU[1] + CDU[6];
+         t2 = CDU[2] + CDU[5];
+@@ -705,7 +903,7 @@ static int jpeg_processDU(jpeg_buf_t *jpeg_buf, int8_t *CDU, float *fdtbl, int D
+     }
+ 
+     // DCT columns
+-    for (int i = 8, *p = DU; i > 0; i--, p++) {
++    for (int32_t i = 8, *p = DU; i > 0; i--, p++) {
+         t0 = p[0] + p[56];
+         t1 = p[8] + p[48];
+         t2 = p[16] + p[40];
+@@ -746,9 +944,30 @@ static int jpeg_processDU(jpeg_buf_t *jpeg_buf, int8_t *CDU, float *fdtbl, int D
+         p[8] = z11 + z4;
+         p[56] = z11 - z4;
+     }
++    #endif // JPEG_MVE_COLOR_CONVERT
+ 
+     // first non-zero element in reverse order
+     int end0pos = 0;
++    #if defined(JPEG_MVE_COLOR_CONVERT)
++    // Quantize/descale/zigzag, 4 coefficients per step. One float
++    // multiply then VCVTN (round-to-nearest-even) = exactly the scalar
++    // fast_roundf (VCVTR under the default FPSCR RN mode). Zigzag
++    // positions arrive as a widening byte load and leave as a word
++    // scatter; end0pos is recovered by a reverse scan afterwards --
++    // same result as tracking it inline.
++    for (int i = 0; i < 64; i += 4) {
++        float32x4_t vf = vmulq_f32(vcvtq_f32_s32(vldrwq_s32(DU + i)),
++                                   vldrwq_f32(fdtbl + i));
++        uint32x4_t zz = vldrbq_u32(s_jpeg_ZigZag + i);
++        vstrwq_scatter_shifted_offset_s32(DUQ, zz, vcvtnq_s32_f32(vf));
++    }
++    for (int z = 63; z > 0; --z) {
++        if (DUQ[z]) {
++            end0pos = z;
++            break;
++        }
++    }
++    #else
+     // Quantize/descale/zigzag the coefficients
+     for (int i = 0; i < 64; ++i) {
+         DUQ[s_jpeg_ZigZag[i]] = fast_roundf(DU[i] * fdtbl[i]);
+@@ -756,6 +975,7 @@ static int jpeg_processDU(jpeg_buf_t *jpeg_buf, int8_t *CDU, float *fdtbl, int D
+             end0pos = s_jpeg_ZigZag[i];
+         }
+     }
++    #endif
+ 
+     if (jpeg_check_highwater(jpeg_buf)) {
+         // check if we're getting close to the end of the buffer

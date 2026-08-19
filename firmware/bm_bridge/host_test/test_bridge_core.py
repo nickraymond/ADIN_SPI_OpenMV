@@ -62,16 +62,43 @@ check(uc.frame_decode(wires[0][:-1]) == frame, "uart_l2 round-trip")
 check(core.stats["he2pi_frames"] == 1 and core.stats["he2pi_bytes"] == 80,
       "he2pi counters")
 
-# ---- HE -> Pi: max frame spans 4 messages, reassembles byte-exact
+# ---- HE -> Pi: with the S23 1524 B budget a max frame is ONE message
 frame = bytes((i * 13) & 0xFF for i in range(MAX_L2))
 msgs = he_frame_msgs(frame)
-check(len(msgs) == 4, "1514 B frame -> 4 rpmsg messages")
+check(len(msgs) == 1, "1514 B frame -> ONE rpmsg message (S23 budget)")
 outs = []
 for m in msgs:
     outs += core.he_msg(m)
-check(len(outs) == 1, "one wire chunk after reassembly")
+check(len(outs) == 1, "one wire chunk out")
 check(uc.frame_decode(outs[0][:-1]) == frame, "1514 B round-trip")
-check(core.stats["frag_errors"] == 0, "no frag errors on clean reassembly")
+check(core.stats["frag_errors"] == 0, "no frag errors")
+
+
+def he_frame_msgs_budget(frame, budget, port=1):
+    """Fragment at an explicit budget -- the reassembler is length-driven
+    and must keep accepting old-budget (492 B) senders byte-exact."""
+    n = len(frame)
+    first = min(n, budget)
+    out = [struct.pack("<BBH", WCMD_FRAME_TX, port, n) + frame[:first]]
+    off = first
+    while off < n:
+        c = min(n - off, budget)
+        out.append(struct.pack("<BBH", WCMD_FRAG, port, c) +
+                   frame[off:off + c])
+        off += c
+    return out
+
+
+# ---- HE -> Pi: an old-budget 4-message frame still reassembles exact
+core = BridgeCore()
+msgs = he_frame_msgs_budget(frame, 492)
+check(len(msgs) == 4, "old 492 B budget fragments 1514 B into 4")
+outs = []
+for m in msgs:
+    outs += core.he_msg(m)
+check(len(outs) == 1 and uc.frame_decode(outs[0][:-1]) == frame,
+      "old-budget fragmentation reassembles byte-exact")
+check(core.stats["frag_errors"] == 0, "no frag errors on old-budget frames")
 
 # ---- HE -> Pi: FRAG with no frame open is counted, not fatal
 core = BridgeCore()
@@ -79,9 +106,11 @@ core.he_msg(struct.pack("<BBH", WCMD_FRAG, 1, 4) + b"abcd")
 check(core.stats["frag_errors"] == 1, "orphan FRAG counted")
 
 # ---- HE -> Pi: new first-msg mid-assembly drops the old one, resyncs
+# (opened with an old-budget partial first message -- at the S23 budget
+# no legal sender fragments, but the reassembler must stay correct)
 core = BridgeCore()
 big = bytes(600)
-core.he_msg(he_frame_msgs(big)[0])          # open assembly (600 > 492)
+core.he_msg(he_frame_msgs_budget(big, 492)[0])   # open assembly (600 > 492)
 wires = core.he_msg(he_frame_msgs(bytes(range(50)))[0])   # resync
 check(core.stats["frag_errors"] == 1, "abandoned assembly counted")
 check(len(wires) == 1 and uc.frame_decode(wires[0][:-1]) == bytes(range(50)),
@@ -115,19 +144,19 @@ check(cmd == WCMD_FRAME_RX and port == 1 and ln == 90 and
       msgs[0][4:] == frame, "WCMD_FRAME_RX shape")
 check(core.stats["pi2he_frames"] == 1, "pi2he counter")
 
-# ---- Pi -> HE: 1514 B frame -> 4 messages with total-length first header
+# ---- Pi -> HE: at the S23 budget even a max L2 frame is ONE message --
+# no legal Pi frame fragments any more (1514 <= 1524), and the shape
+# invariant is exactly that.
 frame = bytes((i * 7) & 0xFF for i in range(MAX_L2))
 msgs = core.vcp_bytes(uc.frame_encode(frame))
-check(len(msgs) == 4, "1514 B Pi frame -> 4 rpmsg messages")
+check(len(msgs) == 1, "1514 B Pi frame -> ONE rpmsg message (S23)")
 cmd, port, ln = struct.unpack_from("<BBH", msgs[0], 0)
 check(cmd == WCMD_FRAME_RX and ln == MAX_L2 and
-      len(msgs[0]) == 4 + MSG_PAYLOAD, "first msg: total len + 492 B")
-cmd2, _, ln2 = struct.unpack_from("<BBH", msgs[1], 0)
-check(cmd2 == WCMD_FRAG and ln2 == MSG_PAYLOAD, "continuation shape")
+      len(msgs[0]) == 4 + MAX_L2, "single msg: total len + whole frame")
 rebuilt = b"".join(bytes(m[4:]) for m in msgs)
-check(rebuilt == frame, "fragments carry the frame byte-exact")
-tail = struct.unpack_from("<BBH", msgs[3], 0)
-check(tail[0] == WCMD_FRAG and tail[2] == MAX_L2 - 3 * MSG_PAYLOAD,
+check(rebuilt == frame, "message carries the frame byte-exact")
+tail = struct.unpack_from("<BBH", msgs[-1], 0)
+check(tail[0] == WCMD_FRAME_RX and tail[2] == MAX_L2,
       "last fragment length (38 B)")
 
 # ---- Pi -> HE: split delivery (partial reads) reassembles at delimiters
@@ -402,16 +431,17 @@ bm_bridge.send_chunk_msgs([bytes([i]) for i in range(4)],
 check(trace == ["s0", "s1", "s2", "s3", "D"],
       "every=0 disables interleaving but keeps the final drain")
 
-# A real HD frame is 26 chunks x 3 messages; the sender must service the
-# other direction 26 times, not once at the end.
+# A real HD frame is 26 chunks = 26 messages (S23: one msg per chunk);
+# the sender must service the other direction 26 times, not once at the
+# end -- the S19 interleave cadence survives the message-geometry change.
 del trace[:]
 core = BridgeCore()
 msgs = core.capture_pub_msgs(bytes(26 * (CAMERA_MAX_PAYLOAD - CHUNK_HDR_LEN)),
                              0, CAMERA_MAX_PAYLOAD)
 n = bm_bridge.send_chunk_msgs(msgs, fake_send, fake_drain)
-check(len(msgs) == 78, "HD frame = 26 chunks x 3 rpmsg messages")
+check(len(msgs) == 26, "HD frame = 26 chunks x ONE rpmsg message (S23)")
 check(n == 26, "HD frame drains 26 times, once per chunk")
-check(bm_bridge.CHUNK_DRAIN_EVERY == 3,
+check(bm_bridge.CHUNK_DRAIN_EVERY == 1,
       "default every matches the messages-per-chunk at 1400 B")
 
 # ---- S18 reef-matrix: ref-scene source -----------------------------------
@@ -457,10 +487,15 @@ class _FakeJpeg:
         return self._tag
 
 
+_NO_SUB = object()   # sentinel: to_jpeg called WITHOUT a subsampling kwarg
+_enc_calls = []      # (quality, subsampling-or-_NO_SUB) per to_jpeg call
+
+
 class _FakeImg:
     def __init__(self, tag):
         self.tag = tag
-    def to_jpeg(self, quality=50, copy=True):
+    def to_jpeg(self, quality=50, copy=True, **kw):
+        _enc_calls.append((quality, kw.get("subsampling", _NO_SUB)))
         return _FakeJpeg(b"jpeg-of-" + self.tag)
 
 
@@ -488,6 +523,7 @@ class _FakeSensor:
 
 class _FakeImageMod:
     """image module whose Image() succeeds only for `available` names."""
+    JPEG_SUBSAMPLING_420 = 420420   # sentinel; the bridge must pass THIS
     loads = 0
     available = ()
     def Image(self, path):
@@ -517,6 +553,18 @@ check(eng.mode == CAMERA_MODE_SINGLE, "sensor mode: command accepted")
 check(eng.poll(0) == b"jpeg-of-live", "sensor mode: encodes the live scene")
 check(eng.enc_frames == 1, "encode accounting counts the frame")
 
+# 1b. S23 bite 0: every COLOR encode forces 4:2:0; a MONO encode never
+#     gets the kwarg (grayscale has no subsampling knob -- passing one
+#     there is unmeasured territory, s22_enc_matrix skipped it too).
+check(_enc_calls[-1] == (50, _FakeImageMod.JPEG_SUBSAMPLING_420),
+      "S23: color encode passes subsampling=420")
+_s23_mono = dict(_cmd)
+_s23_mono["pf"] = CAMERA_PF_MONO
+eng.command(_s23_mono)
+check(eng.poll(0) == b"jpeg-of-live", "S23: mono command still encodes")
+check(_enc_calls[-1] == (50, _NO_SUB),
+      "S23: mono encode carries NO subsampling kwarg")
+
 # 2. ref mode with no asset staged: command REFUSED, mode stays STOP.
 _FakeImageMod.available = ()
 eng = bm_bridge.CaptureEngine(scene="ref")
@@ -538,6 +586,8 @@ eng.command(dict(_cmd))
 check(eng.mode == CAMERA_MODE_SINGLE, "ref mode: staged asset accepted")
 check(eng.poll(0) == b"jpeg-of-ref_color_320x200.bmp",
       "ref mode: encodes the reference, not the live scene")
+check(_enc_calls[-1][1] == _FakeImageMod.JPEG_SUBSAMPLING_420,
+      "S23: ref color encode passes subsampling=420 too")
 
 # 4. JPEG fallback: raw missing, .jpg staged -> loads the .jpg.
 _FakeImageMod.available = ("ref_color_320x200.jpg",)

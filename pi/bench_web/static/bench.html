@@ -424,14 +424,17 @@ const K = {
   // reason); the page mirrors them so the refusal is visible before the
   // click. Rates are predicted from the reef model — conservative for
   // darker scenes, which is the right side to miss on.
-  MSGS_PER_CHUNK: 3,        // ceil(1400 / 492), REV-28
+  // S23 bite 2: rpmsg buffers 512 -> 1544 — one chunk = ONE message
+  // (was 3 at the 492 B budget; REV-28 retires).
+  MSGS_PER_CHUNK: 1,        // 1400 + 10 chunk hdr + 4 wire <= 1524
   // S22 bite 1: the 315 msg/s wedge boundary was a u16 vring wrap in
-  // the HE rpmsg layer — fixed and re-measured. Streams now run clean
-  // at every rate tested (990 commanded / 717 delivered, 10-min soaks
-  // ledger-exact); this is a measured-envelope sanity cap, not a wedge
-  // line. The burst cap is still real: ~83-chunk stills lost 54 chunks
-  // on the FIXED stack — backpressure bite pending.
-  SAFE_STREAM_MSGS: 1200,   // msg/s — above every measured-clean command
+  // the HE rpmsg layer — fixed and re-measured (990 commanded / 717
+  // delivered clean in OLD 492 B messages). S23 bite 2 scales the cap
+  // to the same measured BYTE envelope for the 3x-bigger messages;
+  // bite 3 re-derives it from new-stack ceilings. The burst cap is
+  // still real: ~83-chunk stills lost a chunk on the fixed stack —
+  // backpressure bite pending.
+  SAFE_STREAM_MSGS: 400,    // msg/s — same byte envelope as the old 1200
   SAFE_BURST_CHUNKS: 68,    // hd color q50 reef, delivered clean twice
 };
 
@@ -445,10 +448,15 @@ const RES = {
 };
 const RES_BY_CMD = { qvga: 1, vga: 2, hd: 3 };
 // Reef reference P7071008 @ q50: [bytes/frame, encode ms] measured per mode.
+// Color rows are FORCED-4:2:0 on the MVE-vectorized encoder (S23 bites
+// 0+1a: subsampling=420 kwarg + Helium color convert, golden-passed
+// byte-identical -- s23_enc_golden 2026-08-18). Bytes match 4:2:2-era
+// minus ~7% (the 420 change); encode ms are the MVE numbers. Mono
+// unchanged (no color convert to vectorize).
 const MEAS = {
-  1: { color: [9198, 19.7],   mono: [7536, 8.3]    },
-  2: { color: [29148, 76.7],  mono: [23831, 31.1]  },
-  3: { color: [93253, 299.2], mono: [75324, 117.6] },
+  1: { color: [8728, 11.4],   mono: [7536, 8.3]    },
+  2: { color: [27021, 42.4],  mono: [23831, 25.3]  },
+  3: { color: [86120, 164.3], mono: [75324, 96.0]  },
 };
 // MEASURED delivered fps at q50 per mode — reef reference scene through
 // the whole chain, receiver-ledger truth, ledger clean. Ceilings
@@ -460,10 +468,21 @@ const MEAS = {
 // QVGA mono 30.30 (sensor-cadence-capped), VGA mono 13.27 @ ~717 msg/s,
 // HD mono 3.10 @ 6 commanded (186 frames, exact). HD color stays null:
 // its ceiling run is owed (expected ~1.5-2 fps, encoder-bound).
+// S23 bite 0 (forced 4:2:0 color): VGA color is MEASURED on the 4:2:0
+// bridge (60 s ceiling row 2026-08-18: 476 frames / 7.93 fps, ledger
+// exact, 20 chunks/frame; was 7.41 on 4:2:2 — the 10-min soak lands in
+// bite 3). QVGA + HD color are PRE-4:2:0 FLOORS (encode only got
+// faster; bite 3 re-measures them).
+// S23 measured ladder for VGA color (60 s rows, ledger exact): 7.41
+// (4:2:2 baseline) -> 7.93 (bite 0, forced 4:2:0) -> 9.03 (bite 1a,
+// MVE color convert) -> 9.50 (bite 2, one rpmsg msg/chunk) -> 10.73
+// (bite 1b, MVE DCT+quant, golden-passed; 644 frames, pub_ok exact).
+// HD mono is 2.72 on this stack (was 3.10) -- the relay leg regressed
+// and is under investigation; bite 3 re-measures everything.
 const MEAS_FPS = {
   1: { color: 28.23, mono: 30.30 },
-  2: { color: 7.41,  mono: 13.27 },
-  3: { color: null,  mono: 3.10 },
+  2: { color: 10.73, mono: 13.27 },
+  3: { color: null,  mono: 2.72 },
 };
 
 const S = { res: 1, pf: "color", q: 50, fps: 15, mbps: 2.0, secs: 60, light: 0,

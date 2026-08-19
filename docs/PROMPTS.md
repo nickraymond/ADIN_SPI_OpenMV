@@ -93,3 +93,39 @@ rows finding 1 blocked run clean and land in MEAS_FPS.
 Nibble 1 = plan first, my gate before code. ~300 LoC bites, short
 actionable replies, 10-min status updates.
 ```
+
+## 6 — Ready to paste: S23 encoder fast path kickoff (written 2026-08-18)
+
+```
+Run /agent-entry. We're starting Sprint S23 — the encoder fast path.
+Targets: VGA color q50 >= 15 fps and HD mono >= 5-6 fps delivered,
+ledger-exact, then push to the hardware's true max per mode.
+
+Branch sprint/23-encoder-fastpath from main.
+
+Start from the evidence, not from scratch:
+- TRACKER S23 (bites 0-3, the measured route and the stop-gate) and
+  DESIGN D41/D42 + §S22 detail (the enc-matrix table, the ~2 ms/KB
+  tax, delivered ~= 1000/(enc + tax + capture)).
+- Instruments already built: bench/probes/s22_enc_matrix.py (encoder
+  acceptance) and bench/s22_ceiling_rows.py (delivered-fps rows).
+- The MVE patch rides the sticky-fb precedent: repo-carried openmv
+  patch, D23/D24 Mac docker build, S7 flash ladder, byte-verified,
+  stock rollback kept. jpege.c is plain C; +mve.fp is already in the
+  port CFLAGS.
+- HD color >=5 is OUT OF SCOPE (no hardware codec on the E3 —
+  vendor-verified, SPEC).
+
+Bite 0 first (4:2:0 at q50 — one kwarg + tests + one re-measured
+ceiling row), then bite 1 (MVE color-convert first; STOP and re-plan
+with me if it lands under 1.5x before touching the DCT).
+
+Ops: board access per ae3-board-access; recovery = reboot nereus000 +
+demo_up (~2 min, standing permission); Tailscale side-door key is
+installed (ssh -J pi@nereus001 pi@10.42.0.2 works if Tailscale
+re-auth blocks). S22 leftovers (bite 1b fork instrumentation, PR #38
+demo) are mine and do not gate you.
+
+Nibble 1 = plan first, my gate before code. ~300 LoC bites, short
+actionable replies, 10-min status updates.
+```

@@ -1,0 +1,22 @@
+diff --git a/boards/OPENMV_AE3/board_config.h b/boards/OPENMV_AE3/board_config.h
+index d194f983..ded9c026 100644
+--- a/boards/OPENMV_AE3/board_config.h
++++ b/boards/OPENMV_AE3/board_config.h
+@@ -101,7 +101,7 @@ extern unsigned char OMV_BOARD_UID_ADDR[12];    // Unique address.
+ #define OMV_GPU_MEMORY                  SRAM9_B // GPU heap.
+ #define OMV_GPU_SIZE                    (256K)
+ #define OMV_OPENAMP_MEMORY              SRAM9_A // Open-AMP SHM.
+-#define OMV_OPENAMP_SIZE                (64K)
++#define OMV_OPENAMP_SIZE                (128K) // S23: 32x1544 B rpmsg buffers
+ #define OMV_GC_BLOCK0_MEMORY            SRAM0   // Main GC block
+ #define OMV_GC_BLOCK0_SIZE              (4M)
+ #define OMV_UMA_BLOCK0_MEMORY           SRAM1   // Default UMA pool.
+@@ -122,7 +122,7 @@ extern unsigned char OMV_BOARD_UID_ADDR[12];    // Unique address.
+ #define OMV_SB_SIZE                     (500K)
+ #define OMV_DMA_MEMORY                  DTCM    // Misc DMA buffers memory.
+ #define OMV_OPENAMP_MEMORY              SRAM9_A // Open-AMP SHM
+-#define OMV_OPENAMP_SIZE                (64K)
++#define OMV_OPENAMP_SIZE                (128K) // S23: 32x1544 B rpmsg buffers
+ #define OMV_GC_BLOCK0_MEMORY            SRAM8   // Main GC block
+ #define OMV_GC_BLOCK0_SIZE              (2M)
+ #define OMV_UMA_BLOCK0_MEMORY           SRAM6_B // Default UMA pool.

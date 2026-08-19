@@ -60,7 +60,12 @@ WCMD_PUB = 0x18             # HP->HE: publish payload on camera/stream (S17)
 WREP_STATUS = 0x94
 WREP_CAPTURE = 0x95         # HE->HP: camera command, wire_capture_t <BBHIHH
 
-MSG_PAYLOAD = 492           # 496 rpmsg budget - 4 B wire header
+# S23 bite 2: rpmsg buffers 512 -> 1544 (he_spike.h + openmv patch 0004),
+# so the budget after the 16 B rpmsg header and our 4 B wire header is
+# 1524 -- one 1400 B camera chunk or one full 1514 B L2 frame per
+# message (the measured tax was ~0.57 ms PER MESSAGE). WCMD_FRAG remains
+# for anything larger; on this stack nothing legal is.
+MSG_PAYLOAD = 1524          # 1528 rpmsg budget - 4 B wire header
 MAX_L2 = 1514               # REV-14 network-wide max frame
 
 # S17 camera data plane: chunk header inside each camera/stream payload
@@ -142,9 +147,10 @@ BM_STATUS_PAGE = 0x600BFE00
 # frames.
 RPMSG_QUEUE_CAP = 1024
 # Service the HE->HP direction every N messages while pushing a frame's
-# chunks. A 1400 B chunk is 3 rpmsg messages, so 3 = "drain after every
-# chunk" (S19 bite 2 -- see send_chunk_msgs).
-CHUNK_DRAIN_EVERY = 3
+# chunks. S23 bite 2: one 1400 B chunk is now ONE rpmsg message, so 1 =
+# "drain after every chunk" -- the same interleave cadence S19 bite 2
+# established, in the new message geometry (see send_chunk_msgs).
+CHUNK_DRAIN_EVERY = 1
 PHASE1_TIMEOUT_MS = 600000  # no Pi attach in 10 min -> clean exit
 QUIET_EXIT_MS = 30000       # linked, then silent 30 s (3x the 10 s
                             #   heartbeat period) -> Pi gone, clean exit
@@ -217,6 +223,10 @@ class BridgeCore:
             "unknown_cmds": 0,
             "cap_frames": 0, "cap_bytes": 0,         # JPEGs chunked (S17)
             "cap_chunks": 0,                         # WCMD_PUB payloads sent
+            # S23 bite 2 profile: WHERE the ~2 ms/KB publish tax goes.
+            # asm = capture_pub_msgs (python chunk/msg assembly),
+            # send = send_chunk_msgs (ept.send + interleaved pump).
+            "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0,
         }
 
     # ---- HE -> Pi ---------------------------------------------------------
@@ -314,19 +324,33 @@ class BridgeCore:
         off = 0
         for idx in range(count):
             take = min(data_max, n - off)
-            payload = struct.pack(CHUNK_HDR_FMT, frame_seq, idx, count,
-                                  take) + mv[off:off + take]
-            off += take
-            total = len(payload)
-            first = min(total, MSG_PAYLOAD)
-            msgs.append(struct.pack("<BBH", WCMD_PUB, 0, total) +
-                        payload[:first])
-            p = first
-            while p < total:
-                part = min(total - p, MSG_PAYLOAD)
-                msgs.append(struct.pack("<BBH", WCMD_FRAG, 0, part) +
-                            payload[p:p + part])
-                p += part
+            total = CHUNK_HDR_LEN + take
+            if total <= MSG_PAYLOAD:
+                # S23 bite 2 fast path (the only reachable shape at the
+                # 1524 B budget): both headers packed in place, the JPEG
+                # slice copied ONCE -- no intermediate payload object.
+                buf = bytearray(4 + total)
+                struct.pack_into("<BBH", buf, 0, WCMD_PUB, 0, total)
+                struct.pack_into(CHUNK_HDR_FMT, buf, 4, frame_seq, idx,
+                                 count, take)
+                buf[4 + CHUNK_HDR_LEN:] = mv[off:off + take]
+                msgs.append(buf)
+                off += take
+            else:
+                # Legacy spill path: kept for smaller-budget stacks and
+                # host tests; byte-identical wire shape to pre-S23.
+                payload = struct.pack(CHUNK_HDR_FMT, frame_seq, idx, count,
+                                      take) + mv[off:off + take]
+                off += take
+                first = min(total, MSG_PAYLOAD)
+                msgs.append(struct.pack("<BBH", WCMD_PUB, 0, total) +
+                            payload[:first])
+                p = first
+                while p < total:
+                    part = min(total - p, MSG_PAYLOAD)
+                    msgs.append(struct.pack("<BBH", WCMD_FRAG, 0, part) +
+                                payload[p:p + part])
+                    p += part
             self.stats["cap_chunks"] += 1
         self.stats["cap_frames"] += 1
         self.stats["cap_bytes"] += n
@@ -848,6 +872,7 @@ class CaptureEngine:
         self.cur_res = None         # geometry the sensor is actually holding
         self.cur_pf = None          # (None = unknown -> next cmd re-applies)
         self.q = CAP_DEFAULT_Q
+        self.enc_420 = False        # force 4:2:0 chroma (color only, S23)
         self.interval_ms = 100
         self.rate_bps = 0
         self.payload_max = CAMERA_MAX_PAYLOAD
@@ -1058,6 +1083,12 @@ class CaptureEngine:
             _trace("camera: cmd mode %d REFUSED -- no sensor" % cmd["mode"])
             return
         self.q = cmd["q"]
+        # 4:2:0 chroma for every color encode, at every q (S23 bite 0,
+        # Nick 2026-08-18): -14% encode / -7% bytes measured on the reef
+        # refs (s22_enc_matrix). Mono NEVER gets the kwarg -- the encoder
+        # has no subsampling knob for grayscale and forcing one there is
+        # unmeasured territory.
+        self.enc_420 = (pf == CAMERA_PF_COLOR)
         self.interval_ms = 10000 // cmd["fps_x10"]   # fps_x10 -> ms/frame
         self.rate_bps = cmd["rate_bps"]
         self.payload_max = cmd["payload_max"]
@@ -1101,7 +1132,12 @@ class CaptureEngine:
                 return None          # command() refused; belt and braces
             img = self.ref_img
         t0 = _ticks_us()
-        jpg = img.to_jpeg(quality=self.q, copy=True)
+        if self.enc_420:
+            import image
+            jpg = img.to_jpeg(quality=self.q, copy=True,
+                              subsampling=image.JPEG_SUBSAMPLING_420)
+        else:
+            jpg = img.to_jpeg(quality=self.q, copy=True)
         self.enc_us += _elapsed(t0, _ticks_us())
         self.enc_frames += 1
         b = jpg.bytearray()          # proven idiom (s6_video_tx.py)
@@ -1337,9 +1373,15 @@ def main():
             jpeg = engine.poll(now) if pending_cmd is None else None
             if jpeg is not None:
                 idle = False
+                t0 = _ticks_us()
                 msgs = core.capture_pub_msgs(jpeg, engine.caps - 1,
                                              engine.payload_max)
+                t1 = _ticks_us()
                 send_chunk_msgs(msgs, he.send, pump_he_to_pi)
+                t2 = _ticks_us()
+                core.stats["cap_asm_us"] += _elapsed(t0, t1)
+                core.stats["cap_send_us"] += _elapsed(t1, t2)
+                core.stats["cap_msgs"] += len(msgs)
                 gate.note_chunks(len(msgs), now)
             if core.status is not None and core.status_seq != last_status_seq:
                 last_status_seq = core.status_seq
