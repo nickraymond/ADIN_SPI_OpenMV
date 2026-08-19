@@ -33,10 +33,26 @@ class TestSuggestThreshold(unittest.TestCase):
         self.assertEqual(len(H.suggest_threshold((50, 0, 0)).split(",")), 6)
 
 
+def _clock_over(times):
+    """A fake clock that walks `times` then holds the last value.
+
+    Holding rather than raising StopIteration matters: snapshot() also reads
+    the clock (for stale_s), and a test should not have to count internal
+    clock reads to stay green.
+    """
+    seq = list(times)
+    state = {"i": 0}
+
+    def clock():
+        i = min(state["i"], len(seq) - 1)
+        state["i"] += 1
+        return seq[i]
+    return clock
+
+
 class TestStats(unittest.TestCase):
     def _stats(self, times):
-        it = iter(times)
-        return H.Stats(clock=lambda: next(it))
+        return H.Stats(clock=_clock_over(times))
 
     def test_fps_from_span(self):
         s = self._stats([0.0, 1.0, 2.0])   # 3 frames spanning 2 s = 1.0 fps
@@ -126,6 +142,117 @@ class TestReaderLoop(unittest.TestCase):
         state = {"alive": True}
         H.reader_loop(_stream(b""), latest, stats, state)
         self.assertFalse(state["alive"])
+
+
+class TestStaleness(unittest.TestCase):
+    """A frozen stream and a motionless scene look identical on screen.
+
+    These pin the one signal that tells them apart, because this failure has
+    now shown up three separate ways in this bite.
+    """
+
+    def test_stale_is_none_before_any_frame(self):
+        s = H.Stats(clock=lambda: 100.0)
+        self.assertIsNone(s.snapshot()["stale_s"])
+
+    def test_stale_grows_after_the_last_frame(self):
+        s = H.Stats(clock=_clock_over([100.0, 105.0]))
+        s.note({}, 10)                       # frame lands at t=100
+        self.assertEqual(s.snapshot()["stale_s"], 5.0)   # snapshot at t=105
+
+    def test_status_is_reported(self):
+        s = H.Stats(clock=lambda: 1.0)
+        s.status = "board disconnected -- reconnecting"
+        self.assertIn("reconnect", s.snapshot()["status"])
+
+
+class TestFindPort(unittest.TestCase):
+    def test_explicit_port_wins(self):
+        self.assertEqual(H.find_port("/dev/cu.whatever"), "/dev/cu.whatever")
+
+    def test_missing_board_raises_porterror_not_systemexit(self):
+        # PortError is retryable; SystemExit would kill the supervisor.
+        import glob
+        real = glob.glob
+        glob.glob = lambda pat: []
+        try:
+            with self.assertRaises(H.PortError):
+                H.find_port(None)
+        finally:
+            glob.glob = real
+
+    def test_ambiguous_board_raises_porterror(self):
+        import glob
+        real = glob.glob
+        glob.glob = lambda pat: ["/dev/cu.usbmodem1", "/dev/cu.usbmodem2"]
+        try:
+            with self.assertRaises(H.PortError):
+                H.find_port(None)
+        finally:
+            glob.glob = real
+
+
+class TestSupervise(unittest.TestCase):
+    def test_retries_while_the_board_is_absent_then_quits(self):
+        stats, latest = H.Stats(), H.Latest()
+        state = {"quit": False}
+        calls = {"n": 0}
+
+        def fake_find(hint):
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                state["quit"] = True
+            raise H.PortError("no board")
+
+        real = H.find_port
+        H.find_port = fake_find
+        try:
+            H.supervise(None, "src", latest, stats, state, retry_s=0)
+        finally:
+            H.find_port = real
+        self.assertGreaterEqual(calls["n"], 3)
+        self.assertIn("waiting for board", stats.status)
+
+
+class _FakeSerial:
+    """Feeds canned chunks, then behaves like an idle-but-open port."""
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self.is_open = True
+
+    def read(self, _n):
+        return self._chunks.pop(0) if self._chunks else b""
+
+
+def _board_over(chunks):
+    """A SerialBoard wired to a fake port, bypassing __init__'s real open."""
+    b = H.SerialBoard.__new__(H.SerialBoard)
+    b.ser = _FakeSerial(chunks)
+    b._buf = bytearray()
+    return b
+
+
+class TestSerialBoardReadline(unittest.TestCase):
+    def test_reads_plain_lines(self):
+        b = _board_over([b"one\ntwo\n"])
+        self.assertEqual(b.readline(), b"one\n")
+        self.assertEqual(b.readline(), b"two\n")
+
+    def test_eot_without_trailing_newline_ends_the_stream(self):
+        # The raw REPL ends execution with 0x04 and NO newline. Missing this
+        # blocked the reader forever and stopped the supervisor reconnecting.
+        b = _board_over([b'#D {"frames":2}\n', b"\x04\x04>"])
+        self.assertEqual(b.readline(), b'#D {"frames":2}\n')
+        self.assertEqual(b.readline(), b"")
+
+    def test_eot_before_a_later_newline_still_ends(self):
+        b = _board_over([b"\x04junk\n"])
+        self.assertEqual(b.readline(), b"")
+
+    def test_binary_payload_bytes_survive(self):
+        b = _board_over([b"\xff\xd8\xff\xe0 payload\n"])
+        self.assertEqual(b.readline(), b"\xff\xd8\xff\xe0 payload\n")
 
 
 class TestConfig(unittest.TestCase):

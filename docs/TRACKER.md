@@ -1825,6 +1825,23 @@ unowned side quest.
   that is bite 3's subject, and whether OpenMV loads it directly or it
   needs an `stedgeai` compile pass is UNVERIFIED (sources conflict) —
   flag, don't guess.
+- **Nothing autostarts on the board.** `/flash/main.py` is the stock LED
+  blinker and stays that way; the stream script is pushed into the raw
+  REPL and runs from RAM. So a power cycle or replug leaves the board
+  blinking and NOT streaming — the host viewer is what must be
+  (re)started. It now reconnects by itself, including across a replug,
+  because **the device node is not stable**: this board moved from
+  `usbmodem1101` to `usbmodem1201`, so the port is re-resolved on every
+  attempt rather than cached.
+- **A nudged USB connector ends the stream** (`SerialException: [Errno 6]
+  Device not configured` — seen just from moving the camera). That used
+  to kill the reader thread silently while the page kept serving the
+  last frame with live-looking stats. The viewer now catches it,
+  reconnects, and reports `stale_s` + a red NOT LIVE banner. **Three
+  distinct bugs in this bite produced the same symptom — a plausible
+  still image** (unexercised draw path, mpremote decay, serial drop); a
+  frozen stream and a motionless scene are indistinguishable by eye, so
+  liveness has to be measured and displayed, never inferred.
 - **Stop the stream viewer with Ctrl-C, never `kill -9`.** A SIGKILL
   skips the board teardown and leaves it streaming into a closed
   endpoint from inside the raw REPL; measured once, it took the N6 off

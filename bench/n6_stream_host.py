@@ -50,12 +50,20 @@ text-align:center}img{max-width:100%;image-rendering:pixelated}
 #s{color:#8c8;white-space:pre-wrap;font-size:13px}h3{margin:8px;font-weight:600}</style>
 </head><body>
 <h3>OpenMV N6 &mdash; yolov8n_192 + colour blobs</h3>
+<div id="b"></div>
 <img src="/stream"/>
 <pre id="s">connecting&hellip;</pre>
 <script>setInterval(async()=>{try{const r=await fetch('/stats.json');const j=await r.json();
+// A frozen stream and a motionless scene look identical. Say which it is.
+const dead = j.stale_s === null || j.stale_s > 3;
+const b=document.getElementById('b');
+b.textContent = dead ? ('\\u25CF NOT LIVE \\u2014 '+j.status+
+    (j.stale_s!==null ? '  (last frame '+j.stale_s+'s ago)' : '')) : '';
+b.style.cssText = dead ? 'background:#a11;color:#fff;padding:6px;font-weight:700'
+                       : '';
 document.getElementById('s').textContent=
  'fps '+j.fps+'   frames '+j.frames+'   det '+j.det+'   blobs '+j.blobs+
- '   resyncs '+j.resyncs+'\\n'+
+ '   resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
  'capture '+j.cap_ms+' ms   inference '+j.inf_ms+' ms   blobs '+j.blob_ms+
  ' ms   encode '+j.enc_ms+' ms\\n'+
  (j.lab ? 'centre patch LAB  L='+j.lab[0]+'  A='+j.lab[1]+'  B='+j.lab[2]+
@@ -116,9 +124,14 @@ class Stats:
         self.junk = []
         self.lab = None
         self.resyncs = 0        # frames dropped to a framing/length fault
+        self.reconnects = 0
+        self.status = "starting"
+        self.last_frame_at = None
         self._acc = {"cap_us": 0, "inf_us": 0, "blob_us": 0, "enc_us": 0}
 
     def note(self, hdr, nbytes):
+        now = self._clock()          # one timestamp per frame, read once
+        self.last_frame_at = now
         self.frames += 1
         self.bytes += nbytes
         self.det = hdr.get("det", 0)
@@ -126,7 +139,7 @@ class Stats:
         self.lab = hdr.get("lab") or None
         for k in self._acc:
             self._acc[k] += hdr.get(k, 0)
-        self._times.append(self._clock())
+        self._times.append(now)
         del self._times[:-self.WINDOW]
 
     def fps(self):
@@ -148,6 +161,14 @@ class Stats:
             "lab": self.lab,
             "suggest": suggest_threshold(self.lab) if self.lab else "",
             "resyncs": self.resyncs,
+            "reconnects": self.reconnects,
+            "status": self.status,
+            # Seconds since the last frame. The viewer keeps showing the last
+            # good JPEG when the board goes away, so the page MUST be able to
+            # tell a live stream from a frozen one -- a still scene and a dead
+            # board look identical otherwise.
+            "stale_s": (round(self._clock() - self.last_frame_at, 1)
+                        if self.last_frame_at is not None else None),
             "cap_ms": self._mean_ms("cap_us"),
             "inf_ms": self._mean_ms("inf_us"),
             "blob_ms": self._mean_ms("blob_us"),
@@ -336,15 +357,28 @@ class SerialBoard:
     def readline(self):
         """One line, or b'' at end of execution. Buffered over raw reads."""
         while True:
+            # The raw REPL's end-of-execution 0x04 arrives with NO trailing
+            # newline, so it must be looked for in the buffer rather than at
+            # the head of a completed line -- otherwise a script that returns
+            # leaves this blocked forever waiting for a newline that is never
+            # coming, and the supervisor never learns the stream ended.
+            eot = self._buf.find(b"\x04")
             nl = self._buf.find(b"\n")
+            if eot >= 0 and (nl < 0 or eot < nl):
+                return b""
             if nl >= 0:
                 line = bytes(self._buf[:nl])
                 del self._buf[:nl + 1]
-                # The raw REPL emits 0x04 when the script finishes.
-                if line.startswith(b"\x04"):
-                    return b""
                 return line + b"\n"
-            chunk = self.ser.read(65536)
+            try:
+                chunk = self.ser.read(65536)
+            except (self._serial.SerialException, OSError):
+                # The board went away mid-read -- a nudged USB connector is
+                # enough ("[Errno 6] Device not configured"). Ending the
+                # stream cleanly lets the supervisor reconnect; letting the
+                # exception escape would kill the reader thread and leave the
+                # viewer serving a stale frame forever.
+                return b""
             if chunk:
                 self._buf += chunk
             elif not self.ser.is_open:
@@ -432,42 +466,89 @@ def cfg_from_args(args):
     return cfg
 
 
+class PortError(Exception):
+    """No usable serial device right now (may simply be mid-reconnect)."""
+
+
 def find_port(explicit=None):
-    """Resolve the N6's serial device, failing with something actionable."""
+    """Resolve the N6's serial device, failing with something actionable.
+
+    Note the device node is NOT stable across replugs -- this board came back
+    as usbmodem1201 after having been usbmodem1101 -- so the reconnect path
+    re-resolves it every attempt rather than caching it.
+    """
     if explicit:
         return explicit
     import glob
     ports = sorted(glob.glob("/dev/cu.usbmodem*"))
     if not ports:
-        raise SystemExit("no /dev/cu.usbmodem* found -- is the N6 plugged in? "
-                         "(name it explicitly with --port)")
+        raise PortError("no /dev/cu.usbmodem* found -- is the N6 plugged in?")
     if len(ports) > 1:
-        raise SystemExit("several boards present (%s) -- choose one with --port"
-                         % ", ".join(ports))
+        raise PortError("several boards present (%s) -- choose one with --port"
+                        % ", ".join(ports))
     return ports[0]
+
+
+def supervise(port_hint, script_text, latest, stats, state,
+              retry_s=2.0, settle_s=1.0):
+    """Keep a board stream running, reconnecting when the board comes back.
+
+    Bumping the USB connector while aiming the camera ends the stream. That is
+    a normal thing to do with a camera, so recovery should not need a human at
+    a terminal -- and it cannot be done on the board, which does not autostart
+    this script (``/flash/main.py`` is the stock LED blinker and stays that
+    way; nothing here writes to the board).
+    """
+    first = True
+    while not state.get("quit"):
+        try:
+            port = find_port(port_hint)
+            board = SerialBoard(port).start(script_text)
+        except PortError as exc:
+            stats.status = "waiting for board: %s" % exc
+            time.sleep(retry_s)
+            continue
+        except ImportError:
+            stats.status = "pyserial missing"
+            state["fatal"] = "pyserial missing -- pip3 install --user pyserial"
+            return
+        except (OSError, TimeoutError) as exc:
+            stats.status = "board not answering on %s: %s" % (port, exc)
+            time.sleep(retry_s)
+            continue
+
+        if not first:
+            stats.reconnects += 1
+        first = False
+        state["board"] = board
+        stats.status = "streaming from %s" % port
+        print("board: streaming from %s" % port, flush=True)
+
+        reader_loop(board, latest, stats, state)
+
+        stats.status = "board disconnected -- reconnecting"
+        print("board: disconnected -- will reconnect", flush=True)
+        try:
+            board.stop()
+        except Exception:
+            pass
+        state["board"] = None
+        if state.get("quit"):
+            return
+        time.sleep(settle_s)
 
 
 def main(argv=None):
     args = parse_args(argv)
     cfg = cfg_from_args(args)
-    port = find_port(args.port)
     script_text = build_board_script_text(cfg)
 
-    print("connecting to %s" % port, flush=True)
-    try:
-        board = SerialBoard(port).start(script_text)
-    except ImportError:
-        raise SystemExit("pyserial missing -- pip3 install --user pyserial")
-    except (OSError, TimeoutError) as exc:
-        raise SystemExit(
-            "could not start the board script on %s: %s\nNothing else may hold "
-            "the port -- close any mpremote session or serial monitor, then "
-            "retry." % (port, exc))
-
     latest, stats = Latest(), Stats()
-    state = {"alive": True}
-    threading.Thread(target=reader_loop, args=(board, latest, stats, state),
-                     daemon=True).start()
+    state = {"alive": True, "quit": False, "board": None}
+    threading.Thread(
+        target=supervise,
+        args=(args.port, script_text, latest, stats, state),
+        daemon=True).start()
 
     httpd = QuietServer(("127.0.0.1", args.http_port),
                         make_handler(latest, stats))
@@ -491,11 +572,15 @@ def main(argv=None):
         print("\nstopping...", flush=True)
     finally:
         httpd.server_close()
-        board.stop()
+        state["quit"] = True
+        board = state.get("board")
+        if board is not None:
+            board.stop()
         s = stats.snapshot()
-        print("frames %d  mean fps %.1f  resyncs %d  inference %.1f ms  "
-              "encode %.1f ms" % (s["frames"], s["fps"], s["resyncs"],
-                                  s["inf_ms"], s["enc_ms"]), flush=True)
+        print("frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
+              "inference %.1f ms  encode %.1f ms"
+              % (s["frames"], s["fps"], s["resyncs"], s["reconnects"],
+                 s["inf_ms"], s["enc_ms"]), flush=True)
         if stats.junk:
             print("junk lines seen (last 5): %r" % (stats.junk[-5:],), flush=True)
     return 0

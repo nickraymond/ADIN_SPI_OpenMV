@@ -113,6 +113,31 @@ AE3 were not involved, so S23 bite R is re-ordered, not displaced.
   is uncatchable and is simply the thing not to do. This is the Mac-side
   cousin of the bench's AE3 enumeration lesson.
 
+- **"It stopped when I moved the camera. Bad cable?"** Not the cable
+  necessarily — nudging the connector is enough: the reader died on
+  `SerialException: [Errno 6] Device not configured`, and because that
+  escaped the reader thread, the HTTP server kept serving the last frame
+  with live-looking stats (`fps 19.9, frames 5840`). **That is the same
+  symptom as the two earlier bugs in this bite** (unexercised draw path;
+  mpremote decay) — a frozen stream and a motionless scene look
+  identical, so liveness must be measured and shown, never inferred.
+  Shipped: the exception is caught, a `supervise()` loop reconnects
+  (re-resolving the port each time, since the node moved 1101→1201
+  across the replug), and the page now carries `stale_s`, a
+  `reconnects` count and a red **NOT LIVE** banner.
+  **The reconnect test then found a second bug**: the raw REPL's
+  end-of-execution `0x04` arrives with NO trailing newline, so the
+  line-oriented `readline()` blocked forever when a script returned and
+  the supervisor never learned the stream had ended. Fixed by looking
+  for the EOT in the buffer rather than at the head of a completed line;
+  verified end-to-end with a self-terminating board script — **180
+  frames across 6 cycles, `reconnects 5`**. Suite 19 → **30**.
+- **No, nothing autostarts on the board** (Nick asked). `/flash/main.py`
+  is the stock LED blinker and stays that way; the stream script is
+  pushed into the raw REPL and runs from RAM, so a power cycle leaves
+  the board blinking and not streaming. The host viewer is what
+  restarts — now automatically.
+
 **Next:** Nick replugs the N6, then points it at the four purple balls,
 reads a threshold off `--tune`, and confirms the labelled overlay tracks
 them (bite 1's demo). Then bite 2 — the N6-vs-AE3 tiled-coverage
