@@ -105,6 +105,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 
 | D42 | 2026-08-18 | **New sprint S23 — encoder fast path — runs NEXT (Nick), ahead of S21/S20.** Targets set by Nick: VGA color q50 ≥ 15 fps and HD mono ≥ 5–6 fps delivered, then push to the hardware's true max. Route = the S22 window's measured arithmetic (`delivered ≈ 1000/(enc + ~2 ms/KB tax + capture)`): bite 0 ships 4:2:0-at-q50 (one kwarg, −14% color encode, measured), bite 1 MVE/Helium-vectorizes jpege.c as a repo-carried openmv patch (sticky-fb pattern; color-convert first with a <1.5× stop-gate before DCT investment; golden-image regression before on-chain use), bite 2 moves the per-frame chunk/publish hot path to C (profile first — the bite may shrink to a C helper), bite 3 re-measures ceilings and re-derives MEAS_FPS + the guardrail envelope. HD color ≥5 fps is explicitly out of scope on this SoC (no hardware codec, vendor-verified). | Sequencing the encoder sprint before CV follows D39's own logic one step further: S21's detector work wants to know the REAL frame budget it must share the HP with, and the S23 bites change exactly that budget. The stop-gate inside bite 1 is the S0 discipline applied to SIMD work — vectorization effort is easy to sink and the color-convert-first measurement decides whether the DCT half is worth its risk. S22's burst defect does not gate S23 (HD-mono targets ride q50 55-chunk frames, measured clean); its fork-instrumentation bite interleaves on Nick's side. |
 
+| D43 | 2026-08-19 | **New sprint S24 — N6 CV baseline — opened by Nick and run the same session; the OpenMV N6's stock-model NPU performance is now measured, and there is a headless live detection viewer.** Scoped as its own sprint rather than folded into S8 (the AE3's edge-CV sprint, gated behind S13) because it is board-selection input for a *different* board, needs no bench hardware, and runs entirely on the Mac over USB — it neither blocks nor is blocked by the S23 ladder, so S23 bite R is re-ordered, not displaced. **Headless is forced, not preferred:** every OpenMV IDE build with N6 support (v4.8.1+) is compiled with a macOS 15 minimum and will not launch on this Mac's macOS 14.6.1, so the IDE's framebuffer view had to be rebuilt as `bench/n6_stream_{board,host}.py` — board script executed via `mpremote run` (nothing written to the board), frames returned as `#F` JSON header + base64 payload, host serving multipart MJPEG on the `pi/stream/stream_server.py` pattern. **Base64 rather than the project's frozen framed-binary format is a deliberate transport decision:** `mpremote run` returns stdout through the raw REPL, which terminates on byte `0x04`, and JPEG payloads contain `0x04` freely — base64 costs ~33% bandwidth and deletes the entire failure class, which is worth more than the bytes on a USB link with 24 MB/s of headroom. Measured (tables in §S24 detail): yolov8n_192 **20.7 / 23.7 / 32.2 ms** mean inference at QVGA/VGA/HD with p95 within 0.5 ms of mean, **capture+inference end-to-end 47.9 / 41.8 / 30.2 fps**, capture DMA-hidden at 0.2 ms, model load ~2.2 ms (ROM is memory-mapped, not copied). All 9 ROM models timed. | The vendor's "~30 fps YOLOv8-class detection" claim is now a measured number rather than marketing, and it lands at **HD**, not VGA — better than the claim implies, because at QVGA/VGA the same model runs 42–48 fps. The engineering consequence is that on this board inference IS the frame budget: capture costs 0.2 ms and model load is free, so any fps target is a pure function of model choice, and the S8 tiled-coverage arithmetic (tiles × ms/tile) remains the only thing that matters for real detection work. The stock detectors stay person-only on both boards, so D11's standing conclusion — a custom Vela-compiled detector is required either way — survives this sprint unchanged; what changes is that the N6's per-tile cost is now known well enough to price the tiling budget honestly. |
+
 ## Verified-facts ledger
 
 See SPEC.md §Confirmed technical facts. Anything not there or here is
@@ -831,6 +833,111 @@ hand_landmarks being 2.7× faster than N6's is that confound in action.
 
 Standing bench rule adopted: on nereus000, always
 `mpremote connect /dev/serial/by-id/...` — never rely on auto-connect.
+
+### S24 detail (2026-08-19) — N6 CV baseline, bite 1
+
+Run on the **Mac**, N6 on `/dev/cu.usbmodem1101`. **No bench hardware
+touched** — the AE3 and both Pis were not involved. Nothing was written
+to the board: the board script is executed by `mpremote run` and
+`/flash` (a 218 B LED blinker) is unchanged. No firmware update.
+
+**Fixture:** `sys.version` = `3.4.0; OpenMV v5.0.0; MicroPython
+v1.28.0-49`, built 2026-07-02, `OpenMV N6 with STM32N657X0`, free heap
+25,608,800 B. Recorded from `sys.version` because `os.uname()` carries
+only the MicroPython version (`release='1.28.0'`) — the S7 flash-day
+lesson, re-confirmed here.
+
+**`/rom` inventory** (9 models + 3 Haar cascades):
+
+| file | bytes | | file | bytes |
+|---|---|---|---|---|
+| blazeface_front_128.tflite | 220,232 | | palm_detection_full_192.tflite | 1,468,248 |
+| face_landmarks_192.tflite | 776,616 | | person_detect.tflite | 274,272 |
+| fomo_face_detection.tflite | 64,064 | | yolo_lc_192.tflite | 317,848 |
+| force_int_quant.tflite | 19,104 | | yolov8n_192.tflite | **3,233,408** |
+| hand_landmarks_full_224.tflite | 3,321,688 | | movenet_singlepose_192.tflite | 2,799,016 |
+
+**yolov8n_192 × capture size** (50 timed reps after 1 warm-up; RGB565;
+`e2e` = `snapshot` → `predict`, no encode or transport):
+
+| framesize | actual px | warm-up ms | min ms | mean ms | p95 ms | e2e fps |
+|---|---|---|---|---|---|---|
+| QVGA | 320×200 | 21.2 | 19.6 | **20.7** | 20.9 | **47.9** |
+| VGA | 640×400 | 23.6 | 22.3 | **23.7** | 24.1 | **41.8** |
+| HD | 1280×800 | 32.6 | 31.0 | **32.2** | 32.5 | **30.2** |
+| SXGAM / WQXGA2 | — | *sensor refuses:* `Sensor control failed.` | | | | |
+
+**All ROM models at VGA source** (50 reps; raw `predict` timing, YoloV8
+postprocessor only on yolov8n — for the rest the right postprocessor is
+not identifiable from the filename, so these are raw-inference numbers):
+
+| model | arena B | warm-up ms | min ms | mean ms | p95 ms | fps |
+|---|---|---|---|---|---|---|
+| fomo_face_detection | 29,440 | 3.4 | 3.4 | 3.5 | 3.6 | 283.1 |
+| person_detect | 48,384 | 4.3 | 4.2 | 4.2 | 4.3 | 236.1 |
+| yolo_lc_192 | 34,560 | 6.6 | 6.6 | 6.9 | 7.1 | 144.4 |
+| blazeface_front_128 | 88,704 | 12.5 | 12.4 | 12.7 | 12.9 | 79.0 |
+| face_landmarks_192 | 146,304 | 17.1 | 16.5 | 16.9 | 17.1 | 59.1 |
+| **yolov8n_192** | 195,648 | 23.2 | 22.7 | **23.7** | 24.0 | **42.2** |
+| movenet_singlepose_192 | 143,360 | 24.1 | 24.0 | 26.3 | 27.7 | 38.1 |
+| palm_detection_full_192 | 323,200 | 32.1 | 32.2 | 33.5 | 35.1 | 29.9 |
+| hand_landmarks_full_224 | 1,176,896 | 65.3 | 65.2 | 65.3 | 65.4 | 15.3 |
+
+(`force_int_quant.tflite` SKIPped — input shape `(1, 36)`, not an image.
+Same result the 2026-08-11 run got.)
+
+**Live stream, VGA, blob overlay on: 22.6 fps delivered.** Per-frame
+ledger: capture 0.2 · inference 23.5 · blob search 11.0 · JPEG encode
+3.9 ms, the remainder being base64 + serial.
+
+**Findings that carry:**
+
+- **Inference is the entire frame budget.** Capture is DMA-hidden
+  (0.2 ms — `snapshot()` returns an already-transferred frame) and
+  model load is ~2.2 ms because the tflite is memory-mapped from ROM
+  rather than copied. Neither is worth optimizing; fps is a pure
+  function of model choice.
+- **The ~30 fps vendor claim holds, and holds at HD.** 30.2 fps
+  capture+inference at 1280×800; at QVGA/VGA the same model runs
+  42–48 fps. The claim is conservative, not optimistic.
+- **p95 sits within 0.5 ms of the mean at every size** — the NPU path
+  has no long tail worth designing around.
+- **The sensor letterboxes to 16:10 at every size** (320×200, 640×400,
+  1280×800), and the `csi` module's framesize constants are NOT the
+  sensor's ladder: `SXGAM` and `WQXGA2` are exported but refused.
+  Probe, never assume — the same shape as the AE3's PAG7936 finding.
+- **Stock detectors are person-only on this board too** — both
+  `yolov8n_192.txt` and `yolo_lc_192.txt` read `person` and nothing
+  else. Zero detections on a non-person scene is the correct artifact.
+  S8's conclusion stands: real target detection needs a custom
+  Vela-compiled model regardless of board.
+- Cross-board comparison against the AE3 stays **model-variant-
+  confounded** (N6's yolov8n_192 is 3,233,408 B vs the AE3's
+  1,994,976 B). Bite 2 owes the honest side-by-side.
+- NPU-vs-CPU dispatch is still not queryable from MicroPython; every
+  number here is wall-clock.
+
+**Firmware API facts measured this session** (OpenMV v5.0.0 — these
+differ from the older OpenMV API and every one of them bit):
+
+- `draw_rectangle` / `draw_string` / `draw_cross` take a **tuple** as
+  the first positional argument. The classic `draw_rectangle(x, y, w,
+  h)` spelling raises `TypeError: object 'int' isn't a tuple or list`.
+- `find_blobs()` blob fields are **attributes**, not methods: `b.rect`,
+  `b.cx`, `b.pixels` — `b.rect()` raises `TypeError`.
+- `get_statistics()` returns a **namedtuple**: `st.l_mean`, not
+  `st.l_mean()`.
+- `Image` has no `bpp()` accessor.
+
+**Process note worth keeping (CLAUDE.md rule 4).** The first live
+stream ran 324 frames, 22.6 fps, valid JPEGs verified against their own
+SOF headers — while *every draw call in it was wrong*. The scene (a
+ceiling) had zero detections and zero blobs, so no draw path ever
+executed and the bug stayed latent; it would have crashed on the first
+frame containing anything to draw. It was caught only by forcing a
+wide-open blob threshold specifically to make the draw path run. A
+flowing stream and a clean exit code proved nothing about the code that
+had not yet been reached.
 
 ### S9 detail (2026-08-11) — bite 1: OA first light, spike PASSED
 

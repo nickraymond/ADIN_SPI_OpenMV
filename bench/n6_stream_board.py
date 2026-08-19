@@ -1,0 +1,225 @@
+# n6_stream_board.py -- OpenMV N6 live detection stream, board side (S24 bite 1).
+#
+# Runs ON the N6 under `mpremote run`, driven by bench/n6_stream_host.py, which
+# serves the result as MJPEG in a browser. No OpenMV IDE involved (the IDE has
+# no macOS 14 build -- SPEC/S24), and NOTHING is written to the board: this file
+# is executed from the host, /flash is never touched.
+#
+# Per frame: snapshot -> yolov8n_192 predict -> overlay -> JPEG -> stdout.
+#
+# WIRE FORMAT (chosen deliberately -- see DESIGN S24):
+#   #F {"seq":N,"w":W,"h":H,"b64":LEN, ...}\n
+#   <exactly LEN base64 ASCII chars>\n
+# The payload is base64, NOT raw binary, because `mpremote run` streams the
+# script's stdout back through the raw REPL, which terminates on byte 0x04 --
+# and JPEG payloads contain 0x04 freely. Base64 costs ~33% and buys a stream
+# that needs no board-side deployment at all. The explicit b64 length means the
+# host never has to guess where a frame ends.
+#
+# Config is injected by the host as a `_CFG` dict prepended to this file, so the
+# host owns every knob and there is one copy of the defaults (below).
+
+import csi
+import gc
+import time
+import binascii
+
+try:
+    _CFG                      # injected by the host
+except NameError:
+    _CFG = {}
+
+FRAMESIZE = _CFG.get("framesize", "VGA")
+QUALITY = _CFG.get("quality", 50)
+MAX_SECONDS = _CFG.get("max_seconds", 3600)
+MAX_FRAMES = _CFG.get("max_frames", 0)        # 0 = bounded by MAX_SECONDS only
+MODEL = _CFG.get("model", "/rom/yolov8n_192.tflite")
+THRESHOLD = _CFG.get("threshold", 0.4)
+DETECT = _CFG.get("detect", True)             # run the model at all
+BLOBS = _CFG.get("blobs", True)               # colour-blob overlay
+# LAB threshold for the blob overlay, (L_lo, L_hi, A_lo, A_hi, B_lo, B_hi).
+# Default is a broad purple/violet. Tune from the host: --blob-thresh.
+BLOB_THRESH = tuple(_CFG.get("blob_thresh", (10, 80, 10, 65, -75, -10)))
+BLOB_PIXELS = _CFG.get("blob_pixels", 150)    # reject sensor noise
+BLOB_AREA = _CFG.get("blob_area", 150)
+TUNE = _CFG.get("tune", False)                # centre-patch LAB readout
+
+
+def centre_roi(w, h, frac=8):
+    """A centred box ~1/frac of each dimension, as (x, y, w, h)."""
+    bw, bh = w // frac, h // frac
+    return ((w - bw) // 2, (h - bh) // 2, bw, bh)
+
+
+def tune_readout(img, colour=(255, 255, 0)):
+    """Draw a centre target and return its mean LAB, for picking a threshold.
+
+    Point the object at the box and read the numbers off the stream HUD: that
+    is how you get a real threshold for a real object under real light, rather
+    than guessing LAB ranges from a colour name.
+    """
+    roi = centre_roi(img.width(), img.height())
+    st = img.get_statistics(roi=roi)
+    img.draw_rectangle(roi, color=colour, thickness=2)
+    # get_statistics() returns a namedtuple here: means are ATTRIBUTES.
+    return st.l_mean, st.a_mean, st.b_mean
+
+# yolov8n_192 and yolo_lc_192 both ship a ONE-line label file: "person".
+# Read it live rather than hard-coding a COCO list we do not have (rule 3).
+def load_labels(model_path):
+    try:
+        f = open(model_path.rsplit(".", 1)[0] + ".txt")
+    except OSError:
+        return []
+    try:
+        return [ln.strip() for ln in f.read().split("\n") if ln.strip()]
+    finally:
+        f.close()
+
+
+def make_model(path, threshold):
+    """Load the model with a postprocessor when one is identifiable by name."""
+    import ml
+    if "yolov8" in path:
+        from ml.postprocessing.ultralytics import YoloV8
+        return ml.Model(path, postprocess=YoloV8(threshold=threshold)), True
+    return ml.Model(path), False
+
+
+def draw_detections(img, out, labels, colour=(255, 0, 0)):
+    """Draw postprocessor output. Returns the number of boxes drawn.
+
+    Output shape is per-class lists of ((x, y, w, h), score); a model with no
+    detections yields empty lists (or an empty tuple), which is not an error.
+    """
+    n = 0
+    for cls_idx, dets in enumerate(out):
+        name = labels[cls_idx] if cls_idx < len(labels) else str(cls_idx)
+        for box, score in dets:
+            x, y, w, h = box
+            # NOTE: OpenMV v5 firmware takes a TUPLE first argument on every
+            # draw_* call -- the older x, y, w, h spelling raises TypeError
+            # ("object 'int' isn't a tuple or list"). Measured on this board.
+            img.draw_rectangle((x, y, w, h), color=colour, thickness=2)
+            img.draw_string((x + 2, max(0, y - 12)), "%s %.2f" % (name, score),
+                            color=colour, scale=2)
+            n += 1
+    return n
+
+
+def draw_blobs(img, thresh, pixels, area, colour=(0, 255, 255)):
+    """Colour-blob overlay. Returns blob count.
+
+    This is here because the stock detector is person-only: pointing the camera
+    at coloured objects yields zero model detections, correctly. The blob pass
+    gives an overlay that reacts to what is actually in front of the lens.
+    """
+    n = 0
+    for b in img.find_blobs([thresh], pixels_threshold=pixels,
+                            area_threshold=area, merge=True):
+        # Blob fields are ATTRIBUTES on this firmware (b.rect, not b.rect()).
+        img.draw_rectangle(b.rect, color=colour, thickness=2)
+        img.draw_cross((b.cx, b.cy), color=colour, size=8)
+        n += 1
+        img.draw_string((b.x, max(0, b.y - 12)), "%d px" % b.pixels,
+                        color=colour, scale=2)
+    return n
+
+
+def framesize_const(name):
+    """Resolve a framesize NAME to its csi constant, failing loudly and usefully."""
+    try:
+        return getattr(csi, name)
+    except AttributeError:
+        raise ValueError("framesize %r not exported by csi on this firmware" % name)
+
+
+def main():
+    import sys
+
+    csi0 = csi.CSI()
+    csi0.reset()
+    csi0.pixformat(csi.RGB565)
+    csi0.framesize(framesize_const(FRAMESIZE))
+
+    model = None
+    labels = []
+    has_pp = False
+    if DETECT:
+        model, has_pp = make_model(MODEL, THRESHOLD)
+        labels = load_labels(MODEL)
+
+    # One banner line the host echoes verbatim -- provenance for the results table.
+    img = csi0.snapshot()
+    print("#I {\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,\"model\":\"%s\","
+          "\"labels\":%s,\"quality\":%d,\"heap\":%d}"
+          % (_json_str(sys.version), FRAMESIZE, img.width(), img.height(),
+             MODEL if DETECT else "", _json_list(labels), QUALITY, gc.mem_free()))
+
+    seq = 0
+    t_end = time.ticks_add(time.ticks_ms(), int(MAX_SECONDS * 1000))
+    while True:
+        if time.ticks_diff(t_end, time.ticks_ms()) <= 0:
+            break
+        if MAX_FRAMES and seq >= MAX_FRAMES:
+            break
+
+        t_cap0 = time.ticks_us()
+        img = csi0.snapshot()
+        cap_us = time.ticks_diff(time.ticks_us(), t_cap0)
+
+        ndet = 0
+        inf_us = 0
+        if model is not None:
+            t_inf0 = time.ticks_us()
+            out = model.predict([img])
+            inf_us = time.ticks_diff(time.ticks_us(), t_inf0)
+            if has_pp:
+                ndet = draw_detections(img, out, labels)
+
+        nblob = 0
+        t_blob0 = time.ticks_us()
+        if BLOBS:
+            nblob = draw_blobs(img, BLOB_THRESH, BLOB_PIXELS, BLOB_AREA)
+        blob_us = time.ticks_diff(time.ticks_us(), t_blob0)
+
+        lab = (0, 0, 0)
+        if TUNE:
+            lab = tune_readout(img)
+
+        t_enc0 = time.ticks_us()
+        jpg = img.to_jpeg(quality=QUALITY)
+        enc_us = time.ticks_diff(time.ticks_us(), t_enc0)
+
+        payload = binascii.b2a_base64(jpg)
+        if payload.endswith(b"\n"):
+            payload = payload[:-1]
+
+        print("#F {\"seq\":%d,\"w\":%d,\"h\":%d,\"b64\":%d,\"jpeg\":%d,"
+              "\"cap_us\":%d,\"inf_us\":%d,\"blob_us\":%d,\"enc_us\":%d,"
+              "\"det\":%d,\"blobs\":%d,\"lab\":[%d,%d,%d]}"
+              % (seq, img.width(), img.height(), len(payload), len(jpg),
+                 cap_us, inf_us, blob_us, enc_us, ndet, nblob,
+                 int(lab[0]), int(lab[1]), int(lab[2])))
+        sys.stdout.write(payload)
+        sys.stdout.write("\n")
+
+        seq += 1
+        del jpg, payload
+        if (seq & 0x0F) == 0:
+            gc.collect()
+
+    print("#D {\"frames\":%d}" % seq)
+
+
+def _json_str(s):
+    """Minimal JSON string escaping -- ujson is not worth the import here."""
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') \
+                       .replace("\n", " ").replace("\r", " ") + '"'
+
+
+def _json_list(items):
+    return "[" + ",".join(_json_str(i) for i in items) + "]"
+
+
+main()

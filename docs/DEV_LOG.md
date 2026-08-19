@@ -17,6 +17,66 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 (late) — S24 OPENED: OpenMV N6 CV baseline — headless live detection stream + first measured sweep (no bench hardware touched)
+
+**Branch:** `sprint/24-n6-cv-baseline`. New sprint, Nick's call (D43),
+after a plan review. Runs on the **Mac** over USB; nereus000/001 and the
+AE3 were not involved, so S23 bite R is re-ordered, not displaced.
+
+**Done:**
+- **Reviewed Nick's proposed benchmark plan before writing code** and
+  found half of it already existed: DESIGN §S8's "AE3" table from
+  2026-08-11 was measured on **this N6** (a mis-attribution its own
+  correction records). Confirmed same board/ROM by matching the tells —
+  `yolov8n_192` = 3,233,408 B and 25.6 MB heap. So the new content is
+  capture-in-the-loop, e2e fps, the size sweep and provenance.
+- **Shipped the viewer the OpenMV IDE can't provide** (no IDE build
+  runs on macOS 14.6.1): `bench/n6_stream_board.py` (runs under
+  `mpremote run` — **nothing written to the board**) +
+  `bench/n6_stream_host.py` (decodes, serves multipart MJPEG on the
+  `pi/stream/stream_server.py` pattern) + **19 host tests**.
+  Base64 payload rather than the project's framed-binary format,
+  deliberately: `mpremote run` returns stdout through the raw REPL,
+  which ends on byte `0x04`, and JPEGs contain `0x04`.
+- `--tune` mode draws a centre target and reports its mean LAB with a
+  suggested `--blob-thresh`, so a colour threshold is read off a real
+  object under real light rather than guessed from a colour name.
+- **Measured** (full tables in DESIGN §S24 detail): yolov8n_192
+  **20.7 / 23.7 / 32.2 ms** mean at QVGA/VGA/HD, p95 within 0.5 ms of
+  mean; **capture+inference e2e 47.9 / 41.8 / 30.2 fps**; all 9 ROM
+  models timed (3.5 → 65.3 ms). Live stream 22.6 fps at VGA with the
+  blob overlay on.
+
+**Broke/surprised us:**
+- **The stream ran 324 clean frames with every draw call wrong.** The
+  scene was a ceiling — zero detections, zero blobs — so no draw path
+  ever executed. It would have crashed the instant it saw anything to
+  draw. Caught only by forcing a wide-open blob threshold to make the
+  draw path run. Rule 4, in its purest form: the artifacts were real
+  JPEGs, the fps was real, and the code was still broken.
+- **OpenMV v5 changed the drawing API**: `draw_*` take a tuple first
+  arg (`draw_rectangle((x,y,w,h))`), blob fields are attributes
+  (`b.rect`, not `b.rect()`), `get_statistics()` returns a namedtuple
+  (`st.l_mean`), and `Image` has no `bpp()`. Four separate TypeErrors.
+- **The `csi` module's framesize constants are not the sensor's
+  ladder** — `SXGAM`/`WQXGA2` are exported and refused
+  (`Sensor control failed.`). Sensor letterboxes to 16:10 everywhere:
+  VGA is **640×400**.
+- Model load is ~2.2 ms — the tflite is memory-mapped from ROM, not
+  copied. It is not a cost.
+- `os.uname()` does not carry the OpenMV build (only MicroPython
+  `1.28.0`); `sys.version` does. The S7 lesson, re-confirmed.
+
+**Next:** Nick points the camera at the four purple balls, reads a
+threshold off `--tune`, and confirms the overlay tracks them (bite 1's
+demo). Then bite 2 — the N6-vs-AE3 tiled-coverage comparison, carrying
+the model-variant confound explicitly.
+
+**Bench state:** untouched. The N6's `/flash/main.py` is still its stock
+LED blinker; no firmware written; no ADIN, no Pi, no AE3 contact.
+
+---
+
 ## 2026-08-19 (evening) — S23 GOLD: the "13 ms invariant" NAMED — it is the serialized HE round-trip (HE only ~41% utilized); VGA 12.15 -> 12.53 CLEAN; the "attach-refusal anomaly" mostly EXPLAINED (uhubctl never cuts VBUS on Pi 5 -- no cold boot ever happened)
 
 **Branch:** `claude/vga-color-15fps-encoder-7bf32c`. Two instrumented
