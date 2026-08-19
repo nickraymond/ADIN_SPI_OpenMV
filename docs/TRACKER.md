@@ -12,8 +12,10 @@ wall-time counters; firmware levers = CSI pixclk 24 MHz, Huffman MVE).
 CLEAN ledger-exact. Bench: attach-refusal struck twice more; recovery
 proven = uhubctl cycle + ≥5 min ZERO contact + one demo_up. Deployed:
 bridge `79c9ab4f…` + codec `ebcfb87d…`, MEAS_FPS 12.23/3.62. VGA-15
-NOT closed — Nick's call: instrument the 13 ms vs firmware levers vs
-call 12.3 the MicroPython-path ceiling. Previous:*
+NOT closed — Nick's call: GOLD CONTINUES (the ~13 ms hunt, kickoff
+prompt = PROMPTS.md §7). **PR for the whole relay+GOLD arc OPEN for
+Nick's review; interim-state PR, sprint stays open behind GOLD +
+bite 3.** Previous:*
 *2026-08-19 latest (**S23 drain fast path SHIPPED —
 VGA color 12.30 fps / HD mono 3.37, 60 s rows CLEAN ledger-exact
 (738×20, 202×55); sprint ladder 7.41→…→10.73→12.30.** Zero-alloc
