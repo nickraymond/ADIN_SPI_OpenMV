@@ -50,14 +50,36 @@ if ps -eo args | grep "bm_sbc_s15/build/all" | grep -vq grep; then
   fail "a bm_sbc app is running on this Pi — Ctrl-C it first"
 fi
 
+# Every board touch goes through mpr. A lost attach race (the bridge
+# launcher won the boot and holds the VCP with kbd_intr off) can make
+# mpremote hang FOREVER, not just fail — measured 2026-08-19: two
+# demo_up runs hung ~10 h at one sha-check. The recovery is the proven
+# recipe: the timed-out attach's own bytes armed the bridge's 30 s
+# quiet-exit, so wait it out untouched and retry ONCE. Two timeouts on
+# one step = a genuinely sick board -> fail loudly, hands off.
+MPR_T_DEFAULT=30
+mpr() {
+  local t="${MPR_T:-$MPR_T_DEFAULT}" rc=0
+  timeout "$t" mpremote connect "$P" "$@" || rc=$?
+  if (( rc == 124 )); then
+    echo "attach timed out (bridge won the boot race) — 45 s untouched, one retry" >&2
+    sleep 45
+    rc=0
+    timeout "$t" mpremote connect "$P" "$@" || rc=$?
+    (( rc == 124 )) && fail "board attach timed out twice — recovery: sudo uhubctl -l 3 -p 1 -a cycle -d 3, then 5 min of zero port contact"
+  fi
+  return $rc
+}
+
 # If a previous bridge is still alive, mpremote can't attach; the fix is
-# 30+ s of zero port contact (its quiet-exit), so don't retry in a loop.
-if ! mpremote connect "$P" exec "print(1)" >/dev/null 2>&1; then
+# 30+ s of zero port contact (its quiet-exit), so don't retry in a loop
+# (mpr already carries the one sanctioned retry).
+if ! mpr exec "print(1)" >/dev/null 2>&1; then
   fail "board busy (bridge still running?) — wait 40 s untouched, run again"
 fi
 
 # Board must carry the staged S17 files (bm_he.elf etc. stay resident).
-mpremote connect "$P" exec '
+mpr exec '
 import os
 need = ("bm_he.elf", "bm_bridge.py", "uart_codec.py")
 have = set(os.listdir("/flash"))
@@ -73,7 +95,7 @@ print("MISSING:" + ",".join(missing) if missing else "staged-files-ok")
 mkdir -p "$HOME/bridge_traces"
 STAMP=$(date +%Y%m%dT%H%M%S)
 for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt; do
-  mpremote connect "$P" cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
+  mpr cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
     >/dev/null 2>&1 || true
 done
 echo "bridge traces preserved to ~/bridge_traces/${STAMP}_*"
@@ -82,7 +104,7 @@ echo "bridge traces preserved to ~/bridge_traces/${STAMP}_*"
 # the 20 s REINIT_MIN_QUIET_MS build finally deploys — B2 left the 6 s
 # build on the board). sha16 compare, copy only on mismatch, re-verify.
 board_sha() {
-  mpremote connect "$P" exec \
+  mpr exec \
     "import hashlib; h=hashlib.sha256(); h.update(open('/flash/$1','rb').read()); print(h.digest().hex()[:16])" \
     2>/dev/null || echo "missing"
 }
@@ -90,7 +112,7 @@ for f in bm_bridge.py uart_codec.py; do
   WANT=$(sha256sum "$REPO/firmware/bm_bridge/$f" | cut -c1-16)
   GOT=$(board_sha "$f")
   if [[ "$GOT" != *"$WANT"* ]]; then
-    mpremote connect "$P" cp "$REPO/firmware/bm_bridge/$f" ":/flash/$f" >/dev/null
+    MPR_T=90 mpr cp "$REPO/firmware/bm_bridge/$f" ":/flash/$f" >/dev/null
     GOT=$(board_sha "$f")
     [[ "$GOT" == *"$WANT"* ]] || fail "$f sha $GOT != $WANT after copy"
     echo "$f SYNCED to /flash ($WANT)"
@@ -108,7 +130,7 @@ JPG_SET="ref_color_320x200.jpg ref_mono_320x200.jpg ref_color_640x400.jpg ref_mo
 [[ -d "$ASSETS" ]] || fail "$ASSETS missing — repo checkout stale?"
 
 board_inventory() {
-  mpremote connect "$P" exec '
+  mpr exec '
 import os
 try:
     os.mkdir("/flash/ref_scene")
@@ -142,7 +164,7 @@ done
 for f in $RAW_SET $JPG_SET; do
   if [[ -n "${HAVE[$f]:-}" && "${HAVE[$f]}" != "${LOCAL[$f]}" ]]; then
     echo "ref_scene/$f wrong size (${HAVE[$f]} != ${LOCAL[$f]}) — removing"
-    mpremote connect "$P" fs rm ":/flash/ref_scene/$f" >/dev/null
+    mpr fs rm ":/flash/ref_scene/$f" >/dev/null
     unset "HAVE[$f]"
   fi
 done
@@ -170,7 +192,7 @@ fi
 COPIED=0
 for f in $PICK_SET; do
   if [[ -z "${HAVE[$f]:-}" ]]; then
-    mpremote connect "$P" cp "$ASSETS/$f" ":/flash/ref_scene/$f" >/dev/null
+    MPR_T=300 mpr cp "$ASSETS/$f" ":/flash/ref_scene/$f" >/dev/null
     COPIED=$((COPIED + 1))
   fi
 done
@@ -192,7 +214,7 @@ echo "ref scene staged: $PICK_NAME ($COPIED copied)"
 
 # Scene key written EVERY run (default sensor) so ref mode cannot leak
 # into the next session. Merge, don't clobber — cfg carries one-shots too.
-GOT=$(mpremote connect "$P" exec "
+GOT=$(mpr exec "
 import json
 try:
     cfg = json.load(open('/flash/bridge_cfg.json'))
@@ -204,14 +226,14 @@ print('cfg-scene-ok:' + cfg['scene'])")
 [[ "$GOT" == *"cfg-scene-ok:$SCENE"* ]] || fail "bridge_cfg scene write failed: $GOT"
 echo "bridge scene: $SCENE"
 
-mpremote connect "$P" cp "$LAUNCHER" :/flash/main.py >/dev/null
+mpr cp "$LAUNCHER" :/flash/main.py >/dev/null
 
-GOT=$(mpremote connect "$P" exec \
+GOT=$(mpr exec \
   'import hashlib; h=hashlib.sha256(); h.update(open("/flash/main.py","rb").read()); print(h.digest().hex()[:16])')
 [[ "$GOT" == *"$WANT_MAIN"* ]] || fail "main.py sha $GOT != $WANT_MAIN after copy"
 echo "bridge launcher staged (sha $WANT_MAIN)"
 
-mpremote connect "$P" reset >/dev/null 2>&1 || true
+mpr reset >/dev/null 2>&1 || true
 
 # by-id settle: absent -> present -> hold (bench-earned dance).
 for _ in $(seq 1 20); do [[ -e "$P" ]] || break; sleep 0.5; done
