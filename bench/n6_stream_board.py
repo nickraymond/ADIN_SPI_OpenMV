@@ -163,11 +163,17 @@ def main():
         model, has_pp = make_model(MODEL, THRESHOLD)
         labels = load_labels(MODEL)
 
-    # One banner line the host echoes verbatim -- provenance for the results table.
+    # One banner line the host echoes verbatim -- provenance for the results
+    # table. `board` is NOT decoration: with an N6 and an AE3 both on USB, a
+    # table attributed to the wrong board is the exact failure this project
+    # has already shipped once (DESIGN "S8 detail CORRECTION"). Every row
+    # should carry the board that produced it.
+    import os
     img = csi0.snapshot()
-    print("#I {\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,\"model\":\"%s\","
-          "\"labels\":%s,\"quality\":%d,\"heap\":%d}"
-          % (_json_str(sys.version), FRAMESIZE, img.width(), img.height(),
+    print("#I {\"board\":%s,\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,"
+          "\"model\":\"%s\",\"labels\":%s,\"quality\":%d,\"heap\":%d}"
+          % (_json_str(os.uname().machine), _json_str(sys.version),
+             FRAMESIZE, img.width(), img.height(),
              MODEL if DETECT else "", _json_list(labels), QUALITY, gc.mem_free()))
 
     seq = 0

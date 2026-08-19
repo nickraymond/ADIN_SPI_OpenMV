@@ -44,16 +44,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BOARD_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "n6_stream_board.py")
 
-_PAGE = """<!doctype html><html><head><title>OpenMV N6 &mdash; live detection</title>
+_PAGE = """<!doctype html><html><head><title>OpenMV &mdash; live detection</title>
 <style>body{margin:0;background:#111;color:#ddd;font-family:ui-monospace,monospace;
 text-align:center}img{max-width:100%;image-rendering:pixelated}
 #s{color:#8c8;white-space:pre-wrap;font-size:13px}h3{margin:8px;font-weight:600}</style>
 </head><body>
-<h3>OpenMV N6 &mdash; yolov8n_192 + colour blobs</h3>
+<h3 id="h">OpenMV &mdash; live detection</h3>
 <div id="b"></div>
 <img src="/stream"/>
 <pre id="s">connecting&hellip;</pre>
 <script>setInterval(async()=>{try{const r=await fetch('/stats.json');const j=await r.json();
+// Name the board on screen: with two OpenMV boards on USB, an unlabelled
+// reading is how a table gets attributed to the wrong silicon.
+if(j.board) document.getElementById('h').textContent = j.board;
 // A frozen stream and a motionless scene look identical. Say which it is.
 const dead = j.stale_s === null || j.stale_s > 3;
 const b=document.getElementById('b');
@@ -121,6 +124,7 @@ class Stats:
         self.det = 0
         self.blobs = 0
         self.info = ""
+        self.board = ""    # e.g. "OpenMV N6 with STM32N657X0"
         self.junk = []
         self.lab = None
         self.resyncs = 0        # frames dropped to a framing/length fault
@@ -163,6 +167,7 @@ class Stats:
             "resyncs": self.resyncs,
             "reconnects": self.reconnects,
             "status": self.status,
+            "board": self.board,
             # Seconds since the last frame. The viewer keeps showing the last
             # good JPEG when the board goes away, so the page MUST be able to
             # tell a live stream from a frozen one -- a still scene and a dead
@@ -236,6 +241,10 @@ def reader_loop(out, latest, stats, state):
             stats.note(hdr, len(jpg))
         elif line.startswith(b"#I "):
             stats.info = line[3:].decode("utf-8", "replace")
+            try:
+                stats.board = json.loads(stats.info).get("board", "")
+            except ValueError:
+                stats.board = ""
             print("board: %s" % stats.info, flush=True)
         elif line.startswith(b"#D "):
             print("board: stream done %s" % line[3:].decode("utf-8", "replace"),
