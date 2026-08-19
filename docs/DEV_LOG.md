@@ -17,6 +17,68 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 (later) — Sprint S23 GOLD arc: VGA plateaus at 12.2–12.3 across five falsified levers (an invariant ~13 ms/frame is the open question); HD mono climbs 3.37→3.62; two more bench incidents, recovery recipe nailed
+
+**Branch:** `sprint/23-encoder-fastpath`. Nick's directive: "keep the
+improvements coming till we get 15fps or better on VGA."
+
+**Shipped this arc (each measured on 60 s CLEAN ledger-exact rows):**
+- **Non-blocking capture machinery** (`csi.snapshot(blocking=False)` —
+  the csi module has it; D21's "cannot overlap" was about the dead SPI
+  path): collect-on-poll, kick-after-encode, quiesce before every
+  sensor touch (suite 328→336). VGA 12.10 (flat), HD 3.43 (+).
+- **fb=2 double-buffering**: measured **SLOWER — VGA 11.47.** S3's old
+  verdict reproduces on the sticky-fb stack for a new reason: the
+  continuous capture DMA contends with the MVE encoder for memory
+  bandwidth. REVERTED; finding recorded in the code.
+- **Ref-stream framerate cap** (dark-bench exposure theory — the
+  PAG7936 driver clamps AE max exposure to frame time): cap 60
+  ENGAGED per trace and measured flat (12.00); raised to 120, still
+  flat. Exposure was NOT the wait.
+- **Fused one-pass COBS+CRC viper encoder** (`frame_encode_fused`,
+  goldens incl. 0xFF-code boundaries; codec suite 38→49): per-message
+  relay enc **676→499 µs on the wire** — and VGA cycle unchanged.
+- **Early capture kick** (ref streams kick at collect since the frame
+  is discarded; sensor streams copy to a shadow buffer wrapped by
+  `image.Image(buffer=)` so bench and deployment keep the same
+  pipeline shape; suite 341): VGA 12.23 (flat), HD 3.57–3.62.
+
+**The open question, precisely:** VGA cycle ≈ 81.7 ms = enc ~50 +
+asm ~3 + send ~15 + **~13 ms that survives every lever** (not send —
+fused encoder moved the wire cost, not the cycle; not exposure — caps
+engaged and did nothing; not capture-arm timing — early kick did
+nothing; capture itself is CPI-pixclk-bound ~21 ms/VGA frame at the
+24 MHz OMV_CSI_CLK_FREQUENCY but the kick should hide it under the
+49 ms encode). Next instrument: per-frame kick→collect wall-time and
+poll-gap counters in the engine — measure, don't model. Firmware-side
+levers if the 13 ms is real capture: raise CSI pixclk (board config,
+flash spin); encoder-side: Huffman/bitstream is the remaining scalar
+stage. HD keeps gaining from every send-path lever because its send
+(~90 ms) dwarfs capture: **3.15 → 3.62 across the arc.**
+
+**Bench incidents #2 and #3 (same signature as #1):** attach-refusal
+after clean bridge exits; incident #3 survived one uhubctl cycle
+because the first touch came too soon. **Recovery recipe now proven
+twice: `sudo uhubctl -l 3 -p 1 -a cycle -d 3`, then ≥5 minutes of
+ZERO port contact, then one demo_up.** The silence is load-bearing.
+Three boot-state anomalies in one day on fw `1e56071e…`/ELF
+`39717d44…` — bite 3's soaks must watch for this; if it recurs,
+instrument the SHM-128K/MPU neighborhood on cold boots.
+
+**Bench state:** chain UP under units, scene=ref, health-proven
+(capture landed, gaps=0). Deployed: bridge `79c9ab4f…` + codec
+`ebcfb87d…` (fast path + fusion + early kick + cap 120), fw/ELF
+unchanged. MEAS_FPS: VGA 12.23 / HD mono 3.62 (deployed-config
+numbers, bench_web 81). All commits pushed.
+
+**Next:** the ~13 ms hunt (capture-wait counters, fresh session) →
+Nick's call on firmware levers (CSI pixclk / Huffman MVE) vs calling
+12.3 the MicroPython-path ceiling → bite 3 re-measure + guardrails +
+PR. VGA-15 is NOT closed; HD-mono-5 needs the HE round trip cut
+(ept-block ~62 ms/frame at HD) — HE-side batching or the C path.
+
+---
+
 ## 2026-08-19 — Sprint S23 — relay regression resolved-as-explained (clean-boot HD 3.15×2, above stock) + drain fast path shipped: VGA color 12.30, HD mono 3.37, ledger-exact
 
 **Branch:** `sprint/23-encoder-fastpath` (ff'd to main @ e3bc81e; PR #42

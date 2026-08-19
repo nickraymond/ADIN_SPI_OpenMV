@@ -640,14 +640,14 @@ class TestPage(unittest.TestCase):
         # the S22 wrap-fix ceilings (2026-08-18, 10-min soaks + ceiling
         # rows on the fixed HE, receiver-ledger exact)
         self.assertIn("28.23", block)
-        # VGA color 12.30 = the S23 drain fast path (ladder 7.41 ->
-        # 7.93 -> 9.03 -> 9.50 -> 10.73 -> 12.30, all ledger-exact).
-        self.assertIn("12.30", block)
+        # VGA color 12.23 = the deployed S23 GOLD-arc stack (ladder
+        # 7.41 -> ... -> 10.73 -> 12.2-12.3 plateau, ledger-exact).
+        self.assertIn("12.23", block)
         self.assertIn("30.30", block)
         self.assertIn("13.27", block)
-        # HD mono 3.37 = same fast-path session (2.72 was a boot-state
-        # anomaly; clean-boot floor 3.15, above the 3.10 stock baseline).
-        self.assertIn("3.37", block)
+        # HD mono 3.62 = best of the GOLD-arc rows (3.15 clean-boot
+        # floor -> 3.62 via kick overlap + fused encoder).
+        self.assertIn("3.62", block)
 
     def test_the_label_comes_from_the_model_not_a_constant(self):
         # Provenance rides the model (m.src), so a measured mode and an

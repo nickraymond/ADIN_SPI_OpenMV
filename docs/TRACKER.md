@@ -1,7 +1,20 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-19 latest (**S23 drain fast path SHIPPED —
+*Last updated: 2026-08-19 latest+1 (**S23 GOLD arc: VGA color
+PLATEAUS at 12.2–12.3 — five levers measured, four falsified** (fb=2
+SLOWER at 11.47 = capture-DMA/encoder contention; exposure caps
+engaged+flat; fused one-pass COBS+CRC viper cut wire cost 676→499
+µs/msg with cycle unchanged; early capture kick flat at VGA) — **an
+invariant ~13 ms/frame is the open question** (next: kick→collect
+wall-time counters; firmware levers = CSI pixclk 24 MHz, Huffman MVE).
+**HD mono climbed 3.15→3.62** from the same send-path levers, all rows
+CLEAN ledger-exact. Bench: attach-refusal struck twice more; recovery
+proven = uhubctl cycle + ≥5 min ZERO contact + one demo_up. Deployed:
+bridge `79c9ab4f…` + codec `ebcfb87d…`, MEAS_FPS 12.23/3.62. VGA-15
+NOT closed — Nick's call: instrument the 13 ms vs firmware levers vs
+call 12.3 the MicroPython-path ceiling. Previous:*
+*2026-08-19 latest (**S23 drain fast path SHIPPED —
 VGA color 12.30 fps / HD mono 3.37, 60 s rows CLEAN ledger-exact
 (738×20, 202×55); sprint ladder 7.41→…→10.73→12.30.** Zero-alloc
 relay (`he_frame_wire` + memoryview encode; suite 328) after the
