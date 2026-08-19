@@ -929,6 +929,34 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+**Live stream at each capture size (measured 2026-08-19, `--framesize`).**
+The sweep table above prices capture+inference only; these rows are the
+whole delivered pipeline including overlay, JPEG, base64 and USB:
+
+| stream config | delivered fps | inference ms | blob ms | encode ms |
+|---|---|---|---|---|
+| VGA + blob overlay | ~19 | 23.5 | 11.0 | 3.9 |
+| **HD, no blob overlay** | **15.9** | 35.2 | — | 15.9 |
+| HD + blob overlay (150 px floor) | 6.6 | 32.3 | 87.0 | 16.1 |
+| HD + blob overlay (600 px floor) | 7.1 | 35.3 | 76.4 | 16.1 |
+
+All rows zero resyncs. **HD streams fine; the blob overlay is what costs
+it.** `find_blobs` scans every pixel, so it grows ~7–8× from VGA to HD
+(11 → 76–87 ms) and becomes the single largest term in the frame — more
+than twice inference. Raising the pixel floor 4× (the right scaling,
+since an object covers 4× the pixels at HD) only recovers ~11 ms,
+which locates the cost in the **per-pixel threshold scan, not in blob
+merging** — so there is no threshold that makes HD blobs cheap.
+
+**The important asymmetry: HD helps the blob detector and does nothing
+for the NPU.** `predict()` resizes every frame to the model's 192×192
+input regardless of capture size, so a distant object lands on the same
+number of model pixels at HD as at VGA (HD costs 12 ms more purely in
+preprocessing). The blob path, by contrast, works on the full-resolution
+frame and gets 4× the pixels on target. So HD is the right choice when
+the goal is segmenting small or distant coloured objects, and pointless
+when the goal is feeding the detector.
+
 **Bench observations from Nick's live demo (2026-08-19).** Measured by
 Nick at the bench during bite 1's demo, recorded here as his readings:
 

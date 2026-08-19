@@ -1885,6 +1885,14 @@ unowned side quest.
       Live stream measured **22.6 fps at VGA** with the purple-blob
       overlay on, the delta being JPEG encode (3.8 ms), blob search
       (10.6 ms) and the base64/serial hop.
+      **HD streams too** (Nick asked, 2026-08-19): **15.9 fps with the
+      NPU only**, or **6.6–7.1 fps with the blob overlay** — `find_blobs`
+      scans every pixel and grows 11 → 76–87 ms from VGA to HD, becoming
+      the largest term in the frame. Raising the pixel floor 4× recovers
+      only ~11 ms, locating the cost in the per-pixel scan rather than
+      blob merging. **HD helps the blob path (4× pixels on target) and
+      does nothing for the NPU, which resizes to 192×192 regardless** —
+      so pick HD for small/distant coloured objects, VGA for framerate.
       **A latent bug worth recording:** the first stream ran clean for
       324 frames while every draw call was wrong, because the scene had
       zero detections and zero blobs so no draw path ever executed. It
