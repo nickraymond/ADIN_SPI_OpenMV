@@ -920,9 +920,13 @@ _ref_stream["mode"] = CAMERA_MODE_STREAM
 eng.command(dict(_ref_stream))
 _fc4.script = [_FakeImg(b"live")]
 out = eng.poll(1150)
-check(out == b"jpeg-of-ref_color_320x200.bmp" and _fc4.nb_calls == 2
-      and eng.cap_pending,
-      "early kick: ref stream kicks at collect, encodes the ref")
+check(out == b"jpeg-of-ref_color_320x200.bmp" and _fc4.nb_calls == 0
+      and _fc4.blocking_calls == 0 and not eng.cap_pending,
+      "ref stream bypass: encodes the ref with ZERO sensor contact "
+      "(park=729 falsified the early kick, 2026-08-19)")
+check(eng.cstats["frames"] == 1 and eng.cstats["park"] == 0
+      and eng.cstats["kick_us"] == 0,
+      "ref stream bypass: cycle counted, no kick/park bookkeeping")
 # Sensor-mode stream WITHOUT a usable shadow (fake image module cannot
 # build one; fake frames are the wrong size anyway): the guard falls
 # back to the post-encode kick instead of encoding a torn frame.
@@ -970,22 +974,23 @@ del _FakeSensor._csi
 
 # -- S23 GOLD capwait counters: name the invariant ~13 ms ----------------
 # The clock is _FakeTime._t (ms); ticks_us reads _t*1000, so advancing _t
-# advances both clocks and every duration below is exact.
+# advances both clocks and every duration below is exact. SENSOR-mode
+# stream: ref streams bypass the sensor entirely (tested above), so the
+# csi collect/kick paths live here now.
 _fc6 = _FakeCsi()
 _FakeSensor._csi = _fc6
-_FakeImageMod.available = ("ref_color_320x200.bmp",)
-eng = bm_bridge.CaptureEngine(scene="ref")
+eng = bm_bridge.CaptureEngine()
 eng.booted = True
 eng.sensor_ok = True
 eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
 _FakeTime._t = 1000
-eng.command(dict(_ref_stream))          # t_start=1000, interval=100 ms
+eng.command(dict(_stream_cmd))          # t_start=1000, interval=100 ms
 check(eng.cstats["frames"] == 0 and eng.cstats["cw_polls"] == 0,
       "capwait: command() resets the ledger")
 
 # Frame 1: two misses 3 ms apart, then the collect lands 10 ms after the
 # first attempt -- cw books the wait, the gap lands in the 2-4 ms bucket.
-_fc6.script = [None, None, _FakeImg(b"live")]
+_fc6.script = [None, None, _FakeImg(b"live"), None]  # + post-encode kick
 _FakeTime._t = 1150
 check(eng.poll(1150) is None, "capwait: first miss opens the cw window")
 _FakeTime._t = 1153
@@ -993,7 +998,7 @@ check(eng.poll(1153) is None, "capwait: second miss buckets its gap")
 _FakeTime._t = 1160
 out = eng.poll(1160)
 cs = eng.cstats
-check(out == b"jpeg-of-ref_color_320x200.bmp", "capwait: frame 1 lands")
+check(out == b"jpeg-of-live", "capwait: frame 1 lands")
 check(cs["cw_sum_us"] == 10000 and cs["cw_frames"] == 1
       and cs["cw_max_us"] == 10000,
       "capwait: cw = first failed attempt -> success (10 ms)")
@@ -1004,12 +1009,12 @@ check(cs["gap_hist"][2] == 1 and sum(cs["gap_hist"]) == 1,
 check(cs["frames"] == 1 and cs["kc_n"] == 0,
       "capwait: no kick preceded frame 1 -- kc stays empty")
 
-# Frame 2: the ref-mode kick armed at frame 1's collect (t=1160); the
-# collect at t=1240 succeeds first try -> kc=80 ms, no cw, cyc=80 ms.
-_fc6.script = [_FakeImg(b"live")]
+# Frame 2: the post-encode kick armed at frame 1 (t=1160); the collect
+# at t=1240 succeeds first try -> kc=80 ms, no cw, cyc=80 ms.
+_fc6.script = [_FakeImg(b"live"), None]
 _FakeTime._t = 1240
 out = eng.poll(1240)
-check(out == b"jpeg-of-ref_color_320x200.bmp", "capwait: frame 2 lands")
+check(out == b"jpeg-of-live", "capwait: frame 2 lands")
 check(cs["kc_n"] == 1 and cs["kc_sum_us"] == 80000
       and cs["kc_min_us"] == 80000 and cs["kc_max_us"] == 80000,
       "capwait: kc = kick -> image-in-hand (80 ms)")
@@ -1017,6 +1022,14 @@ check(cs["cw_frames"] == 1 and cs["cw_sum_us"] == 10000,
       "capwait: an instant collect adds NO cw")
 check(cs["cyc_sum_us"] == 80000 and cs["cyc_hist"][3] == 1,
       "capwait: cycle = collect-to-collect, 80 ms in the 80-90 bucket")
+
+# out_us: frame-return -> next poll entry (the untimed loop residue).
+# out_us accumulates frame-return -> next poll entry: the fake harness
+# polled at 1240 (frame 2, gap 80 ms after frame 1's return) and now at
+# 1245 (5 ms after frame 2's return) = 85 ms booked.
+_FakeTime._t = 1245
+check(eng.poll(1245) is None and cs["out_us"] == 85000,
+      "capwait: out_us books the between-frames residue")
 
 # Frame 3: the kick completes instantly -> parked, kc books ZERO (the
 # whole encode+send window must not masquerade as capture latency).
@@ -1037,19 +1050,83 @@ check(cs["frames"] == 4 and cs["cyc_sum_us"] == 80000 + 100000 + 80000,
 # enc_qin: rpmsg arrivals during to_jpeg (scheduled-callback proxy).
 _qvals = [0, 3]                       # before-encode, after-encode
 eng.q_probe = lambda: _qvals.pop(0)
-_fc6.script = [_FakeImg(b"live")]
+_fc6.script = [_FakeImg(b"live"), None]
 _FakeTime._t = 1550
 eng.poll(1550)
 check(cs["enc_qin"] == 3,
       "capwait: queue growth across the encode lands in enc_qin")
 eng.q_probe = None
 
+# kick_us: a csi whose snapshot costs 2 ms shows up in the kick meter.
+class _SlowKickCsi(_FakeCsi):
+    def snapshot(self, blocking=True):
+        _FakeTime._t += 2
+        return _FakeCsi.snapshot(self, blocking)
+
+_fc6b = _SlowKickCsi()
+_FakeSensor._csi = _fc6b
+eng2 = bm_bridge.CaptureEngine()
+eng2.booted = True
+eng2.sensor_ok = True
+eng2.cur_res, eng2.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng2._nb = None                       # re-probe: pick up _fc6b
+_FakeTime._t = 3000
+eng2.command(dict(_stream_cmd))
+_fc6b.script = [_FakeImg(b"live"), None]
+_FakeTime._t = 3150
+eng2.poll(3150)
+check(eng2.cstats["kick_us"] == 2000 and eng2.cstats["kick_max_us"] == 2000,
+      "capwait: kick cost is metered (2 ms fake snapshot)")
+
 # A new command starts a fresh ledger.
 _FakeTime._t = 2000
-eng.command(dict(_ref_stream))
+eng.command(dict(_stream_cmd))
 check(eng.cstats["frames"] == 0 and eng.cstats["kc_n"] == 0
-      and sum(eng.cstats["cyc_hist"]) == 0,
+      and sum(eng.cstats["cyc_hist"]) == 0 and eng.cstats["out_us"] == 0,
       "capwait: next command resets every counter")
+
+# -- S23 GOLD round 2: HeWire RX ring + recycling pool -------------------
+hw = bm_bridge.HeWire()
+hw._rx(0, b"\x01" * 100)
+check(hw.count == 1 and len(hw._free) == 0, "ring: warmup alloc, no free yet")
+check(bytes(hw.peek()) == b"\x01" * 100, "ring: peek returns the payload")
+hw.advance()
+check(hw.count == 0 and len(hw._free) == 1
+      and len(hw._free[0]) == bm_bridge.RPMSG_SLOT_B,
+      "ring: advance recycles a full-size slot")
+hw._rx(0, b"\x02" * 50)
+check(len(hw._free) == 0 and bytes(hw.peek()) == b"\x02" * 50,
+      "ring: recycled slot reused, new length honoured")
+hw.advance()
+for i in range(bm_bridge.RPMSG_QUEUE_CAP):
+    hw._rx(0, bytes([i & 0xFF]) * 4)
+check(hw.count == bm_bridge.RPMSG_QUEUE_CAP, "ring: fills to cap")
+hw._rx(0, b"overflow")
+check(hw.q_drops == 1 and hw.count == bm_bridge.RPMSG_QUEUE_CAP,
+      "ring: cap overflow drops, count unchanged")
+check(bytes(hw.peek()) == b"\x00" * 4, "ring: FIFO order across the ring")
+while hw.count:
+    hw.advance()
+check(len(hw._free) == bm_bridge.RPMSG_POOL_MAX,
+      "ring: pool growth capped at RPMSG_POOL_MAX")
+hw2 = bm_bridge.HeWire()
+_big = b"\x03" * (bm_bridge.RPMSG_SLOT_B + 8)
+hw2._rx(0, _big)
+check(bytes(hw2.peek()) == _big, "ring: oversize spill preserved intact")
+hw2.advance()
+check(len(hw2._free) == 0, "ring: oversize buffer never enters the pool")
+# The pump's contract: he_frame_wire accepts a peeked memoryview.
+core_mv = BridgeCore()
+_l2 = b"\xaa" * 60
+_msg = struct.pack("<BBH", WCMD_FRAME_TX, 7, len(_l2)) + _l2
+hw3 = bm_bridge.HeWire()
+hw3._rx(0, _msg)
+_wire_mv = core_mv.he_frame_wire(hw3.peek())
+hw3.advance()
+_ref_wire = core_mv2 = BridgeCore()
+_wire_b = core_mv2.he_frame_wire(_msg)
+check(_wire_mv is not None and bytes(_wire_mv) == bytes(_wire_b),
+      "ring: he_frame_wire(peek()) byte-identical to bytes input")
 
 del _FakeSensor._csi
 
