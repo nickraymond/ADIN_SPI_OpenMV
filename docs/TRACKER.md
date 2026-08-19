@@ -1,7 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-19 latest+1 (**S23 GOLD arc: VGA color
+*Last updated: 2026-08-19 latest+2 (**S23 GOLD bounded + PIVOT
+ORDERED (Nick): GOLD gets THREE more bench attempts, then the
+attach-refusal/boot-state anomaly becomes the next priority as S23
+bite R (below) — a fresh session tackles it.** The 13 ms hunt's
+instrumentation SHIPPED (capwait counters: kick→collect, poll-gap
+hist, cycle hist, enc_qin; bridge suite 341→359, bridge `44c20573…`
+verified on /flash) but NO measured row yet: the whole bench day went
+to attach-refusal incidents #4a/b/c — the wedge now has a SHAPE
+(§bite R): ~4–6 mpremote attaches after any bridge teardown, refusal
+below python, power-cycle-only cure, six incidents all on fw
+`1e56071e…`/ELF `39717d44…`. demo_up HARDENED en route (mpr
+timeout+armed-exit-retry wrapper, raw-repl-signature retry at every
+step, loud inventory failure; units suite 43 green, errno allowlist
+fix). Execution order now: **GOLD (≤3 attempts) → bite R → bite 3 →
+S21 → S20.** Previous:*
+*2026-08-19 latest+1 (**S23 GOLD arc: VGA color
 PLATEAUS at 12.2–12.3 — five levers measured, four falsified** (fb=2
 SLOWER at 11.47 = capture-DMA/encoder contention; exposure caps
 engaged+flat; fused one-pass COBS+CRC viper cut wire cost 676→499
@@ -1668,11 +1683,37 @@ precedent for repo-carried firmware patches.
       the DCT (bite 1b, −21 ms) and capture/encode overlap (the
       snapshot wait + drain interleave, re-opens D21). Re-planned
       route to 15: DCT → ~12 fps, then overlap → 15+.**
+- [ ] **Bite R — attach-refusal / boot-state anomaly root cause
+      (NEW 2026-08-19, Nick: NEXT PRIORITY after GOLD's three bounded
+      attempts; fresh session, own branch).** Six incidents, all on fw
+      `1e56071e…`/ELF `39717d44…` (the SHM-128K/MPU-patch stack).
+      **Measured shape:** after a bridge lifecycle ends (he.start()
+      … quiet-exit teardown with rp.stop()), the board tolerates ~4–6
+      mpremote attaches, then refuses raw-REPL entry — fast
+      ("could not enter raw repl") or hanging forever — persistently
+      and BELOW python: a Pi reboot does not clear it (Pi 5 never cuts
+      VBUS); only a true power cycle does (uhubctl or physical). Twice
+      the refusal onset was mid-demo_up, ~4–6 execs after a teardown.
+      Incident #2's trace adds: a linked boot that received ZERO VCP
+      bytes for 30 s while bm-light heartbeated, and an HE ring dump
+      that came back EMPTY — CDC-RX stall + unreadable SHM smells like
+      memory-attribute corruption in the USB/rpmsg neighborhood, not
+      an app bug. Ladder (2–3 sessions): (1) reproducer — scripted
+      cold cycle → repeated bridge lifecycles → count
+      attaches-to-wedge; (2) instrument — MPU/cache region config +
+      SHM pool state dumped to flash at boot; on refusal, CDC endpoint
+      state vs HE-ring readability (splits "USB died" from "SHM
+      corrupt"); (3) the convicting bisect — same reproducer on the
+      pre-SHM-128K firmware (`7d4dbf7`+sticky-fb): vanishes → patches
+      0004/0005 cache attributes are the suspect; persists → Alif
+      ROM/TinyUSB territory, mitigate. Ops armor already shipped
+      (demo_up mpr wrapper); bite 3's soaks double as the test bed.
 - [ ] **Bite 3 — re-measure everything and raise the truth.** Full
       ceiling rows + 10-min soaks at the new maxes (`s22_ceiling_rows`
       + new max-rate rows), MEAS_FPS + guardrail envelope re-derived,
       page provenance flipped. **Targets check: VGA color ≥15, HD
-      mono ≥5–6 — the sprint's pass/fail line.**
+      mono ≥5–6 — the sprint's pass/fail line.** *(Sequenced AFTER
+      bite R — Nick 2026-08-19.)*
 **Demo (Nick):** bench page → VGA color q50 stream commanded 15+ fps →
 the pill shows ≥15 delivered, ledger exact · `capture 90 hd mono`-class
 HD mono stream ≥5 fps · the enc-matrix table re-printed on the patched

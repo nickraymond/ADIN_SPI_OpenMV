@@ -17,6 +17,64 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19 (latest) — Sprint S23 GOLD: capwait counters shipped; the bench day went to attach-refusal #4a/b/c — the wedge now has a shape; demo_up hardened; Nick bounds GOLD at 3 attempts then pivot to root cause (bite R)
+
+**Branch:** `claude/vga-color-15fps-encoder-7bf32c`. Nick's gates:
+nibble-1 plan approved, then "keep moving past nibble"; late-day call:
+**three more GOLD attempts, then pivot — root-causing the anomaly
+becomes next priority (TRACKER bite R), fresh session.**
+
+**Done (desk, tested):**
+- **capwait counters** (the name-the-13-ms instrument), bridge-only:
+  per-frame kick→collect (`kc`), first-miss→collect wait (`cw` +
+  polls), poll-gap histogram (loop service granularity), cycle
+  histogram (uniform tax vs gc/callback spikes), `enc_qin` (rpmsg
+  arrivals during to_jpeg — the 42.4 ms desk vs ~50 ms on-chain enc
+  discrepancy suspect). Traced per stream + 30 s snapshots. Suite
+  341→**359**. Bridge `44c20573…` — VERIFIED current on /flash by the
+  morning demo_up before the bench fell over. NO measured row yet.
+- **demo_up hardened into a convergent tool** (three commits): `mpr`
+  wrapper = 30 s timeout on every board touch; on timeout OR the
+  "could not enter raw repl" signature → 45 s untouched (the failed
+  attach itself arms the bridge's 30 s quiet-exit) → ONE retry → loud
+  fail naming the uhubctl recipe. Preflight retries through the
+  armed-exit window; a failed ref-scene inventory now refuses to
+  masquerade as "/flash full (free 0)" (it did, on a healthy board).
+  Units suite 43 green (+ pre-existing `errno` allowlist fix).
+
+**The day's real finding — the wedge has a SHAPE (TRACKER bite R):**
+after a bridge teardown (rp.stop()), the board tolerates ~4–6
+mpremote attaches then refuses raw-REPL entry BELOW python until a
+true power cycle. Incidents #4a (2× demo_up hung ~10 h at the same
+sha-check — one hang held the port overnight), #4b (fast refusals
+through properly-armed windows), #4c (post-physical-replug run got 6
+attaches in, then wedged at the inventory step). Six incidents total,
+all on fw `1e56071e…`/ELF `39717d44…`. The DEV_LOG trigger
+("instrument the SHM-128K/MPU neighborhood") has fired six times over.
+
+**Bench ops en route:** one uhubctl cycle + Nick's physical replug
+(both re-enumerated clean); nereus001 yellow-LED after Nick moved the
+Pis → clean reboot (throttled=0x0, both green); **cross-cable side
+door currently DOWN** ("network unreachable" after the move — reseat
+J-cable on a calm day); Tailscale ssh to n000 flaky-then-fine.
+Attempt-1 bring-up also burned one 10-min phase-1 window on an agent
+timezone bug (bench clock vs Mac clock — timed starts now use bench
+time only).
+
+**Broke/learned:** trusting `rc=0` + tail — the first demo_up hang
+was invisible because the pipeline exit code was the ssh's, not the
+script's (CLAUDE.md rule 4, again); `2>/dev/null` at a call site
+swallowed mpr's fail message AND the xtrace — the silent-death run
+was diagnosed only by logging server-side to a file.
+
+**Next (this session):** attempts 1–3 = power cycle → 90 s → bm-light
+into the fresh phase-1 bridge → bm-telemetry → 60 s `vga-color-15`
+row → read capwait via the units path (no mpremote). On a clean row:
+name the 13 ms, fix what it names (task 3). On three failures: stop,
+leave the bench cold-cycled, hand to the bite R session.
+
+---
+
 ## 2026-08-19 (later) — Sprint S23 GOLD arc: VGA plateaus at 12.2–12.3 across five falsified levers (an invariant ~13 ms/frame is the open question); HD mono climbs 3.37→3.62; two more bench incidents, recovery recipe nailed
 
 **Branch:** `sprint/23-encoder-fastpath`. Nick's directive: "keep the
