@@ -958,6 +958,17 @@ class CaptureEngine:
         self.sent_bytes = 0         # JPEG bytes this stream (rate cap)
         self.enc_us = 0             # encode time this command (matrix column)
         self.enc_frames = 0
+        # S23 capture/encode overlap (re-opens D21 -- that verdict was
+        # about the dead per-byte-polled SPI TX path, not this stack).
+        # The csi module's snapshot(blocking=False) returns None on
+        # WOULD_BLOCK and leaves the one-shot capture ARMED (verified in
+        # ports/alif/omv_csi.c: CAM_CTRL_SNAPSHOT started before the
+        # wait loop), so the sensor exposes/reads out while the main
+        # loop chunk-and-sends the previous JPEG.
+        self._csi = None            # csi handle behind the sensor shim
+        self._nb = None             # None=unprobed, False=fallback, True=on
+        self._img_ready = None      # frame collected early by a kick
+        self.cap_pending = False    # a kicked capture is in flight
 
     def _framesize(self, sensor, res):
         if res == CAMERA_RES_VGA:
@@ -965,6 +976,37 @@ class CaptureEngine:
         if res == CAMERA_RES_HD:
             return sensor.HD
         return sensor.QVGA
+
+    def _nb_handle(self):
+        """The csi object behind the sensor shim, or None -> blocking
+        fallback (old firmware / host fakes without _csi). Probed once;
+        the verdict is traced so a fallback never hides silently."""
+        if self._nb is None:
+            try:
+                import sensor
+                self._csi = getattr(sensor, "_csi", None)
+            except Exception:
+                self._csi = None
+            self._nb = self._csi is not None
+            _trace("camera: non-block capture %s"
+                   % ("ENABLED" if self._nb
+                      else "unavailable -- blocking snapshot fallback"))
+        return self._csi
+
+    def _quiesce(self):
+        """Collect (and discard) any in-flight capture BEFORE the sensor
+        is touched. A geometry/format change with the CSI DMA mid-frame
+        is the S18 hazard class; every re-init must enter with the
+        capture pipeline idle so the B2 model stays intact."""
+        if not self.cap_pending and self._img_ready is None:
+            return
+        try:
+            if self.cap_pending and self._csi is not None:
+                self._csi.snapshot()        # blocking collect, discarded
+        except Exception as e:
+            _trace("camera: quiesce snapshot failed: %r" % e)
+        self.cap_pending = False
+        self._img_ready = None
 
     def bootstrap(self):
         """Claim the framebuffer CEILING. MUST run before the HE loads.
@@ -1072,6 +1114,8 @@ class CaptureEngine:
         """Apply the planned sensor steps; raises on failure."""
         import sensor
         steps = sensor_steps(self.cur_res, self.cur_pf, res, pf)
+        if steps:
+            self._quiesce()          # never re-init with a capture in flight
         for step in steps:
             if step == "pixformat":
                 sensor.set_pixformat(sensor.GRAYSCALE
@@ -1132,6 +1176,7 @@ class CaptureEngine:
                 _trace("camera: stop (%d frames, %d B this stream)"
                        % (self.slots, self.sent_bytes))
             self.mode = CAMERA_MODE_STOP
+            self._quiesce()          # don't leave a kicked capture behind
             return
         res = cmd.get("res", CAP_DEFAULT_RES)
         pf = cmd.get("pf", CAP_DEFAULT_PF)
@@ -1201,7 +1246,22 @@ class CaptureEngine:
             if self.rate_bps and self.sent_bytes * 8000 > self.rate_bps * el:
                 return None          # over the byte budget, skip the slot
         import sensor
-        img = sensor.snapshot()      # ref mode still pays the capture cost
+        csi = self._nb_handle()
+        if csi is None:
+            img = sensor.snapshot()  # ref mode still pays the capture cost
+        elif self._img_ready is not None:
+            img = self._img_ready    # a kick completed before we returned
+            self._img_ready = None
+            self.cap_pending = False
+        else:
+            # Collect the kicked capture -- or, first frame of a stream,
+            # arm one. None = WOULD_BLOCK: the capture runs in hardware
+            # while the main loop keeps draining; poll again next pass.
+            img = csi.snapshot(blocking=False)
+            if img is None:
+                self.cap_pending = True
+                return None
+            self.cap_pending = False
         if self.scene == "ref":
             if self.ref_img is None:
                 return None          # command() refused; belt and braces
@@ -1223,6 +1283,19 @@ class CaptureEngine:
             self.mode = CAMERA_MODE_STOP
             _trace("camera: single enc %d us, %d B, q=%d"
                    % (self.enc_us, len(b), self.q))
+        elif csi is not None:
+            # The overlap: kick the NEXT capture now (copy=True above
+            # freed the fb) so exposure/readout runs under the send of
+            # THIS jpeg. A rare instantly-complete frame is kept for the
+            # next poll, never dropped. Frame latency grows by up to one
+            # pacing slot (image taken earlier than encoded) -- fine for
+            # this product, stated here rather than hidden.
+            k = csi.snapshot(blocking=False)
+            if k is not None:
+                self._img_ready = k      # complete already: nothing in flight
+                self.cap_pending = False
+            else:
+                self.cap_pending = True
         return b
 
 

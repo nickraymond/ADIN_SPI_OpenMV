@@ -818,6 +818,92 @@ check("set_pixformat" in _sensor_calls and "set_framesize" in _sensor_calls,
 for _n, _o in _orig_sensor.items():
     setattr(_FakeSensor, _n, staticmethod(_o))
 
+# -- S23 capture/encode overlap: the non-block path via sensor._csi ------
+# The engine probes getattr(sensor, "_csi", None) ONCE; everything above
+# ran without _csi and exercised the blocking fallback. Here the shim
+# grows the handle and the overlap contract is pinned: WOULD_BLOCK
+# returns None and leaves cap_pending; a stream frame kicks the next
+# capture after encode; re-inits and stops quiesce the in-flight capture.
+
+
+class _FakeCsi:
+    def __init__(self):
+        self.script = []            # per nb call: None=WOULD_BLOCK or image
+        self.nb_calls = 0
+        self.blocking_calls = 0
+
+    def snapshot(self, blocking=True):
+        if blocking:
+            self.blocking_calls += 1
+            return _FakeImg(b"live")
+        self.nb_calls += 1
+        return self.script.pop(0) if self.script else None
+
+
+_stream_cmd = dict(_cmd)
+_stream_cmd["mode"] = CAMERA_MODE_STREAM
+
+_fc = _FakeCsi()
+_FakeSensor._csi = _fc
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_stream_cmd))          # t_start=1000, interval=100ms
+_fc.script = [None, _FakeImg(b"live")]  # first poll blocks, second collects
+check(eng.poll(1150) is None and eng.cap_pending,
+      "overlap: WOULD_BLOCK returns None with the capture in flight")
+out = eng.poll(1160)
+check(out == b"jpeg-of-live",
+      "overlap: the armed capture is collected and encoded")
+check(_fc.nb_calls == 3 and eng.cap_pending,
+      "overlap: a stream frame KICKS the next capture after encode")
+# A kick that completes instantly is kept, never dropped: next poll must
+# encode it WITHOUT another csi call.
+_fc.script = [_FakeImg(b"live"), _FakeImg(b"live")]   # collect + ready kick
+eng.poll(1300)
+check(eng._img_ready is not None and not eng.cap_pending,
+      "overlap: an instantly-complete kick parks in _img_ready")
+calls_before = _fc.nb_calls
+out = eng.poll(1400)
+check(out == b"jpeg-of-live" and _fc.nb_calls == calls_before + 1,
+      "overlap: parked frame encoded; only the kick touches the csi")
+# STOP quiesces: the in-flight capture is collected and discarded.
+eng.cap_pending = True
+eng.command({"mode": CAMERA_MODE_STOP})
+check(_fc.blocking_calls == 1 and not eng.cap_pending
+      and eng._img_ready is None,
+      "overlap: STOP collects the in-flight capture (quiesce)")
+# A geometry delta quiesces BEFORE the sensor is touched.
+_fc2 = _FakeCsi()
+_FakeSensor._csi = _fc2
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng._nb_handle()
+eng.cap_pending = True
+mono_vga = dict(_stream_cmd)
+mono_vga["res"] = CAMERA_RES_VGA
+mono_vga["pf"] = CAMERA_PF_MONO
+eng.command(mono_vga)
+check(_fc2.blocking_calls == 1 and not eng.cap_pending,
+      "overlap: a re-init quiesces the in-flight capture first")
+# Single mode never kicks (no stream to overlap into).
+_fc3 = _FakeCsi()
+_FakeSensor._csi = _fc3
+eng = bm_bridge.CaptureEngine()
+eng.booted = True
+eng.sensor_ok = True
+eng.cur_res, eng.cur_pf = CAMERA_RES_QVGA, CAMERA_PF_COLOR
+eng.command(dict(_cmd))                 # MODE_SINGLE
+_fc3.script = [_FakeImg(b"live")]
+check(eng.poll(1150) == b"jpeg-of-live" and _fc3.nb_calls == 1
+      and not eng.cap_pending,
+      "overlap: single capture collects once and never kicks")
+
+del _FakeSensor._csi
+
 del sys.modules["sensor"]
 del sys.modules["image"]
 bm_bridge.time = _real_time
