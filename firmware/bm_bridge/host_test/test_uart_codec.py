@@ -133,6 +133,12 @@ def test_into_variant():
     wire = bytearray(uc.cobs_max_encoded(n + uc.FRAME_OVERHEAD) + 1)
     w = uc.frame_encode_into(wire, payload, f, n)
     check("into == allocating", bytes(wire[:w]) == uc.frame_encode(f))
+    # S23 drain fast path feeds a memoryview straight in (the old
+    # bytes() detour was a measured ~1.5 KB/msg allocation) -- pin the
+    # memoryview input byte-identical to bytes input.
+    w2 = uc.frame_encode_into(wire, payload, memoryview(f), n)
+    check("memoryview input == bytes input", bytes(wire[:w2]) ==
+          uc.frame_encode(f))
     check("self_test()", uc.self_test())
 
 

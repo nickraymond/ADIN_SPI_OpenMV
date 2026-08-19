@@ -175,7 +175,11 @@ def frame_encode_into(wire, payload_buf, l2, n, crc_fn=None):
         return 0
     payload_buf[0] = (n >> 8) & 0xFF
     payload_buf[1] = n & 0xFF
-    payload_buf[2:2 + n] = l2[:n] if not isinstance(l2, memoryview) else bytes(l2[:n])
+    # Slice-assign straight from the source buffer (bytes, bytearray or
+    # memoryview) -- one memcpy, no intermediate bytes() allocation. The
+    # S23 relay profile measured the old bytes(l2[:n]) detour as part of
+    # a ~1.1 ms/message python tax in the drain hot path.
+    payload_buf[2:2 + n] = l2[:n]
     c = (crc_fn or crc32c)(memoryview(payload_buf)[: 2 + n]) & 0xFFFFFFFF
     payload_buf[2 + n] = (c >> 24) & 0xFF
     payload_buf[3 + n] = (c >> 16) & 0xFF

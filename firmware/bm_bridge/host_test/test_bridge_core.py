@@ -496,6 +496,53 @@ check(core2.stats["cap_ept_slow"] == 1 and
 
 bm_bridge._ticks_us = _real_ticks
 
+# ---- S23 drain fast path: he_frame_wire == he_msg, byte for byte ---------
+# The pump's zero-alloc path aliases core._wire, so its result must be
+# consumed (or copied) before the next encode. The slow path stays the
+# reference implementation; equivalence is pinned here.
+
+for size in (1, 200, 1414, MAX_L2):
+    frame = bytes((i * 7 + size) & 0xFF for i in range(size))
+    msg = struct.pack("<BBH", WCMD_FRAME_TX, 1, size) + frame
+    fast_core = BridgeCore()
+    slow_core = BridgeCore()
+    mv = fast_core.he_frame_wire(msg)
+    got_fast = bytes(mv) if mv is not None else None
+    got_slow = slow_core.he_msg(msg)
+    check(got_fast is not None and len(got_slow) == 1 and
+          got_fast == got_slow[0],
+          "fast path == slow path for a %d B frame" % size)
+    check(fast_core.stats["he2pi_frames"] == slow_core.stats["he2pi_frames"]
+          == 1 and fast_core.stats["he2pi_bytes"] ==
+          slow_core.stats["he2pi_bytes"] == size,
+          "fast path counters match slow path (%d B)" % size)
+
+core = BridgeCore()
+check(core.he_frame_wire(b"\x01") is None, "short msg -> fallback")
+check(core.he_frame_wire(struct.pack("<BBH", WCMD_FRAG, 1, 4) + b"abcd")
+      is None, "WCMD_FRAG -> fallback (reasm accounting stays in he_msg)")
+big = struct.pack("<BBH", WCMD_FRAME_TX, 1, MAX_L2 + 1) + bytes(MAX_L2 + 1)
+check(core.he_frame_wire(big) is None, "oversize -> fallback")
+frag_start = struct.pack("<BBH", WCMD_FRAME_TX, 1, 100) + bytes(40)
+check(core.he_frame_wire(frag_start) is None,
+      "fragmented FRAME_TX -> fallback, fast path never starts reasm")
+check(core.reasm is None, "fast path did not touch reasm state")
+core.he_msg(frag_start)                     # slow path starts assembly
+check(core.reasm is not None, "slow path owns the assembly")
+whole = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(8)
+check(core.he_frame_wire(whole) is None,
+      "mid-reasm complete frame -> fallback so he_msg can resync")
+
+# Aliasing contract: the second encode overwrites the first's buffer.
+core = BridgeCore()
+m1 = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(range(8))
+m2 = struct.pack("<BBH", WCMD_FRAME_TX, 1, 8) + bytes(range(8, 16))
+w1 = core.he_frame_wire(m1)
+w1_copy = bytes(w1)
+w2 = core.he_frame_wire(m2)
+check(bytes(w1) == bytes(w2) and w1_copy != bytes(w2),
+      "returned memoryview aliases _wire -- consume before next encode")
+
 # ---- S18 reef-matrix: ref-scene source -----------------------------------
 # Asset naming is a contract with demo_up.sh's staging arm and the S0
 # assets in bench/assets/ref_scene -- lock it with tests.

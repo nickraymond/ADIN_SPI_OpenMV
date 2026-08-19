@@ -381,6 +381,29 @@ class BridgeCore:
         self.stats["he2pi_bytes"] += n
         return bytes(self._wire[:w])
 
+    def he_frame_wire(self, b):
+        """S23 drain fast path: a COMPLETE `WCMD_FRAME_TX` message ->
+        a memoryview of the encoded wire, or None = caller must fall
+        back to he_msg (frags, replies, resync, oversize).
+
+        Zero ~1.5 KB allocations: the returned memoryview aliases
+        self._wire and is valid only until the NEXT encode on this
+        core -- write it to the VCP before touching the core again.
+        he_msg stays the allocating general path (host tests, spill
+        shapes); test_bridge_core pins the two paths byte-identical.
+        """
+        if len(b) < 4:
+            return None
+        cmd, _port, ln = struct.unpack_from("<BBH", b, 0)
+        if (cmd != WCMD_FRAME_TX or self.reasm is not None
+                or ln > MAX_L2 or len(b) - 4 < ln):
+            return None         # he_msg owns resync + error accounting
+        w = uc.frame_encode_into(self._wire, self._payload_buf,
+                                 memoryview(b)[4:4 + ln], ln)
+        self.stats["he2pi_frames"] += 1
+        self.stats["he2pi_bytes"] += ln
+        return memoryview(self._wire)[:w]
+
     # ---- Pi -> HE ---------------------------------------------------------
 
     def vcp_bytes(self, chunk):
@@ -1301,13 +1324,18 @@ def main():
             while he.queue:
                 m = he.queue.pop(0)
                 t0 = _ticks_us()
-                wires = core.he_msg(m)
+                wire = core.he_frame_wire(m)   # zero-alloc fast path
                 dt = _elapsed(t0, _ticks_us())
                 stats["relay_enc_us"] += dt
                 if dt > stats["relay_enc_max_us"]:
                     stats["relay_enc_max_us"] = dt
-                for wire in wires:
-                    usb.write(wire)
+                if wire is not None:
+                    usb.write(wire)            # consume before next encode
+                else:
+                    # Non-frame or spill shapes: the allocating general
+                    # path (untimed by relay_enc -- rare by design).
+                    for w2 in core.he_msg(m):
+                        usb.write(w2)
                 n += 1
             stats["pump_calls"] += 1
             stats["pump_msgs"] += n
