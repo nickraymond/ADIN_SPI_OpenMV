@@ -55,11 +55,28 @@ a reboot.
 - `pkill -INT -f workbench.py` over ssh matches its own bash wrapper
   (exit 255) — same `pgrep -f` trap as the 2026-08-20 session note.
 
-**Next:** bite 3 (state reconciliation: verify firmware label + model
-sha256, repair only drift, report loudly; deploy routes proven in S8 B1 —
-NEVER DFU alt 0) · bite 4 (second recipe + "how to add a test" doc) · then
-back to S8 bite B2 (the custom two-colour detector) with the workbench as
-the known-good-state substrate.
+**Same session, later (after PR #53 merged — Nick's "get up to #3"):**
+- **Bite 3 DONE + verified live:** Start = preflight → reconcile → spawn →
+  health. One serialized `mpremote exec` per board (sys.version + on-board
+  sha256 of declared models); repair only via `models[].src` file copy,
+  hash-checked before, read back after; firmware/N6-ROMFS drift REFUSE with
+  the manual step. Live proof: both boards' firmware probed green,
+  reconciling→LIVE, AE3 attached cleanly after its probe (RECON_GAP 3 s).
+  The "delete a model → repaired" live demo waits for the first recipe that
+  ships an artifact (B2's detector); 9 host tests pin the path meanwhile.
+- **Bite 4 DONE:** `n6-detect-stream` recipe (zero detections on a ball
+  scene = CORRECT, person-only model) + `pi/workbench/README.md` (release
+  step, recipe reference, safety posture). 70 host tests total.
+- **CLAUDE.md updated** (Nick-approved deltas): two-arc scope line, real
+  layout (`ml/`, `pi/workbench/`), bench standing facts (by-id identity
+  backwards-from-guess, single-owner ports via the workbench, AE3 35 s
+  settle), board identity added to "never invent hardware facts".
+- **PROMPTS.md §11** written: S8 bite B2 kickoff (Nick runs it in a
+  parallel session).
+
+**Next:** S25 owes only Nick's sprint demo (cold boot → page → pick test →
+streams → stop → ports released). Then S8 B2 (parallel session, §11), whose
+detector recipe becomes reconciliation's first live model-repair demo.
 
 ## 2026-08-20 (evening) — S8 bite A DEMO PASSED; B0+B1 closed: both boards run our own compiled models
 
