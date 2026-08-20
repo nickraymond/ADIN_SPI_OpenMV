@@ -245,6 +245,7 @@ class Stats:
         self._clock = clock
         self.labels = list(labels or [])
         self.blob_counts = [0] * len(self.labels)
+        self.model_counts = []
         self.amb = 0
         self.saved = 0
         self._times = []
@@ -263,7 +264,8 @@ class Stats:
         self.reconnects = 0
         self.status = "starting"
         self.last_frame_at = None
-        self._acc = {"cap_us": 0, "inf_us": 0, "blob_us": 0, "enc_us": 0}
+        self._acc = {"cap_us": 0, "inf_us": 0, "blob_us": 0, "enc_us": 0,
+                     "mdec_us": 0}
 
     def note(self, hdr, nbytes):
         now = self._clock()          # one timestamp per frame, read once
@@ -276,6 +278,7 @@ class Stats:
         # the wire rather than from our own config means a board running an
         # older script shows short-but-honest counts instead of a crash.
         self.blob_counts = list(hdr.get("bc", []))
+        self.model_counts = list(hdr.get("mc", []))
         self.amb = hdr.get("amb", 0)
         self.lab = hdr.get("lab") or None
         for k in self._acc:
@@ -336,6 +339,7 @@ class Stats:
             "blobs": self.blobs,
             "blob_labels": self.labels,
             "blob_counts": self.blob_counts,
+            "model_counts": self.model_counts,
             "amb": self.amb,
             "saved": self.saved,
             "lab": self.lab,
@@ -370,6 +374,7 @@ class Stats:
             "inf_ms": self._mean_ms("inf_us"),
             "blob_ms": self._mean_ms("blob_us"),
             "enc_ms": self._mean_ms("enc_us"),
+            "mdec_ms": self._mean_ms("mdec_us"),
             "info": self.info,
         }
 
@@ -734,6 +739,11 @@ setInterval(async()=>{
   // that check. `amb` is blobs that matched more than one colour box.
   const per = (j.blob_labels||[]).map((n,i)=>n+' '+((j.blob_counts||[])[i]||0))
       .join('   ');
+  // Model per-class counts (FOMO mode) next to the blob baseline: the whole
+  // point of the page is that the two methods are comparable at a glance.
+  const mlab = (j.labels && j.labels.length) ? j.labels : (j.blob_labels||[]);
+  const mper = (j.model_counts||[]).map((c,i)=>(mlab[i]||('c'+i))+' '+c)
+      .join('   ');
   if(s) s.textContent =
    'capture   '+(j.framesize||'?')+'  '+j.w+'\\u00d7'+j.h+'  '+(j.pixfmt||'')+'\\n'+
    'encode    JPEG q'+(j.quality===null?'?':j.quality)+
@@ -743,7 +753,8 @@ setInterval(async()=>{
    'rate      '+j.fps+' fps   inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
    '          capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
    'found     '+j.blobs+' blobs   '+j.det+' detections\\n'+
-   (per ? '          '+per+(j.amb ? '   ambiguous '+j.amb : '')+'\\n' : '')+
+   (per ? '          blobs: '+per+(j.amb ? '   ambiguous '+j.amb : '')+'\\n' : '')+
+   (mper ? '          model: '+mper+(j.mdec_ms ? '   decode '+j.mdec_ms+' ms' : '')+'\\n' : '')+
    (j.saved ? 'captured  '+j.saved+' frames saved\\n' : '')+
    'health    resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
    j.port;
@@ -920,6 +931,20 @@ def parse_args(argv=None):
     ap.add_argument("--max-seconds", type=float, default=3600)
     ap.add_argument("--max-frames", type=int, default=0)
     ap.add_argument("--model", default="/rom/yolov8n_192.tflite")
+    ap.add_argument("--board-model", action="append", default=None,
+                    metavar="LABEL:PATH",
+                    help="per-board model path, e.g. AE3:/flash/nereus.tflite "
+                         "N6:/rom/nereus_two_ball.tflite -- the S8 B2 custom "
+                         "model deploys to a DIFFERENT place per board "
+                         "(AE3 /flash, N6 ROMFS)")
+    ap.add_argument("--model-kind", default="auto",
+                    choices=("auto", "yolo", "fomo", "raw"),
+                    help="postprocessing: auto sniffs the filename "
+                         "(yolov8* -> yolo, *fomo*/*nereus* -> fomo)")
+    ap.add_argument("--model-labels", default=None,
+                    help="comma-separated class names for models that ship "
+                         "no .txt beside them (the N6 ROMFS carries only "
+                         "the .tflite)")
     ap.add_argument("--threshold", type=float, default=0.4)
     ap.add_argument("--no-detect", action="store_true",
                     help="skip inference (isolates capture+encode cost)")
@@ -970,13 +995,14 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
-def cfg_from_args(args, classes=None, overlay=None, pixels=None):
+def cfg_from_args(args, classes=None, overlay=None, pixels=None, model=None):
     cfg = {
         "framesize": args.framesize,
         "quality": args.quality,
         "max_seconds": args.max_seconds,
         "max_frames": args.max_frames,
-        "model": args.model,
+        "model": args.model if model is None else model,
+        "model_kind": args.model_kind,
         "threshold": args.threshold,
         "detect": not args.no_detect,
         "blobs": not args.no_blobs,
@@ -992,6 +1018,9 @@ def cfg_from_args(args, classes=None, overlay=None, pixels=None):
         # seeing?" needs.
         "overlay": (not args.save_frames) if overlay is None else bool(overlay),
     }
+    if getattr(args, "model_labels", None):
+        cfg["model_labels"] = [s.strip() for s in args.model_labels.split(",")
+                               if s.strip()]
     if classes is None:
         try:
             classes = blob_classes_from_args(args)
@@ -1000,6 +1029,23 @@ def cfg_from_args(args, classes=None, overlay=None, pixels=None):
     if classes:
         cfg["blob_classes"] = classes
     return cfg
+
+
+def board_model_map(args, known_labels):
+    """``--board-model LABEL:PATH`` (repeatable) -> {label: path}."""
+    out = {}
+    for spec in (args.board_model or []):
+        if ":" not in spec:
+            raise ValueError("--board-model wants LABEL:PATH, got %r" % spec)
+        label, path = spec.split(":", 1)
+        label, path = label.strip(), path.strip()
+        if label not in known_labels:
+            raise ValueError("--board-model %r names no --board label "
+                             "of %s" % (label, ", ".join(known_labels) or "(none)"))
+        if not path:
+            raise ValueError("--board-model %r has an empty path" % spec)
+        out[label] = path
+    return out
 
 
 class PortError(Exception):
@@ -1216,6 +1262,7 @@ def main(argv=None):
         labels_present = [v.label for v in views]
         overrides = board_thresh_map(args, labels_present)
         pixel_overrides = board_pixels_map(args, labels_present)
+        model_overrides = board_model_map(args, labels_present)
     except ValueError as exc:
         raise SystemExit(str(exc))
 
@@ -1224,10 +1271,12 @@ def main(argv=None):
         view.labels = [n for n, _ in view.classes] or [args.blob_label]
         view.stats = Stats(labels=view.labels)
         px = pixel_overrides.get(view.label)
-        view.make_script = (lambda classes, px: lambda on:
+        mdl = model_overrides.get(view.label)
+        view.make_script = (lambda classes, px, mdl: lambda on:
                             build_board_script_text(cfg_from_args(
-                                args, classes, overlay=on, pixels=px)))(
-            view.classes, px)
+                                args, classes, overlay=on, pixels=px,
+                                model=mdl)))(
+            view.classes, px, mdl)
         view.overlay = not args.save_frames
         view.script_text = view.make_script(view.overlay)
         if view.label in overrides:

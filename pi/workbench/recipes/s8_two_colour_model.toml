@@ -1,0 +1,59 @@
+# s8_two_colour_model.toml -- S8 bite B2: OUR OWN trained two-colour detector
+# running on both boards' NPUs, next to the bite-A blob baseline in one page.
+#
+# The model is a from-scratch FOMO-style net (ml/fomo/train.py), trained on
+# the 2026-08-20 two-ball captures from BOTH cameras, compiled per board by
+# the proven B1 routes (AE3 vela -> /flash; N6 stedgeai -> ROMFS via DFU
+# alt 3). Measured on-board: AE3 5.51 ms, N6 6.36 ms per inference -- the
+# NPU class, not a CPU fallback.
+#
+# The sha256s below are of the files AS DEPLOYED ON THE BOARD (the N6's is
+# stedgeai's Neural-ART binary, not the source .tflite), which is what
+# reconciliation must compare against.
+
+name = "s8-two-colour-model"
+title = "Two-colour ball detector (custom ML)"
+summary = "Our own trained model counting pink vs purple balls on both NPUs (AE3 5.5 ms, N6 6.4 ms per inference), side by side with the classic-CV blob baseline it must beat. From sprint S8 bite B2."
+opens = ":8090"
+thumbnail = "thumbs/two_colour_balls.jpg"
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+firmware = "v5.0.0-52.g7d4dbf7ab2.dirty"
+
+  [[boards.models]]
+  name = "nereus_two_ball"
+  path = "/flash/nereus_two_ball.tflite"
+  sha256 = "aee3e4e99f7d6d2c418ba6fb9730999116233eb07b954ffde55b3f9aad64f476"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+firmware = "v5.0.0"
+
+  [[boards.models]]
+  name = "nereus_two_ball"
+  path = "/rom/nereus_two_ball.tflite"
+  sha256 = "8c216f9131385fcc9659de1c1ac1681201b244727f4323270dbfc553f758b735"
+
+[run]
+argv = [
+  "python3", "bench/n6_stream_host.py",
+  "--bind", "0.0.0.0", "--framesize", "VGA",
+  "--board", "AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00",
+  "--board", "N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00",
+  "--board-model", "AE3:/flash/nereus_two_ball.tflite",
+  "--board-model", "N6:/rom/nereus_two_ball.tflite",
+  "--model-labels", "pink,purple",
+  "--board-thresh", "AE3:pink:28,75,14,32,-12,6",
+  "--board-thresh", "AE3:purple:15,65,3,18,-40,-13",
+  "--board-thresh", "N6:pink:28,80,23,50,-19,-2",
+  "--board-thresh", "N6:purple:20,65,8,38,-70,-20",
+  "--board-pixels", "AE3:60",
+  "--board-pixels", "N6:150",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8090/"
