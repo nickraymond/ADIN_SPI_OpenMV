@@ -1743,6 +1743,76 @@ the evidence stops splitting.
 
 ---
 
+### S25 — nereus000 as the machine-vision workbench  `[ ]`  ← **NEXT (Nick 2026-08-20)**
+**Goal:** boot the Pi, open a page, pick a test, and the Pi puts the OpenMV
+hardware into that test's known-good state and runs it — no hand-flashing, no
+remembering command lines, no agent required. Every released test setup adds a
+menu entry.
+
+**Why now (Nick):** "We have been producing and will continue to produce bench
+testing, UIs and tests that run on the Pi and OpenMV board... instead of asking
+you to flash and setup and run everything, the Pi should be programmed to
+reconfigure and run the software needed." This is the interactive way to get
+the hardware back to a known-good state before a test.
+
+**Reuse before rewriting — S18 already shipped most of the substrate**
+(tombstoned, not deleted, for exactly this reason): `pi/bench_web/bench_web.py`
++ its tests, `pi/services/bench-web.service` and five sibling units, and
+`pi/bm_bench/{demo_up,bench-ctl,chain_status,deploy}.sh`. This sprint is a
+**menu and a runner on top of those**, not a new web application. A rewrite
+needs a measured reason.
+
+- [ ] **Bite 1 — recipe format, registry, and the page on boot.** A "test
+      setup" is a declarative file in the repo naming: which boards it needs,
+      the state they must be in (firmware label, models present + sha256,
+      `/flash` contents), the command to run, the URL to open, and its health
+      check. The home page lists every recipe plus a **preflight panel**
+      (boards enumerated by their by-id paths, ports free, disk, services).
+      Autostarts on boot via a systemd unit on the `bench-web.service`
+      pattern. **No deploying yet** — listing and preflight only, so the
+      format is proven before anything drives hardware.
+      *Verifiable:* fresh boot of nereus000 → the page answers on the LAN and
+      lists the recipes with a correct preflight verdict for both boards.
+- [ ] **Bite 2 — the runner, and the board lock.** Start/stop a selected
+      recipe from the page, with live status and log tail. **A single-owner
+      lock on the boards is a REQUIREMENT of this bite, not a nicety:** this
+      session repeatedly wedged a board by letting two processes touch one
+      port, and a menu that can launch anything makes that trivially easy.
+      First recipe = the S8 two-colour ball demo (fully specified by PR #50,
+      including per-board thresholds and pixel floors).
+      *Verifiable:* click the S8 recipe on a cold bench → both boards stream
+      with the tuned thresholds; click stop → ports free, boards enumerated;
+      a second start attempt while one is running is refused, loudly.
+- [ ] **Bite 3 — state reconciliation ("put it back to known-good").** Before
+      running, verify what is actually on the hardware — model present, sha256
+      matching, firmware label, `/flash` contents — and repair only what has
+      drifted. Report drift explicitly rather than silently fixing it. The
+      deploy routes are already proven (S8 B1): AE3 = copy to `/flash`, N6 =
+      ROMFS image over USB DFU alt 3.
+      *Verifiable:* delete a model from a board, click the recipe, and the
+      page reports the drift and restores it; re-running with nothing drifted
+      does no writes at all.
+- [ ] **Bite 4 — a second recipe + the "how to add a test" doc.** Proves the
+      format generalises beyond the one it was designed around, and writes
+      down the release step so adding a menu entry is a documented act.
+
+**Open questions for Nick, flagged not guessed:**
+- **Exposure.** This UI can reflash and power-cycle hardware, so it is more
+  sensitive than the video feed. Proposal: bind to the LAN with a loud banner
+  and no auth for now (the bench is on a trusted network), revisited if it
+  ever leaves it. **Nick's call.**
+- **Sudo steps.** Installing/enabling units and udev rules needs sudo, which
+  the agent does not have — those stay one-time copy-pasteable commands for
+  Nick, exactly as `pi/ae3_flash/README.md` already does.
+- **Boot ordering.** USB enumeration can lag service start; the preflight must
+  treat "no boards yet" as a normal early state, not a failure.
+
+**Demo (Nick):** cold-boot nereus000, open the page from a laptop or phone,
+pick the S8 ball demo, watch both boards come up streaming with the tuned
+per-board thresholds, stop it, and see the ports released.
+**Needs:** bench time; sudo for the one-time unit install.
+
+
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
 closed; each item now names its own origin. Nothing here is owned by a
