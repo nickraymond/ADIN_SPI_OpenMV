@@ -83,6 +83,26 @@ stock `v5.0.0`. Free heap differs ~7.7× (N6 25,393,136 B vs AE3 3,281,488 B,
 both at VGA with yolov8n_192 loaded). Any cross-board comparison carries this
 in addition to the already-known model-binary confound — see S8 bite D.
 
+### `find_blobs` with a threshold list (measured on the N6, 2026-08-20)
+
+`b.code` is a **bitfield of threshold INDEX** — bit 0 for the first threshold
+in the list, bit 1 for the second, and so on (verified by scanning one frame
+with `[NONE, WIDE]` → 2 and `[NONE, NONE, WIDE]` → 4). Two rules govern it:
+
+1. **Each pixel is claimed by the FIRST matching threshold in list order.**
+   The thresholds partition the pixels; they do not each get a copy. So two
+   boxes that OVERLAP in LAB are not both counted — the earlier one takes the
+   shared pixels and the later one can report **zero, silently** (only one
+   bit is ever set, so an ambiguity check cannot catch it).
+2. **`merge=True` ORs the codes of merged blobs**, so a blob that touches
+   another of a different colour carries both bits and IS detectable.
+
+Consequence: one `find_blobs` call over a list is correct and cheap for
+**disjoint** boxes; overlapping boxes need one call per threshold. Blob search
+costs **~11 ms/frame (N6)** and **~15 ms (AE3)** at VGA with real thresholds —
+a wide-open threshold that matches the whole frame costs 20–70 ms and is not
+a representative number.
+
 ### OpenMV AE3 user pins (OpenMV docs)
 
 | AE3 pin | Function in this project |

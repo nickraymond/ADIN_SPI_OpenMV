@@ -1434,6 +1434,79 @@ wide-open blob threshold specifically to make the draw path run. A
 flowing stream and a clean exit code proved nothing about the code that
 had not yet been reached.
 
+### S8 bite A detail (2026-08-20) — multi-colour blobs, and what `b.code` actually means
+
+Run on nereus000 with **both boards attached** (D44). Nothing written to
+either board: scripts run from RAM through the raw REPL, `/flash` untouched.
+
+**The question the bite had to settle:** `find_blobs` takes a LIST of LAB
+thresholds and each blob carries a `code`. Whether that code reliably says
+which threshold matched was UNVERIFIED, and it decides whether multi-colour
+counting costs one pass (~11 ms) or one pass per colour (~11 ms each).
+
+**Settled by probing one frame with four threshold lists** (`~/bm_bench/
+code_probe2.py`, throwaway; the same frame scanned by every list so the scene
+could not drift between measurements):
+
+| threshold list | `b.code` | blob px |
+|---|---|---|
+| `[WIDE, BRIGHT]` (BRIGHT ⊂ WIDE) | **1** | 256,000 |
+| `[NONE, WIDE]` | **2** | 256,000 |
+| `[BRIGHT, WIDE]` | **3** | 254,563 |
+| `[NONE, NONE, WIDE]` | **4** | 256,000 |
+
+**`b.code` is an index bitfield, and it does accumulate bits.** Two rules
+account for every row:
+
+1. **Each pixel is claimed by the FIRST matching threshold in list order.**
+   Thresholds partition the pixels; they do not each get a copy. In row 1
+   WIDE matches everything first, so BRIGHT is left with nothing and never
+   sets bit 1. In row 3 BRIGHT takes the bright pixels and WIDE takes the
+   rest.
+2. **`merge=True` ORs the codes of blobs it joins** — row 3's code 3 is one
+   merged blob carrying both bits.
+
+**Consequences, in the order they matter:**
+
+- Rule 2 is why `classify_blobs` counts a multi-bit blob ONCE (lowest class)
+  and tallies it in `amb`: a pink ball touching a purple one is one merged
+  blob, and counting it into both classes would inflate the very number bite
+  C checks against ground truth.
+- Rule 1 is a **silent under-count for OVERLAPPING boxes**. The earlier box
+  takes the shared pixels and the later box can report zero — and `amb` stays
+  0, because only one bit is ever set. Nothing surfaces it.
+- **The repo's own documented pink/purple example overlapped by 8.8% in `b`**
+  and would have hit this. Found by writing the guard, not by inspection.
+- Guard shipped: the host computes the overlap fraction from the parsed
+  thresholds and warns before a frame is captured, naming the earlier box as
+  the shadowing one and pointing at `--blob-scan per-class`. Loud, not fatal —
+  overlapping boxes are legitimate under per-class.
+
+**Measured costs (VGA, both boards, real thresholds):** blob search **10.6 ms
+N6 / 15.2 ms AE3** per frame. The 20–70 ms figures from the first probe runs
+are an artifact of a wide-open threshold matching all 256,000 px of the frame
+and must not be quoted as a scan cost.
+
+**Capture verified end-to-end on hardware.** `--save-frames` wrote 6 frames
+per board into separate `AE3/` and `N6/` directories with a matching
+`index.jsonl`; JPEGs valid (SOI/EOI present, SOF 640×400); boxes recorded as
+`[cls, x, y, w, h, pixels]`. A first capture run recorded `boxes: []` because
+a ceiling has nothing pink in it — **the box-recording path had not executed**,
+the same latent-path trap S24 hit with its draw calls, so the run was repeated
+with a threshold that matches the ceiling to force it. The saved frame was
+then pulled back and **looked at**: clean image, no rectangle, no cross, no
+label, despite a full-frame blob being recorded alongside it. Overlay-off and
+labels-recorded are both true at once, which is what makes the output usable
+as training data.
+
+**Method note worth keeping.** The first attempt at the `b.code` question ran
+the two scan modes as two separate viewer sessions and compared their counts.
+The scene drifted between runs — the N6's own count moved 1 → 2 with no
+configuration change — so the comparison was measuring the ceiling, not the
+API. One frame, every variant, was what settled it. Two runs at two times is
+not an A/B.
+
+
 ### S9 detail (2026-08-11) — bite 1: OA first light, spike PASSED
 
 **Result: bm_core's adin2111 OA driver (vendored @ d4ecc38, byte-identical)

@@ -17,6 +17,52 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-20 (later) — S8 bite A shipped + PR #48 folded in; `b.code` settled by probe; both boards now on nereus000
+
+**Branch:** `claude/s8-cv-detector-ladder-bbfa8d`. Bench: both cameras on
+nereus000, side-by-side viewer live on :8090.
+
+**Done:**
+- **Bite A code**: repeatable `--blob-thresh NAME:...` (one LAB box per
+  colour, own palette colour each), per-class counts on the wire
+  (`bc`/`amb`/`bb`), `--blob-scan codes|per-class`, `--save-frames` +
+  `index.jsonl` labelled capture with the overlay forced OFF, bounded runs
+  that end by themselves. Tests 30 → 102.
+- **Folded PR #48** (S24 round 2: two-board viewer, AE3-vs-N6 head-to-head,
+  dark-frame finding). Both branches rewrote the same three files; kept both
+  designs with bite A adapted onto the multi-board structure. Wrote 6 tests
+  for the merge seams, which neither branch could have had.
+- **`b.code` SETTLED** — index bitfield; each pixel goes to the FIRST
+  matching threshold in list order; `merge=True` ORs codes. So overlapping
+  boxes silently under-count, and the repo's own pink/purple example
+  overlapped 8.8%. Guard shipped (quantified warning). DESIGN §S8 bite A.
+- **D44 topology**: both boards on nereus000, Mac is the training/toolchain
+  host, artifacts move through the Pi. Board identities verified from their
+  own banners — and they are backwards from the guess (N6 = "MicroPython
+  Pyboard", AE3 = "OpenMV Camera").
+- Retired the off-repo fork at `~/n6_sidebyside` (renamed, note left) after
+  verifying by hash that all three files were strict ancestors of the merge.
+
+**Broke/surprised us:**
+- **My first `b.code` experiment was invalid** — two scan modes run as two
+  sessions against a drifting ceiling; the N6's own count moved 1 → 2 with
+  no config change. One frame scanned by every variant is what settled it.
+  Two runs at two times is not an A/B.
+- **A `pgrep -f` matched the bash wrapper AND my own ssh command line**, so a
+  "successful" kill left the viewer holding both ports. Caught only by
+  checking the ports afterwards; launching a second viewer would have had two
+  processes fighting over both boards.
+- **First capture run recorded `boxes: []`** — a ceiling has nothing pink, so
+  the box-recording path never executed. Same latent-path trap as S24's draw
+  calls. Re-run with a matching threshold to force it, then the saved frame
+  was pulled back and LOOKED at to confirm it was clean.
+- Detection counting was fused with drawing, so `det` would have read 0 for
+  every frame of every capture run. Split and tested.
+
+**Next:** bite A's live demo with real balls (blocked on Nick's camera mount,
+~1–2 h), then B0's Mac ML environment + the int8-TFLite export proof. **B1
+still needs Nick's explicit go** — first bite that writes to a board.
+
 ## 2026-08-20 — Ladder resequenced: CV leads. S18/S19 dead, S22 closed, S8 reshaped to NEXT, S23 parked
 
 **Branch:** `claude/ae3-board-states-root-cause-33011e`. Planning

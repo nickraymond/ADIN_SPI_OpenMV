@@ -1516,8 +1516,20 @@ any urchin labelling effort is spent.
       `bench/n6_stream_{board,host}.py` + 19 host tests; yolov8n_192
       20.7/23.7/32.2 ms and end-to-end 47.9/41.8/30.2 fps at
       QVGA/VGA/HD. Tables in DESIGN §S24.)*
-- [ ] **Bite A — match more than one colour at once** *(was S24 bite
-      1b.)* Nick threw pink balls into a purple-tuned scene and they
+- [~] **Bite A — match more than one colour at once** *(was S24 bite
+      1b.)* **Code + hardware verification DONE 2026-08-20; the live demo
+      with real balls is owed and waits on Nick's camera mount.** Shipped:
+      repeatable `--blob-thresh NAME:L,L,A,A,B,B`, per-class counts on the
+      wire (`bc`/`amb`/`bb`), one palette colour per class, `--blob-scan
+      codes|per-class`, `--save-frames` + `index.jsonl` labelled capture,
+      and an overlap guard. Folded with PR #48's two-board viewer, so both
+      boards report per-class counts in one page. 102 host tests.
+      **`b.code` settled by probe** (DESIGN §S8 bite A detail): index
+      bitfield, first-matching-threshold-wins per pixel, merge ORs codes —
+      so overlapping boxes silently under-count and the repo's own
+      documented pink/purple example overlapped by 8.8%. Blob cost measured
+      at 10.6 ms (N6) / 15.2 ms (AE3). Still owed: tuned real thresholds
+      and ground-truth counts at 1 m / 2 m.* Nick threw pink balls into a purple-tuned scene and they
       were correctly ignored: the threshold is a single LAB box and
       pink's `b` sits outside the purple range. `find_blobs` already
       takes a LIST of thresholds; the board script passes one and the
