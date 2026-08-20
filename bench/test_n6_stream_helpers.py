@@ -246,9 +246,17 @@ class TestSerialBoardReadline(unittest.TestCase):
         self.assertEqual(b.readline(), b'#D {"frames":2}\n')
         self.assertEqual(b.readline(), b"")
 
-    def test_eot_before_a_later_newline_still_ends(self):
+    def test_eot_at_buffer_start_ends(self):
         b = _board_over([b"\x04junk\n"])
         self.assertEqual(b.readline(), b"")
+
+    def test_stray_eot_mid_line_does_NOT_end_the_stream(self):
+        # base64 and the JSON headers contain no 0x04, so one deeper in a
+        # line is corruption. Treating it as end-of-stream tore down a
+        # healthy stream over a single bad byte.
+        b = _board_over([b"abc\x04def\n", b"next\n"])
+        self.assertEqual(b.readline(), b"abc\x04def\n")
+        self.assertEqual(b.readline(), b"next\n")
 
     def test_binary_payload_bytes_survive(self):
         b = _board_over([b"\xff\xd8\xff\xe0 payload\n"])
@@ -286,6 +294,47 @@ class TestBoardSpecs(unittest.TestCase):
         self.assertEqual(b.stats.frames, 0)     # one board cannot skew another
         a.latest.put(1, b"\xff\xd8x")
         self.assertEqual(b.latest.get(), (b"", -1))
+
+
+class TestSupervisorSurvivesAttachErrors(unittest.TestCase):
+    """A supervisor that can die is not a supervisor.
+
+    mpremote raises TransportError, which is NOT an OSError. An
+    OSError-only clause let it escape and kill the thread outright: on
+    nereus000 the N6's panel then sat on its last frame forever while the
+    AE3 beside it streamed happily. Any attach failure must back off and
+    retry.
+    """
+
+    def _run_with_failing_attach(self, exc):
+        state = {"quit": False}
+        calls = {"n": 0}
+
+        def boom(port, baudrate=115200):
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                state["quit"] = True
+            raise exc
+
+        real = H.SerialBoard
+        H.SerialBoard = boom
+        try:
+            stats = H.Stats()
+            H.supervise("/dev/x", "src", H.Latest(), stats, state, retry_s=0)
+        finally:
+            H.SerialBoard = real
+        return calls["n"], stats
+
+    def test_survives_a_non_oserror_transport_failure(self):
+        class TransportError(Exception):
+            pass
+        n, stats = self._run_with_failing_attach(TransportError("failed to access"))
+        self.assertGreaterEqual(n, 3)          # retried, did not die
+        self.assertIn("not answering", stats.status)
+
+    def test_survives_an_oserror_too(self):
+        n, _ = self._run_with_failing_attach(OSError("device busy"))
+        self.assertGreaterEqual(n, 3)
 
 
 class TestMultiPage(unittest.TestCase):

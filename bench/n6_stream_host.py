@@ -509,13 +509,15 @@ class SerialBoard:
         """One line, or b'' at end of execution. Buffered over raw reads."""
         while True:
             # The raw REPL's end-of-execution 0x04 arrives with NO trailing
-            # newline, so it must be looked for in the buffer rather than at
-            # the head of a completed line -- otherwise a script that returns
-            # leaves this blocked forever waiting for a newline that is never
-            # coming, and the supervisor never learns the stream ended.
-            eot = self._buf.find(b"\x04")
+            # newline, so it cannot be found by scanning for line ends alone --
+            # a returning script would otherwise leave this blocked forever on
+            # a newline that never comes. But only position 0 counts: that is
+            # where the REPL puts it, once the preceding line has been
+            # consumed. A 0x04 deeper in the buffer is corruption (base64 and
+            # JSON headers contain no 0x04), and treating THAT as end-of-stream
+            # tore down a healthy stream over one bad byte.
             nl = self._buf.find(b"\n")
-            if eot >= 0 and (nl < 0 or eot < nl):
+            if self._buf[:1] == b"\x04":
                 return b""
             if nl >= 0:
                 line = bytes(self._buf[:nl])
@@ -750,10 +752,17 @@ def supervise(port_hint, script_text, latest, stats, state,
             time.sleep(_backoff())
             continue
         except ImportError:
-            stats.status = "pyserial missing"
-            state["fatal"] = "pyserial missing -- pip3 install --user pyserial"
+            stats.status = "pyserial or mpremote missing"
+            state["fatal"] = ("pyserial/mpremote missing -- "
+                              "pip3 install --user pyserial mpremote")
             return
-        except (OSError, TimeoutError) as exc:
+        # Deliberately broad. mpremote raises TransportError, which is NOT an
+        # OSError, so an OSError-only clause let it escape and KILL this
+        # supervisor thread -- the board then never reconnected while its
+        # panel kept showing the last frame. Any attach failure must back off
+        # and retry, never take the thread down; a supervisor that can die is
+        # not a supervisor.
+        except Exception as exc:
             fails += 1
             wait = _backoff()
             stats.status = ("board not answering on %s after %d attempt(s): %s "

@@ -929,6 +929,69 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 bite 5 — side-by-side on nereus000, and an AE3 firmware surprise
+
+Both boards attached to nereus000, one process, one page, panels
+left-to-right. Ports resolved by **by-id** (ttyACM numbering is
+assignment-order and swaps between boots), and the two boards enumerate
+under *different* product strings — the AE3 as `usb-OpenMV_OpenMV_Camera_
+0829c14000000000-if00` (37c5:16e3), the N6 as
+`usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_0200230004…-if00`
+(37c5:1206) — so an `OpenMV*`-only glob finds one and silently misses
+the other.
+
+**⚠ The AE3 on nereus000 is NOT running the firmware the laptop AE3 was.**
+Measured from the boards' own banners, same script, same day:
+
+| | laptop AE3 | nereus000 AE3 |
+|---|---|---|
+| `sys.version` | `OpenMV v5.0.0; MicroPython v1.28.0-49` | `OpenMV v5.0.0-52.g7d4dbf7ab2.dirty; MicroPython 11852aa3d0-dirty` |
+| build | genuine stock release | **the S23 patched dev build** (`7d4dbf7`+patches) |
+| **VGA JPEG encode** | **73.8 ms** | **46.2 ms** |
+| delivered fps | 7.6 | 9.6 |
+
+`7d4dbf7ab2` is exactly the base commit the repo's custom firmware is
+built from and `.dirty` means local patches on top — i.e. the sticky-fb
+and **MVE-vectorized jpege** work from S18 B4 / S23 bite 1.
+
+**This is an independent corroboration of the S23 MVE encoder work,
+arrived at from a completely different direction.** S23 measured MVE DCT
++ colour-convert at **1.55×** on VGA colour encode (65.9 → 42.4 ms) using
+the bridge's enc-matrix instrumentation. This viewer, which shares no
+code with that path and calls plain `img.to_jpeg(quality=50)`, measures
+**73.8 → 46.2 ms = 1.60×** between a stock and a patched AE3. Two
+unrelated instruments agreeing to within 3% is strong evidence both are
+measuring something real.
+
+**Consequence for the ranking table above: the 7.6 fps AE3 row is the
+STOCK number and stays correct as such.** A patched AE3 delivers 9.6 fps
+at VGA, closing the gap to the N6 from 2.5× to 2.0× — the encoder
+remains the AE3's binding constraint even after a 1.6× improvement to it.
+
+**Bench hazard flagged:** both AE3s report USB serial
+`0829c14000000000` and machine id `AE302F80F55D5AE`. Either this is one
+board that was reflashed between the two sessions, or **the AE3's USB
+serial is a non-unique default** — in which case `by-id` cannot tell two
+AE3s apart and only the firmware banner can. The N6's serial
+(`020023000450433547373200`) looks like a real per-die UID by contrast.
+Unresolved; flagged in SPEC §Open questions. **Until it is resolved,
+trust the `#I` banner's `fw` string, not the port name, to say which
+AE3 produced a number.**
+
+**Side-by-side numbers (VGA, same scene, simultaneous):**
+
+| stage | AE3 (patched) | N6 |
+|---|---|---|
+| capture | 11.0 ms | 0.2 ms |
+| inference | 28.7 ms | 23.4 ms |
+| blob search | 12.1 ms | 7.6 ms |
+| JPEG encode | 46.2 ms | 3.8 ms |
+| **delivered** | **9.6 fps** | **28.9 fps** |
+
+Both zero resyncs. The N6's 28.9 here beats the ~19 measured on the Mac
+and sits right at its board-work limit (35 ms → 28.6 fps predicted), so
+the Mac's serial read path — not the board — was costing the difference.
+
 ### S24 — what detection rate does an application actually need? (2026-08-19)
 
 Prompted by Nick asking where ~7 fps is *useful*. The rate is not set by
