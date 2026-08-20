@@ -134,6 +134,23 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **Target speeds and sizes for the rate-requirement model are NOT
+  measured — Nick to validate from field observation (raised
+  2026-08-19, S24).** DESIGN §S24 derives the detection rate each
+  application needs from `fps_min ≈ 2 × speed ÷ object length`, and the
+  arithmetic drives a real conclusion (fish/jelly are throughput
+  problems favouring the N6; urchins/kelp are energy problems favouring
+  the AE3 by 4.3×). But the inputs — reef fish cruise ~0.25 m/s and
+  burst ~2 m/s at ~18 cm; jellyfish drift ~0.3 m/s at ~30 cm; urchins
+  ~3 cm/min at ~8 cm; kelp ~30 cm/day — are **order-of-magnitude
+  estimates from general knowledge, with no source and no measurement.**
+  They have the right exponent, which is enough to separate a 7 fps
+  problem from a 1-frame-per-4-hours problem, and NOT enough to size a
+  product. Also unvalidated: the assumed ~2 m field of view in the
+  jellyfish transit calculation, which depends on lens and standoff.
+  **Verifiable:** Nick's own dive/field observations, or a short
+  reef-footage measurement, replacing each row with a sourced figure.
+
 - **ANSWERED 2026-08-18 (S22 bite 2 desk check, vendor-sourced): the
   Alif Ensemble E3 has NO hardware JPEG or video codec.** Its
   image/graphics accelerators are the D/AVE 2D GPU (vector graphics),

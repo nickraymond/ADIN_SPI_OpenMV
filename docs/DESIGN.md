@@ -929,6 +929,65 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 — what detection rate does an application actually need? (2026-08-19)
+
+Prompted by Nick asking where ~7 fps is *useful*. The rate is not set by
+the animal, it is set by **how far the target moves between frames
+relative to its own size**: once displacement exceeds roughly half a
+body length, frame-to-frame association breaks and "one individual seen
+twice" becomes indistinguishable from "two individuals" — which is the
+whole game when the deliverable is a count.
+
+    fps_min  ≈  2 × speed ÷ object length          (tracking / no double-count)
+    fps_min  ≈  N × speed ÷ FOV width              (don't miss a transit, N frames per crossing)
+
+⚠ **The speed and size figures below are order-of-magnitude estimates,
+NOT measured and NOT sourced — they are flagged in SPEC §Open questions
+and need Nick's field validation before anything is designed to them.**
+The arithmetic and the conclusions are what this section is for; the
+inputs are placeholders with the right exponent.
+
+| application | speed | size | fps needed | 7 fps is |
+|---|---|---|---|---|
+| **Fish, cruising** | ~0.25 m/s | ~18 cm | **~2.8** | 2.5× headroom — matched |
+| Fish, burst/startle | ~2 m/s | ~18 cm | ~22 | 3× too slow, tracks break |
+| **Jellyfish at an inlet** | ~0.3 m/s | ~30 cm | **~2** | 3.5× headroom |
+| **Urchins crawling** | ~3 cm/min | ~8 cm | ~1 frame/80 s | **~560× oversampled** |
+| **Kelp growth** | ~30 cm/day | ~10 cm | ~1 frame/4 h | **~10⁵× oversampled** |
+
+**Two regimes, and the board ranking INVERTS between them:**
+
+- **Fish and jellyfish are throughput problems.** A few fps is what
+  separates a correct count from a double count, so the N6's 2.5×
+  delivered-fps advantage is real product value. The jellyfish-inlet
+  case is additionally bounded by transit sampling — at 0.3 m/s through
+  a ~2 m FOV an individual crosses in ~7 s, so even 1 fps sees it, and
+  7 fps buys drift direction and density rather than mere presence.
+- **Urchins and kelp are energy problems, not rate problems.** At 7 fps
+  an urchin survey produces ~560 near-identical frames per frame that
+  carries new information; kelp is two further orders of magnitude out.
+  The correct design is duty-cycling — wake, infer once, sleep — and
+  there **the AE3's 5.5 mJ/inference is the whole decision**: at one
+  inference per minute a season of monitoring is a battery-sizing
+  exercise, and 4.3× energy is 4.3× deployment endurance.
+
+**There is therefore no single "better board" across the product line.**
+Fish/jelly favour the N6; urchin/kelp favour the AE3 decisively.
+
+**The fish case is squeezed from both sides, and this is the measured
+reason S8's conclusion stands.** The 7 fps figure comes from
+*single-pass downscale* (the whole frame resized to 192×192), which is
+temporally fine for cruising fish but puts a fish at range below the
+~24–32 px detection floor — so only near fish are seen. Restore the size
+floor by tiling HD and the rate collapses to **0.91 fps, now BELOW the
+~2.8 fps tracking needs**. Fast enough to track is too coarse to detect
+at range; fine enough to detect at range is too slow to track. Neither
+board escapes it (the NPUs are within 20%), so **a custom detector with
+a larger input — fewer tiles for the same coverage — is not an
+optimisation for the fish product, it is what makes it possible.**
+Urchins and kelp are immune to the squeeze: they hold still, so 40 tiles
+at 1.1 s costs nothing that matters.
+
 ### S24 — what "fps" means here, and which ceiling binds (2026-08-19)
 
 Nick asked whether the demo's 7.6 fps was frames-with-inference or a mix.

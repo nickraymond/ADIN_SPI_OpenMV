@@ -1415,6 +1415,21 @@ Camera self-detects dark scenes (HP luma stats) → camera node issues
 customer never thinks about it. All on bm_service (§6.2).
 
 ### S21 — CV: count-and-report (stub — was S20 in D30)  *(PROMOTED above S20 — Nick 2026-08-18, D39)*
+> **Scoping input from S24 (2026-08-19) — read DESIGN §S24 "what
+> detection rate does an application actually need?" before sizing this
+> sprint.** The required fps follows from `2 × speed ÷ object length`,
+> and it splits the product line in two: **fish and jellyfish are
+> throughput problems** (~2–3 fps needed, favouring the N6) while
+> **urchins and kelp are energy problems** (1 frame per 80 s to per
+> 4 hours — 7 fps is 560× to 10⁵× oversampled, and the AE3's
+> 4.3×-better mJ/inference decides it). **No single board wins the
+> product line.** Critically, the fish case is squeezed from both sides:
+> single-pass downscale is fast enough to track but too coarse to detect
+> at range, tiled HD restores the size floor but drops to 0.91 fps,
+> below the ~2.8 fps tracking needs — so **a custom detector with a
+> larger input is what makes fish counting possible, not an
+> optimisation.** Input speeds/sizes are unvalidated estimates (SPEC
+> §Open questions) — Nick to check before designing to them.
 Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
 D29 context). Requires a custom Vela-compiled detector (S8 finding:
 ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
