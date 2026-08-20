@@ -17,6 +17,109 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-19/20 (night) — Sprint S23 bite R: the reproducer works, load does NOT cause the wedge, and a NEW host-side failure mode (usb-storage reset livelock) is found and reproduced twice
+
+**Branch:** `claude/ae3-board-states-root-cause-33011e`. Nibble-1 plan
+approved by Nick, then "go with v2", then a firmware round trip at his
+request. Bench: Nick handed over hardware for the night.
+
+**Shipped (tests 0 -> 50, all green; bridge 373, units 43 unchanged):**
+- `pi/bm_bench/repro_attach.py` — scripted cold-boot -> lifecycle ->
+  attach-ladder cycles. Every refusal is screened against the bridge
+  state machine BEFORE it may count (verdict table in the header); a
+  true anomaly STOPS the run and preserves the wedge as the specimen.
+- `firmware/bm_bridge/boot_report.py` — MPU walk (ARMv8-M regs verified
+  against the vendored CM55 FreeRTOS port + CMSIS mpu_armv8.h) and SHM
+  probes to /flash at boot and post-he.start, one generation kept.
+- `pi/bm_bench/bench_chain.py` — v2 load: drives bm-light + telemetry +
+  bench-ctl, streams a real row, proves load from BOTH ends (receiver
+  ledger AND the board's cap_frames); either reading zero = cycle VOID.
+- demo_up: syncs/preserves boot_report, and the silent-fail is FIXED.
+
+**RESULT 1 — v1 (no load): 8/8 clean, 64/64 attaches.** Its own artifacts
+said why it proved nothing: exit stats `cap_frames=0`. It tore down
+bridges that had never carried traffic.
+
+**RESULT 2 — v2 (real load): 6/6 clean, 48 attaches, then aborted.**
+VGA color 623 frames x3 and HD mono 220 x3, gaps=0 dropped=0
+pub_errs=0, receiver ledger == board cap_frames EXACTLY every cycle.
+**So streaming load before the teardown does NOT cause the refusal.**
+That hypothesis is not supported.
+
+**RESULT 3 (the big one) — a NEW failure mode, host-side, reproduced
+twice: the usb-storage reset livelock.** udev/blkid probes the AE3's
+mass-storage volume (SCSI READ(10), 4 blocks @ LBA 0) while the board
+is not servicing MSC; the read fails (hostbyte=0x07 DID_ERROR);
+usb-storage escalates to a USB device reset; the reset re-triggers the
+probe; loop, ~46 resets/minute, indefinitely. **Every reset re-binds
+cdc_acm, so any in-flight mpremote session dies and by-id flickers** —
+i.e. it presents EXACTLY as "could not enter raw repl" / "board fell
+off the bus", with a perfectly healthy board underneath.
+It is a RACE, hence intermittent: 37 clean SCSI attaches tonight vs 6
+failed reads; cycles 1-6 attached in ~1 s, cycle 7 took 7 s then
+failed. Cure: unbind usb-storage from the MSC interface only (CDC
+untouched) — `echo "1-2:1.2" > /sys/bus/usb/drivers/usb-storage/unbind`;
+verified twice, board immediately reachable after.
+**Correction to the mid-session read:** the first storm was blamed on
+an MSC mount done to read evidence. WRONG — it recurred tonight with
+no mount anywhere. The mount was coincidence.
+
+**RESULT 4 — warm reset does NOT clear SRAM9 (measured).** Read off the
+board's MSC volume with ZERO REPL contact (an attach would have
+soft-reset and rotated the evidence away). The wedged generation's
+report vs a post-unplug boot: MPU regions IDENTICAL (region 7 =
+0x60000000-0x6001FFFF, AttrIndx 4 -> MAIR1 0x44 = Normal
+Non-cacheable in BOTH — so patches 0004/0005 set the attributes
+correctly even on the boot that wedged, evidence AGAINST the step-3
+bisect premise). What differs is CONTENT: warm boots come up carrying
+the previous generation's rsc/vring/pool AND the HE "BMHE" magic
+already at the status page before he.start; after a physical unplug the
+same addresses are random with no magic. **`mpremote reset` and a
+physical unplug are NOT the same boot** — the ops recipe says they are.
+`bench_chain.sram_state_at_boot()` now classifies every boot; all 6 v2
+cycles logged `sram=warm`.
+
+**RESULT 5 — the v3 demo_up silent-fail was a SCRIPT DEFECT, not a sick
+board.** Reproduced live. `mpr`'s fail() calls `exit 1` inside
+`GOT=$(board_sha ...)`, which exits the SUBSHELL — the `|| echo missing`
+never runs, the assignment carries rc=1, `set -e` kills demo_up — and
+`2>/dev/null` on the same line swallowed the reason. Fixed; 3 tests pin
+it. The underlying double-attach-failure is still real and still bite R's.
+
+**STILL UNEXPLAINED (bite R's remaining core): the silent refusal with
+NO resets.** 22:03: USB healthy, cdc_acm bound, zero resets in dmesg,
+~59 min after boot (past the 600 s phase-1 ceiling, so no legal bridge
+could hold the port), refused raw-REPL TWICE through a properly-armed
+45 s window. Not the storm, not state confusion, not the script defect.
+
+**Firmware round trip (Nick's request):** flashed stock v5.0.0
+(byte-verified), Nick yolo-tested, IDE-erased the filesystem; restored
+fw `1e56071e…` byte-for-byte + `bm_he.elf` `39717d44…` hashed ON the
+board + demo_up staging. **Caught en route: the two banked bm_he.elf
+copies DIFFER** — `~/bm_bench/` is `89cc92ff` (stale), `~/bm_he/` is
+`39717d44` (correct). Using the wrong one would have silently poisoned
+every later measurement.
+En route a mute-on-CDC state appeared on STOCK firmware (zero bytes to
+mpremote, to raw Ctrl-C, and to the S6 fixture's own JSON, while
+enumerating perfectly) — state 2's signature, which would exonerate our
+patches, but CONFOUNDED: the S6 fixture was running under MicroPython
+v1.28 rather than the line it was written for. Not counted as evidence.
+
+**Bench state:** AE3 restored and verified, board at REPL, units DOWN,
+scene=ref. `usb-storage` currently UNBOUND from the AE3's MSC interface
+(rebinds on the next re-enumeration). S6 fixture files were erased by
+the IDE and are NOT yet restored (needed only for the session-end
+fixture rule). Evidence banked: `docs/evidence/` + `~/biteR_wedge_evidence/`.
+
+**Next:** (1) Nick's call on a durable udev rule to stop probing the
+AE3's MSC volume — it would remove a whole class of phantom "sick
+board" events; (2) teach the reproducer to detect a reset storm in
+dmesg and classify it, so mode A is auto-excluded from the hunt;
+(3) then keep hunting the no-reset silent refusal, which is now the
+ONLY unexplained state.
+
+---
+
 ## 2026-08-19 (evening) — S23 GOLD: the "13 ms invariant" NAMED — it is the serialized HE round-trip (HE only ~41% utilized); VGA 12.15 -> 12.53 CLEAN; the "attach-refusal anomaly" mostly EXPLAINED (uhubctl never cuts VBUS on Pi 5 -- no cold boot ever happened)
 
 **Branch:** `claude/vga-color-15fps-encoder-7bf32c`. Two instrumented

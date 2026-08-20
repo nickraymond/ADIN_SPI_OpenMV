@@ -1717,7 +1717,22 @@ precedent for repo-carried firmware patches.
       HD's 72 ms/frame ept-block is the same disease. Acceptance:
       vga-color-15 ≥ 15.0 CLEAN ledger-exact, HD mono ≥ 3.5 held,
       10-min soak.
-- [ ] **Bite R — attach-refusal / boot-state anomaly root cause
+- [~] **Bite R — attach-refusal / boot-state anomaly root cause
+      ← IN PROGRESS (reproducer + instrument SHIPPED; see DEV_LOG
+      2026-08-19/20 night). FINDINGS: (a) load does NOT cause it — 6/6
+      clean loaded cycles, ledger-exact both ends; (b) NEW host-side
+      failure mode found + reproduced twice: the **usb-storage reset
+      livelock** (udev probes the MSC volume, board doesn't answer,
+      usb-storage resets the device ~46x/min, each reset re-binds
+      cdc_acm — presents EXACTLY as an attach refusal on a healthy
+      board; cure = unbind usb-storage from the MSC interface);
+      (c) **warm reset does NOT clear SRAM9** — only power loss does,
+      so `mpremote reset` != physical unplug, contra the ops recipe;
+      (d) MPU cache attributes are IDENTICAL on wedged vs healthy
+      boots — evidence AGAINST the 0004/0005 bisect premise;
+      (e) the v3 demo_up silent-fail was a SCRIPT defect (fixed).
+      REMAINING: the silent refusal with NO resets and no legal bridge
+      (22:03 capture) — now the only unexplained state.
       ← NEXT (Nick's pivot call 2026-08-19 evening; fresh session,
       own branch, kickoff = PROMPTS.md §8). SCOPE SHRUNK by the
       uhubctl-VBUS discovery — only two states remain unexplained
