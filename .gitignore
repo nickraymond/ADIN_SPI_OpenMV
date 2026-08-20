@@ -1,3 +1,13 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# --- ml/ (S8 B0): code and released models only; data lives in ~/nereus_ml ---
+ml/datasets/
+ml/runs/
+ml/weights/
+*.pt
+*.onnx
+*_saved_model/
+# ...but a RELEASED model is a deliverable and must be committable.
+!ml/models/**
