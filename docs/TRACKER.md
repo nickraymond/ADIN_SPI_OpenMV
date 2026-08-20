@@ -1907,6 +1907,29 @@ unowned side quest.
       test (method not recorded — an order-of-magnitude reading, not an
       instrumented figure; re-measure deliberately before relying on
       it). Remaining: nibble 4 (PR).
+- [~] **Bite 1d — hardware ranking, N6 vs AE3 (2026-08-19). DONE.**
+      Nick measured the **AE3 at ~0.2 W running yolov8n, against the
+      N6's ~1.0 W** — and that inverts the ranking depending on
+      workload. Full table + caveats in DESIGN §S24 ranking:
+      **N6 wins throughput** (19 vs 7.6 fps delivered, entirely its
+      hardware JPEG at 3.9 vs 73.8 ms); **AE3 wins energy decisively —
+      5.5 mJ vs 23.7 mJ per inference, 4.3×**, and 2.0× per delivered
+      frame. The NPUs are within 1.2× of each other (and even that is
+      model-variant-confounded), so the separation is everything
+      *around* the NPU. **For a battery/PoDL-fed node that wakes, looks
+      and sleeps, energy per inference is the metric and the AE3 wins
+      it.** Both power figures are single uninstrumented bench readings
+      — direction is safe at 5× apart, magnitudes are owed a deliberate
+      re-measure.
+- [ ] **Bite 4 — Pi Zero 2 W + IMX sensor on the same axis (NEXT,
+      Nick).** Deploy the same or a comparable detector and measure
+      **mJ per inference**, not just fps — that is the axis that makes
+      all three boards comparable. Prior: no NPU, so CPU inference at an
+      expected 1–2 W baseline = 5–10× the AE3's *total* draw before any
+      work, and the interesting question is whether it loses by one or
+      two orders of magnitude on energy per detection. Also record the
+      caveats that apply to every row: whole-board draw, and different
+      model variants per platform.
 - [~] **Bite 1c — the same demo on the AE3 (Nick, 2026-08-19). DONE,
       measured.** Same scripts, board swapped, stock `v5.0.0` verified
       (`/flash/main.py` is the stock LED blinker — the board is fully

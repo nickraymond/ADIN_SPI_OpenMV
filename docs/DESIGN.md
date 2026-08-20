@@ -929,6 +929,76 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 — hardware ranking: N6 vs AE3 (2026-08-19)
+
+Both boards ran the **same scripts on the same scene** at VGA. Power
+figures are **Nick's bench readings** (method not recorded — treat as
+order-of-magnitude, and see the caveats below); everything else is
+measured by the counters in `bench/n6_stream_{board,host}.py`.
+
+| | OpenMV N6 | OpenMV AE3 | winner |
+|---|---|---|---|
+| **Board power (running yolov8n)** | ~1.0 W | **~0.2 W** | AE3 **5×** |
+| Delivered fps, VGA + overlay | **~19** | 7.6 | N6 2.5× |
+| Inference latency, yolov8n_192 | **23.7 ms** | 27.5 ms | N6 1.2× |
+| Inference rate (NPU alone) | **42.2 /s** | 36.4 /s | N6 1.2× |
+| **Energy per inference** | 23.7 mJ | **5.5 mJ** | AE3 **4.3×** |
+| **Energy per delivered frame** | 52.6 mJ | **26.3 mJ** | AE3 **2.0×** |
+| Delivered fps per watt | 19 | **38** | AE3 2.0× |
+| JPEG encode, VGA | **3.9 ms** | 73.8 ms | N6 **19×** |
+| Capture | **0.2 ms** | 11.6 ms | N6 |
+| Blob search (CPU), VGA | **11.0 ms** | 15.6 ms | N6 1.4× |
+| Free heap | **25.6 MB** | 4.09 MB | N6 6× |
+| Model arena (same model) | **196 KB** | 791 KB | N6 4× |
+| Hardware JPEG | **yes** | no (D41) | N6 |
+| Max capture | HD 1280×800 | HD 1280×800 | tie |
+
+**The ranking depends entirely on the workload, and the two answers are
+opposite:**
+
+- **Streaming video → N6.** Its hardware JPEG is the whole story: 3.9 ms
+  vs 73.8 ms, which is 58% of the AE3's frame budget. That single term
+  is why the N6 delivers 2.5× the fps despite the NPUs being within 20%
+  of each other.
+- **Duty-cycled inference on a power budget → AE3, decisively.** At
+  **5.5 mJ per inference vs 23.7 mJ it is 4.3× cheaper per detection**,
+  and that is the metric that matters for a battery- or PoDL-fed node
+  that wakes, looks, decides, and sleeps. It wins on energy per frame
+  (2.0×) even in the streaming case it loses on throughput.
+
+**The NPUs are close; the SoCs are not.** Inference differs by 1.2× —
+and the AE3 is running a *smaller* model binary (1,994,976 B vs
+3,233,408 B), so even that gap is confounded. What separates the boards
+is everything around the NPU: the N6 spends silicon on a JPEG encoder
+and 25.6 MB of heap and pays ~1 W for it; the AE3 omits both and runs
+the same detector for a fifth of the power.
+
+**Caveats that must travel with these numbers:**
+
+1. **Both power figures are single bench readings with the method not
+   recorded.** They are 5× apart, which is far outside any plausible
+   reading error, so the *direction* is safe — but do not quote 0.2 W
+   or 1.0 W as instrumented values. A deliberate re-measure (idle vs
+   inference-only vs full stream, same instrument, same conditions on
+   both boards) is owed before any of this sizes a power budget.
+2. **This is whole-board 5 V draw**, not SoC or NPU power — regulators,
+   sensor, USB PHY and LEDs included. Correct for comparing boards
+   running the same workload; useless for attributing power to the NPU.
+3. **The two boards ship different yolov8n binaries**, so the inference
+   comparison is model-variant-confounded (the standing §S8 caveat).
+4. The AE3 rows were taken while it was also JPEG-encoding and
+   streaming over USB, i.e. its *worst* case for power. A duty-cycled
+   inference-only workload should draw less still.
+
+**Forward-looking, for the Pi Zero 2 W comparison (not yet measured):**
+a Pi Zero 2 W has **no NPU**, so yolov8n runs on CPU, and its expected
+1–2 W baseline is **5–10× the AE3's total draw before it does any
+work**. If the AE3 holds at 5.5 mJ per inference, the interesting
+number to put next to it is not the Pi's fps but its **mJ per
+inference** — that is where an accelerator-less SoC should lose by one
+to two orders of magnitude. Worth measuring exactly that way so the
+three boards land on one axis.
+
 ### S24 detail — the same demo on the AE3 (2026-08-19)
 
 Same scripts, same scene, board swapped. **AE3 on genuine stock

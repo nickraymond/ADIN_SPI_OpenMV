@@ -181,7 +181,24 @@ purple is less magenta than the floor, and widening `L` instead merged
 the furniture into one 120 ms blob. Bite 1b promoted from nicety to
 requirement.
 
-**Next:** nibble 4 (PR) for bite 1, then bite 2 — the N6-vs-AE3
+**THE RANKING FLIPPED ON POWER (Nick measured it).** AE3 **~0.2 W**
+running yolov8n against the N6's **~1.0 W**. Worked through in DESIGN
+§S24 ranking: **N6 wins delivered throughput** 19 vs 7.6 fps — which is
+entirely its hardware JPEG (3.9 vs 73.8 ms) — while **the AE3 wins
+energy by 4.3×: 5.5 mJ vs 23.7 mJ per inference**, and 2.0× per
+delivered frame. The NPUs are within 1.2×, and even that is confounded
+by the AE3 running a smaller model binary, so the separation is
+everything *around* the NPU: the N6 spends silicon on a JPEG encoder and
+25.6 MB of heap and pays ~1 W; the AE3 omits both and runs the same
+detector for a fifth of the power. **For a duty-cycled subsea node,
+energy per inference is the metric that matters and the AE3 wins it.**
+Both power numbers are single uninstrumented readings — 5× apart so the
+direction is safe, but the magnitudes are owed a deliberate re-measure
+before they size a power budget.
+
+**Next:** nibble 4 (PR) for bite 1, then **bite 4 — Pi Zero 2 W + IMX on
+the same axis** (Nick): measure **mJ per inference**, not fps, so all
+three boards land on one comparable scale. Then bite 2 — the N6-vs-AE3
 tiled-coverage comparison, carrying the model-variant confound
 explicitly.
 
