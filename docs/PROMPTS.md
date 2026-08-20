@@ -261,11 +261,18 @@ Acceptance trap to design around from the start: prove the model runs
 ON THE NPU, not silently on the CPU. A rejected .tflite still returns
 correct answers, just slowly -- "it inferred" is not the artifact.
 
-Hardware: N6 on the Mac's USB (no bench hardware needed for A/B1/D).
-The AE3 lives on nereus000 with the bench stack restored -- board
-access per ae3-board-access, one command then hand off, and note the
-no-MSC udev rule is installed there. Reuse bench/n6_stream_{board,
-host}.py and bench/ae3_npu_bench.py; do not start a third harness.
+Hardware (CHANGED 2026-08-20, D44): BOTH boards are on nereus000's USB
+-- the Mac holds no board and is the training/toolchain host (Docker,
+dataset, model compilation); artifacts reach the boards through the Pi.
+Identify boards by the by-id path, and note it is backwards from the
+guess: the N6 is usb-MicroPython_Pyboard_Virtual_Comm_Port... and the
+AE3 is usb-OpenMV_OpenMV_Camera_0829c14... Board access per
+ae3-board-access, one command then hand off; the no-MSC udev rule is
+installed there. Reuse bench/n6_stream_{board,host}.py and
+bench/ae3_npu_bench.py; do not start a third harness -- and note there
+is an off-repo fork of the stream host on the Pi at ~/n6_sidebyside
+(multi-board --board NAME=PATH + --bind) that must be reconciled, not
+re-forked.
 
 Nibble 1 = plan first, my gate before code. Short actionable replies.
 ```

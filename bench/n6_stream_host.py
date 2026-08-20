@@ -8,8 +8,9 @@ browser can watch live.
 
     python3 bench/n6_stream_host.py                 # then open http://localhost:8090/
     python3 bench/n6_stream_host.py --tune          # centre LAB readout
-    python3 bench/n6_stream_host.py --blob-thresh 20,70,10,50,-60,-15 \
-                                    --blob-label ball
+    python3 bench/n6_stream_host.py --blob-thresh pink:20,70,10,50,-20,25 \
+                                    --blob-thresh purple:10,80,10,65,-75,-10
+    python3 bench/n6_stream_host.py --blob-thresh pink:... --save-frames data/raw
 
 Nothing is written to the board -- the script runs from RAM and ``/flash`` is
 never touched. Needs ``mpremote`` (its transport does the raw-REPL attach) and
@@ -45,34 +46,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BOARD_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "n6_stream_board.py")
 
-_PAGE = """<!doctype html><html><head><title>OpenMV &mdash; live detection</title>
-<style>body{margin:0;background:#111;color:#ddd;font-family:ui-monospace,monospace;
-text-align:center}img{max-width:100%;image-rendering:pixelated}
-#s{color:#8c8;white-space:pre-wrap;font-size:13px}h3{margin:8px;font-weight:600}</style>
-</head><body>
-<h3 id="h">OpenMV &mdash; live detection</h3>
-<div id="b"></div>
-<img src="/stream"/>
-<pre id="s">connecting&hellip;</pre>
-<script>setInterval(async()=>{try{const r=await fetch('/stats.json');const j=await r.json();
-// Name the board on screen: with two OpenMV boards on USB, an unlabelled
-// reading is how a table gets attributed to the wrong silicon.
-if(j.board) document.getElementById('h').textContent = j.board;
-// A frozen stream and a motionless scene look identical. Say which it is.
-const dead = j.stale_s === null || j.stale_s > 3;
-const b=document.getElementById('b');
-b.textContent = dead ? ('\\u25CF NOT LIVE \\u2014 '+j.status+
-    (j.stale_s!==null ? '  (last frame '+j.stale_s+'s ago)' : '')) : '';
-b.style.cssText = dead ? 'background:#a11;color:#fff;padding:6px;font-weight:700'
-                       : '';
-document.getElementById('s').textContent=
- 'fps '+j.fps+'   frames '+j.frames+'   det '+j.det+'   blobs '+j.blobs+
- '   resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
- 'capture '+j.cap_ms+' ms   inference '+j.inf_ms+' ms   blobs '+j.blob_ms+
- ' ms   encode '+j.enc_ms+' ms\\n'+
- (j.lab ? 'centre patch LAB  L='+j.lab[0]+'  A='+j.lab[1]+'  B='+j.lab[2]+
-   '   -> --blob-thresh '+j.suggest+'\\n' : '')+j.info;
-}catch(e){}},500)</script></body></html>"""
 
 
 #: Half-width of the suggested LAB box around a measured centre-patch mean.
@@ -93,6 +66,99 @@ def suggest_threshold(lab, margin=LAB_MARGIN, limits=LAB_LIMITS):
         hi = min(hi_lim, int(value) + half)
         parts += [lo, hi]
     return ",".join(str(p) for p in parts)
+
+
+def parse_blob_class(spec, default_label, index):
+    """``"pink:20,70,10,50,-20,25"`` or a bare 6-tuple -> ``(label, tuple)``.
+
+    Kept as pure text-in/tuple-out so every error message is unit-testable
+    without a board attached.
+    """
+    label, _, numbers = spec.rpartition(":")
+    if not label:
+        # Bare form: keep the pre-bite-A spelling working, and name the box
+        # after --blob-label so a single-colour run reads exactly as before.
+        label = default_label if index == 0 else "%s%d" % (default_label, index + 1)
+    parts = [p.strip() for p in numbers.split(",")]
+    if len(parts) != 6:
+        raise ValueError("--blob-thresh %r needs 6 comma-separated ints "
+                         "(L_lo,L_hi,A_lo,A_hi,B_lo,B_hi), got %d"
+                         % (spec, len(parts)))
+    try:
+        values = tuple(int(p) for p in parts)
+    except ValueError:
+        raise ValueError("--blob-thresh %r has a non-integer bound" % spec)
+    return label, values
+
+
+def blob_classes_from_args(args):
+    """-> ``[(label, thresh), ...]``, or ``[]`` to leave the board default.
+
+    Returning empty rather than materialising the default keeps ONE copy of
+    the default threshold, on the board, where the script can also run alone.
+    """
+    if not args.blob_thresh:
+        return []
+    classes, seen = [], set()
+    for i, spec in enumerate(args.blob_thresh):
+        label, values = parse_blob_class(spec, args.blob_label, i)
+        if label in seen:
+            raise ValueError("--blob-thresh: duplicate colour name %r -- the "
+                             "per-class counts would be unreadable" % label)
+        seen.add(label)
+        classes.append((label, values))
+    return classes
+
+
+def lab_box_volume(box):
+    """Volume of a (L_lo,L_hi,A_lo,A_hi,B_lo,B_hi) box, edges counted inclusively."""
+    v = 1
+    for axis in range(3):
+        v *= max(0, box[axis * 2 + 1] - box[axis * 2]) + 1
+    return v
+
+
+def lab_overlap_fraction(earlier, later):
+    """How much of `later` sits inside `earlier`, as a fraction of `later`.
+
+    A yes/no answer is not actionable -- a 2% corner and a fully nested box
+    are different problems -- so the guard reports the share of the later box
+    that the earlier one will claim.
+    """
+    inter = 1
+    for axis in range(3):
+        lo = max(earlier[axis * 2], later[axis * 2])
+        hi = min(earlier[axis * 2 + 1], later[axis * 2 + 1])
+        if lo > hi:
+            return 0.0
+        inter *= (hi - lo) + 1
+    volume = lab_box_volume(later)
+    return inter / volume if volume else 0.0
+
+
+def shadowed_pairs(classes):
+    """-> [(earlier_label, later_label), ...] for boxes that overlap in LAB.
+
+    Measured on the N6 (S8 bite A, nibble 3): in ONE ``find_blobs`` call over
+    a threshold list, each pixel is claimed by the FIRST matching threshold in
+    list order, and ``merge=True`` ORs the codes of blobs it joins. So two
+    boxes that overlap in LAB are not both counted -- the earlier one takes
+    the shared pixels and the later one can report zero, with nothing to show
+    it happened. Disjoint boxes (pink vs purple) are unaffected: first match
+    is the only match.
+    """
+    pairs = []
+    for i in range(len(classes)):
+        for j in range(i + 1, len(classes)):
+            frac = lab_overlap_fraction(classes[i][1], classes[j][1])
+            if frac > 0:
+                pairs.append((classes[i][0], classes[j][0], frac))
+    return pairs
+
+
+def class_labels(args):
+    """The names the HUD shows, whether or not thresholds were given."""
+    return [lbl for lbl, _ in blob_classes_from_args(args)] or [args.blob_label]
 
 
 class Latest:
@@ -117,8 +183,12 @@ class Stats:
 
     WINDOW = 30
 
-    def __init__(self, clock=time.monotonic):
+    def __init__(self, clock=time.monotonic, labels=None):
         self._clock = clock
+        self.labels = list(labels or [])
+        self.blob_counts = [0] * len(self.labels)
+        self.amb = 0
+        self.saved = 0
         self._times = []
         self._win_bytes = []
         self._win_wire = []
@@ -144,6 +214,11 @@ class Stats:
         self.bytes += nbytes
         self.det = hdr.get("det", 0)
         self.blobs = hdr.get("blobs", 0)
+        # Per-class counts are the board's, verbatim. Trusting the length from
+        # the wire rather than from our own config means a board running an
+        # older script shows short-but-honest counts instead of a crash.
+        self.blob_counts = list(hdr.get("bc", []))
+        self.amb = hdr.get("amb", 0)
         self.lab = hdr.get("lab") or None
         for k in self._acc:
             self._acc[k] += hdr.get(k, 0)
@@ -201,6 +276,10 @@ class Stats:
             "fps": round(self.fps(), 1),
             "det": self.det,
             "blobs": self.blobs,
+            "blob_labels": self.labels,
+            "blob_counts": self.blob_counts,
+            "amb": self.amb,
+            "saved": self.saved,
             "lab": self.lab,
             "suggest": suggest_threshold(self.lab) if self.lab else "",
             "resyncs": self.resyncs,
@@ -246,18 +325,80 @@ class BoardView:
     cannot disturb the other -- which is the point of watching two at once.
     """
 
-    def __init__(self, label, port=None):
+    def __init__(self, label, port=None, labels=None, saver=None):
         self.label = label
         self.port = port
         self.latest = Latest()
-        self.stats = Stats()
+        self.stats = Stats(labels=labels)
         self.state = {"alive": True, "quit": False, "board": None}
+        # Per-board capture: two boards writing frame_000001.jpg into one
+        # directory would overwrite each other, and the dataset wants to know
+        # which sensor produced which frame regardless -- one model deploys to
+        # both, so "which camera shot this" is a training-relevant field.
+        self.saver = saver
 
     def snapshot(self):
         s = self.stats.snapshot()
         s["label"] = self.label
         s["port"] = self.port or "(auto)"
         return s
+
+
+class FrameSaver:
+    """Write every Nth frame plus its blob boxes: a labelled capture set.
+
+    The sidecar is JSONL, one object per SAVED frame, carrying the boxes the
+    board actually produced. B0 turns that into YOLO ``.txt`` labels and
+    Label Studio pre-annotations; nothing here re-derives the detection on the
+    host, which would not agree with the board that made it.
+
+    ``saved`` is counted and shown in the HUD on purpose: a capture run that
+    "worked" while writing nothing is the exact failure CLAUDE.md rule 4 is
+    about, and it is invisible unless the count is on screen.
+    """
+
+    def __init__(self, directory, every=15, labels=None, opener=open,
+                 makedirs=os.makedirs):
+        self.dir = directory
+        self.every = max(1, int(every))
+        self.labels = list(labels or [])
+        self._opener = opener
+        self._seen = 0
+        self.saved = 0
+        makedirs(directory, exist_ok=True)
+        self._index = os.path.join(directory, "index.jsonl")
+
+    def name_for(self, n):
+        """Monotonic in SAVED frames, not in the board's seq.
+
+        The board's seq restarts at 0 on every reconnect, and a nudged USB
+        connector is enough to cause one -- naming by seq would overwrite the
+        first frames of the session with the first frames after the replug.
+        """
+        return "frame_%06d.jpg" % n
+
+    def put(self, hdr, jpg):
+        """-> the filename written, or None when this frame is skipped."""
+        self._seen += 1
+        if (self._seen - 1) % self.every:
+            return None
+        name = self.name_for(self.saved)
+        with self._opener(os.path.join(self.dir, name), "wb") as fh:
+            fh.write(jpg)
+        record = {
+            "file": name,
+            "seq": hdr.get("seq", -1),
+            "w": hdr.get("w", 0),
+            "h": hdr.get("h", 0),
+            "classes": self.labels,
+            "boxes": hdr.get("bb", []),
+            "counts": hdr.get("bc", []),
+            "amb": hdr.get("amb", 0),
+        }
+        with self._opener(self._index, "a") as fh:
+            fh.write(json.dumps(record) + "\n")
+        self.saved += 1
+        return name
 
 
 def build_board_script_text(cfg):
@@ -274,7 +415,7 @@ def build_board_script(cfg, dest_dir):
     return path
 
 
-def reader_loop(out, latest, stats, state):
+def reader_loop(out, latest, stats, state, saver=None):
     """Consume the board's output: ``#I`` banner, ``#F`` header + base64 payload.
 
     ``out`` is anything with a bytes ``readline()`` -- a ``SerialBoard`` or a
@@ -317,6 +458,14 @@ def reader_loop(out, latest, stats, state):
                 continue
             latest.put(hdr.get("seq", 0), jpg)
             stats.note(hdr, len(jpg))
+            if saver is not None:
+                try:
+                    if saver.put(hdr, jpg) is not None:
+                        stats.saved = saver.saved
+                except OSError as exc:
+                    # A full disk must not look like a healthy capture run.
+                    stats.junk.append(b"save failed: %s"
+                                      % str(exc).encode("utf-8", "replace"))
         elif line.startswith(b"#I "):
             stats.info = line[3:].decode("utf-8", "replace")
             try:
@@ -327,6 +476,10 @@ def reader_loop(out, latest, stats, state):
                 stats.board = ""
             print("board: %s" % stats.info, flush=True)
         elif line.startswith(b"#D "):
+            # A CLEAN completion, not a disconnect: the board hit --max-frames
+            # or --max-seconds. Distinguishing the two is what lets a bounded
+            # run end by itself instead of being restarted by the supervisor.
+            state["done"] = True
             print("board: stream done %s" % line[3:].decode("utf-8", "replace"),
                   flush=True)
         else:
@@ -463,6 +616,11 @@ setInterval(async()=>{
       '  ' + mb(j.model_bytes) +
       (j.model_in ? '  in '+j.model_in : '') +
       (j.labels && j.labels.length ? '  ['+j.labels.join(',')+']' : '');
+  // Per-class counts, from bite A: "5 blobs" cannot be checked against a
+  // scene holding 3 pink and 2 purple balls, and bite C's baseline is exactly
+  // that check. `amb` is blobs that matched more than one colour box.
+  const per = (j.blob_labels||[]).map((n,i)=>n+' '+((j.blob_counts||[])[i]||0))
+      .join('   ');
   if(s) s.textContent =
    'capture   '+(j.framesize||'?')+'  '+j.w+'\\u00d7'+j.h+'  '+(j.pixfmt||'')+'\\n'+
    'encode    JPEG q'+(j.quality===null?'?':j.quality)+
@@ -472,63 +630,12 @@ setInterval(async()=>{
    'rate      '+j.fps+' fps   inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
    '          capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
    'found     '+j.blobs+' blobs   '+j.det+' detections\\n'+
+   (per ? '          '+per+(j.amb ? '   ambiguous '+j.amb : '')+'\\n' : '')+
+   (j.saved ? 'captured  '+j.saved+' frames saved\\n' : '')+
    'health    resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
    j.port;
  });
 },500)</script></body></html>""" % (panels, len(views))
-
-
-def make_handler(latest, stats):
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, *a):
-            pass
-
-        def _body(self, body, ctype):
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path == "/" or self.path.startswith("/index"):
-                self._body(_PAGE.encode(), "text/html; charset=utf-8")
-            elif self.path == "/stats.json":
-                self._body(json.dumps(stats.snapshot()).encode(), "application/json")
-            elif self.path == "/frame.jpg":
-                frame, _ = latest.get()
-                if frame:
-                    self._body(frame, "image/jpeg")
-                else:
-                    self.send_error(503, "no frame yet")
-            elif self.path == "/stream":
-                self._mjpeg()
-            else:
-                self.send_error(404)
-
-        def _mjpeg(self):
-            self.send_response(200)
-            self.send_header("Content-Type",
-                             "multipart/x-mixed-replace; boundary=frame")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            last = -1
-            try:
-                while True:
-                    frame, seq = latest.get()
-                    if frame and seq != last:
-                        last = seq
-                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
-                        self.wfile.write(b"Content-Length: %d\r\n\r\n" % len(frame))
-                        self.wfile.write(frame)
-                        self.wfile.write(b"\r\n")
-                    time.sleep(0.01)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    return Handler
 
 
 class SerialBoard:
@@ -705,8 +812,17 @@ def parse_args(argv=None):
                     help="skip inference (isolates capture+encode cost)")
     ap.add_argument("--no-blobs", action="store_true",
                     help="skip the colour-blob overlay")
-    ap.add_argument("--blob-thresh", default=None,
-                    help="LAB threshold L_lo,L_hi,A_lo,A_hi,B_lo,B_hi")
+    ap.add_argument("--blob-thresh", action="append", default=None,
+                    metavar="[NAME:]L_lo,L_hi,A_lo,A_hi,B_lo,B_hi",
+                    help="one LAB box, repeatable -- one colour per box, each "
+                         "drawn in its own colour. e.g. "
+                         "--blob-thresh pink:20,70,10,50,-20,25 "
+                         "--blob-thresh purple:10,80,10,65,-75,-10")
+    ap.add_argument("--blob-scan", choices=("codes", "per-class"),
+                    default="codes",
+                    help="codes: one find_blobs pass, attributed by the blob's "
+                         "code bitfield (~11 ms total at VGA). per-class: one "
+                         "pass per colour, unambiguous, ~11 ms EACH")
     ap.add_argument("--blob-pixels", type=int, default=150)
     ap.add_argument("--blob-label", default="blob",
                     help="what to call a colour blob in the overlay "
@@ -714,6 +830,14 @@ def parse_args(argv=None):
     ap.add_argument("--tune", action="store_true",
                     help="draw a centre target and report its mean LAB, so you "
                          "can read a --blob-thresh off a real object")
+    ap.add_argument("--save-frames", default=None, metavar="DIR",
+                    help="save frames + their blob boxes to DIR as a training "
+                         "set. Turns the OVERLAY OFF -- a JPEG with boxes "
+                         "burned into it is not a training image")
+    ap.add_argument("--save-every", type=int, default=15,
+                    help="save one frame in N (default 15 -- at ~22 fps that "
+                         "is ~1.5/s; consecutive frames are near-duplicates "
+                         "and inflate a dataset without informing it)")
     return ap.parse_args(argv)
 
 
@@ -731,12 +855,17 @@ def cfg_from_args(args):
         "blob_area": args.blob_pixels,
         "tune": args.tune,
         "blob_label": args.blob_label,
+        "blob_scan": args.blob_scan,
+        # Training frames must be pixel-clean; the blob pass still runs and
+        # still reports its boxes, so the labels survive -- only drawing stops.
+        "overlay": not args.save_frames,
     }
-    if args.blob_thresh:
-        parts = [int(p) for p in args.blob_thresh.split(",")]
-        if len(parts) != 6:
-            raise SystemExit("--blob-thresh needs 6 comma-separated ints")
-        cfg["blob_thresh"] = tuple(parts)
+    try:
+        classes = blob_classes_from_args(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    if classes:
+        cfg["blob_classes"] = classes
     return cfg
 
 
@@ -826,7 +955,8 @@ RETRY_BACKOFF_S = (2, 5, 10, 20, 30)
 
 
 def supervise(port_hint, script_text, latest, stats, state,
-              retry_s=None, settle_s=1.0, backoff=RETRY_BACKOFF_S):
+              retry_s=None, settle_s=1.0, backoff=RETRY_BACKOFF_S,
+              saver=None, on_done=None):
     """Keep a board stream running, reconnecting when the board comes back.
 
     Bumping the USB connector while aiming the camera ends the stream. That is
@@ -883,7 +1013,19 @@ def supervise(port_hint, script_text, latest, stats, state,
         stats.status = "streaming from %s" % port
         print("board: streaming from %s" % port, flush=True)
 
-        reader_loop(board, latest, stats, state)
+        reader_loop(board, latest, stats, state, saver)
+
+        if state.get("done"):
+            stats.status = "board finished its bounded run"
+            state["quit"] = True
+            try:
+                board.stop()
+            except Exception:            # never let teardown strand serve_forever
+                pass
+            state["board"] = None
+            if on_done is not None:
+                on_done()
+            return
 
         reason = getattr(board, "end_reason", "") or "unknown"
         why = getattr(board, "last_error", "") or ""
@@ -905,7 +1047,7 @@ def supervise(port_hint, script_text, latest, stats, state,
         time.sleep(settle_s)
 
 
-def parse_board_specs(specs):
+def parse_board_specs(specs, labels=None):
     """``["AE3=/dev/x", "N6=/dev/y"]`` -> ``[BoardView, ...]`` in order."""
     views = []
     for spec in specs:
@@ -916,7 +1058,7 @@ def parse_board_specs(specs):
         if not label or not port:
             raise SystemExit("--board wants a non-empty LABEL and PORT: %r"
                              % spec)
-        views.append(BoardView(label, port))
+        views.append(BoardView(label, port, labels=labels))
     dupes = {v.port for v in views}
     if len(dupes) != len(views):
         raise SystemExit("the same port was given twice -- each board needs "
@@ -926,23 +1068,33 @@ def parse_board_specs(specs):
 
 def main(argv=None):
     args = parse_args(argv)
-    cfg = cfg_from_args(args)
+    cfg = cfg_from_args(args)          # SystemExit on a malformed threshold
+    labels = class_labels(args)
+
+    # Loud, not fatal: overlapping boxes are legitimate with --blob-scan
+    # per-class and are a silent under-count with the default single pass.
+    if args.blob_scan == "codes":
+        for earlier, later, frac in shadowed_pairs(blob_classes_from_args(args)):
+            print("WARNING: %.0f%% of --blob-thresh %r lies inside %r. Under "
+                  "--blob-scan codes the EARLIER box claims the shared pixels, "
+                  "so %r under-counts (silently -- it is not flagged as "
+                  "ambiguous). Use --blob-scan per-class, or tighten the "
+                  "boxes so they do not meet."
+                  % (100 * frac, later, earlier, later), flush=True)
     script_text = build_board_script_text(cfg)
 
     if args.board:
-        views = parse_board_specs(args.board)
+        views = parse_board_specs(args.board, labels)
     else:
-        views = [BoardView("OpenMV", args.port)]
+        views = [BoardView("OpenMV", args.port, labels=labels)]
 
-    for view in views:
-        # One supervisor thread per board: an independent attach, reader and
-        # reconnect loop, so a board that drops out cannot stall the other.
-        threading.Thread(
-            target=supervise,
-            args=(view.port, script_text, view.latest, view.stats, view.state),
-            daemon=True).start()
-        print("board %-6s -> %s" % (view.label, view.port or "(auto)"),
-              flush=True)
+    if args.save_frames:
+        for view in views:
+            view.saver = FrameSaver(os.path.join(args.save_frames, view.label),
+                                    args.save_every, labels)
+            print("saving 1 frame in %d to %s -- overlay OFF (training frames "
+                  "must be clean); boxes go to index.jsonl"
+                  % (view.saver.every, view.saver.dir), flush=True)
 
     httpd = QuietServer((args.bind, args.http_port),
                         make_multi_handler(views))
@@ -953,7 +1105,35 @@ def main(argv=None):
         for addr in lan_addresses():
             print("  http://%s:%d/" % (addr, args.http_port), flush=True)
     url = "http://localhost:%d/" % args.http_port
-    print("open %s  (Ctrl-C to stop)" % url, flush=True)
+    bounded = bool(args.max_frames) or args.max_seconds < 3600
+    print("open %s  (%s)"
+          % (url, "ends by itself after the bounded run" if bounded
+             else "Ctrl-C to stop"), flush=True)
+
+    # A bounded run (--max-frames) ends when EVERY board has finished, not
+    # when the first one does -- otherwise the faster board tears down the
+    # viewer while the slower one is still mid-run, which on a two-board
+    # comparison silently truncates exactly the row being measured.
+    finished = set()
+    finished_lock = threading.Lock()
+
+    def _finished(label):
+        with finished_lock:
+            finished.add(label)
+            if len(finished) == len(views):
+                httpd.shutdown()
+
+    for view in views:
+        # One supervisor thread per board: an independent attach, reader and
+        # reconnect loop, so a board that drops out cannot stall the other.
+        threading.Thread(
+            target=supervise,
+            args=(view.port, script_text, view.latest, view.stats, view.state),
+            kwargs={"saver": view.saver,
+                    "on_done": (lambda lbl=view.label: _finished(lbl))},
+            daemon=True).start()
+        print("board %-6s -> %s" % (view.label, view.port or "(auto)"),
+              flush=True)
 
     # SIGTERM must unwind through the same path as Ctrl-C. A stop that skips
     # board.stop() leaves the board streaming into a closed endpoint from
@@ -987,9 +1167,13 @@ def main(argv=None):
         for view in views:
             s = view.stats.snapshot()
             print("%-6s frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
-                  "inference %.1f ms  encode %.1f ms"
+                  "inference %.1f ms  blobs %.1f ms  encode %.1f ms"
                   % (view.label, s["frames"], s["fps"], s["resyncs"],
-                     s["reconnects"], s["inf_ms"], s["enc_ms"]), flush=True)
+                     s["reconnects"], s["inf_ms"], s["blob_ms"], s["enc_ms"]),
+                  flush=True)
+            if view.saver is not None:
+                print("  saved %d frames to %s (index.jsonl)"
+                      % (view.saver.saved, view.saver.dir), flush=True)
             if view.stats.junk:
                 print("  junk (last 3): %r" % (view.stats.junk[-3:],),
                       flush=True)

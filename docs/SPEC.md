@@ -27,8 +27,8 @@ data path between camera and Pi is one twisted pair.
 
 | Item | Qty | Role |
 |---|---|---|
-| OpenMV AE3 (Alif E3) | 1 | Camera + SPI host under test |
-| OpenMV N6 (STM32N657) | 1 | Alternate camera board (H.264-capable), later |
+| OpenMV AE3 (Alif E3) | 1 | Camera + SPI host under test; **on nereus000's USB** |
+| OpenMV N6 (STM32N657) | 1 | Second camera board (H.264-capable, Neural-ART NPU); **on nereus000's USB** since 2026-08-20 |
 | SG-Electronics SPE V1.0.0 shield (ADIN1110) | 1 | Known-good ADIN board, documented pinout |
 | AOS BOREALIS Pi-Zero hat (ADIN1110) | 2 | Node hardware; pinout to be buzzed out |
 | Raspberry Pi 5 | 1 | Primary Linux node (eth0 stays free for debug) |
@@ -56,6 +56,52 @@ device tree. Other SG straps as-shipped: SWPD/TX2P4/MS_SEL/SHLD/EWP all open
 SPI0 CE0 · reset = GPIO17 · interrupt = GPIO22 (level) · I2C = PCF85063 RTC ·
 SG's published overlay uses 23 MHz and compat `ethernet-phy-id0283.bc91`
 (→ expected PHY ID readback: **0x0283BC91**).
+
+### Board identity on nereus000 (verified live 2026-08-20, both banners read)
+
+**Both camera boards now live on nereus000's USB** (D44). Development that
+needs Docker or an ML toolchain happens on the Mac; artifacts reach the boards
+*through the Pi*. The Mac's own USB carries no board.
+
+| `/dev/serial/by-id/…` | PID | tty | board banner | firmware |
+|---|---|---|---|---|
+| `usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00` | `37c5:1206` | ttyACM1 | `OpenMV N6 with STM32N657X0` | `v5.0.0; MicroPython v1.28.0-49` |
+| `usb-OpenMV_OpenMV_Camera_0829c14000000000-if00` | `37c5:16e3` | ttyACM0 | `OpenMV-AE3 with AE302F80F55D5AE` | `v5.0.0-52.g7d4dbf7ab2.dirty` |
+
+**The names are backwards from the obvious guess and this WILL cost someone a
+session: the N6 enumerates as "MicroPython Pyboard Virtual Comm Port", and the
+AE3 is the one that reads "OpenMV Camera".** Identify a board by asking it
+(`sys.version` plus the banner's `board` field), never by its USB descriptor —
+and never by `os.uname()`, whose `release` is only the MicroPython version.
+`ttyACM0`/`ttyACM1` are enumeration-order and are NOT stable across reboots;
+always use the by-id path (the standing rule from DESIGN §S8's mis-run, which
+benchmarked the wrong board).
+
+**The two boards do not run the same firmware.** The AE3 carries the S18
+sticky-framebuffer patch build (`v5.0.0-52.g7d4dbf7ab2.dirty`, D38); the N6 is
+stock `v5.0.0`. Free heap differs ~7.7× (N6 25,393,136 B vs AE3 3,281,488 B,
+both at VGA with yolov8n_192 loaded). Any cross-board comparison carries this
+in addition to the already-known model-binary confound — see S8 bite D.
+
+### `find_blobs` with a threshold list (measured on the N6, 2026-08-20)
+
+`b.code` is a **bitfield of threshold INDEX** — bit 0 for the first threshold
+in the list, bit 1 for the second, and so on (verified by scanning one frame
+with `[NONE, WIDE]` → 2 and `[NONE, NONE, WIDE]` → 4). Two rules govern it:
+
+1. **Each pixel is claimed by the FIRST matching threshold in list order.**
+   The thresholds partition the pixels; they do not each get a copy. So two
+   boxes that OVERLAP in LAB are not both counted — the earlier one takes the
+   shared pixels and the later one can report **zero, silently** (only one
+   bit is ever set, so an ambiguity check cannot catch it).
+2. **`merge=True` ORs the codes of merged blobs**, so a blob that touches
+   another of a different colour carries both bits and IS detectable.
+
+Consequence: one `find_blobs` call over a list is correct and cheap for
+**disjoint** boxes; overlapping boxes need one call per threshold. Blob search
+costs **~11 ms/frame (N6)** and **~15 ms (AE3)** at VGA with real thresholds —
+a wide-open threshold that matches the whole frame costs 20–70 ms and is not
+a representative number.
 
 ### OpenMV AE3 user pins (OpenMV docs)
 

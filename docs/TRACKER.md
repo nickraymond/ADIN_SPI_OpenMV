@@ -1487,10 +1487,12 @@ transport swapped later.*
 *(Was "Edge CV bring-up (T2)". Its old gate — "runs AFTER the BM-native
 arc S9–S13; board risk gates CV investment" — is **OVERRIDDEN by Nick
 2026-08-20**: CV is now the board-selection input, so it leads.
-**Runs alongside S24, which owns the N6 baseline and its toolchain
-question** — S8 is the AE3 half plus the cross-board custom model; S24
-is the N6's measured floor. Neither blocks the other: S24 is Mac-only,
-S8 wants the bench. Encoder
+**S24 is CLOSED and folded in** (2026-08-20) — its round-2 work (the
+AE3-vs-N6 head-to-head, the side-by-side viewer, the dark-frame
+false-detection finding) merged here via PR #48, and its open items are
+routed into S8's bites below. The "S24 is Mac-only, S8 wants the bench"
+split is dead with it: **both boards are on nereus000** (D44), so S8
+owns one bench and one harness. Encoder
 fps work (S23 bites S and 3) waits behind these numbers — Nick: get a
 custom model benchmarking on both boards before spending more on VGA.)*
 **Goal:** prove the ENTIRE custom-model path — train, compile, deploy,
@@ -1514,8 +1516,20 @@ any urchin labelling effort is spent.
       `bench/n6_stream_{board,host}.py` + 19 host tests; yolov8n_192
       20.7/23.7/32.2 ms and end-to-end 47.9/41.8/30.2 fps at
       QVGA/VGA/HD. Tables in DESIGN §S24.)*
-- [ ] **Bite A — match more than one colour at once** *(was S24 bite
-      1b.)* Nick threw pink balls into a purple-tuned scene and they
+- [~] **Bite A — match more than one colour at once** *(was S24 bite
+      1b.)* **Code + hardware verification DONE 2026-08-20; the live demo
+      with real balls is owed and waits on Nick's camera mount.** Shipped:
+      repeatable `--blob-thresh NAME:L,L,A,A,B,B`, per-class counts on the
+      wire (`bc`/`amb`/`bb`), one palette colour per class, `--blob-scan
+      codes|per-class`, `--save-frames` + `index.jsonl` labelled capture,
+      and an overlap guard. Folded with PR #48's two-board viewer, so both
+      boards report per-class counts in one page. 102 host tests.
+      **`b.code` settled by probe** (DESIGN §S8 bite A detail): index
+      bitfield, first-matching-threshold-wins per pixel, merge ORs codes —
+      so overlapping boxes silently under-count and the repo's own
+      documented pink/purple example overlapped by 8.8%. Blob cost measured
+      at 10.6 ms (N6) / 15.2 ms (AE3). Still owed: tuned real thresholds
+      and ground-truth counts at 1 m / 2 m.* Nick threw pink balls into a purple-tuned scene and they
       were correctly ignored: the threshold is a single LAB box and
       pink's `b` sits outside the purple range. `find_blobs` already
       takes a LIST of thresholds; the board script passes one and the
@@ -1579,10 +1593,28 @@ any urchin labelling effort is spent.
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
 
+**BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
+nereus000's USB.** The Mac holds no board — it is the training and
+toolchain host (Docker, dataset work, model compilation) and artifacts
+reach the boards *through the Pi*. Board identities, verified live by
+reading both banners, are in SPEC §Board identity on nereus000; the
+short version, because it is the opposite of the obvious guess:
+**the N6 enumerates as `usb-MicroPython_Pyboard_Virtual_Comm_Port…`
+(`37c5:1206`) and the AE3 as `usb-OpenMV_OpenMV_Camera_0829c14…`
+(`37c5:16e3`)**. Always the by-id path, never `ttyACM<n>`.
+Consequence for the bites below: A/B1/D are **no longer Mac-only**, and
+`bench/n6_stream_host.py` resolves ports by globbing `/dev/cu.usbmodem*`
+— Mac-only, so it needs a by-id path before it runs on the Pi.
+
 **Hardware facts, all verified live this session — do not re-litigate:**
 - Board reports `OpenMV v5.0.0; MicroPython v1.28.0-49`, built
   2026-07-02, `OpenMV N6 with STM32N657X0`, free heap **25.6 MB**. On
-  macOS it enumerates as `/dev/cu.usbmodem1101` (VID `37c5`).
+  macOS it enumerated as `/dev/cu.usbmodem1101` (VID `37c5`) — that was
+  the 2026-08-19 topology; see the by-id paths above for the bench.
+- **The two boards do not run the same firmware**: AE3 is the S18
+  patched build `v5.0.0-52.g7d4dbf7ab2.dirty` (D38), N6 is stock
+  `v5.0.0`; free heap differs ~7.7× (25,393,136 vs 3,281,488 B at VGA
+  with yolov8n_192 loaded). Bite D's confound list grows by one.
 - **Verify firmware with `sys.version`, NOT `os.uname()`** — uname's
   `release` is the MicroPython version (`1.28.0`) and carries no OpenMV
   build. Same trap the S7 flash work recorded.
@@ -1657,8 +1689,10 @@ N6; one table of end-to-end capture→detect→count fps and count accuracy
 at 1 m and 2 m for both boards and for both methods (blob baseline vs
 custom model), pixels-on-target recorded alongside; plus the board-
 decision table from bite D reviewed together.
-**Needs:** bench time; the AE3 on nereus000; a training host; **S24's
-bite-3 answer for the N6 compile path** (do not re-derive it).
+**Needs:** bench time; **both boards on nereus000** (D44); the Mac set up
+as the training/toolchain host (Docker + ML env — unstarted, see bite
+B0); **S24's bite-3 answer for the N6 compile path** (do not re-derive
+it, it is bite B1 here).
 **Reuse before rewriting:** S24 shipped `bench/n6_stream_{board,host}.py`
 (+19 host tests) — a headless capture→infer→view harness for the N6.
 Bite B's end-to-end measurement should extend that and

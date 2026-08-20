@@ -107,6 +107,8 @@ makes AE3→N6 (or MicroPython→C) a HAL swap, not a rewrite.
 
 | D43 | 2026-08-19 | **New sprint S24 — N6 CV baseline — opened by Nick and run the same session; the OpenMV N6's stock-model NPU performance is now measured, and there is a headless live detection viewer.** Scoped as its own sprint rather than folded into S8 (the AE3's edge-CV sprint, gated behind S13) because it is board-selection input for a *different* board, needs no bench hardware, and runs entirely on the Mac over USB — it neither blocks nor is blocked by the S23 ladder, so S23 bite R is re-ordered, not displaced. **Headless is forced, not preferred:** every OpenMV IDE build with N6 support (v4.8.1+) is compiled with a macOS 15 minimum and will not launch on this Mac's macOS 14.6.1, so the IDE's framebuffer view had to be rebuilt as `bench/n6_stream_{board,host}.py` — board script executed via `mpremote run` (nothing written to the board), frames returned as `#F` JSON header + base64 payload, host serving multipart MJPEG on the `pi/stream/stream_server.py` pattern. **Base64 rather than the project's frozen framed-binary format is a deliberate transport decision:** `mpremote run` returns stdout through the raw REPL, which terminates on byte `0x04`, and JPEG payloads contain `0x04` freely — base64 costs ~33% bandwidth and deletes the entire failure class, which is worth more than the bytes on a USB link with 24 MB/s of headroom. Measured (tables in §S24 detail): yolov8n_192 **20.7 / 23.7 / 32.2 ms** mean inference at QVGA/VGA/HD with p95 within 0.5 ms of mean, **capture+inference end-to-end 47.9 / 41.8 / 30.2 fps**, capture DMA-hidden at 0.2 ms, model load ~2.2 ms (ROM is memory-mapped, not copied). All 9 ROM models timed. | The vendor's "~30 fps YOLOv8-class detection" claim is now a measured number rather than marketing, and it lands at **HD**, not VGA — better than the claim implies, because at QVGA/VGA the same model runs 42–48 fps. The engineering consequence is that on this board inference IS the frame budget: capture costs 0.2 ms and model load is free, so any fps target is a pure function of model choice, and the S8 tiled-coverage arithmetic (tiles × ms/tile) remains the only thing that matters for real detection work. The stock detectors stay person-only on both boards, so D11's standing conclusion — a custom Vela-compiled detector is required either way — survives this sprint unchanged; what changes is that the N6's per-tile cost is now known well enough to price the tiling budget honestly. |
 
+| D44 | 2026-08-20 | **Bench topology (Nick): BOTH camera boards live on nereus000's USB; the Mac is the training/toolchain host; artifacts reach the boards through the Pi.** Supersedes the S24-era arrangement where the N6 hung off the Mac's USB (`/dev/cu.usbmodem1101`) and CV work was Mac-only — that history stands as as-built in §S24 detail, but no bite should plan around it again. Board identity verified live by reading both banners, and it is **backwards from the obvious guess**: the N6 enumerates as `usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_0200…-if00` (`37c5:1206`, banner `OpenMV N6 with STM32N657X0`) while the AE3 is `usb-OpenMV_OpenMV_Camera_0829c14000000000-if00` (`37c5:16e3`, banner `OpenMV-AE3 with AE302F80F55D5AE`). `ttyACM0/1` are enumeration-order and not stable; the by-id path is the only safe handle — the standing rule from the §S8 mis-run that benchmarked the wrong board. Two asymmetries recorded at the same time: the boards are **not on the same firmware** (AE3 = the S18 sticky-framebuffer patch build `v5.0.0-52.g7d4dbf7ab2.dirty`, D38; N6 = stock `v5.0.0`) and free heap differs ~7.7× (25,393,136 vs 3,281,488 B at VGA with yolov8n_192 loaded). Discovered in the same pass: an **off-repo fork of `bench/n6_stream_{board,host}.py` on the Pi at `~/n6_sidebyside`** (not a git repo, dated 2026-08-20 05:02–05:20), running both boards side-by-side via a repeatable `--board NAME=PATH` plus `--bind` — features the repo copy does not have, on a file S8 bite A is concurrently modifying. | The topology change is what makes a *single* two-board measurement possible at all: bite C wants capture→detect→count on both boards against the same scene, and two boards on two different hosts cannot share a scene, a clock, or a viewer. Putting the toolchain on the Mac and the boards on the Pi splits the work along the line the hardware already draws — the Mac has the RAM, the disk and Docker; the Pi has the USB and the bench — and makes "move the artifact through the Pi" the one deployment path, instead of two that drift. Recording the firmware and heap asymmetry now matters because bite D's job is a board-decision number: it already carried a model-binary confound, and shipping a comparison that quietly also spans two firmware builds would make the number unusable. The fork is called out rather than absorbed because reconciling it is a scope decision (it is ~200 LoC of unreviewed, untested-in-repo divergence on a file under active edit), and silently re-forking it is exactly the "do not start a third harness" failure the sprint was warned about. |
+
 ## Verified-facts ledger
 
 See SPEC.md §Confirmed technical facts. Anything not there or here is
@@ -1431,6 +1433,79 @@ frame containing anything to draw. It was caught only by forcing a
 wide-open blob threshold specifically to make the draw path run. A
 flowing stream and a clean exit code proved nothing about the code that
 had not yet been reached.
+
+### S8 bite A detail (2026-08-20) — multi-colour blobs, and what `b.code` actually means
+
+Run on nereus000 with **both boards attached** (D44). Nothing written to
+either board: scripts run from RAM through the raw REPL, `/flash` untouched.
+
+**The question the bite had to settle:** `find_blobs` takes a LIST of LAB
+thresholds and each blob carries a `code`. Whether that code reliably says
+which threshold matched was UNVERIFIED, and it decides whether multi-colour
+counting costs one pass (~11 ms) or one pass per colour (~11 ms each).
+
+**Settled by probing one frame with four threshold lists** (`~/bm_bench/
+code_probe2.py`, throwaway; the same frame scanned by every list so the scene
+could not drift between measurements):
+
+| threshold list | `b.code` | blob px |
+|---|---|---|
+| `[WIDE, BRIGHT]` (BRIGHT ⊂ WIDE) | **1** | 256,000 |
+| `[NONE, WIDE]` | **2** | 256,000 |
+| `[BRIGHT, WIDE]` | **3** | 254,563 |
+| `[NONE, NONE, WIDE]` | **4** | 256,000 |
+
+**`b.code` is an index bitfield, and it does accumulate bits.** Two rules
+account for every row:
+
+1. **Each pixel is claimed by the FIRST matching threshold in list order.**
+   Thresholds partition the pixels; they do not each get a copy. In row 1
+   WIDE matches everything first, so BRIGHT is left with nothing and never
+   sets bit 1. In row 3 BRIGHT takes the bright pixels and WIDE takes the
+   rest.
+2. **`merge=True` ORs the codes of blobs it joins** — row 3's code 3 is one
+   merged blob carrying both bits.
+
+**Consequences, in the order they matter:**
+
+- Rule 2 is why `classify_blobs` counts a multi-bit blob ONCE (lowest class)
+  and tallies it in `amb`: a pink ball touching a purple one is one merged
+  blob, and counting it into both classes would inflate the very number bite
+  C checks against ground truth.
+- Rule 1 is a **silent under-count for OVERLAPPING boxes**. The earlier box
+  takes the shared pixels and the later box can report zero — and `amb` stays
+  0, because only one bit is ever set. Nothing surfaces it.
+- **The repo's own documented pink/purple example overlapped by 8.8% in `b`**
+  and would have hit this. Found by writing the guard, not by inspection.
+- Guard shipped: the host computes the overlap fraction from the parsed
+  thresholds and warns before a frame is captured, naming the earlier box as
+  the shadowing one and pointing at `--blob-scan per-class`. Loud, not fatal —
+  overlapping boxes are legitimate under per-class.
+
+**Measured costs (VGA, both boards, real thresholds):** blob search **10.6 ms
+N6 / 15.2 ms AE3** per frame. The 20–70 ms figures from the first probe runs
+are an artifact of a wide-open threshold matching all 256,000 px of the frame
+and must not be quoted as a scan cost.
+
+**Capture verified end-to-end on hardware.** `--save-frames` wrote 6 frames
+per board into separate `AE3/` and `N6/` directories with a matching
+`index.jsonl`; JPEGs valid (SOI/EOI present, SOF 640×400); boxes recorded as
+`[cls, x, y, w, h, pixels]`. A first capture run recorded `boxes: []` because
+a ceiling has nothing pink in it — **the box-recording path had not executed**,
+the same latent-path trap S24 hit with its draw calls, so the run was repeated
+with a threshold that matches the ceiling to force it. The saved frame was
+then pulled back and **looked at**: clean image, no rectangle, no cross, no
+label, despite a full-frame blob being recorded alongside it. Overlay-off and
+labels-recorded are both true at once, which is what makes the output usable
+as training data.
+
+**Method note worth keeping.** The first attempt at the `b.code` question ran
+the two scan modes as two separate viewer sessions and compared their counts.
+The scene drifted between runs — the N6's own count moved 1 → 2 with no
+configuration change — so the comparison was measuring the ceiling, not the
+API. One frame, every variant, was what settled it. Two runs at two times is
+not an A/B.
+
 
 ### S9 detail (2026-08-11) — bite 1: OA first light, spike PASSED
 
