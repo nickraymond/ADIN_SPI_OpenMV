@@ -797,6 +797,63 @@ class TestReaderLoopSaves(unittest.TestCase):
             self.assertTrue(any(b"save failed" in j for j in stats.junk))
 
 
+class TestLabBoxOverlap(unittest.TestCase):
+    """The guard for the one configuration that silently under-counts.
+
+    Measured on the N6 (nibble 3): in a single find_blobs call over a list,
+    each pixel goes to the FIRST matching threshold, so an earlier box that
+    overlaps a later one takes the shared pixels and the later one can report
+    zero -- with `amb` staying 0, because only one code bit is ever set.
+    """
+
+    WIDE = (0, 100, -128, 127, -128, 127)
+    BRIGHT = (50, 100, -128, 127, -128, 127)      # strict subset of WIDE
+
+    def test_a_nested_box_is_fully_shadowed(self):
+        self.assertEqual(H.lab_overlap_fraction(self.WIDE, self.BRIGHT), 1.0)
+
+    def test_disjoint_boxes_do_not_overlap(self):
+        pink = (20, 70, 10, 50, 0, 25)
+        purple = (10, 80, 10, 65, -75, -10)        # b ranges do not meet
+        self.assertEqual(H.lab_overlap_fraction(pink, purple), 0.0)
+        self.assertEqual(H.shadowed_pairs([("pink", pink),
+                                           ("purple", purple)]), [])
+
+    def test_partial_overlap_is_quantified(self):
+        # L overlaps on 5..10 (6 of 11 values); A and B match exactly.
+        earlier = (0, 10, 0, 10, 0, 10)
+        later = (5, 15, 0, 10, 0, 10)
+        self.assertAlmostEqual(H.lab_overlap_fraction(earlier, later),
+                               (6 * 11 * 11) / (11 * 11 * 11))
+
+    def test_boxes_touching_on_one_plane_still_share_pixels(self):
+        # Ranges are inclusive, so L=10 satisfies both -- a real overlap.
+        self.assertGreater(H.lab_overlap_fraction((0, 10, 0, 10, 0, 10),
+                                                  (10, 20, 0, 10, 0, 10)), 0)
+
+    def test_the_pair_is_reported_in_list_order(self):
+        # Order is what decides the winner, so the guard must say which box
+        # is doing the shadowing, not just that two of them overlap.
+        pairs = H.shadowed_pairs([("wide", self.WIDE), ("bright", self.BRIGHT)])
+        self.assertEqual([(a, b) for a, b, _ in pairs], [("wide", "bright")])
+
+    def test_every_pair_is_checked(self):
+        box = (0, 100, -128, 127, -128, 127)
+        pairs = H.shadowed_pairs([("a", box), ("b", box), ("c", box)])
+        self.assertEqual([(a, b) for a, b, _ in pairs],
+                         [("a", "b"), ("a", "c"), ("b", "c")])
+
+    def test_the_documented_example_thresholds_overlap(self):
+        # The pink/purple pair used in the help text and docs overlaps in `b`
+        # by ~9%. Pinned as a test because it is the exact configuration a
+        # reader would copy, and it under-counts under the default scan.
+        pink = (20, 70, 10, 50, -20, 25)
+        purple = (10, 80, 10, 65, -75, -10)
+        pairs = H.shadowed_pairs([("pink", pink), ("purple", purple)])
+        self.assertEqual(len(pairs), 1)
+        self.assertAlmostEqual(pairs[0][2], 0.0877, places=3)
+
+
 class TestMergedTwoBoardSeams(unittest.TestCase):
     """The seams where bite A meets the side-by-side viewer.
 

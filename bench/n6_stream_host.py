@@ -110,6 +110,52 @@ def blob_classes_from_args(args):
     return classes
 
 
+def lab_box_volume(box):
+    """Volume of a (L_lo,L_hi,A_lo,A_hi,B_lo,B_hi) box, edges counted inclusively."""
+    v = 1
+    for axis in range(3):
+        v *= max(0, box[axis * 2 + 1] - box[axis * 2]) + 1
+    return v
+
+
+def lab_overlap_fraction(earlier, later):
+    """How much of `later` sits inside `earlier`, as a fraction of `later`.
+
+    A yes/no answer is not actionable -- a 2% corner and a fully nested box
+    are different problems -- so the guard reports the share of the later box
+    that the earlier one will claim.
+    """
+    inter = 1
+    for axis in range(3):
+        lo = max(earlier[axis * 2], later[axis * 2])
+        hi = min(earlier[axis * 2 + 1], later[axis * 2 + 1])
+        if lo > hi:
+            return 0.0
+        inter *= (hi - lo) + 1
+    volume = lab_box_volume(later)
+    return inter / volume if volume else 0.0
+
+
+def shadowed_pairs(classes):
+    """-> [(earlier_label, later_label), ...] for boxes that overlap in LAB.
+
+    Measured on the N6 (S8 bite A, nibble 3): in ONE ``find_blobs`` call over
+    a threshold list, each pixel is claimed by the FIRST matching threshold in
+    list order, and ``merge=True`` ORs the codes of blobs it joins. So two
+    boxes that overlap in LAB are not both counted -- the earlier one takes
+    the shared pixels and the later one can report zero, with nothing to show
+    it happened. Disjoint boxes (pink vs purple) are unaffected: first match
+    is the only match.
+    """
+    pairs = []
+    for i in range(len(classes)):
+        for j in range(i + 1, len(classes)):
+            frac = lab_overlap_fraction(classes[i][1], classes[j][1])
+            if frac > 0:
+                pairs.append((classes[i][0], classes[j][0], frac))
+    return pairs
+
+
 def class_labels(args):
     """The names the HUD shows, whether or not thresholds were given."""
     return [lbl for lbl, _ in blob_classes_from_args(args)] or [args.blob_label]
@@ -1024,6 +1070,17 @@ def main(argv=None):
     args = parse_args(argv)
     cfg = cfg_from_args(args)          # SystemExit on a malformed threshold
     labels = class_labels(args)
+
+    # Loud, not fatal: overlapping boxes are legitimate with --blob-scan
+    # per-class and are a silent under-count with the default single pass.
+    if args.blob_scan == "codes":
+        for earlier, later, frac in shadowed_pairs(blob_classes_from_args(args)):
+            print("WARNING: %.0f%% of --blob-thresh %r lies inside %r. Under "
+                  "--blob-scan codes the EARLIER box claims the shared pixels, "
+                  "so %r under-counts (silently -- it is not flagged as "
+                  "ambiguous). Use --blob-scan per-class, or tighten the "
+                  "boxes so they do not meet."
+                  % (100 * frac, later, earlier, later), flush=True)
     script_text = build_board_script_text(cfg)
 
     if args.board:
