@@ -255,6 +255,75 @@ class TestSerialBoardReadline(unittest.TestCase):
         self.assertEqual(b.readline(), b"\xff\xd8\xff\xe0 payload\n")
 
 
+class TestBoardSpecs(unittest.TestCase):
+    def test_parses_in_order(self):
+        vs = H.parse_board_specs(["AE3=/dev/ttyACM0", "N6=/dev/ttyACM1"])
+        self.assertEqual([(v.label, v.port) for v in vs],
+                         [("AE3", "/dev/ttyACM0"), ("N6", "/dev/ttyACM1")])
+
+    def test_order_is_left_to_right(self):
+        vs = H.parse_board_specs(["L=/dev/a", "R=/dev/b"])
+        self.assertEqual(vs[0].label, "L")   # panel order is argument order
+
+    def test_rejects_missing_equals(self):
+        with self.assertRaises(SystemExit):
+            H.parse_board_specs(["noequals"])
+
+    def test_rejects_empty_label_or_port(self):
+        for bad in (["=/dev/x"], ["A="]):
+            with self.assertRaises(SystemExit):
+                H.parse_board_specs(bad)
+
+    def test_rejects_the_same_port_twice(self):
+        # Two panels on one device would silently show the same board.
+        with self.assertRaises(SystemExit):
+            H.parse_board_specs(["A=/dev/x", "B=/dev/x"])
+
+    def test_views_are_independent(self):
+        a, b = H.parse_board_specs(["A=/dev/x", "B=/dev/y"])
+        a.stats.note({"inf_us": 1000}, 10)
+        self.assertEqual(a.stats.frames, 1)
+        self.assertEqual(b.stats.frames, 0)     # one board cannot skew another
+        a.latest.put(1, b"\xff\xd8x")
+        self.assertEqual(b.latest.get(), (b"", -1))
+
+
+class TestMultiPage(unittest.TestCase):
+    def test_one_panel_and_route_per_board(self):
+        vs = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"])
+        page = H.multi_page(vs)
+        for token in ('id="t0"', 'id="t1"', "/s/0/stream", "/s/1/stream",
+                      "const N=2", "AE3", "N6"):
+            self.assertIn(token, page)
+
+    def test_single_board_still_renders(self):
+        page = H.multi_page([H.BoardView("solo", "/dev/a")])
+        self.assertIn("/s/0/stream", page)
+        self.assertNotIn("/s/1/stream", page)
+
+    def test_snapshot_carries_label_and_port(self):
+        v = H.BoardView("AE3", "/dev/ttyACM0")
+        snap = v.snapshot()
+        self.assertEqual(snap["label"], "AE3")
+        self.assertEqual(snap["port"], "/dev/ttyACM0")
+
+
+class TestPortCandidates(unittest.TestCase):
+    def test_linux_prefers_by_id(self):
+        # by-id encodes the USB serial; ttyACM numbering is assignment-order
+        # and swaps between boots. Getting this wrong is how a table gets
+        # attributed to the wrong board.
+        for pat in H.PORT_GLOBS["linux"]:
+            self.assertIn("/dev/serial/by-id/", pat)
+
+    def test_linux_matches_both_product_strings(self):
+        # The AE3 enumerates as "OpenMV Camera", the N6 as a MicroPython
+        # Pyboard VCP -- measured on nereus000. Both must be found.
+        pats = H.PORT_GLOBS["linux"]
+        self.assertTrue(any("OpenMV" in p for p in pats))
+        self.assertTrue(any("MicroPython" in p for p in pats))
+
+
 class TestConfig(unittest.TestCase):
     def test_blob_thresh_needs_six_values(self):
         args = H.parse_args(["--blob-thresh", "1,2,3"])

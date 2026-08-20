@@ -183,6 +183,29 @@ class Stats:
         }
 
 
+class BoardView:
+    """One board's stream: its label, its port, and its live state.
+
+    The comparison view is just a list of these. Everything that was
+    per-process in the single-board design (Latest, Stats, the supervisor's
+    state dict) is per-view here, so one board disconnecting or wedging
+    cannot disturb the other -- which is the point of watching two at once.
+    """
+
+    def __init__(self, label, port=None):
+        self.label = label
+        self.port = port
+        self.latest = Latest()
+        self.stats = Stats()
+        self.state = {"alive": True, "quit": False, "board": None}
+
+    def snapshot(self):
+        s = self.stats.snapshot()
+        s["label"] = self.label
+        s["port"] = self.port or "(auto)"
+        return s
+
+
 def build_board_script_text(cfg):
     """The board script with a ``_CFG`` prelude injected. Returns source text."""
     with open(BOARD_SCRIPT) as fh:
@@ -256,6 +279,134 @@ def reader_loop(out, latest, stats, state):
             print("board: %s" % text, flush=True)
     state["alive"] = False
     print("board: stream ended", flush=True)
+
+
+def make_multi_handler(views):
+    """Routes for N boards: /s/<i>/stream, /s/<i>/stats.json, /s/<i>/frame.jpg.
+
+    Everything is served same-origin from one process so the page can fetch
+    each board's stats without CORS, and so one browser tab shows both.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def _body(self, body, ctype):
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _view(self, idx):
+            return views[idx] if 0 <= idx < len(views) else None
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            if path == "/" or path.startswith("/index"):
+                self._body(multi_page(views).encode(), "text/html; charset=utf-8")
+                return
+            if path == "/api/boards":
+                body = json.dumps([v.snapshot() for v in views]).encode()
+                self._body(body, "application/json")
+                return
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "s" and parts[1].isdigit():
+                view = self._view(int(parts[1]))
+                if view is None:
+                    self.send_error(404)
+                    return
+                if parts[2] == "stats.json":
+                    self._body(json.dumps(view.snapshot()).encode(),
+                               "application/json")
+                elif parts[2] == "frame.jpg":
+                    frame, _ = view.latest.get()
+                    if frame:
+                        self._body(frame, "image/jpeg")
+                    else:
+                        self.send_error(503, "no frame yet")
+                elif parts[2] == "stream":
+                    self._mjpeg(view)
+                else:
+                    self.send_error(404)
+                return
+            self.send_error(404)
+
+        def _mjpeg(self, view):
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            last = -1
+            try:
+                while True:
+                    frame, seq = view.latest.get()
+                    if frame and seq != last:
+                        last = seq
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                        self.wfile.write(b"Content-Length: %d\r\n\r\n" % len(frame))
+                        self.wfile.write(frame)
+                        self.wfile.write(b"\r\n")
+                    time.sleep(0.01)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    return Handler
+
+
+def multi_page(views):
+    """Side-by-side comparison page, one panel per board, in argument order."""
+    panels = "\n".join(
+        '<div class="p"><h2 id="t%d">%s</h2><div class="ban" id="b%d"></div>'
+        '<img src="/s/%d/stream"/><pre id="s%d">connecting&hellip;</pre></div>'
+        % (i, v.label, i, i, i) for i, v in enumerate(views))
+    return """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenMV &mdash; side by side</title><style>
+body{margin:0;background:#111;color:#ddd;font-family:ui-monospace,monospace}
+h1{font-size:15px;margin:10px;text-align:center;color:#9ab;font-weight:600}
+.row{display:flex;gap:10px;padding:0 10px 12px;align-items:flex-start}
+.p{flex:1 1 0;min-width:0;text-align:center}
+.p h2{font-size:14px;margin:4px 0;color:#fff}
+img{width:100%%;height:auto;image-rendering:pixelated;background:#000;
+    border:1px solid #333;border-radius:4px}
+pre{color:#8c8;white-space:pre-wrap;font-size:12px;text-align:left;margin:6px 0}
+.ban{font-weight:700;border-radius:3px}
+@media(max-width:760px){.row{flex-direction:column}}
+</style></head><body>
+<h1>OpenMV side-by-side &mdash; same script, same scene, different silicon</h1>
+<div class="row">%s</div>
+<script>
+const N=%d;
+setInterval(async()=>{
+ let js;
+ try{ js = await (await fetch('/api/boards')).json(); }catch(e){ return; }
+ js.forEach((j,i)=>{
+  // Board identity comes from the board itself, never from the label we
+  // typed -- with two boards attached, a mislabelled panel is how a wrong
+  // number gets published (DESIGN "S8 detail CORRECTION").
+  const t=document.getElementById('t'+i);
+  if(t) t.textContent = j.label + (j.board ? '  \\u2014  '+j.board : '');
+  const dead = j.stale_s === null || j.stale_s > 3;
+  const b=document.getElementById('b'+i);
+  if(b){
+   b.textContent = dead ? ('\\u25CF NOT LIVE \\u2014 '+j.status) : '';
+   b.style.cssText = dead
+     ? 'background:#a11;color:#fff;padding:5px;font-weight:700' : '';
+  }
+  const s=document.getElementById('s'+i);
+  if(s) s.textContent =
+   'fps '+j.fps+'   frames '+j.frames+'   blobs '+j.blobs+'   det '+j.det+'\\n'+
+   'inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
+   'capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
+   'resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
+   j.port;
+ });
+},500)</script></body></html>""" % (panels, len(views))
 
 
 def make_handler(latest, stats):
@@ -424,7 +575,14 @@ class QuietServer(ThreadingHTTPServer):
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", default=None,
-                    help="serial device (default: the sole /dev/cu.usbmodem*)")
+                    help="serial device for single-board mode (default: the "
+                         "only OpenMV board present)")
+    ap.add_argument("--board", action="append", default=None,
+                    metavar="LABEL=PORT",
+                    help="add a board to the side-by-side view; repeatable, "
+                         "and panels appear left-to-right in the order given. "
+                         "e.g. --board AE3=/dev/serial/by-id/usb-OpenMV_... "
+                         "--board N6=/dev/serial/by-id/usb-MicroPython_...")
     ap.add_argument("--http-port", type=int, default=8090)
     ap.add_argument("--bind", default="127.0.0.1",
                     help="HTTP bind address. Defaults to localhost only. Pass "
@@ -506,22 +664,49 @@ def lan_addresses():
     return addrs
 
 
-def find_port(explicit=None):
-    """Resolve the N6's serial device, failing with something actionable.
+#: Where a board turns up, per platform. On Linux ALWAYS prefer
+#: /dev/serial/by-id -- ttyACM numbering is assignment-order and swaps between
+#: boots, and this project has already published a table attributed to the
+#: wrong board because bare mpremote grabbed the first CDC device
+#: (DESIGN "S8 detail CORRECTION"). by-id encodes the USB serial, so it names
+#: one specific board forever.
+PORT_GLOBS = {
+    "darwin": ("/dev/cu.usbmodem*",),
+    "linux": ("/dev/serial/by-id/usb-OpenMV*",
+              "/dev/serial/by-id/usb-MicroPython*"),
+}
 
-    Note the device node is NOT stable across replugs -- this board came back
-    as usbmodem1201 after having been usbmodem1101 -- so the reconnect path
-    re-resolves it every attempt rather than caching it.
+
+def port_candidates():
+    """Serial devices that look like an OpenMV board, on this platform."""
+    import glob
+    key = "darwin" if sys.platform == "darwin" else "linux"
+    found = []
+    for pattern in PORT_GLOBS[key]:
+        for p in sorted(glob.glob(pattern)):
+            if p not in found:
+                found.append(p)
+    return found
+
+
+def find_port(explicit=None):
+    """Resolve a board's serial device, failing with something actionable.
+
+    The device node is NOT stable -- on macOS this board came back as
+    usbmodem1201 after having been usbmodem1101, and on Linux ttyACM numbering
+    is assignment-order -- so the reconnect path re-resolves every attempt
+    rather than caching, and by-id is preferred where it exists.
     """
     if explicit:
         return explicit
-    import glob
-    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
+    ports = port_candidates()
     if not ports:
-        raise PortError("no /dev/cu.usbmodem* found -- is the N6 plugged in?")
+        raise PortError("no OpenMV board found (looked for %s) -- plugged in?"
+                        % ", ".join(PORT_GLOBS[
+                            "darwin" if sys.platform == "darwin" else "linux"]))
     if len(ports) > 1:
-        raise PortError("several boards present (%s) -- choose one with --port"
-                        % ", ".join(ports))
+        raise PortError("several boards present -- name one with --port:\n  %s"
+                        % "\n  ".join(ports))
     return ports[0]
 
 
@@ -600,20 +785,47 @@ def supervise(port_hint, script_text, latest, stats, state,
         time.sleep(settle_s)
 
 
+def parse_board_specs(specs):
+    """``["AE3=/dev/x", "N6=/dev/y"]`` -> ``[BoardView, ...]`` in order."""
+    views = []
+    for spec in specs:
+        if "=" not in spec:
+            raise SystemExit("--board wants LABEL=PORT, got %r" % spec)
+        label, port = spec.split("=", 1)
+        label, port = label.strip(), port.strip()
+        if not label or not port:
+            raise SystemExit("--board wants a non-empty LABEL and PORT: %r"
+                             % spec)
+        views.append(BoardView(label, port))
+    dupes = {v.port for v in views}
+    if len(dupes) != len(views):
+        raise SystemExit("the same port was given twice -- each board needs "
+                         "its own device")
+    return views
+
+
 def main(argv=None):
     args = parse_args(argv)
     cfg = cfg_from_args(args)
     script_text = build_board_script_text(cfg)
 
-    latest, stats = Latest(), Stats()
-    state = {"alive": True, "quit": False, "board": None}
-    threading.Thread(
-        target=supervise,
-        args=(args.port, script_text, latest, stats, state),
-        daemon=True).start()
+    if args.board:
+        views = parse_board_specs(args.board)
+    else:
+        views = [BoardView("OpenMV", args.port)]
+
+    for view in views:
+        # One supervisor thread per board: an independent attach, reader and
+        # reconnect loop, so a board that drops out cannot stall the other.
+        threading.Thread(
+            target=supervise,
+            args=(view.port, script_text, view.latest, view.stats, view.state),
+            daemon=True).start()
+        print("board %-6s -> %s" % (view.label, view.port or "(auto)"),
+              flush=True)
 
     httpd = QuietServer((args.bind, args.http_port),
-                        make_handler(latest, stats))
+                        make_multi_handler(views))
     if args.bind not in ("127.0.0.1", "localhost"):
         print("WARNING: bound to %s -- the camera feed is reachable by any "
               "host on this network, with no authentication." % args.bind,
@@ -640,17 +852,27 @@ def main(argv=None):
         print("\nstopping...", flush=True)
     finally:
         httpd.server_close()
-        state["quit"] = True
-        board = state.get("board")
-        if board is not None:
-            board.stop()
-        s = stats.snapshot()
-        print("frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
-              "inference %.1f ms  encode %.1f ms"
-              % (s["frames"], s["fps"], s["resyncs"], s["reconnects"],
-                 s["inf_ms"], s["enc_ms"]), flush=True)
-        if stats.junk:
-            print("junk lines seen (last 5): %r" % (stats.junk[-5:],), flush=True)
+        # Every board gets its teardown even if one of them raises: leaving a
+        # board streaming into a closed endpoint is what takes it off the USB
+        # bus, and on a two-board bench that would strand the other one too.
+        for view in views:
+            view.state["quit"] = True
+            board = view.state.get("board")
+            if board is not None:
+                try:
+                    board.stop()
+                except Exception as exc:
+                    print("board %s: teardown failed: %s" % (view.label, exc),
+                          flush=True)
+        for view in views:
+            s = view.stats.snapshot()
+            print("%-6s frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
+                  "inference %.1f ms  encode %.1f ms"
+                  % (view.label, s["frames"], s["fps"], s["resyncs"],
+                     s["reconnects"], s["inf_ms"], s["enc_ms"]), flush=True)
+            if view.stats.junk:
+                print("  junk (last 3): %r" % (view.stats.junk[-3:],),
+                      flush=True)
     return 0
 
 
