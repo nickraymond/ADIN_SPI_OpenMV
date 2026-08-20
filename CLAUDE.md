@@ -17,6 +17,25 @@ Docs map — read per the ritual, don't skip it:
 Layout: `firmware/` (AE3 MicroPython, later C) · `pi/` (overlays, services,
 shim, stream server) · `bench/` (benchmarks, counters) · `docs/diagrams/`.
 
+## Reporting to Nick
+
+**At every milestone, lead with a tight summary — not a transcript.** A
+milestone is a bite finishing, a nibble gate, a merge landing, a demo
+passing, or a blocker that changes the plan. Nick reads these to decide
+what happens next, so they are a planning instrument, not a status dump.
+
+- **Five sentences or less at the top**, in plain language: what happened,
+  what it means, what it costs or unblocks. Detail goes below, or in the
+  PR and docs where it belongs.
+- **Lead with the decision he owns.** If a finding changes the plan, say so
+  first; do not bury it under what was built.
+- **Say what is NOT done** — owed demos, unverified assumptions, anything
+  that only passed in a test and not on hardware.
+- **No re-derivation.** Facts already in SPEC/DESIGN/TRACKER get referenced,
+  not re-explained.
+- Long output is for artifacts (PR bodies, DESIGN entries, DEV_LOG), which
+  are read on purpose. A chat reply is read to make a decision.
+
 ## Engineering values (apply to every bite)
 
 1. **Boring, debuggable engineering.** Small modules, explicit control flow,
