@@ -156,6 +156,48 @@ def shadowed_pairs(classes):
     return pairs
 
 
+def parse_board_thresh(spec, index=0):
+    """``"AE3:pink:32,75,14,32,-16,6"`` -> ``("AE3", ("pink", tuple))``."""
+    label, _, rest = spec.partition(":")
+    label = label.strip()
+    # All THREE parts are required. Without this, "pink:1,2,3,4,5,6" parses as
+    # a board called "pink" with an unnamed colour -- structurally identical
+    # to a valid --blob-thresh, and wrong in a way nothing downstream notices.
+    if not label or ":" not in rest:
+        raise ValueError("--board-thresh wants LABEL:NAME:L,L,A,A,B,B "
+                         "(all three parts), got %r" % spec)
+    name, values = parse_blob_class(rest, "blob", index)
+    return label, (name, values)
+
+
+def board_thresh_map(args, known_labels):
+    """-> ``{board_label: [(name, thresh), ...]}`` from --board-thresh.
+
+    A typo in a board label is rejected rather than silently ignored: a
+    threshold that quietly applies to nothing looks exactly like a threshold
+    that does not work.
+    """
+    out = {}
+    for spec in (args.board_thresh or []):
+        label, entry = parse_board_thresh(spec, len(out.get(spec, ())))
+        if label not in known_labels:
+            raise ValueError("--board-thresh names board %r, which is not one "
+                             "of %s" % (label, ", ".join(known_labels) or "(none)"))
+        out.setdefault(label, [])
+        if any(name == entry[0] for name, _ in out[label]):
+            raise ValueError("--board-thresh: duplicate colour %r for board %r"
+                             % (entry[0], label))
+        out[label].append(entry)
+    return out
+
+
+def blob_classes_from_args_or_exit(args):
+    try:
+        return blob_classes_from_args(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+
 def class_labels(args):
     """The names the HUD shows, whether or not thresholds were given."""
     return [lbl for lbl, _ in blob_classes_from_args(args)] or [args.blob_label]
@@ -325,7 +367,8 @@ class BoardView:
     cannot disturb the other -- which is the point of watching two at once.
     """
 
-    def __init__(self, label, port=None, labels=None, saver=None):
+    def __init__(self, label, port=None, labels=None, saver=None,
+                 classes=None, script_text=None):
         self.label = label
         self.port = port
         self.latest = Latest()
@@ -336,6 +379,12 @@ class BoardView:
         # which sensor produced which frame regardless -- one model deploys to
         # both, so "which camera shot this" is a training-relevant field.
         self.saver = saver
+        # Each board gets its OWN threshold list and therefore its own board
+        # script -- the two sensors render the same scene differently enough
+        # that one config cannot serve both (measured: the N6's pink sits
+        # ~10 LAB units lower in b than the AE3's).
+        self.classes = list(classes or [])
+        self.script_text = script_text
 
     def snapshot(self):
         s = self.stats.snapshot()
@@ -818,6 +867,14 @@ def parse_args(argv=None):
                          "drawn in its own colour. e.g. "
                          "--blob-thresh pink:20,70,10,50,-20,25 "
                          "--blob-thresh purple:10,80,10,65,-75,-10")
+    ap.add_argument("--board-thresh", action="append", default=None,
+                    metavar="LABEL:NAME:L_lo,L_hi,A_lo,A_hi,B_lo,B_hi",
+                    help="a LAB box for ONE board, repeatable. Two sensors "
+                         "do not share a threshold: the N6's blue cast puts "
+                         "its pink balls ~10 LAB units lower in b than the "
+                         "AE3's, so one box cannot fit both (measured, "
+                         "DESIGN S8 bite A). Boards with no override fall "
+                         "back to --blob-thresh")
     ap.add_argument("--blob-scan", choices=("codes", "per-class"),
                     default="codes",
                     help="codes: one find_blobs pass, attributed by the blob's "
@@ -841,7 +898,7 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
-def cfg_from_args(args):
+def cfg_from_args(args, classes=None):
     cfg = {
         "framesize": args.framesize,
         "quality": args.quality,
@@ -860,10 +917,11 @@ def cfg_from_args(args):
         # still reports its boxes, so the labels survive -- only drawing stops.
         "overlay": not args.save_frames,
     }
-    try:
-        classes = blob_classes_from_args(args)
-    except ValueError as exc:
-        raise SystemExit(str(exc))
+    if classes is None:
+        try:
+            classes = blob_classes_from_args(args)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
     if classes:
         cfg["blob_classes"] = classes
     return cfg
@@ -1068,30 +1126,44 @@ def parse_board_specs(specs, labels=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    cfg = cfg_from_args(args)          # SystemExit on a malformed threshold
-    labels = class_labels(args)
-
-    # Loud, not fatal: overlapping boxes are legitimate with --blob-scan
-    # per-class and are a silent under-count with the default single pass.
-    if args.blob_scan == "codes":
-        for earlier, later, frac in shadowed_pairs(blob_classes_from_args(args)):
-            print("WARNING: %.0f%% of --blob-thresh %r lies inside %r. Under "
-                  "--blob-scan codes the EARLIER box claims the shared pixels, "
-                  "so %r under-counts (silently -- it is not flagged as "
-                  "ambiguous). Use --blob-scan per-class, or tighten the "
-                  "boxes so they do not meet."
-                  % (100 * frac, later, earlier, later), flush=True)
-    script_text = build_board_script_text(cfg)
+    global_classes = blob_classes_from_args_or_exit(args)
+    global_labels = class_labels(args)
 
     if args.board:
-        views = parse_board_specs(args.board, labels)
+        views = parse_board_specs(args.board, global_labels)
     else:
-        views = [BoardView("OpenMV", args.port, labels=labels)]
+        views = [BoardView("OpenMV", args.port, labels=global_labels)]
+
+    try:
+        overrides = board_thresh_map(args, [v.label for v in views])
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    for view in views:
+        view.classes = overrides.get(view.label, global_classes)
+        view.labels = [n for n, _ in view.classes] or [args.blob_label]
+        view.stats = Stats(labels=view.labels)
+        view.script_text = build_board_script_text(
+            cfg_from_args(args, view.classes))
+        if view.label in overrides:
+            print("board %-6s thresholds: %s"
+                  % (view.label, ", ".join(n for n, _ in view.classes)),
+                  flush=True)
+        # Loud, not fatal: overlapping boxes are legitimate with --blob-scan
+        # per-class and are a silent under-count with the default single pass.
+        if args.blob_scan == "codes":
+            for earlier, later, frac in shadowed_pairs(view.classes):
+                print("WARNING [%s]: %.0f%% of threshold %r lies inside %r. "
+                      "Under --blob-scan codes the EARLIER box claims the "
+                      "shared pixels, so %r under-counts silently. Use "
+                      "--blob-scan per-class, or tighten the boxes."
+                      % (view.label, 100 * frac, later, earlier, later),
+                      flush=True)
 
     if args.save_frames:
         for view in views:
             view.saver = FrameSaver(os.path.join(args.save_frames, view.label),
-                                    args.save_every, labels)
+                                    args.save_every, view.labels)
             print("saving 1 frame in %d to %s -- overlay OFF (training frames "
                   "must be clean); boxes go to index.jsonl"
                   % (view.saver.every, view.saver.dir), flush=True)
@@ -1128,7 +1200,8 @@ def main(argv=None):
         # reconnect loop, so a board that drops out cannot stall the other.
         threading.Thread(
             target=supervise,
-            args=(view.port, script_text, view.latest, view.stats, view.state),
+            args=(view.port, view.script_text, view.latest, view.stats,
+                  view.state),
             kwargs={"saver": view.saver,
                     "on_done": (lambda lbl=view.label: _finished(lbl))},
             daemon=True).start()

@@ -854,6 +854,60 @@ class TestLabBoxOverlap(unittest.TestCase):
         self.assertAlmostEqual(pairs[0][2], 0.0877, places=3)
 
 
+class TestPerBoardThresholds(unittest.TestCase):
+    """Two sensors, two threshold sets -- measured, not speculative.
+
+    The N6's blue cast puts its pink balls ~10 LAB units lower in b than the
+    AE3's, so one shared box gave 5 blobs on one board and 18 on the other.
+    """
+
+    def test_parses_label_name_and_values(self):
+        self.assertEqual(H.parse_board_thresh("AE3:pink:32,75,14,32,-16,6"),
+                         ("AE3", ("pink", (32, 75, 14, 32, -16, 6))))
+
+    def test_rejects_a_spec_without_a_board(self):
+        with self.assertRaises(ValueError):
+            H.parse_board_thresh("pink:1,2,3,4,5,6")
+
+    def test_unknown_board_label_is_rejected_not_ignored(self):
+        # A threshold that silently applies to nothing looks exactly like a
+        # threshold that does not work.
+        args = H.parse_args(["--board-thresh", "TYPO:pink:1,2,3,4,5,6"])
+        with self.assertRaises(ValueError) as cm:
+            H.board_thresh_map(args, ["AE3", "N6"])
+        self.assertIn("TYPO", str(cm.exception))
+
+    def test_duplicate_colour_for_one_board_is_rejected(self):
+        args = H.parse_args(["--board-thresh", "AE3:pink:1,2,3,4,5,6",
+                             "--board-thresh", "AE3:pink:7,8,9,10,11,12"])
+        with self.assertRaises(ValueError):
+            H.board_thresh_map(args, ["AE3"])
+
+    def test_each_board_keeps_its_own_boxes(self):
+        args = H.parse_args(["--board-thresh", "AE3:pink:32,75,14,32,-16,6",
+                             "--board-thresh", "N6:pink:30,80,26,50,-30,-2"])
+        m = H.board_thresh_map(args, ["AE3", "N6"])
+        self.assertEqual(m["AE3"][0][1], (32, 75, 14, 32, -16, 6))
+        self.assertEqual(m["N6"][0][1], (30, 80, 26, 50, -30, -2))
+
+    def test_cfg_takes_an_explicit_class_list(self):
+        # This is what makes per-board board scripts possible: each view
+        # renders its own _CFG rather than sharing one.
+        args = H.parse_args([])
+        cfg = H.cfg_from_args(args, [("pink", (1, 2, 3, 4, 5, 6))])
+        self.assertEqual(cfg["blob_classes"], [("pink", (1, 2, 3, 4, 5, 6))])
+
+    def test_two_boards_produce_different_scripts(self):
+        args = H.parse_args([])
+        a = H.build_board_script_text(H.cfg_from_args(
+            args, [("pink", (32, 75, 14, 32, -16, 6))]))
+        b = H.build_board_script_text(H.cfg_from_args(
+            args, [("pink", (30, 80, 26, 50, -30, -2))]))
+        self.assertNotEqual(a, b)
+        self.assertIn("-16", a.split("\n")[0])
+        self.assertIn("-30", b.split("\n")[0])
+
+
 class TestMergedTwoBoardSeams(unittest.TestCase):
     """The seams where bite A meets the side-by-side viewer.
 
