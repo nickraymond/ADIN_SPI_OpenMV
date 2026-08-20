@@ -908,6 +908,28 @@ class TestPerBoardThresholds(unittest.TestCase):
         self.assertIn("-30", b.split("\n")[0])
 
 
+class TestPerBoardPixels(unittest.TestCase):
+    def test_parses_and_applies(self):
+        args = H.parse_args(["--board-pixels", "AE3:60"])
+        self.assertEqual(H.board_pixels_map(args, ["AE3"]), {"AE3": 60})
+        cfg = H.cfg_from_args(args, None, pixels=60)
+        self.assertEqual((cfg["blob_pixels"], cfg["blob_area"]), (60, 60))
+
+    def test_unknown_board_is_rejected(self):
+        args = H.parse_args(["--board-pixels", "NOPE:60"])
+        with self.assertRaises(ValueError):
+            H.board_pixels_map(args, ["AE3"])
+
+    def test_non_numeric_is_rejected(self):
+        args = H.parse_args(["--board-pixels", "AE3:lots"])
+        with self.assertRaises(ValueError):
+            H.board_pixels_map(args, ["AE3"])
+
+    def test_default_falls_back_to_the_global_flag(self):
+        args = H.parse_args(["--blob-pixels", "150"])
+        self.assertEqual(H.cfg_from_args(args)["blob_pixels"], 150)
+
+
 class TestOverlayToggle(unittest.TestCase):
     """The overlay is drawn ON THE BOARD, so a live toggle rebuilds its script."""
 

@@ -192,6 +192,21 @@ def board_thresh_map(args, known_labels):
     return out
 
 
+def board_pixels_map(args, known_labels):
+    """-> ``{board_label: min_area}`` from --board-pixels."""
+    out = {}
+    for spec in (args.board_pixels or []):
+        label, _, value = spec.partition(":")
+        label = label.strip()
+        if not label or not value.strip().isdigit():
+            raise ValueError("--board-pixels wants LABEL:N, got %r" % spec)
+        if label not in known_labels:
+            raise ValueError("--board-pixels names board %r, which is not one "
+                             "of %s" % (label, ", ".join(known_labels) or "(none)"))
+        out[label] = int(value)
+    return out
+
+
 def blob_classes_from_args_or_exit(args):
     try:
         return blob_classes_from_args(args)
@@ -924,6 +939,14 @@ def parse_args(argv=None):
                          "AE3's, so one box cannot fit both (measured, "
                          "DESIGN S8 bite A). Boards with no override fall "
                          "back to --blob-thresh")
+    ap.add_argument("--board-pixels", action="append", default=None,
+                    metavar="LABEL:N",
+                    help="minimum blob area for ONE board, repeatable. The "
+                         "two sensors need different floors: measured, the "
+                         "AE3 resolves a distant ball at ~73 px while the N6 "
+                         "needs ~150 px to reject the shadowed rims of pink "
+                         "balls that its wider purple box would otherwise "
+                         "count. Boards with no override use --blob-pixels")
     ap.add_argument("--blob-scan", choices=("codes", "per-class"),
                     default="codes",
                     help="codes: one find_blobs pass, attributed by the blob's "
@@ -947,7 +970,7 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
-def cfg_from_args(args, classes=None, overlay=None):
+def cfg_from_args(args, classes=None, overlay=None, pixels=None):
     cfg = {
         "framesize": args.framesize,
         "quality": args.quality,
@@ -957,8 +980,8 @@ def cfg_from_args(args, classes=None, overlay=None):
         "threshold": args.threshold,
         "detect": not args.no_detect,
         "blobs": not args.no_blobs,
-        "blob_pixels": args.blob_pixels,
-        "blob_area": args.blob_pixels,
+        "blob_pixels": args.blob_pixels if pixels is None else int(pixels),
+        "blob_area": args.blob_pixels if pixels is None else int(pixels),
         "tune": args.tune,
         "blob_label": args.blob_label,
         "blob_scan": args.blob_scan,
@@ -1190,7 +1213,9 @@ def main(argv=None):
         views = [BoardView("OpenMV", args.port, labels=global_labels)]
 
     try:
-        overrides = board_thresh_map(args, [v.label for v in views])
+        labels_present = [v.label for v in views]
+        overrides = board_thresh_map(args, labels_present)
+        pixel_overrides = board_pixels_map(args, labels_present)
     except ValueError as exc:
         raise SystemExit(str(exc))
 
@@ -1198,8 +1223,11 @@ def main(argv=None):
         view.classes = overrides.get(view.label, global_classes)
         view.labels = [n for n, _ in view.classes] or [args.blob_label]
         view.stats = Stats(labels=view.labels)
-        view.make_script = (lambda classes: lambda on: build_board_script_text(
-            cfg_from_args(args, classes, overlay=on)))(view.classes)
+        px = pixel_overrides.get(view.label)
+        view.make_script = (lambda classes, px: lambda on:
+                            build_board_script_text(cfg_from_args(
+                                args, classes, overlay=on, pixels=px)))(
+            view.classes, px)
         view.overlay = not args.save_frames
         view.script_text = view.make_script(view.overlay)
         if view.label in overrides:
