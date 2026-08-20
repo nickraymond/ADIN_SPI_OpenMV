@@ -93,8 +93,23 @@ custom model and REUSES S24's `bench/n6_stream_{board,host}.py` harness
 rather than starting a third one. S24 is Mac-only, S8 wants the bench,
 so neither blocks the other.
 
-**Execution order now: S24 (running) → S8 → S21 → S20**, with S23's
-leftovers and bite R slotted at Nick's call.
+**Then Nick folded S24 into S8** (same session, after reading the
+reconciliation): S24 was only a separate sprint because S8 was gated
+behind S13, and that gate had just been overridden — so the reason for
+the split had dissolved and two sprints describing CV would only split
+the evidence. S24 bite 1 stays delivered and kept (demo PASSED, PR #45
+merged); bites 1b/2/3 became S8 bites A/D/B1; and S24's verified
+hardware-facts block MOVED into S8, because it is operational guidance
+the next session needs in front of it rather than history. S8's bite
+list is now A (multi-colour blob baseline — the classic-CV control the
+ML numbers get compared against), B1 (does a stock int8 .tflite run on
+Neural-ART or need `stedgeai` — settle by test, needs Nick's go as the
+first bite that writes to the board), B2 (the from-scratch two-colour
+detector), C (end-to-end at 1 m vs 2 m), D (the board-decision number),
+E (urchin). Kickoff prompt written as PROMPTS.md §9.
+
+**Execution order now: S8 → S21 → S20**, with S23's leftovers and bite
+R slotted at Nick's call.
 
 ---
 
