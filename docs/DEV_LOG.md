@@ -17,6 +17,72 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-20 — Ladder resequenced: CV leads. S18/S19 dead, S22 closed, S8 reshaped to NEXT, S23 parked
+
+**Branch:** `claude/ae3-board-states-root-cause-33011e`. Planning
+session with Nick after the bite R night; no bench work.
+
+**Nick's calls, in order:**
+- **S18 and S19 are DEAD.** Dropped from the ladder as *tombstones*,
+  not deletions: S18 shipped the infrastructure the bench runs on every
+  session (the two systemd units, demo_up, bench-ctl, chain_status,
+  ref-scene, MEAS_FPS), and deleting the provenance of live tooling
+  would cost the next agent a day. The compare/gallery tool "works well
+  enough for now" — further work parked until it needs changes. S19's
+  unowned findings explicitly survive it.
+- **CV leads.** Nick: *"before I spend any more time trying to make the
+  VGA faster it's important to get the AE3 and N6 running a custom
+  urchin model so that I can benchmark performance."* The prior CV
+  sprint is **S8**, whose bite 1 (NPU bench, 2026-08-11) already
+  concluded that all ROM detectors are person-class-only and that a
+  custom Vela-compiled detector is required either way — and whose
+  cross-board table carries the caveat that the two boards ship
+  DIFFERENT model binaries, so it is "not a silicon shoot-out". One
+  custom model on both boards is precisely what removes that confound.
+- **S8 reshaped and promoted to NEXT**, old gate ("runs after the
+  BM-native arc; board risk gates CV investment") OVERRIDDEN — CV is
+  now the board-selection input. Bite A = **"pink ball vs purple ball"**
+  (Nick's call): a deliberately easy, classic-CV target to prove the
+  whole train→compile→deploy path before any urchin labelling exists,
+  split A1 (toolchain, sourced from vendor docs — **the N6's NPU is NOT
+  an Ethos-U55 and this repo has no verified note on it**) / A2 (the
+  detector), with a STOP gate between. Acceptance names the trap:
+  **prove it runs on the NPU, not silently on the CPU** — a rejected
+  .tflite still returns correct answers, just slowly. Bite B =
+  end-to-end capture→detect→count at **1 m vs 2 m**, with
+  **pixels-on-target recorded next to the distance** so the numbers
+  transfer to urchins and the T2 ≥24–32 px floor. Bite C = the urchin
+  model once a labelled set exists. S8's old pipeline/alert bites moved
+  to S21 so the two sprints stop describing the same work.
+- **S22 CLOSED on the shipped work.** Goal met by bite 1 (HE flood fix:
+  u16 vring-index wrap in `rr_poll_n`, one wrap-safe cast, proven
+  on-chain at the exact rate+duration that killed the live demo —
+  10-min QVGA color 28.23 fps, 16,939 frames, ledger-exact) and bite 2
+  (the headroom table was reviewed and ACTED ON: it became S23's bite
+  list, 7.41 → 12.53 fps). **Its one debt is carried, not buried:**
+  bite 1b's q90 burst loss is investigated-but-unfixed (every hop
+  exonerated except the telemetry fork's internals) and now lives in
+  the retitled "Flagged, not owned by any bite yet" list, cross-
+  referenced from the S21 bite that will inherit it — evidence stills
+  are exactly the q90-class payload that defect bites.
+- **S23 PARKED** at GOLD 12.53 with bites S (overlap the HE feed) and 3
+  (re-measure + guardrails) unstarted.
+
+**Measured en route (planning input, not a bench session):** both
+boards are on nereus000 and healthy — AE3 and N6 each report OpenMV
+v5.0.0 / MicroPython v1.28.0-49 and expose the `ml` module loading
+`.tflite` from ROM. So S8 A1 is likely CONFIRMING "one trained source,
+two compilations, one load API" rather than discovering two unrelated
+paths. The N6 is `usb-MicroPython_Pyboard_...FS_Mode_0200...-if00`
+(ttyACM1) — distinct by-id from the AE3, so the S8 standing rule
+(always connect by-id, never auto-connect) matters more than ever now
+that both boards are targets.
+
+**Execution order now: S8 → S21 → S20**, with S23's leftovers and bite
+R slotted at Nick's call.
+
+---
+
 ## 2026-08-19/20 (night) — Sprint S23 bite R: the reproducer works, load does NOT cause the wedge, and a NEW host-side failure mode (usb-storage reset livelock) is found and reproduced twice
 
 **Branch:** `claude/ae3-board-states-root-cause-33011e`. Nibble-1 plan

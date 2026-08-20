@@ -17,6 +17,10 @@ cause) stays open with ONE unexplained state; three of its symptoms are
 explained and the usb-storage reset livelock now has a shipped fix
 (`pi/ae3_flash/99-ae3-no-msc.rules`). Execution order now: **S8 → S21 →
 S20**, with S23's leftovers and bite R slotted at Nick's call.
+**S22 CLOSED 2026-08-20** on its shipped work (HE flood fix proven
+on-chain; the headroom table became S23) — its one debt, bite 1b's q90
+burst loss, is carried into the unowned-findings list and referenced
+from the S21 bite that will inherit it.
 Previous:*
 *2026-08-19 latest+3 (**S23 GOLD: the invariant is
 NAMED — it is the serialized HE round-trip, not capture and not a
@@ -751,8 +755,8 @@ DESIGN §D32 / §D36–D38.
 **Dropped from the ladder.** Bites 1–2 shipped (the HD capture +
 transport work that S22/S23's measurements then inherited); bites 3–4
 are dropped unshipped. Full record: DEV_LOG 2026-08-16, DESIGN §S19.
-**The findings it raised do NOT die with it** — see "Flagged during
-S19, not owned by any bite yet" below; those are still unowned.
+**The findings it raised do NOT die with it** — see "Flagged, not owned
+by any bite yet" below; those are still unowned.
 
 ### S20 — Light intelligence (stub — was S19 in D30)  *(DELAYED behind S21 — Nick 2026-08-18, D39)*
 Camera self-detects dark scenes (HP luma stats) → camera node issues
@@ -765,17 +769,21 @@ sprints stop describing the same work: S8 = the detector and the
 numbers; S21 = the product feature built on it.
 - [ ] Detect/track/count pipeline vs T2 spec (target ≥24–32 px)
 - [ ] Alert + evidence-JPEG path over the existing bridge→pub/sub link
+      **← inherits S22 bite 1b's unfixed q90 burst loss** (carried
+      2026-08-20; see "Flagged, not owned by any bite yet"). Evidence
+      stills are exactly the q90-class payload that defect bites; size
+      this bite expecting to fix it, not to discover it.
 Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
 D29 context). Requires a custom Vela-compiled detector (S8 finding:
 ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
 evidence stills ride the existing bridge→pub/sub path. Data collection
 for training can use the S18 tool + S17 pipeline.
 
-### S22 — Camera pipeline hardening & headroom  `[~]`  *(D39's "RUNS FIRST" is SUPERSEDED — S8 leads from 2026-08-20. **State needs a call from Nick:** all three bites are `[~]` — bite 1's HE flood fix shipped and bites 1b/2 fed S23's measurements, but nothing closed the sprint or ran its demo. Either close it on the shipped work or name what it still owes.)*
+### S22 — Camera pipeline hardening & headroom  `[x]`  *(**CLOSED 2026-08-20 on the shipped work — Nick.** D39's "RUNS FIRST" is superseded; S8 leads. The sprint's goal — "a camera node that cannot be wedged at any commanded rate, and a measured answer on how much fps headroom the encode path has" — is MET by bites 1 and 2. **What it does NOT deliver: bite 1b's burst-loss fix**, which is investigated but unfixed and is CARRIED FORWARD below rather than buried by this closure.)*
 **Goal:** a camera node that cannot be wedged at any commanded rate,
 and a measured answer on how much fps headroom the encode path has.
 
-- [~] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).**
+- [x] **Bite 1 — the HE flood fix (finding 1; evidence fully banked).** *(SHIPPED; on-chain ledger-exact at the exact rate+duration that killed the live demo — the closure's main evidence.)*
       → **NIBBLE 1 DONE 2026-08-18 (branch `sprint/22-he-flood`; Phase A
       approved by Nick): ROOT-CAUSED — a u16 vring-index wrap in
       `rr_poll_n` (rpmsg_remote.c:295, shared into bm_he): u32 cursor vs
@@ -805,7 +813,7 @@ and a measured answer on how much fps headroom the encode path has.
       SEPARATE bug** (54 of ~83 chunks lost on the FIXED stack —
       rpmsg arrival ~2× VCP drain, byte-bounded txq sheds; SPEC).
       Remaining: nibble 4 (PR) + Nick's demo.
-- [~] **Bite 1b — the burst loss (Nick approved 2026-08-18).
+- [!] **Bite 1b — the burst loss — NOT DELIVERED; carried forward 2026-08-20 (see "Flagged, not owned by any bite yet" below). (Nick approved 2026-08-18).
       INVESTIGATED same day: every hop EXONERATED except the telemetry
       fork's internals — the fix now needs fork instrumentation (pin
       discipline, Nick's push).** The opening model (HE txq sheds) was
@@ -846,7 +854,7 @@ and a measured answer on how much fps headroom the encode path has.
       measured boundary with the suite updated; the mono-ceiling
       matrix rows finding 1 blocked (true QVGA/VGA mono ceilings) run
       clean and land in MEAS_FPS.
-- [~] **Bite 2 — encoder-headroom exploration (measure first, decide
+- [x] **Bite 2 — encoder-headroom exploration (measure first, decide
       second; AFTER bite 1 — Nick 2026-08-18).**
       → **MEASUREMENT WINDOW RUN 2026-08-18 (Nick approved; targets
       set: VGA @ 15 fps, HD @ 5–6 fps).** Banked, all vendor-verified
@@ -894,6 +902,13 @@ and a measured answer on how much fps headroom the encode path has.
       follow-on bites only if a candidate clears the product bar.
 **Needs:** S18 closed enough to free the bench (D2 can interleave);
 no new hardware.
+**Closure note (2026-08-20, Nick):** bite 2's deliverable — the
+candidate table with measured/sourced fps deltas and a written
+recommendation — was reviewed and ACTED ON: it became S23's bite list,
+and the encoder path went 7.41 → 12.53 fps on it. That is the demo,
+satisfied in substance. Bite 1's demo is its own on-chain evidence
+(10-min QVGA color 28.23 fps, 16,939 frames across ~5 vring wraps,
+ledger-exact). Bite 1b is the sprint's honest debt — carried, not closed.
 
 ### S23 — Encoder fast path: push delivered fps to the hardware's limit  `[~]`  *(**PARKED 2026-08-20 behind S8 — Nick**: "before I spend any more time trying to make the VGA faster it's important to get the AE3 and N6 running a custom urchin model so that I can benchmark performance." Parked at **GOLD 12.53 fps** VGA color CLEAN; bites S (overlap the HE feed — the named route to 19–20 fps) and 3 (re-measure + guardrails, the sprint's pass/fail line) are UNSTARTED and keep their specs below. Bite R (board-state root cause) is also open — see its entry.)*
 **Goal:** VGA color q50 ≥ **15 fps** and HD mono ≥ **5–6 fps**
@@ -1444,7 +1459,25 @@ S21 is the product feature built on top.
 
 ---
 
-## Flagged during S19, not owned by any bite yet (2026-08-16)
+## Flagged, not owned by any bite yet
+*(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
+closed; each item now names its own origin. Nothing here is owned by a
+live bite, and nothing here should be assumed benign because it is old.)*
+
+- **The q90 burst loss — S22 bite 1b, investigated but UNFIXED
+  (carried 2026-08-20 at S22's closure).** Every hop is EXONERATED
+  except the telemetry fork's internals: the q90 ref frame is really
+  149 chunks; "gaps=54" was reassembler TAIL-LENGTH (one chunk lost,
+  usually idx ~95), not 54 lost; HE published all, bridge relayed all
+  (qdrops=0), uart clean, and tcpdump saw all 149 on the UDP wire in
+  order with valid inner checksums. The fix needs fork instrumentation
+  (pin discipline — Nick's push). **Why it did not block the closure:**
+  at S23's HD-mono rates frames stay q50-sized (55 chunks, measured
+  clean), so the defect does not block those targets — but it still
+  owes the **q90-class stills rung**, which is exactly what S21's
+  "alert + evidence-JPEG path" will ride on. Whoever picks up that S21
+  bite inherits this.
+
 
 - **`bench_apps` (fork) segfaults occasionally at startup.** Once in
   four starts this session, on the Light role, immediately after opening
