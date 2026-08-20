@@ -81,6 +81,47 @@ Vela also prints an inference-time estimate at compile time (0.47 ms for
 fomo_face_detection at `Ethos_U55_256`), which answers "is it on the NPU?"
 *before* anything is deployed.
 
+## Deploy + run on-board: AE3 SOLVED, N6 BLOCKED (measured 2026-08-20)
+
+Compiled `fomo_face_detection` for each board and ran it against the board's
+OWN ROM copy of the same model, in one session on one frame — the A/B that
+makes the number mean something.
+
+| | AE3 | N6 |
+|---|---|---|
+| compile matches vendor's | different bytes (36,992 B) | **byte-identical** (64,064 B) |
+| copy to `/flash` | works | works |
+| `ml.Model()` loads it | **yes** | **NO — `RuntimeError: Failed to load network`** |
+| our model's inference | **1.66 ms** | — |
+| the ROM copy's inference | 1.81 ms | 2.77 ms |
+
+**The AE3 path is proven end to end**: our own compiled model loads from
+`/flash` and runs at 1.66 ms — slightly faster than the vendor's ROM copy of
+the same model at 1.81 ms, with identical input/output shapes
+(`(1,96,96,3)` → `(1,12,12,2)`). Vela reported `Ethos_U55_256` placement at
+compile time, so this is the NPU, not a CPU fallback.
+
+**The N6 rejects the same bytes it already runs.** The file we compiled is
+byte-for-byte what sits in the board's ROM, and it loads from `/rom` (2.77 ms)
+and fails from `/flash`. Cause is not alignment — `py_ml.c` aligns
+file-loaded models to the cache line. The likely reason is in stedgeai's own
+output: the relocatable binary places its params in **`xSPI2`** (external
+flash, execute-in-place) and activations in `AXISRAM5`. A `/flash` load
+copies into heap RAM, which cannot satisfy that. **Unproven — do not treat
+as fact until tested.**
+
+Routes for the N6, none yet attempted:
+- Get the model into ROMFS. `mpremote romfs query` reports the 24 MB
+  `ROMFS0` partition but reads `ROMFS image size: 0` — it does not
+  understand OpenMV's image, so **`mpremote romfs deploy` would likely
+  overwrite the vendor's nine models and need a firmware reflash to
+  recover. Not attempted.**
+- Rebuild the firmware ROMFS with our model included, via `tools/mkromfs.py`
+  and the docker build — the supported path, and the one OpenMV's own IDE
+  automates.
+- Check whether `ml.Model` accepts a pre-loaded buffer placed in the right
+  memory.
+
 ## The remaining gap: getting OUR model into that shape
 
 `modelc.py` takes an int8/uint8 **NHWC** `.tflite`. OpenMV's own source
