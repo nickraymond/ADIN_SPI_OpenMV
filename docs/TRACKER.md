@@ -1815,7 +1815,19 @@ needs a measured reason.
       *Verifiable:* click the S8 recipe on a cold bench → both boards stream
       with the tuned thresholds; click stop → ports free, boards enumerated;
       a second start attempt while one is running is refused, loudly.
-- [ ] **Bite 3 — state reconciliation ("put it back to known-good").** Before
+- [x] **Bite 3 — state reconciliation ("put it back to known-good").**
+      → **DONE 2026-08-20 (night), verified live on the bench** (both boards'
+      firmware probed via one serialized `mpremote exec` each, checks green,
+      demo went reconciling→starting→LIVE; the AE3 attached cleanly after its
+      probe behind a 3 s RECON_GAP). Drift handling: models repaired ONLY via
+      the file-copy route (`models[].src`, artifact hash-checked on disk
+      BEFORE the copy, board sha read back AFTER — trust the bytes, not the
+      rc); firmware drift and N6 ROMFS drift REFUSE the run with the manual
+      step (never a page side effect). Probe failures arm the settle window.
+      Page shows PREPARING + a per-check drift table. 70 host tests.
+      **Live "delete a model → watch it repaired" demo still owed** — waits
+      for the first recipe that ships a model artifact (S8 B2's detector);
+      the repair path is pinned by 9 host tests meanwhile. Before
       running, verify what is actually on the hardware — model present, sha256
       matching, firmware label, `/flash` contents — and repair only what has
       drifted. Report drift explicitly rather than silently fixing it. The
@@ -1824,7 +1836,11 @@ needs a measured reason.
       *Verifiable:* delete a model from a board, click the recipe, and the
       page reports the drift and restores it; re-running with nothing drifted
       does no writes at all.
-- [ ] **Bite 4 — a second recipe + the "how to add a test" doc.** Proves the
+- [x] **Bite 4 — a second recipe + the "how to add a test" doc.**
+      → **DONE 2026-08-20 (night):** `n6-detect-stream` (single-board, stock
+      person model on Neural-ART; zero detections on a ball scene documented
+      as the CORRECT artifact) + `pi/workbench/README.md` (release step,
+      recipe reference, what Start does, safety posture). Proves the
       format generalises beyond the one it was designed around, and writes
       down the release step so adding a menu entry is a documented act.
 
