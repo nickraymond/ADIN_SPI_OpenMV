@@ -122,14 +122,24 @@ echo "bridge traces preserved to ~/bridge_traces/${STAMP}_*"
 # S18: keep /flash's bridge code in step with the checkout (this is how
 # the 20 s REINIT_MIN_QUIET_MS build finally deploys — B2 left the 6 s
 # build on the board). sha16 compare, copy only on mismatch, re-verify.
+# NOTE the two traps here, both measured live 2026-08-19 (the "v3 demo_up
+# silent-fail" of TRACKER bite R was exactly this, not a sick board):
+#   * `2>/dev/null` swallowed mpr's own fail message AND the xtrace, so a
+#     genuine double-attach-failure left NO diagnosis at all;
+#   * mpr's fail() calls `exit 1`, and inside $( ) that exits the
+#     SUBSHELL immediately -- the `|| echo missing` never runs, the
+#     assignment carries status 1, and `set -e` kills the script without
+#     printing a thing.
+# So: let stderr through, and never let the substitution's status reach
+# errexit -- an unreadable sha is data ("attach-failed"), not a silent death.
 board_sha() {
   mpr exec \
     "import hashlib; h=hashlib.sha256(); h.update(open('/flash/$1','rb').read()); print(h.digest().hex()[:16])" \
-    2>/dev/null || echo "missing"
+    || echo "missing"
 }
 for f in bm_bridge.py uart_codec.py boot_report.py; do
   WANT=$(sha256sum "$REPO/firmware/bm_bridge/$f" | cut -c1-16)
-  GOT=$(board_sha "$f")
+  GOT=$(board_sha "$f") || GOT="attach-failed"
   if [[ "$GOT" != *"$WANT"* ]]; then
     MPR_T=90 mpr cp "$REPO/firmware/bm_bridge/$f" ":/flash/$f" >/dev/null
     GOT=$(board_sha "$f")

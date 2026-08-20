@@ -122,6 +122,27 @@ class TestCrossFileAgreements(unittest.TestCase):
         self.assertIn("boot_report.txt", names)
         self.assertIn("boot_report.prev.txt", names)
 
+    def test_board_sha_does_not_swallow_stderr(self):
+        # the v3 silent-fail: 2>/dev/null hid mpr's own fail message, so a
+        # real double-attach-failure produced no diagnosis whatsoever
+        body = re.search(r"board_sha\(\) \{.*?\n\}", code(DEMO_UP),
+                         re.S).group(0)
+        self.assertNotIn("2>/dev/null", body)
+
+    def test_board_sha_assignment_cannot_trip_errexit(self):
+        # mpr's fail() exits the $( ) SUBSHELL, so `|| echo missing`
+        # inside board_sha never runs and the assignment carries rc=1 --
+        # under set -e that killed demo_up silently. The guard must be on
+        # the ASSIGNMENT, not only inside the function.
+        c = code(DEMO_UP)
+        m = re.search(r"^\s*GOT=\$\(board_sha \"\$f\"\).*$", c, re.M)
+        self.assertIsNotNone(m, "board_sha assignment not found")
+        self.assertIn("||", m.group(0))
+
+    def test_demo_up_still_sets_errexit(self):
+        # the fix must not have been "drop set -e"
+        self.assertRegex(read(DEMO_UP), r"(?m)^set -euo pipefail")
+
     def test_demo_up_syncs_boot_report(self):
         m = re.search(r"^for f in ([^;]+); do", code(DEMO_UP), re.M)
         self.assertIn("boot_report.py", m.group(1).split())
