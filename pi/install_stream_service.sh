@@ -11,6 +11,10 @@
 #   sudo pi/install_stream_service.sh telemetry  # on nereus001
 #   sudo pi/install_stream_service.sh bench-web  # on nereus001 (S18 bite C)
 #
+# S25 workbench (installed ENABLED — "fresh boot → page answers" is the point;
+# bite 1 opens no serial port, so boot-time start cannot fight the dev loop):
+#   sudo pi/install_stream_service.sh workbench  # on nereus000 (S25 bite 1)
+#
 # The two BM nodes are deliberately NOT enabled at boot. bm-light opens
 # the AE3's CDC port, and a node that grabs it at every boot fights
 # mpremote, demo_up.sh and firmware flashing — the dev loop has to win by
@@ -28,7 +32,8 @@ case "$ROLE" in
   light)     UNIT=bm-light.service;          AUTOSTART=no  ;;
   telemetry) UNIT=bm-telemetry.service;      AUTOSTART=no  ;;
   bench-web) UNIT=bench-web.service;         AUTOSTART=no  ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web" >&2; exit 1 ;;
+  workbench) UNIT=workbench.service;         AUTOSTART=yes ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -1,0 +1,31 @@
+# workbench.service — S25 machine-vision workbench menu on nereus000.
+#
+# Serves the recipe menu + preflight panel on :8088. Bite 1 scope: it lists
+# recipes and reports passive hardware state — it opens NO serial port and
+# starts nothing (the runner + board lock are bite 2). That is why, unlike
+# bm-light/bm-telemetry, it is safe AND correct to enable at boot: the whole
+# point of S25 is "fresh boot → page answers on the LAN".
+#
+# Bound to 0.0.0.0 with no auth — Nick's S25 exposure call; the process
+# prints the loud banner. Revisit if the bench ever leaves the trusted LAN.
+#
+# Install: sudo pi/install_stream_service.sh workbench
+# Open:    http://nereus000:8088/
+# Watch:   journalctl -u workbench -f
+[Unit]
+Description=S25 machine-vision workbench (recipe menu on :8088)
+After=network.target
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/workbench/workbench.py
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+SyslogIdentifier=workbench
+ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/workbench/workbench.py
+
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

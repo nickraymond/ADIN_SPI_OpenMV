@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<!-- workbench.html — S25 bite 1: menu + preflight panel. Listing only; the
+     start/stop controls are bite 2. Served by workbench.py; polls
+     /api/recipes once and /api/preflight every 3 s. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nereus000 workbench</title>
+<style>
+  body { background:#14171a; color:#d8dde2; font:15px/1.45 system-ui, sans-serif;
+         margin:0 auto; max-width:920px; padding:1rem; }
+  h1 { font-size:1.2rem; margin:.2rem 0 .1rem; }
+  .sub { color:#8a949e; font-size:.85rem; margin-bottom:1rem; }
+  .card { background:#1d2126; border:1px solid #2c333a; border-radius:8px;
+          padding: .8rem 1rem; margin:.6rem 0; }
+  .card.problem { border-color:#a33; }
+  .card h2 { font-size:1rem; margin:0 0 .2rem; }
+  .muted { color:#8a949e; font-size:.85rem; }
+  .boards span { display:inline-block; margin-right:.6rem; padding:.05rem .5rem;
+                 border-radius:4px; font-size:.85rem; background:#262c33; }
+  .ready   { color:#7fd48a; }
+  .waiting { color:#e6c15a; }
+  .held    { color:#ef8a8a; }
+  .err     { color:#ef8a8a; }
+  table { border-collapse:collapse; font-size:.85rem; }
+  td { padding:.1rem .8rem .1rem 0; }
+  code { background:#262c33; padding:0 .3rem; border-radius:3px; font-size:.85em; }
+  #panel { margin-top:1.4rem; }
+</style>
+</head>
+<body>
+<h1>nereus000 — machine-vision workbench</h1>
+<div class="sub">S25 bite 1 — menu + preflight. Start/stop lands in bite 2.
+This page holds no serial port and never will; preflight is passive.</div>
+
+<div id="recipes"><span class="muted">loading recipes…</span></div>
+
+<div id="panel" class="card">
+  <h2>Preflight</h2>
+  <div id="boards" class="boards"><span class="muted">…</span></div>
+  <div id="disk" class="muted"></div>
+  <table id="services"></table>
+  <div id="stale" class="muted"></div>
+</div>
+
+<script>
+"use strict";
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let boardState = {};   // by_id -> preflight entry
+
+function recipeCard(r) {
+  const boards = r.boards.map(b => {
+    const st = boardState[b.by_id];
+    const cls = st ? st.state : "waiting";
+    const txt = st ? st.state : "…";
+    return `<span class="${cls}">${esc(b.label)}: ${txt}</span>`;
+  }).join(" ");
+  const opens = r.opens
+    ? `<div class="muted">opens <code>http://${location.hostname}${esc(r.opens)}/</code> when running</div>`
+    : "";
+  return `<div class="card"><h2>${esc(r.title)}</h2>
+    ${r.summary ? `<div class="muted">${esc(r.summary)}</div>` : ""}
+    <div class="boards">${boards}</div>${opens}
+    <div class="muted">recipe <code>${esc(r.file)}</code></div></div>`;
+}
+
+function problemCard(p) {
+  return `<div class="card problem"><h2 class="err">broken recipe:
+    <code>${esc(p.file)}</code></h2>
+    <div class="err">${esc(p.error)}</div></div>`;
+}
+
+let recipes = [], problems = [];
+async function loadRecipes() {
+  const r = await fetch("/api/recipes");
+  const j = await r.json();
+  recipes = j.recipes; problems = j.problems;
+  render();
+}
+
+function render() {
+  const el = document.getElementById("recipes");
+  if (!recipes.length && !problems.length) {
+    el.innerHTML = '<div class="card"><span class="muted">no recipes released yet — drop a .toml into pi/workbench/recipes/</span></div>';
+    return;
+  }
+  el.innerHTML = recipes.map(recipeCard).join("") +
+                 problems.map(problemCard).join("");
+}
+
+async function poll() {
+  let j;
+  try {
+    const r = await fetch("/api/preflight");
+    j = await r.json();
+    document.getElementById("stale").textContent = "";
+  } catch (e) {
+    document.getElementById("stale").textContent =
+      "preflight unreachable: " + e;
+    return;
+  }
+  boardState = {};
+  document.getElementById("boards").innerHTML = j.boards.map(b => {
+    boardState[b.by_id] = b;
+    const extra = b.state === "held"
+      ? " — held by " + b.holders.map(h => `pid ${h.pid} (${esc(h.cmd)})`).join(", ")
+      : (b.state === "waiting" ? " — not enumerated (normal early after boot)" : "");
+    return `<span class="${b.state}">${esc(b.label)} [${esc(b.by_id.slice(0,28))}…]:
+      ${b.state}${extra}</span>`;
+  }).join(" ") || '<span class="muted">no boards named by any recipe</span>';
+  const d = j.disk;
+  document.getElementById("disk").innerHTML = d.free_mb === null
+    ? `<span class="err">disk: ${esc(d.error || "unreadable")}</span>`
+    : `disk free: ${d.free_mb} MB ${d.ok ? "" : '<span class="err">(LOW)</span>'}`;
+  document.getElementById("services").innerHTML =
+    Object.entries(j.services).map(([u, s]) =>
+      `<tr><td>${esc(u)}</td><td class="${s === "active" ? "ready" : "muted"}">${esc(s)}</td></tr>`).join("");
+  render();
+}
+
+loadRecipes().then(poll);
+setInterval(poll, 3000);
+</script>
+</body>
+</html>
