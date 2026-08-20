@@ -1003,6 +1003,43 @@ Unresolved; flagged in SPEC §Open questions. **Until it is resolved,
 trust the `#I` banner's `fw` string, not the port name, to say which
 AE3 produced a number.**
 
+**A black frame makes the detector confidently wrong — and that is a
+PRODUCT finding, not a bench curiosity.** In the dark room the AE3
+reported `person 0.87` on a full-frame box, every frame. It is not the
+drawing code and not the custom firmware; the model really does return
+that. Measured from the two boards' own frames, same room, same instant:
+
+| | mean luma | pixels exactly zero | range | detections |
+|---|---|---|---|---|
+| AE3 | **1.4** | **90.6%** | 0–96 | **person 0.87 (full frame)** |
+| N6 | 12.1 | **0%** | 4–30 | none |
+
+The AE3's sensor crushes the scene to **all zeros** with sparse hot-pixel
+noise; the N6's auto-exposure lifts the same room to a dim but fully
+populated image. So the AE3 is feeding the network a near-constant
+all-zero tensor — thoroughly out of distribution. A CNN given a constant
+input produces activations dominated by its biases, and the detection
+head settles on a fixed output; **0.87 is not a perception, it is what
+this network emits when fed zeros.** The N6, with a non-degenerate frame,
+correctly reports nothing. Both boards run a model with the same
+`(1, 5, 756)` output, verified individually, so the difference tracks the
+INPUT, not the silicon and not the firmware.
+
+Falsifiable, and cheap to check: **in daylight the false detection should
+vanish.** If it survives good light, the model or the NPU path is
+genuinely suspect and this explanation is wrong.
+
+**Why it matters beyond the bench:** a subsea node will sit in darkness
+routinely — at night, at depth, with the light off to save power. A
+detector that returns `person 0.87` on a black frame will happily
+generate confident false counts and alerts all night. **A frame-validity
+gate is therefore a product requirement, not polish**: cheap to
+implement (mean luma / fraction of non-zero pixels, both already
+computed by `get_statistics`), and it belongs upstream of `predict()` so
+the NPU is not even asked. Also worth pursuing separately: the AE3's
+exposure/gain in low light, since the N6 clearly extracts a usable
+signal from the same scene where the AE3 gets nothing.
+
 **Side-by-side numbers — VGA, DARK ROOM, both boards simultaneous:**
 
 | stage | AE3 (patched) | N6 | ratio |

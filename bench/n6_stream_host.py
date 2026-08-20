@@ -495,6 +495,8 @@ class SerialBoard:
         self.ser = self._transport.serial
         self.ser.timeout = 0.1              # bound our own read loop
         self._buf = bytearray()
+        self.last_error = ""   # board traceback captured at end-of-execution
+        self.end_reason = ""   # "eot" (script ended) vs "usb" (link dropped)
 
     def start(self, script_text):
         """Enter the raw REPL and start the script running from RAM."""
@@ -518,6 +520,13 @@ class SerialBoard:
             # tore down a healthy stream over one bad byte.
             nl = self._buf.find(b"\n")
             if self._buf[:1] == b"\x04":
+                # The raw REPL frames a run as: OK <stdout> 0x04 <stderr> 0x04 >
+                # so the board's traceback lives AFTER this first 0x04.
+                # Returning here without reading it discards the only
+                # explanation of why a stream ended -- which left "stream
+                # ended / reconnect" cycling with no visible cause.
+                self.end_reason = "eot"
+                self.last_error = self._read_error_tail()
                 return b""
             if nl >= 0:
                 line = bytes(self._buf[:nl])
@@ -525,17 +534,42 @@ class SerialBoard:
                 return line + b"\n"
             try:
                 chunk = self.ser.read(65536)
-            except (self._serial.SerialException, OSError):
+            except (self._serial.SerialException, OSError) as exc:
                 # The board went away mid-read -- a nudged USB connector is
                 # enough ("[Errno 6] Device not configured"). Ending the
                 # stream cleanly lets the supervisor reconnect; letting the
                 # exception escape would kill the reader thread and leave the
                 # viewer serving a stale frame forever.
+                # Recorded distinctly from "eot": a script that ended and a
+                # USB link that dropped need completely different fixes, and
+                # they were previously indistinguishable in the log.
+                self.end_reason = "usb: %s" % exc
                 return b""
             if chunk:
                 self._buf += chunk
             elif not self.ser.is_open:
                 return b""
+
+    def _read_error_tail(self, limit=2048, timeout_s=1.0):
+        """Text the board printed after end-of-execution: its traceback.
+
+        Bounded in both bytes and time -- this runs on the teardown path and
+        must never be what hangs a reconnect.
+        """
+        del self._buf[:1]                       # consume the first 0x04
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and len(self._buf) < limit:
+            if b"\x04" in self._buf:
+                break
+            try:
+                chunk = self.ser.read(512)
+            except Exception:
+                break
+            if chunk:
+                self._buf += chunk
+        end = self._buf.find(b"\x04")
+        tail = bytes(self._buf[:end if end >= 0 else len(self._buf)])
+        return tail.decode("utf-8", "replace").strip()
 
     def stop(self):
         """Interrupt the script and leave the board at a usable REPL.
@@ -782,7 +816,15 @@ def supervise(port_hint, script_text, latest, stats, state,
 
         reader_loop(board, latest, stats, state)
 
-        stats.status = "board disconnected -- reconnecting"
+        reason = getattr(board, "end_reason", "") or "unknown"
+        why = getattr(board, "last_error", "") or ""
+        print("board: stream ended (%s)" % reason, flush=True)
+        if why:
+            stats.status = "board stopped: %s" % why.splitlines()[-1][:90]
+            stats.junk.append(why.encode("utf-8", "replace")[:400])
+            print("board: STOPPED WITH AN ERROR ->\n%s" % why, flush=True)
+        else:
+            stats.status = "board disconnected -- reconnecting"
         print("board: disconnected -- will reconnect", flush=True)
         try:
             board.stop()

@@ -1967,6 +1967,28 @@ unowned side quest.
       the S23 encoder arc started (7.41 fps). Full table + the LAB
       threshold analysis in DESIGN §S24. **Ops cost: I wedged the AE3
       once** (below) — the fix is committed.
+- [ ] **Bite 6 — frame-validity gate before inference (NEW, and it is a
+      PRODUCT requirement).** In the dark the AE3 reports `person 0.87`
+      on a full-frame box every frame. Root-caused from pixel stats
+      (DESIGN §S24): its sensor crushes the scene to **90.6% exactly-zero
+      pixels, mean luma 1.4**, so the network gets a near-constant
+      all-zero tensor and its head emits a fixed confident box — 0.87 is
+      what it says when fed zeros, not a perception. The N6, whose
+      exposure lifts the same room to mean luma 12.1 with **no** zero
+      pixels, correctly detects nothing. **A subsea node sits in
+      darkness routinely (night, depth, light off for power), so this
+      would generate confident false counts all night.** Gate on mean
+      luma / non-zero fraction (both already in `get_statistics`)
+      **upstream of `predict()`** so the NPU is not even asked, and
+      surface "frame rejected: too dark" rather than silently returning
+      nothing. **First: confirm in daylight that the false detection
+      vanishes** — if it survives good light the model/NPU path is
+      genuinely suspect and this diagnosis is wrong.
+- [ ] **Bite 7 — AE3 low-light exposure.** Same evidence, separate
+      problem: the N6 extracts a usable dim image where the AE3 gets
+      all zeros. Worth finding whether the AE3's gain/exposure can be
+      driven manually, since a camera that sees nothing below some light
+      level bounds the product regardless of the detector.
 - [ ] **Bite 1b — match more than one colour at once (NEW, from the
       demo; PROMOTED by the AE3 run — it is now a requirement, not a
       nicety).** Measured on Nick's mixed purple/pink ball scene: the

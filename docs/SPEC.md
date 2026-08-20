@@ -134,8 +134,16 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
-- **Is the AE3's USB serial unique? Two AE3s reported the SAME one
-  (raised 2026-08-19, S24 bite 5).** The AE3 Nick handed over ran genuine
+- **ANSWERED 2026-08-19 (Nick): it is ONE physical AE3, reflashed.**
+  Another agent flashed custom firmware onto it to push VGA fps, which
+  is why the same board reported stock `v5.0.0` on the laptop and
+  `v5.0.0-52.g7d4dbf7ab2.dirty` on nereus000. **No conclusion about USB
+  serial uniqueness can be drawn** — the two readings were never two
+  boards. The practical rule stands anyway and for a better reason:
+  **the `#I` banner's `fw` string identifies the firmware a measurement
+  was taken on, and the port name cannot.** Original entry:
+- ~~**Is the AE3's USB serial unique? Two AE3s reported the SAME one
+  (raised 2026-08-19, S24 bite 5).**~~ The AE3 Nick handed over ran genuine
   stock `OpenMV v5.0.0; MicroPython v1.28.0-49`; the AE3 on nereus000
   runs the patched dev build `v5.0.0-52.g7d4dbf7ab2.dirty` — measurably
   different (VGA JPEG encode 73.8 vs 46.2 ms). **Yet both report USB
