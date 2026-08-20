@@ -1520,10 +1520,28 @@ any urchin labelling effort is spent.
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
 
+**BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
+nereus000's USB.** The Mac holds no board — it is the training and
+toolchain host (Docker, dataset work, model compilation) and artifacts
+reach the boards *through the Pi*. Board identities, verified live by
+reading both banners, are in SPEC §Board identity on nereus000; the
+short version, because it is the opposite of the obvious guess:
+**the N6 enumerates as `usb-MicroPython_Pyboard_Virtual_Comm_Port…`
+(`37c5:1206`) and the AE3 as `usb-OpenMV_OpenMV_Camera_0829c14…`
+(`37c5:16e3`)**. Always the by-id path, never `ttyACM<n>`.
+Consequence for the bites below: A/B1/D are **no longer Mac-only**, and
+`bench/n6_stream_host.py` resolves ports by globbing `/dev/cu.usbmodem*`
+— Mac-only, so it needs a by-id path before it runs on the Pi.
+
 **Hardware facts, all verified live this session — do not re-litigate:**
 - Board reports `OpenMV v5.0.0; MicroPython v1.28.0-49`, built
   2026-07-02, `OpenMV N6 with STM32N657X0`, free heap **25.6 MB**. On
-  macOS it enumerates as `/dev/cu.usbmodem1101` (VID `37c5`).
+  macOS it enumerated as `/dev/cu.usbmodem1101` (VID `37c5`) — that was
+  the 2026-08-19 topology; see the by-id paths above for the bench.
+- **The two boards do not run the same firmware**: AE3 is the S18
+  patched build `v5.0.0-52.g7d4dbf7ab2.dirty` (D38), N6 is stock
+  `v5.0.0`; free heap differs ~7.7× (25,393,136 vs 3,281,488 B at VGA
+  with yolov8n_192 loaded). Bite D's confound list grows by one.
 - **Verify firmware with `sys.version`, NOT `os.uname()`** — uname's
   `release` is the MicroPython version (`1.28.0`) and carries no OpenMV
   build. Same trap the S7 flash work recorded.
@@ -1598,8 +1616,10 @@ N6; one table of end-to-end capture→detect→count fps and count accuracy
 at 1 m and 2 m for both boards and for both methods (blob baseline vs
 custom model), pixels-on-target recorded alongside; plus the board-
 decision table from bite D reviewed together.
-**Needs:** bench time; the AE3 on nereus000; a training host; **S24's
-bite-3 answer for the N6 compile path** (do not re-derive it).
+**Needs:** bench time; **both boards on nereus000** (D44); the Mac set up
+as the training/toolchain host (Docker + ML env — unstarted, see bite
+B0); **S24's bite-3 answer for the N6 compile path** (do not re-derive
+it, it is bite B1 here).
 **Reuse before rewriting:** S24 shipped `bench/n6_stream_{board,host}.py`
 (+19 host tests) — a headless capture→infer→view harness for the N6.
 Bite B's end-to-end measurement should extend that and
