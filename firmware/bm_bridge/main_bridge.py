@@ -31,6 +31,13 @@ def _run():
 
 _log("boot: launcher start")
 try:
+    # S23 bite R: MPU/SHM boot snapshot to /flash/boot_report.txt.
+    # Non-fatal by contract -- the instrument must never kill the boot.
+    import boot_report
+    boot_report.boot()
+except Exception as exc:
+    _log("boot_report failed (non-fatal)", exc)
+try:
     _run()
     _log("exit: main() returned cleanly")
 except KeyboardInterrupt as exc:

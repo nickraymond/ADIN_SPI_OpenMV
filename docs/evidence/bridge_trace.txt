@@ -1,0 +1,22 @@
+1714 bridge up, cfg {"scene": "ref"}
+1846 kbd_intr disabled
+2595 camera: ceiling claimed 1280x800 RGB565 (pre-HE)
+2698 he loaded, bm-wire announced
+602841 phase 1 timeout -- no Pi attach, exiting
+602903 exit stats {"pump_batch_max": 0, "unknown_cmds": 0, "pi2he_frames": 0, "vcp_writes": 0, "he2pi_frames": 0, "oversize": 0, "cap_chunks": 0, "cap_ept_us": 0, "relay_enc_us": 0, "he2pi_bytes": 0, "vcp_bytes": 0, "pi2he_bytes": 0, "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0, "relay_enc_max_us": 0, "vcp_max_us": 0, "cap_ept_slow": 0, "cap_frames": 0, "frag_errors": 0, "cap_ept_max_us": 0, "cap_pump_us": 0, "pump_calls": 0, "cap_bytes": 0, "pump_msgs": 0, "vcp_us": 0} splitter f=0 e=0 qdrops=0
+602967 exit gate opens=0 refusals=0 worst_wait=0 ms
+---- HE ring (exit) ----
+Unable to load configs from flash.Unable to load configs from flash.Unable to load configs from flash.ip: ll=FE80::BE9C:0:0:3
+ip: ucast=FD00::BE9C:0:0:3
+BM DFU Subsystem thread started
+Transitioning to state: Idle
+Subscribing to Topic: 000000000000000lx/sys_inf/req
+Added topic 000000000000000lx/sys_inf/req to BCMP resource table.
+Subscribing to Topic: bus_power_controller/timing/req
+Added topic bus_power_controller/timing/req to BCMP resource table.
+Subscribing to Topic: camera/control/req
+Added topic camera/control/req to BCMP resource table.
+bm stack RUNNING, node 0xbe9c000000000003
+
+---- end ring ----
+603150 he stopped

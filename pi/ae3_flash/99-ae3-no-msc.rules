@@ -1,0 +1,35 @@
+# Keep usb-storage OFF the AE3's mass-storage interface (S23 bite R).
+#
+# WHY (measured twice, 2026-08-19 and 2026-08-20 — DEV_LOG "bite R"):
+# the AE3 exposes its 8 MB flash as USB mass storage alongside the CDC
+# serial the bench actually uses. When udev/blkid probes that volume
+# while the board is busy (the bridge boots, loads a 917 KB HE ELF and
+# then runs a tight relay loop), the SCSI READ(10) of 4 blocks @ LBA 0
+# fails with hostbyte=0x07, usb-storage escalates to a USB DEVICE
+# RESET, the reset re-triggers the probe, and it livelocks at ~46
+# resets/minute indefinitely. Every one of those resets re-binds
+# cdc_acm, so an in-flight mpremote session dies and /dev/serial/by-id
+# flickers -- it presents EXACTLY as "could not enter raw repl" or a
+# board that fell off the bus, on completely healthy hardware. It is a
+# race (measured: 37 clean SCSI attaches vs 6 failed reads in one
+# night), which is why it looked capricious for six incidents.
+#
+# The bench NEVER uses the AE3 as a disk -- file transfer is serial
+# only (mpremote), and reading /flash over MSC is a deliberate,
+# manual, unbind-afterwards operation. So the fix is simply: no block
+# device, no probe, no livelock.
+#
+# Matched on the interface CLASS (08/06/50 = Mass Storage / SCSI /
+# Bulk-Only), not on an interface NUMBER, so a firmware that reorders
+# its interfaces cannot silently re-enable the disk.
+#
+# Install:
+#   sudo cp 99-ae3-no-msc.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+# Undo: remove the file, reload, and replug (or bind usb-storage by hand).
+#
+# VID 37C5 = OpenMV; PID 16E3 = AE3 application mode (CDC + MSC composite).
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", \
+  ATTRS{idVendor}=="37c5", ATTRS{idProduct}=="16e3", \
+  ENV{INTERFACE}=="8/6/80", \
+  RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/usb-storage/unbind 2>/dev/null || true'"
