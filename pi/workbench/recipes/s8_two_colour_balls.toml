@@ -1,0 +1,41 @@
+# s8_two_colour_balls.toml — the S25 first recipe: S8 bite A's two-colour
+# ball demo, exactly as its demo PASSED 2026-08-20 (PR #50's demo block,
+# per-board thresholds and per-board pixel floors included).
+#
+# Bite 1 uses: name/title/summary/opens/boards (menu + preflight).
+# Bite 2 uses: [run] + [health] (the runner; argv runs from the repo root).
+# Bite 3 uses: boards[].firmware (+ models, when a recipe ships any).
+
+name = "s8-two-colour-balls"
+title = "Two-colour ball comparison"
+summary = "Both cameras side by side counting pink vs purple balls (classic-CV blob baseline, tuned per board). Ground truth 11 pink / 10 purple converges at 10/7 with one ambiguous merge. From sprint S8."
+opens = ":8090"
+thumbnail = "thumbs/two_colour_balls.jpg"
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+firmware = "v5.0.0-52.g7d4dbf7ab2.dirty"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+firmware = "v5.0.0"
+
+[run]
+argv = [
+  "python3", "bench/n6_stream_host.py",
+  "--bind", "0.0.0.0", "--framesize", "VGA", "--no-detect",
+  "--board", "AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00",
+  "--board", "N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00",
+  "--board-thresh", "AE3:pink:28,75,14,32,-12,6",
+  "--board-thresh", "AE3:purple:15,65,3,18,-40,-13",
+  "--board-thresh", "N6:pink:28,80,23,50,-19,-2",
+  "--board-thresh", "N6:purple:20,65,8,38,-70,-20",
+  "--board-pixels", "AE3:60",
+  "--board-pixels", "N6:150",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8090/"

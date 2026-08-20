@@ -1,7 +1,18 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-20 (**LADDER RESEQUENCED (Nick): CV LEADS —
+*Last updated: 2026-08-20 night (**S25 bites 1+2 SHIPPED AND DEMO'D
+(Nick): the workbench page on nereus000:8088 lists recipes, preflights the
+boards passively, and starts/stops the S8 ball demo with a single-owner
+board lock, health-gated LIVE, and a 35 s settle window after stop** —
+born from a live wedge: quick stop→start put the AE3 into the bite-R
+power-cycle-only raw-repl refusal, cleared only by physical replug.
+`workbench.service` ENABLED at boot, proven across a reboot. Exposure
+DECIDED (Nick): bind 0.0.0.0 on the trusted LAN, loud banner, no auth.
+Bites 3 (reconciliation) + 4 (second recipe + doc) remain. NEW unowned
+observation: the N6 sat in DFU mode for 9 min and self-recovered —
+unattributed. Previous:*
+*2026-08-20 (**LADDER RESEQUENCED (Nick): CV LEADS —
 and S24 is already running it on the N6.** Reconciled with S24 at merge
 time: **S24 (N6 CV baseline) stays exactly as it is** — running, Mac-
 only, no bench hardware — and it now OWNS the N6 half of the CV work,
@@ -1743,7 +1754,7 @@ the evidence stops splitting.
 
 ---
 
-### S25 — nereus000 as the machine-vision workbench  `[ ]`  ← **NEXT (Nick 2026-08-20)**
+### S25 — nereus000 as the machine-vision workbench  `[~]`  ← **RUNNING (bites 1+2 DONE, demo PASSED by Nick 2026-08-20 night)**
 **Goal:** boot the Pi, open a page, pick a test, and the Pi puts the OpenMV
 hardware into that test's known-good state and runs it — no hand-flashing, no
 remembering command lines, no agent required. Every released test setup adds a
@@ -1762,7 +1773,17 @@ the hardware back to a known-good state before a test.
 **menu and a runner on top of those**, not a new web application. A rewrite
 needs a measured reason.
 
-- [ ] **Bite 1 — recipe format, registry, and the page on boot.** A "test
+- [x] **Bite 1 — recipe format, registry, and the page on boot.**
+      → **DONE 2026-08-20 (night), proven across Nick's reboot.** Strict-schema
+      TOML (unknown keys are ERRORS — the format is being proven), registry
+      re-read per request (drop a file in, refresh; broken file = red card
+      naming the error, never a silent absence), passive preflight (by-id
+      presence → waiting/ready/held with /proc-scanned holders named; NO
+      serial-port contact by design), `workbench.service` ENABLED at boot on
+      :8088. Per Nick: friendly titles (sprint tags demoted to the recipe
+      line), per-recipe `thumbnail` (live-captured, confined /thumbs/ route),
+      and per-recipe `services` replacing the six-unit panel (three of those
+      units belong to the parked two-Pi T1L bench). A "test
       setup" is a declarative file in the repo naming: which boards it needs,
       the state they must be in (firmware label, models present + sha256,
       `/flash` contents), the command to run, the URL to open, and its health
@@ -1773,7 +1794,18 @@ needs a measured reason.
       format is proven before anything drives hardware.
       *Verifiable:* fresh boot of nereus000 → the page answers on the LAN and
       lists the recipes with a correct preflight verdict for both boards.
-- [ ] **Bite 2 — the runner, and the board lock.** Start/stop a selected
+- [x] **Bite 2 — the runner, and the board lock.**
+      → **DONE 2026-08-20 (night); demo RUN BY NICK — PASS** (start → LIVE
+      with hyperlink → stop → settle countdown → start again). Health-gated
+      LIVE (recipe [health] URL must answer 200), one demo at a time (409),
+      foreign port holders refused BY NAME and never killed, SIGINT→SIGTERM→
+      STUCK ladder with `signal.SIGKILL` pinned out of the source by a test,
+      pidfile adoption across workbench restarts (proven through the unit
+      install). **Hard-won addition: SETTLE=35 s window** — Nick's quick
+      stop→start wedged the AE3 into S23 bite R's power-cycle-only raw-repl
+      refusal (two serialised recovery attempts failed; physical replug
+      cleared it), so the runner refuses restarts onto just-stopped boards
+      and the page counts down. 61 host tests. Start/stop a selected
       recipe from the page, with live status and log tail. **A single-owner
       lock on the boards is a REQUIREMENT of this bite, not a nicety:** this
       session repeatedly wedged a board by letting two processes touch one
@@ -1797,10 +1829,10 @@ needs a measured reason.
       down the release step so adding a menu entry is a documented act.
 
 **Open questions for Nick, flagged not guessed:**
-- **Exposure.** This UI can reflash and power-cycle hardware, so it is more
-  sensitive than the video feed. Proposal: bind to the LAN with a loud banner
-  and no auth for now (the bench is on a trusted network), revisited if it
-  ever leaves it. **Nick's call.**
+- **Exposure — DECIDED (Nick, 2026-08-20):** bind 0.0.0.0 on the trusted
+  LAN, loud banner, no auth. Consequence honoured in the runner: it refuses
+  anything it cannot undo — never DFU alt 0 (the schema cannot even express
+  a DFU target), never SIGKILL, never kill a foreign port holder.
 - **Sudo steps.** Installing/enabling units and udev rules needs sudo, which
   the agent does not have — those stay one-time copy-pasteable commands for
   Nick, exactly as `pi/ae3_flash/README.md` already does.

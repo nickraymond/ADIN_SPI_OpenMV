@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<!-- workbench.html — S25 bites 1+2: menu, preflight, runner. Served by
+     workbench.py; polls /api/runner + /api/preflight every 2 s. Buttons:
+     per-recipe Start (POST /api/start), global Stop (POST /api/stop) and
+     Dev mode (POST /api/devmode). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nereus000 workbench</title>
+<style>
+  body { background:#14171a; color:#d8dde2; font:15px/1.45 system-ui, sans-serif;
+         margin:0 auto; max-width:920px; padding:1rem; }
+  h1 { font-size:1.2rem; margin:.2rem 0 .1rem; }
+  .sub { color:#8a949e; font-size:.85rem; margin-bottom:1rem; }
+  .card { background:#1d2126; border:1px solid #2c333a; border-radius:8px;
+          padding:.8rem 1rem; margin:.6rem 0; }
+  .card.problem { border-color:#a33; }
+  .card h2 { font-size:1rem; margin:0 0 .2rem; }
+  .muted { color:#8a949e; font-size:.85rem; }
+  .boards span { display:inline-block; margin-right:.6rem;
+       padding:.05rem .5rem; border-radius:4px; font-size:.85rem;
+       background:#262c33; }
+  .ready { color:#7fd48a; } .waiting { color:#e6c15a; }
+  .held { color:#ef8a8a; } .err { color:#ef8a8a; }
+  button { background:#2c6e49; color:#eaf3ee; border:0; border-radius:6px;
+           padding:.45rem 1.1rem; font-size:.95rem; cursor:pointer; }
+  button:disabled { background:#2c333a; color:#6a737d; cursor:default; }
+  button.stop { background:#8a3434; }
+  button.dev  { background:#3a5a7a; }
+  .statusline { margin:.5rem 0; font-size:.95rem; }
+  .live { color:#7fd48a; font-weight:600; }
+  .starting { color:#e6c15a; font-weight:600; }
+  .failed { color:#ef8a8a; font-weight:600; }
+  .biglink { display:inline-block; margin:.4rem 0; padding:.5rem 1rem;
+             background:#234832; border:1px solid #2c6e49; border-radius:6px;
+             color:#9fe0ae; font-weight:600; text-decoration:none; }
+  pre.log { background:#111417; border:1px solid #2c333a; border-radius:6px;
+            padding:.5rem .7rem; font-size:.78rem; color:#9aa6b0;
+            max-height:11em; overflow-y:auto; margin:.4rem 0;
+            white-space:pre-wrap; }
+  #globalbar { display:flex; gap:.7rem; align-items:center; flex-wrap:wrap;
+               background:#1d2126; border:1px solid #2c333a; border-radius:8px;
+               padding:.6rem 1rem; margin-bottom:.8rem; }
+  .banner { border-radius:6px; padding:.5rem .8rem; margin:.5rem 0 0;
+            font-size:.9rem; flex-basis:100%; }
+  .banner.ok   { background:#1d3226; border:1px solid #2c6e49; color:#9fe0ae; }
+  .banner.warn { background:#33251d; border:1px solid #8a5a34; color:#e0b89f; }
+  .banner.bad  { background:#331d1d; border:1px solid #8a3434; color:#e09f9f; }
+  .rowflex { display:flex; gap:1rem; align-items:flex-start; }
+  .rowflex .grow { flex:1; min-width:0; }
+  .thumb { width:280px; max-width:35%; border-radius:6px;
+           border:1px solid #2c333a; flex-shrink:0; }
+  code { background:#262c33; padding:0 .3rem; border-radius:3px;
+         font-size:.85em; }
+  table { border-collapse:collapse; font-size:.85rem; }
+  td { padding:.1rem .8rem .1rem 0; }
+</style>
+</head>
+<body>
+<h1>nereus000 — machine-vision workbench</h1>
+<div class="sub">pick a test → the Pi puts the boards in its known-good state
+and runs it → open the link when LIVE. This page never opens a serial port
+itself; demos it starts are the only thing it will ever stop.</div>
+
+<div id="globalbar"><span class="muted">…</span></div>
+<div id="recipes"></div>
+
+<div class="card">
+  <h2>Preflight</h2>
+  <div id="pf-boards" class="boards"><span class="muted">…</span></div>
+  <div id="pf-disk" class="muted"></div>
+  <table id="pf-services"></table>
+</div>
+
+<script>
+"use strict";
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let recipes = [], problems = [], run = {state:"idle"}, pf = {boards:[]};
+let banner = null;   // {cls, html} from the last button action
+let busy = false;    // a button press is in flight
+
+function openUrl(opens) {
+  return opens ? `http://${location.hostname}${opens}/` : null;
+}
+
+async function post(path, body) {
+  busy = true; render();
+  try {
+    const r = await fetch(path, {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(body || {})});
+    return await r.json();
+  } catch (e) {
+    return {ok:false, err:String(e)};
+  } finally { busy = false; }
+}
+
+async function doStart(name) {
+  banner = null;
+  const res = await post("/api/start", {name});
+  if (!res.ok) banner = {cls:"warn", html:"Cannot start: " + esc(res.err)};
+  await poll();
+}
+
+async function doStop() {
+  banner = null;
+  const res = await post("/api/stop");
+  if (!res.ok && res.state === "stuck")
+    banner = {cls:"bad", html: esc(res.err) +
+      ' Manual: <code>ssh pi@nereus000 "pkill -TERM -f n6_stream_host.py"</code>'};
+  await poll();
+}
+
+async function doDev() {
+  banner = null;
+  const res = await post("/api/devmode");
+  if (res.ok)
+    banner = {cls:"ok", html:"DEV MODE: no demo running · boards enumerated · "
+      + "ports free — safe for mpremote / flashing."};
+  else {
+    const held = (res.boards || []).filter(b => b.state !== "ready")
+      .map(b => `${esc(b.label)}: ${b.state}` + (b.holders?.length
+        ? ` (pid ${b.holders[0].pid} — ${esc(b.holders[0].cmd)})` : ""))
+      .join("; ");
+    banner = {cls:"warn", html:"Not fully in dev mode — " +
+      (res.err ? esc(res.err) + " · " : "") + (held || "see preflight")};
+  }
+  await poll();
+}
+
+function globalBar() {
+  const stoppable = ["starting","live"].includes(run.state);
+  const idleish = ["idle","failed"].includes(run.state);
+  let status;
+  if (run.state === "live")
+    status = `<span class="live">● LIVE: ${esc(run.title)}</span>` +
+      (run.opens ? ` <a class="biglink" target="_blank"
+        href="${openUrl(run.opens)}">Open demo → ${openUrl(run.opens)}</a>` : "");
+  else if (run.state === "starting")
+    status = `<span class="starting">STARTING: ${esc(run.title)}…</span>`;
+  else if (run.state === "stopping")
+    status = `<span class="starting">stopping (SIGINT sent, waiting for
+      clean teardown)…</span>`;
+  else if (run.state === "stuck")
+    status = `<span class="failed">STOP FAILED</span>`;
+  else if (run.state === "failed")
+    status = `<span class="failed">FAILED: ${esc(run.title)}</span>`;
+  else
+    status = `<span class="muted">no demo running</span>`;
+  let extra = "";
+  if (run.state === "stuck")
+    extra = `<div class="banner bad">${esc(run.error)} — manual:
+      <code>ssh pi@nereus000 "pkill -TERM -f n6_stream_host.py"</code></div>`;
+  const b = banner ? `<div class="banner ${banner.cls}">${banner.html}</div>` : "";
+  return `${status}
+    <button class="stop" ${stoppable && !busy ? "" : "disabled"}
+      onclick="doStop()">■ Stop demo</button>
+    <button class="dev" ${idleish || run.state === "stuck" ? "" : "disabled"}
+      ${busy ? "disabled" : ""} onclick="doDev()">⚙ Dev mode</button>
+    ${extra}${b}`;
+}
+
+function boardChip(b) {
+  const mine = run.pid && b.holders?.some(h => belongsToRun(h));
+  let extra = "";
+  if (b.state === "held")
+    extra = mine ? " — by this demo" :
+      ` — pid ${b.holders[0].pid} (${esc(b.holders[0].cmd).slice(0,60)})`;
+  if (b.state === "waiting") extra = " — not enumerated";
+  return `<span class="${b.state}">${esc(b.label)}: ${b.state}${extra}</span>`;
+}
+
+function belongsToRun(holder) {
+  // The demo runs in its own process group whose pgid == the runner's pid;
+  // we can't see pgids from here, so "started after run.started and running
+  // the recipe argv" is approximated by pid >= runner pid. Cosmetic only.
+  return run.pid && holder.pid >= run.pid;
+}
+
+function recipeCard(r) {
+  const active = run.recipe === r.name;
+  const settling = (run.settle_s || 0) > 0;
+  const startable = ["idle","failed"].includes(run.state) && !busy && !settling;
+  let status = "";
+  if (active && run.state === "starting")
+    status = `<div class="statusline starting">starting… waiting for the
+      app's page to answer</div><pre class="log">${esc(run.log_tail)}</pre>`;
+  if (active && run.state === "live")
+    status = `<div class="statusline live">● LIVE</div>` +
+      (r.opens ? `<a class="biglink" target="_blank"
+         href="${openUrl(r.opens)}">Open demo → ${openUrl(r.opens)}</a>` : "");
+  if (active && run.state === "stopping")
+    status = `<div class="statusline starting">stopping…</div>`;
+  if (active && run.state === "stuck")
+    status = `<div class="statusline failed">stop failed — see above</div>`;
+  if (active && run.state === "failed")
+    status = `<div class="statusline failed">FAILED — ${esc(run.error)}</div>
+      <pre class="log">${esc(run.log_tail)}</pre>`;
+  const thumb = r.thumbnail
+    ? `<img class="thumb" src="/${esc(r.thumbnail)}" alt="demo preview">` : "";
+  return `<div class="card"><div class="rowflex"><div class="grow">
+    <h2>${esc(r.title)}</h2>
+    ${r.summary ? `<div class="muted">${esc(r.summary)}</div>` : ""}
+    <div class="boards" style="margin:.3rem 0">
+      ${r.boards.map(b => boardChip(stateOf(b))).join(" ")}</div>
+    ${status}
+    <div style="margin-top:.5rem">
+      <button ${startable ? "" : "disabled"}
+        onclick="doStart('${esc(r.name)}')">${settling &&
+          ["idle","failed"].includes(run.state)
+          ? "boards settling… " + run.settle_s + " s" : "▶ Start"}</button>
+      <span class="muted" style="margin-left:.6rem">recipe
+        <code>${esc(r.file)}</code></span>
+    </div></div>${thumb}</div></div>`;
+}
+
+function stateOf(recipeBoard) {
+  return pf.boards.find(b => b.by_id === recipeBoard.by_id)
+      || {...recipeBoard, state:"waiting", holders:[]};
+}
+
+function problemCard(p) {
+  return `<div class="card problem"><h2 class="err">broken recipe:
+    <code>${esc(p.file)}</code></h2>
+    <div class="err">${esc(p.error)}</div></div>`;
+}
+
+function render() {
+  document.getElementById("globalbar").innerHTML = globalBar();
+  document.getElementById("recipes").innerHTML =
+    (recipes.length || problems.length)
+      ? recipes.map(recipeCard).join("") + problems.map(problemCard).join("")
+      : '<div class="card"><span class="muted">no recipes released yet — '
+        + 'drop a .toml into pi/workbench/recipes/</span></div>';
+  document.getElementById("pf-boards").innerHTML =
+    pf.boards.map(boardChip).join(" ")
+    || '<span class="muted">no boards named by any recipe</span>';
+  const d = pf.disk || {};
+  document.getElementById("pf-disk").innerHTML = d.free_mb == null
+    ? `<span class="err">disk: ${esc(d.error || "unreadable")}</span>`
+    : `disk free: ${d.free_mb} MB ${d.ok ? "" : '<span class="err">(LOW)</span>'}`;
+  document.getElementById("pf-services").innerHTML =
+    Object.entries(pf.services || {}).map(([u, s]) =>
+      `<tr><td>${esc(u)}</td><td class="${s === "active" ? "ready" : "muted"}">
+       ${esc(s)}</td></tr>`).join("");
+}
+
+async function loadRecipes() {
+  try {
+    const j = await (await fetch("/api/recipes")).json();
+    recipes = j.recipes; problems = j.problems;
+  } catch (e) { /* next poll retries */ }
+}
+
+async function poll() {
+  try {
+    [run, pf] = await Promise.all([
+      (await fetch("/api/runner")).json(),
+      (await fetch("/api/preflight")).json()]);
+  } catch (e) { /* page keeps last state; next poll retries */ }
+  render();
+}
+
+loadRecipes().then(poll);
+setInterval(poll, 2000);
+setInterval(loadRecipes, 10000);
+</script>
+</body>
+</html>
