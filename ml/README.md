@@ -110,7 +110,46 @@ flash, execute-in-place) and activations in `AXISRAM5`. A `/flash` load
 copies into heap RAM, which cannot satisfy that. **Unproven — do not treat
 as fact until tested.**
 
-Routes for the N6, none yet attempted:
+### N6 RESOLVED 2026-08-20: USB DFU, ROMFS0 partition only
+
+No ST-LINK needed. The N6's bootloader exposes named DFU partitions at
+`37C5:9206` — `BOOTLOADER`(0), `FIRMWARE`(1), `FILESYSTEM`(2), `ROMFS0`(3) —
+so ROMFS0 can be written on its own. **Alt 0 is never written, which is what
+makes this recoverable**: the DFU window survives a bad ROMFS write, so the
+board can always be re-entered and rewritten.
+
+```bash
+ml/build_romfs_n6.sh our_model.tflite                 # on the Mac
+scp ~/nereus_ml/romfs_n6/out/romfs0.img pi@nereus000:~/bm_bench/models/
+ssh pi@nereus000 "mpremote connect <N6-by-id> exec 'import machine; machine.bootloader()'"
+ssh pi@nereus000 "dfu-util -a 3 -D ~/bm_bench/models/romfs0.img"
+ssh pi@nereus000 "dfu-util -a 2 -U /tmp/fs.img -R"    # any read + -R boots it
+```
+
+Verify by read-back, not by the "Download done" message. `-U` runs to the
+partition end regardless, so cap the compare at the image length:
+
+```
+read back 25,165,828 B -> sha256 of the first 12,641,204 == source. MATCH.
+```
+
+**Measured after flashing** — our model in ROM, running, vendor models intact:
+
+| model in `/rom` | bytes | inference |
+|---|---|---|
+| **`nereus_fomo.tflite` (ours)** | 64,064 | **2.75 ms** |
+| `fomo_face_detection.tflite` (vendor's) | 64,064 | 2.76 ms |
+| `yolov8n_192.tflite` (vendor's, untouched) | 3,233,408 | 19.48 ms |
+
+18 entries in `/rom`, every vendor model and cascade present at its original
+size. Ours runs within 0.01 ms of the vendor's own copy of the same model.
+
+**So the end-to-end route is proven on BOTH boards.** AE3 deploys by copying
+a file to `/flash`; the N6 needs a ROMFS image flashed over DFU. That asymmetry
+is the deployment story, and it is a property of the compilers' output, not of
+our tooling.
+
+Superseded routes (kept so they are not retried):
 - Get the model into ROMFS. `mpremote romfs query` reports the 24 MB
   `ROMFS0` partition but reads `ROMFS image size: 0` — it does not
   understand OpenMV's image, so **`mpremote romfs deploy` would likely
