@@ -411,6 +411,41 @@ class TestRunner(unittest.TestCase):
         self.assertFalse(os.path.exists(self.r.pidfile))
         self.assertIsNone(self.r.recipe)
 
+    def test_stop_arms_the_settle_window(self):
+        # Measured (Nick 2026-08-20): a quick stop->start wedges the AE3
+        # into a raw-repl refusal. The runner must hold the boards quiet.
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        self.r.stop()
+        with self.assertRaises(StartRefused) as cm:
+            self.r.start(run_recipe(SLEEPER), READY)
+        self.assertIn("settling", str(cm.exception))
+        self.assertGreater(self.r.snapshot()["settle_s"], 0)
+        self.r.settle_until = 0.0  # window elapsed
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        self.r.stop()
+
+    def test_settle_does_not_block_disjoint_boards(self):
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        self.r.stop()
+        other = [{"label": "N6", "by_id": "usb-OTHER", "state": "ready",
+                  "holders": []}]
+        r2 = run_recipe(SLEEPER)
+        r2["boards"] = [{"label": "N6", "by_id": "usb-OTHER",
+                         "firmware": None, "models": []}]
+        self.r.start(r2, other)  # must not raise
+        self.wait_state("live")
+        self.r.stop()
+
+    def test_failure_also_arms_the_settle_window(self):
+        self.r.start(run_recipe(
+            [sys.executable, "-c", "import sys; sys.exit(3)"],
+            health={"http": "http://127.0.0.1:1/"}), READY)
+        self.wait_state("failed")
+        self.assertGreater(self.r.snapshot()["settle_s"], 0)
+
     def test_child_that_dies_early_is_failed_with_rc(self):
         self.r.start(run_recipe(
             [sys.executable, "-c", "import sys; sys.exit(3)"],

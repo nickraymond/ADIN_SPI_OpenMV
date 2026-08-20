@@ -347,6 +347,12 @@ class Runner:
     GRACE_TERM = 5.0
     HEALTH_TIMEOUT = 60.0
     POLL = 0.5
+    # Measured 2026-08-20 (Nick's stop->start test): the AE3 tolerates NO
+    # quick reattach -- its teardown/quiet-exit needs ~30 s of silence, and
+    # an immediate restart lands in a raw-repl refusal that then takes a
+    # recovery ladder to clear. So a stopped board cannot be started again
+    # until this many seconds have passed with the port untouched.
+    SETTLE = 35.0
 
     def __init__(self, repo=REPO, pidfile="/tmp/workbench-run.json",
                  logpath="/tmp/workbench-run.log"):
@@ -360,6 +366,8 @@ class Runner:
         self.started = None
         self.proc = None        # Popen when started by us
         self.pid = None         # always set while owning something
+        self.settle_until = 0.0  # monotonic; boards quiet until then
+        self.settle_boards = set()
         self._adopt()
 
     # -- pidfile ----------------------------------------------------------
@@ -419,6 +427,13 @@ class Runner:
             if not recipe.get("run"):
                 raise StartRefused("recipe '%s' has no [run] block"
                                    % recipe["name"])
+            needed = {b["by_id"] for b in recipe["boards"]}
+            remaining = self.settle_until - time.monotonic()
+            if remaining > 0 and needed & self.settle_boards:
+                raise StartRefused(
+                    "the boards are settling after the last stop -- the AE3 "
+                    "needs ~%.0f s of silence before a reattach or it wedges. "
+                    "Try again in %d s." % (self.SETTLE, int(remaining) + 1))
             for b in board_states:
                 if b["state"] == "waiting":
                     raise StartRefused(
@@ -456,6 +471,13 @@ class Runner:
         print("runner: started %s (pid %d)" % (recipe["name"], self.pid),
               flush=True)
 
+    def _arm_settle(self):
+        """Called (under the lock) whenever the demo releases its boards."""
+        if self.recipe:
+            self.settle_boards = {b["by_id"]
+                                  for b in self.recipe.get("boards", [])}
+            self.settle_until = time.monotonic() + self.SETTLE
+
     def _health_url(self):
         h = self.recipe.get("health") if self.recipe else None
         return h.get("http") if h else None
@@ -482,6 +504,7 @@ class Runner:
                     self.state = "failed"
                     self.error = ("exited rc=%d after %.1f s"
                                   % (rc, time.time() - self.started))
+                    self._arm_settle()
                     self._clear_pidfile()
                     print("runner: FAILED -- %s" % self.error, flush=True)
                     return
@@ -516,6 +539,7 @@ class Runner:
                 if rc is not None:
                     self.state = "failed"
                     self.error = "exited rc=%d while live" % rc
+                    self._arm_settle()
                     self._clear_pidfile()
                     print("runner: FAILED -- %s" % self.error, flush=True)
                     return
@@ -577,10 +601,12 @@ class Runner:
                 if self.proc:
                     self.proc.wait()  # reap
                 self.state = "idle"
+                self._arm_settle()
                 self.recipe = None
                 self.error = None
                 self._clear_pidfile()
-                print("runner: stopped, ports released", flush=True)
+                print("runner: stopped, ports released; boards settle %.0f s"
+                      % self.SETTLE, flush=True)
             else:
                 self.state = "stuck"
                 self.error = ("pid %d ignored SIGINT (%.0f s) and SIGTERM "
@@ -604,6 +630,8 @@ class Runner:
         with self._lk:
             r = self.recipe
             return {"state": self.state,
+                    "settle_s": max(0, int(self.settle_until
+                                           - time.monotonic() + 0.999)),
                     "recipe": r["name"] if r else None,
                     "title": r.get("title") if r else None,
                     "opens": r.get("opens") if r else None,

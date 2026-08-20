@@ -182,7 +182,8 @@ function belongsToRun(holder) {
 
 function recipeCard(r) {
   const active = run.recipe === r.name;
-  const startable = ["idle","failed"].includes(run.state) && !busy;
+  const settling = (run.settle_s || 0) > 0;
+  const startable = ["idle","failed"].includes(run.state) && !busy && !settling;
   let status = "";
   if (active && run.state === "starting")
     status = `<div class="statusline starting">starting… waiting for the
@@ -208,7 +209,9 @@ function recipeCard(r) {
     ${status}
     <div style="margin-top:.5rem">
       <button ${startable ? "" : "disabled"}
-        onclick="doStart('${esc(r.name)}')">▶ Start</button>
+        onclick="doStart('${esc(r.name)}')">${settling &&
+          ["idle","failed"].includes(run.state)
+          ? "boards settling… " + run.settle_s + " s" : "▶ Start"}</button>
       <span class="muted" style="margin-left:.6rem">recipe
         <code>${esc(r.file)}</code></span>
     </div></div>${thumb}</div></div>`;
