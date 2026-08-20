@@ -1,11 +1,16 @@
-# test_workbench.py -- host tests for the S25 workbench menu (bite 1).
+# test_workbench.py -- host tests for the S25 workbench (bites 1 + 2).
 # No Pi, no hardware, no serial port, no systemd, no browser.
 #
-# Bite 1's interesting logic is the RECIPE SCHEMA (the format is being
-# proven before anything drives hardware, so a typo must be a loud error,
-# never a silently dropped field) and the PASSIVE PREFLIGHT (board
-# presence and port-holders read from fake /dev and /proc trees, so every
-# state -- waiting / ready / held -- is asserted deterministically).
+# Bite 1's interesting logic is the RECIPE SCHEMA (a typo must be a loud
+# error, never a silently dropped field) and the PASSIVE PREFLIGHT (board
+# states asserted against fake /dev and /proc trees).
+#
+# Bite 2's interesting logic is the RUNNER: the single-owner lock, the
+# refusal paths (foreign holder, absent board, double start), the health
+# poll that gates LIVE, and the stop ladder (SIGINT -> SIGTERM -> stuck,
+# NEVER SIGKILL). Children here are real subprocesses -- tiny python
+# scripts -- so signal semantics are the real thing, with the grace
+# timers shrunk per instance to keep the suite fast.
 #
 # Run:  python3 pi/workbench/test_workbench.py
 
@@ -13,11 +18,13 @@ import http.client
 import json
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import threading
+import time
 import unittest
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PI = os.path.dirname(HERE)
@@ -25,7 +32,8 @@ sys.path.insert(0, HERE)
 
 import workbench  # noqa: E402
 from workbench import (  # noqa: E402
-    board_preflight, load_recipes, preflight, validate_recipe)
+    Runner, StartRefused, board_preflight, load_recipes, preflight,
+    validate_recipe)
 
 UNIT = os.path.join(PI, "services", "workbench.service")
 INSTALLER = os.path.join(PI, "install_stream_service.sh")
@@ -54,6 +62,8 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(out["name"], "demo-test")
         self.assertIsNone(out["run"])
         self.assertIsNone(out["health"])
+        self.assertIsNone(out["thumbnail"])
+        self.assertEqual(out["services"], [])
 
     def test_missing_required(self):
         for key in ("name", "title", "boards"):
@@ -124,6 +134,21 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(errs, [])
         out, errs = errs_of(recipe(health={"htp": "typo"}))
         self.assertIsNone(out)
+
+    def test_thumbnail_confined_to_thumbs_dir(self):
+        out, errs = errs_of(recipe(thumbnail="thumbs/ball.jpg"))
+        self.assertEqual(errs, [])
+        for bad in ("../secrets.jpg", "/etc/passwd", "thumbs/../x.jpg",
+                    "ball.jpg"):
+            out, errs = errs_of(recipe(thumbnail=bad))
+            self.assertIsNone(out, bad)
+
+    def test_services_validated(self):
+        out, errs = errs_of(recipe(services=["bm-light.service"]))
+        self.assertEqual(errs, [])
+        for bad in ("bm-light.service", ["bm-light"], [3]):
+            out, errs = errs_of(recipe(services=bad))
+            self.assertIsNone(out, bad)
 
     def test_non_table_top_level(self):
         out, errs = errs_of(["not", "a", "table"])
@@ -212,6 +237,13 @@ class TestShippedRecipes(unittest.TestCase):
         for b in s8["boards"]:
             self.assertIn(b["by_id"], argv)
 
+    def test_s8_recipe_thumbnail_ships(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        s8 = {r["name"]: r for r in recipes}["s8-two-colour-balls"]
+        self.assertTrue(
+            os.path.exists(os.path.join(workbench.RECIPE_DIR,
+                                        s8["thumbnail"])))
+
 
 class FakeBench:
     """A fake /dev + /proc tree for passive-preflight tests."""
@@ -280,8 +312,6 @@ class TestPreflight(unittest.TestCase):
         self.assertEqual([h["pid"] for h in st["holders"]], [7])
 
     def test_unreadable_proc_entries_skipped(self):
-        # A pid dir with no fd/ subdir (raced exit, or another user's
-        # process on a locked-down /proc) must be skipped, not fatal.
         os.makedirs(os.path.join(self.fake.proc, "999"))
         self.fake.add_board("usb-x-if00")
         st = board_preflight("usb-x-if00", self.fake.dev, self.fake.proc)
@@ -298,15 +328,20 @@ class TestPreflight(unittest.TestCase):
         states = {b["label"]: b["state"] for b in pf["boards"]}
         self.assertEqual(states, {"AE3": "ready", "N6": "waiting"})
 
-    def test_panel_reports_disk_and_services(self):
-        pf = preflight([], dev_dir=self.fake.dev, proc=self.fake.proc,
+    def test_services_shown_only_when_a_recipe_declares_them(self):
+        # No standing unit list (Nick 2026-08-20): today's CV bench
+        # declares none, so the panel shows none.
+        r_none = {"boards": [{"label": "A", "by_id": "usb-x"}]}
+        pf = preflight([r_none], dev_dir=self.fake.dev, proc=self.fake.proc,
                        runner=lambda u: "active", disk_path=self.fake.root)
-        self.assertIsInstance(pf["disk"]["free_mb"], int)
-        self.assertEqual(set(pf["services"]), set(workbench.BENCH_UNITS))
-        self.assertTrue(all(v == "active" for v in pf["services"].values()))
+        self.assertEqual(pf["services"], {})
+        r_decl = {"boards": [{"label": "A", "by_id": "usb-x"}],
+                  "services": ["bm-light.service"]}
+        pf = preflight([r_decl], dev_dir=self.fake.dev, proc=self.fake.proc,
+                       runner=lambda u: "active", disk_path=self.fake.root)
+        self.assertEqual(pf["services"], {"bm-light.service": "active"})
 
     def test_systemctl_absent_reports_unavailable_not_crash(self):
-        # On a dev Mac there is no systemctl; the panel must degrade.
         states = workbench.service_states(
             units=("x.service",),
             runner=workbench._systemctl_state
@@ -315,24 +350,206 @@ class TestPreflight(unittest.TestCase):
                       ("unavailable", "unknown", "inactive"))
 
 
+# ---------------------------------------------------------------------------
+# The runner.
+# ---------------------------------------------------------------------------
+
+READY = [{"label": "AE3", "by_id": "usb-x", "state": "ready", "holders": []}]
+
+
+def run_recipe(argv, health=None, **over):
+    r = {"name": "rt", "title": "RT", "summary": None, "opens": ":9",
+         "thumbnail": None, "services": [], "boards":
+         [{"label": "AE3", "by_id": "usb-x", "firmware": None, "models": []}],
+         "run": {"argv": argv, "cwd": "."}, "health": health}
+    r.update(over)
+    return r
+
+
+SLEEPER = [sys.executable, "-c", "import time; time.sleep(60)"]
+STUBBORN = [sys.executable, "-c",
+            "import signal, time\n"
+            "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(60)"]
+
+
+class TestRunner(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.mkdtemp(prefix="wb_run_")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self.r = Runner(repo=d, pidfile=os.path.join(d, "run.json"),
+                        logpath=os.path.join(d, "run.log"))
+        self.r.POLL = 0.05
+        self.r.GRACE_INT = 1.0
+        self.r.GRACE_TERM = 1.0
+        self.r.HEALTH_TIMEOUT = 5.0
+        self.addCleanup(self._cleanup_child)
+
+    def _cleanup_child(self):
+        # Test hygiene only -- the product never SIGKILLs.
+        if self.r.pid:
+            try:
+                os.killpg(self.r.pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def wait_state(self, *states, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.r.state in states:
+                return self.r.state
+            time.sleep(0.02)
+        self.fail("state %r never reached %r" % (self.r.state, states))
+
+    def test_start_to_live_without_health_then_stop(self):
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.assertEqual(self.r.state, "starting")
+        self.assertTrue(os.path.exists(self.r.pidfile))
+        self.wait_state("live")
+        self.assertEqual(self.r.stop(), "idle")
+        self.assertFalse(os.path.exists(self.r.pidfile))
+        self.assertIsNone(self.r.recipe)
+
+    def test_child_that_dies_early_is_failed_with_rc(self):
+        self.r.start(run_recipe(
+            [sys.executable, "-c", "import sys; sys.exit(3)"],
+            health={"http": "http://127.0.0.1:1/"}), READY)
+        self.wait_state("failed")
+        self.assertIn("rc=3", self.r.error)
+        self.assertFalse(os.path.exists(self.r.pidfile))
+
+    def test_health_gates_live(self):
+        # Health URL answers only after the server below starts; until
+        # then the runner must sit in "starting".
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *a):
+                pass
+
+        self.r.start(run_recipe(SLEEPER,
+                                health={"http": None}), READY)
+        # no server yet: pick the port AFTER start so it can't race
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.r.recipe["health"] = {
+            "http": "http://127.0.0.1:%d/" % httpd.server_address[1]}
+        time.sleep(0.3)
+        self.assertEqual(self.r.state, "starting")
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        self.addCleanup(httpd.shutdown)
+        self.wait_state("live")
+        self.assertEqual(self.r.stop(), "idle")
+
+    def test_double_start_refused(self):
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        with self.assertRaises(StartRefused) as cm:
+            self.r.start(run_recipe(SLEEPER), READY)
+        self.assertIn("one demo at a time", str(cm.exception))
+        self.r.stop()
+
+    def test_waiting_board_refused(self):
+        with self.assertRaises(StartRefused) as cm:
+            self.r.start(run_recipe(SLEEPER),
+                         [{"label": "AE3", "by_id": "usb-x",
+                           "state": "waiting", "holders": []}])
+        self.assertIn("not enumerated", str(cm.exception))
+        self.assertEqual(self.r.state, "idle")
+
+    def test_foreign_holder_refused_by_name(self):
+        with self.assertRaises(StartRefused) as cm:
+            self.r.start(run_recipe(SLEEPER),
+                         [{"label": "AE3", "by_id": "usb-x", "state": "held",
+                           "holders": [{"pid": 999, "cmd": "mpremote"}]}])
+        msg = str(cm.exception)
+        self.assertIn("999", msg)
+        self.assertIn("will not kill", msg)
+
+    def test_bad_exec_is_a_refusal_not_a_crash(self):
+        with self.assertRaises(StartRefused):
+            self.r.start(run_recipe(["/no/such/binary"]), READY)
+        self.assertEqual(self.r.state, "idle")
+
+    def test_recipe_without_run_refused(self):
+        with self.assertRaises(StartRefused):
+            self.r.start(run_recipe(SLEEPER, run=None), READY)
+
+    def test_stubborn_child_goes_stuck_never_sigkill(self):
+        self.r.start(run_recipe(STUBBORN), READY)
+        self.wait_state("live")
+        time.sleep(0.3)  # let the child install its handlers
+        self.assertEqual(self.r.stop(), "stuck")
+        self.assertIn("SIGKILL", self.r.error)
+        # The child must still be alive: proof no SIGKILL was sent.
+        self.assertTrue(self.r._alive())
+
+    def test_child_death_while_live_is_failed(self):
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        os.killpg(self.r.pid, signal.SIGTERM)  # simulated external death
+        self.wait_state("failed")
+        self.assertIn("while live", self.r.error)
+
+    def test_stale_pidfile_cleaned_on_init(self):
+        d = tempfile.mkdtemp(prefix="wb_stale_")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        pidfile = os.path.join(d, "run.json")
+        with open(pidfile, "w") as fh:
+            json.dump({"pid": 99999999, "recipe": "x"}, fh)
+        r2 = Runner(repo=d, pidfile=pidfile,
+                    logpath=os.path.join(d, "run.log"))
+        self.assertEqual(r2.state, "idle")
+        self.assertFalse(os.path.exists(pidfile))
+
+    def test_restart_adopts_running_demo_and_can_stop_it(self):
+        self.r.start(run_recipe(SLEEPER), READY)
+        self.wait_state("live")
+        # A second Runner on the same pidfile = the workbench restarted.
+        r2 = Runner(repo=self.r.repo, pidfile=self.r.pidfile,
+                    logpath=self.r.logpath)
+        r2.POLL = 0.05
+        r2.GRACE_INT = 1.0
+        r2.GRACE_TERM = 1.0
+        self.assertEqual(r2.state, "live")
+        self.assertEqual(r2.recipe["name"], "rt")
+        self.assertEqual(r2.stop(), "idle")
+        self.assertFalse(self.r._alive())
+
+
+# ---------------------------------------------------------------------------
+# HTTP.
+# ---------------------------------------------------------------------------
+
 class TestHTTP(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fake = FakeBench()
         cls.rdir = tempfile.mkdtemp(prefix="wb_http_recipes_")
+        os.makedirs(os.path.join(cls.rdir, "thumbs"))
+        with open(os.path.join(cls.rdir, "thumbs", "t.jpg"), "wb") as fh:
+            fh.write(b"\xff\xd8fakejpeg")
         with open(os.path.join(cls.rdir, "good.toml"), "w") as fh:
-            fh.write(TestRegistry.GOOD)
+            fh.write(TestRegistry.GOOD +
+                     '\n[run]\nargv = ["python3", "-c", "pass"]\n')
         with open(os.path.join(cls.rdir, "broken.toml"), "w") as fh:
             fh.write("name = [unclosed\n")
+        cls.tmp = tempfile.mkdtemp(prefix="wb_http_run_")
+        cls.runner = Runner(repo=cls.tmp,
+                            pidfile=os.path.join(cls.tmp, "run.json"),
+                            logpath=os.path.join(cls.tmp, "run.log"))
         cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
                "disk_path": cls.fake.root}
-        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0),
-                                        workbench.make_handler(cfg))
+        cls.httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0), workbench.make_handler(cfg, cls.runner))
         cls.port = cls.httpd.server_address[1]
-        cls.thread = threading.Thread(target=cls.httpd.serve_forever,
-                                      daemon=True)
-        cls.thread.start()
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
@@ -340,23 +557,27 @@ class TestHTTP(unittest.TestCase):
         cls.httpd.server_close()
         cls.fake.cleanup()
         shutil.rmtree(cls.rdir, ignore_errors=True)
+        shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def get(self, path):
+    def req(self, method, path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
-            conn.request("GET", path)
+            conn.request(method, path,
+                         body=json.dumps(body).encode() if body else None,
+                         headers={"Content-Type": "application/json"}
+                         if body else {})
             resp = conn.getresponse()
             return resp.status, resp.read()
         finally:
             conn.close()
 
     def test_page_served(self):
-        code, body = self.get("/")
+        code, body = self.req("GET", "/")
         self.assertEqual(code, 200)
         self.assertIn(b"workbench", body)
 
     def test_recipes_endpoint_carries_both_lists(self):
-        code, body = self.get("/api/recipes")
+        code, body = self.req("GET", "/api/recipes")
         self.assertEqual(code, 200)
         obj = json.loads(body)
         self.assertEqual([r["name"] for r in obj["recipes"]], ["good-one"])
@@ -364,28 +585,56 @@ class TestHTTP(unittest.TestCase):
                          ["broken.toml"])
 
     def test_preflight_endpoint_shape(self):
-        code, body = self.get("/api/preflight")
+        code, body = self.req("GET", "/api/preflight")
         self.assertEqual(code, 200)
         obj = json.loads(body)
         self.assertEqual({b["by_id"] for b in obj["boards"]}, {"usb-x-if00"})
         self.assertEqual(obj["boards"][0]["state"], "waiting")
         self.assertIn("disk", obj)
-        self.assertIn("services", obj)
+        self.assertEqual(obj["services"], {})
 
-    def test_unknown_route_404(self):
-        code, _ = self.get("/api/nope")
+    def test_runner_endpoint_idle(self):
+        code, body = self.req("GET", "/api/runner")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)["state"], "idle")
+
+    def test_start_unknown_recipe_404(self):
+        code, body = self.req("POST", "/api/start", {"name": "nope"})
         self.assertEqual(code, 404)
+        self.assertFalse(json.loads(body)["ok"])
 
-    def test_no_post_routes_exist_in_bite_1(self):
-        # Listing only: nothing on this server mutates anything yet.
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        try:
-            conn.request("POST", "/api/recipes", body=b"{}")
-            resp = conn.getresponse()
-            resp.read()
-            self.assertEqual(resp.status, 501)  # BaseHTTPRequestHandler: no do_POST
-        finally:
-            conn.close()
+    def test_start_refused_when_board_absent_409(self):
+        # good-one's board is not in the fake /dev tree -> waiting.
+        code, body = self.req("POST", "/api/start", {"name": "good-one"})
+        self.assertEqual(code, 409)
+        self.assertIn("not enumerated", json.loads(body)["err"])
+
+    def test_stop_when_idle_is_idempotent(self):
+        code, body = self.req("POST", "/api/stop")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)["state"], "idle")
+
+    def test_devmode_reports_boards(self):
+        code, body = self.req("POST", "/api/devmode")
+        self.assertEqual(code, 200)
+        obj = json.loads(body)
+        # Board absent (waiting) -> not fully in dev mode, and says why.
+        self.assertFalse(obj["ok"])
+        self.assertEqual(obj["boards"][0]["state"], "waiting")
+
+    def test_thumb_served_and_confined(self):
+        code, body = self.req("GET", "/thumbs/t.jpg")
+        self.assertEqual(code, 200)
+        self.assertTrue(body.startswith(b"\xff\xd8"))
+        for evil in ("/thumbs/../good.toml", "/thumbs/..%2Fgood.toml",
+                     "/thumbs/no.jpg"):
+            code, _ = self.req("GET", evil)
+            self.assertEqual(code, 404, evil)
+
+    def test_unknown_routes_404(self):
+        for method, path in (("GET", "/api/nope"), ("POST", "/api/nope")):
+            code, _ = self.req(method, path)
+            self.assertEqual(code, 404, (method, path))
 
 
 class TestShipsWith(unittest.TestCase):
@@ -403,13 +652,21 @@ class TestShipsWith(unittest.TestCase):
 
     def test_installer_has_the_workbench_role_enabled(self):
         text = self.read(INSTALLER)
-        self.assertIn("workbench) UNIT=workbench.service;         AUTOSTART=yes",
-                      text)
+        self.assertIn(
+            "workbench) UNIT=workbench.service;         AUTOSTART=yes", text)
 
     def test_page_file_ships(self):
         self.assertTrue(
             os.path.exists(os.path.join(HERE, "static", "workbench.html")))
 
+    def test_no_sigkill_in_the_runner(self):
+        # The rule is load-bearing (a SIGKILLed viewer took the N6 off
+        # the USB bus): the product code must never USE SIGKILL. Prose
+        # may mention it; the API constant may not appear.
+        src = self.read(os.path.join(HERE, "workbench.py"))
+        self.assertNotIn("signal.SIGKILL", src)
+        self.assertNotIn("kill -9", src)
+
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=1)

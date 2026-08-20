@@ -7,9 +7,10 @@
 # Bite 3 uses: boards[].firmware (+ models, when a recipe ships any).
 
 name = "s8-two-colour-balls"
-title = "S8 two-colour ball demo (blob baseline, both boards)"
-summary = "Side-by-side live view, tuned pink/purple LAB thresholds and per-board pixel floors. Ground truth 11 pink / 10 purple converges at 10/7 with one ambiguous merge."
+title = "Two-colour ball comparison"
+summary = "Both cameras side by side counting pink vs purple balls (classic-CV blob baseline, tuned per board). Ground truth 11 pink / 10 purple converges at 10/7 with one ambiguous merge. From sprint S8."
 opens = ":8090"
+thumbnail = "thumbs/two_colour_balls.jpg"
 
 [[boards]]
 label = "AE3"
