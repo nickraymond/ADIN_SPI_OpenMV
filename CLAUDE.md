@@ -36,8 +36,10 @@ what happens next, so they are a planning instrument, not a status dump.
 ```
 
 - **Bullets, not paragraphs.** One idea per bullet, plain language.
-- **Roughly five bullets per section, hard cap of seven.** If a section
-  needs more, the extra belongs in the PR or DESIGN, not the reply.
+- **TWO bullets per section. Maximum.** This is a hard cap, not a target.
+  If something does not make the cut it belongs in the PR, DESIGN or
+  DEV_LOG — the point of the cap is to force the ranking, so combine
+  related items rather than splitting hairs to smuggle a third in.
 - **Technical comparisons go in a table**, never in prose: measured vs
   expected, board vs board, option A vs option B, before vs after. A
   comparison spread across sentences is unreadable and hides the delta.
