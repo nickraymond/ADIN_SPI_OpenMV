@@ -426,6 +426,11 @@ def parse_args(argv=None):
     ap.add_argument("--port", default=None,
                     help="serial device (default: the sole /dev/cu.usbmodem*)")
     ap.add_argument("--http-port", type=int, default=8090)
+    ap.add_argument("--bind", default="127.0.0.1",
+                    help="HTTP bind address. Defaults to localhost only. Pass "
+                         "0.0.0.0 to watch from another device on the same "
+                         "network -- that PUBLISHES THE CAMERA FEED to every "
+                         "host on that network, unauthenticated.")
     ap.add_argument("--framesize", default="VGA",
                     help="csi framesize NAME, e.g. QVGA VGA HD SXGAM (default VGA)")
     ap.add_argument("--quality", type=int, default=50)
@@ -474,6 +479,31 @@ def cfg_from_args(args):
 
 class PortError(Exception):
     """No usable serial device right now (may simply be mid-reconnect)."""
+
+
+def lan_addresses():
+    """This host's non-loopback IPv4 addresses, for printing a reachable URL."""
+    import socket
+    addrs = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None,
+                                       socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in addrs:
+                addrs.append(ip)
+    except socket.gaierror:
+        pass
+    if not addrs:
+        # getaddrinfo can miss the Wi-Fi address; ask the routing table.
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 80))    # TEST-NET-1, never actually sent
+            addrs.append(s.getsockname()[0])
+        except OSError:
+            pass
+        finally:
+            s.close()
+    return addrs
 
 
 def find_port(explicit=None):
@@ -582,8 +612,14 @@ def main(argv=None):
         args=(args.port, script_text, latest, stats, state),
         daemon=True).start()
 
-    httpd = QuietServer(("127.0.0.1", args.http_port),
+    httpd = QuietServer((args.bind, args.http_port),
                         make_handler(latest, stats))
+    if args.bind not in ("127.0.0.1", "localhost"):
+        print("WARNING: bound to %s -- the camera feed is reachable by any "
+              "host on this network, with no authentication." % args.bind,
+              flush=True)
+        for addr in lan_addresses():
+            print("  http://%s:%d/" % (addr, args.http_port), flush=True)
     url = "http://localhost:%d/" % args.http_port
     print("open %s  (Ctrl-C to stop)" % url, flush=True)
 
