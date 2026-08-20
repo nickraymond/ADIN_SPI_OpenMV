@@ -1516,9 +1516,9 @@ any urchin labelling effort is spent.
       `bench/n6_stream_{board,host}.py` + 19 host tests; yolov8n_192
       20.7/23.7/32.2 ms and end-to-end 47.9/41.8/30.2 fps at
       QVGA/VGA/HD. Tables in DESIGN §S24.)*
-- [~] **Bite A — match more than one colour at once** *(was S24 bite
-      1b.)* **Code + hardware verification DONE 2026-08-20; the live demo
-      with real balls is owed and waits on Nick's camera mount.** Shipped:
+- [x] **Bite A — match more than one colour at once** *(was S24 bite
+      1b.)* **DEMO PASSED 2026-08-20 (Nick), on the 3D-printed two-camera
+      mount.** Shipped:
       repeatable `--blob-thresh NAME:L,L,A,A,B,B`, per-class counts on the
       wire (`bc`/`amb`/`bb`), one palette colour per class, `--blob-scan
       codes|per-class`, `--save-frames` + `index.jsonl` labelled capture,
@@ -1528,8 +1528,20 @@ any urchin labelling effort is spent.
       bitfield, first-matching-threshold-wins per pixel, merge ORs codes —
       so overlapping boxes silently under-count and the repo's own
       documented pink/purple example overlapped by 8.8%. Blob cost measured
-      at 10.6 ms (N6) / 15.2 ms (AE3). Still owed: tuned real thresholds
-      and ground-truth counts at 1 m / 2 m.* Nick threw pink balls into a purple-tuned scene and they
+      at 10.6 ms (N6) / 15.2 ms (AE3).
+      **Tuning outcome (ground truth 11 pink / 10 purple):** both boards
+      converge at pink 10 / purple 7 with one ambiguous merge. Thresholds
+      AND pixel floors must be PER BOARD — the N6's blue cast puts its pink
+      at b≈−16.7, inside the default purple box, which is why one shared
+      threshold gave 5 blobs on one board and 18 on the other. Known
+      remaining error modes, all measured: touching balls merge into one
+      blob (the "2×" case), and both boards lose balls at the FOV edges —
+      the N6 noticeably more than the AE3.
+      **Nick's product read (2026-08-20), recorded because it moves the
+      board decision:** the AE3 is NOT out of the running. Its lower fps and
+      absence of a hardware JPEG encoder were expected to disqualify it, and
+      on this task they do not — its detection accuracy matches or beats the
+      N6, which struggles more at the edges of its field of view.* Nick threw pink balls into a purple-tuned scene and they
       were correctly ignored: the threshold is a single LAB box and
       pink's `b` sits outside the purple range. `find_blobs` already
       takes a LIST of thresholds; the board script passes one and the
@@ -1541,8 +1553,34 @@ any urchin labelling effort is spent.
       table has no baseline. Until it lands, `--tune` reads a threshold
       off whatever object is really in front of the lens, which is the
       honest way to get one anyway.
-- [ ] **Bite B — the toolchain, then a from-scratch two-colour
-      detector.** Two halves with a gate between them.
+- [x] **Bite B1 — the toolchain. CLOSED 2026-08-20: both boards run our
+      own compiled models.** No new tooling was needed — OpenMV ships both
+      compilers in the SDK we already had, driven by its own
+      `tools/modelc.py`. AE3 = vela 5.0.0 → copy to `/flash` → 1.66 ms
+      (vendor's own copy of the same model: 1.81 ms). N6 = stedgeai 4.0.0 →
+      ROMFS image over USB DFU (alt 3, ROMFS0; no ST-LINK) → 2.75 ms
+      (vendor's: 2.76 ms). Compile verified byte-identical to the vendor's
+      shipped artifacts (`person_detect` 274,272 B, `fomo_face_detection`
+      64,064 B). The N6 canNOT load a model from `/flash` — stedgeai's
+      relocatable binary wants its params in XIP flash — so its deployment
+      is a partition flash, not a file copy. Recipes: `ml/compile_model.sh`,
+      `ml/build_romfs_n6.sh`, `ml/deploy_probe.py`. Detail in `ml/README.md`.
+- [x] **Bite B0 — Mac training host.** Python 3.11 venv, torch 2.12.1 on
+      MPS, ultralytics 8.4.124, 83 packages pinned; datasets/runs/venvs live
+      in `~/nereus_ml`, outside the repo (worktrees). `ml/chain_proof.py`
+      re-verifies train→export→inspect after any version bump. **Known
+      blocker for B2:** ultralytics 8.4.124's only TFLite path is LiteRT,
+      which emits NCHW float32; the boards want NHWC uint8 (OpenMV's own
+      source models are `(1,192,192,3)` uint8, scale 1/255). OpenMV's
+      maintainers report stock Ultralytics INT8 export failing ST's
+      compiler outright and point at ST's YOLOv8-STEdgeAI / Roboflow's
+      `ultralytics-openmv` fork — so YOLO is the wrong FIRST target; a small
+      classifier or FOMO-style detector clears the path with far less risk.
+- [ ] **Bite B2 — the from-scratch two-colour detector.** NEXT. Collect and
+      label the two-ball set (bite A's `--save-frames` is the capture rig and
+      its per-class boxes are the auto-labels), train on the Mac, export to
+      NHWC uint8, compile per target, deploy to both boards by the proven
+      routes above.
       **B1 — does a stock int8 `.tflite` run on the NPU?** *(was S24
       bite 3, promoted by Nick's "sports ball" question.)* The ROM
       model's `(1, 5, 756)` output proves it carries ONE class, so no
