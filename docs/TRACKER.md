@@ -1907,8 +1907,26 @@ unowned side quest.
       test (method not recorded — an order-of-magnitude reading, not an
       instrumented figure; re-measure deliberately before relying on
       it). Remaining: nibble 4 (PR).
+- [~] **Bite 1c — the same demo on the AE3 (Nick, 2026-08-19). DONE,
+      measured.** Same scripts, board swapped, stock `v5.0.0` verified
+      (`/flash/main.py` is the stock LED blinker — the board is fully
+      restored). **VGA delivered 7.6 fps vs the N6's ~19, and the gap is
+      the JPEG encoder, not the NPU**: inference 27–28 ms vs 23.5 (1.2×)
+      but encode **73.8 ms vs 3.9 (19×)**, 58% of the AE3's frame. The
+      AE3 has no hardware JPEG (D41), so this independently reproduces
+      the S22/S23 premise — the stock AE3 measured here sits right where
+      the S23 encoder arc started (7.41 fps). Full table + the LAB
+      threshold analysis in DESIGN §S24. **Ops cost: I wedged the AE3
+      once** (below) — the fix is committed.
 - [ ] **Bite 1b — match more than one colour at once (NEW, from the
-      demo).** Nick threw pink balls into a purple-tuned scene and they
+      demo; PROMOTED by the AE3 run — it is now a requirement, not a
+      nicety).** Measured on Nick's mixed purple/pink ball scene: the
+      purple balls sit at `a`=5–7, *less* magenta than the wooden floor
+      at `a`=9, so no `a` bound separates them, and widening `L` to catch
+      them by lightness instead merged the dark furniture into ONE blob
+      (120 ms/frame, 4.4 fps). **A single LAB box provably cannot cover
+      both colours in that scene** — `find_blobs` taking a LIST is the
+      only fix. Nick threw pink balls into a purple-tuned scene and they
       were correctly ignored — the threshold is a single LAB box, and
       pink's `b` sits outside the purple range. `find_blobs` already
       accepts a LIST of thresholds; the board script passes exactly one

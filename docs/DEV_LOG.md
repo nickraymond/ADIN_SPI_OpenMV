@@ -150,6 +150,37 @@ balls into a purple-tuned scene and they were correctly ignored — pink's
 working, not a fault; matching several colours at once is fenced as
 bite 1b rather than smuggled into the demo.
 
+**AE3 run, same evening (Nick handed the board over).** Stock `v5.0.0`
+verified, `/flash/main.py` is the stock LED blinker. **VGA 7.6 fps vs
+the N6's ~19, and the gap is the JPEG encoder, not the NPU** —
+inference 27–28 ms vs 23.5 (1.2×), encode **73.8 ms vs 3.9 (19×)**,
+58% of the AE3's frame budget. Independently reproduces the S22/S23
+premise: the stock AE3 measured here sits right where the S23 encoder
+arc started (7.41 fps). Tables in DESIGN §S24.
+
+**I wedged the AE3, and the cause was my own retry loop.** The
+hand-rolled raw-REPL handshake failed (5 s timeout where mpremote
+allows 10, no raw-paste), and the supervisor then retried every 2 s —
+~20 attaches in 45 s, against a documented wedge threshold of 4–6
+(S23 bite R). It then refused mpremote too (`could not enter raw
+repl`); Nick's physical replug cured it, as the docs say it must.
+Two fixes shipped: the attach now uses **mpremote's own
+`SerialTransport`** (reuse before rewriting — only the attach; the read
+loop stays ours), and retries **back off 2/5/10/20/30 s** with the
+attempt count in the status line. Four clean start/stop cycles since,
+no refusals. **A viewer that hammers a quiet port is not resilient, it
+is the fault.**
+
+**Colour thresholds are a property of the scene, not the object.** The
+default purple box found nothing on ~20 purple/pink balls at 2–3 m.
+Sampling the frame: pink reaches `a`=29–30 with `b`=1–15, purple sits
+at `a`=5–7, the floor at `a`=9/`b`=21 — and the default demanded `b` in
+−75…−10, where **no ball is**. Re-thresholding on measured values
+tracked the pink balls immediately. **One box cannot cover both**:
+purple is less magenta than the floor, and widening `L` instead merged
+the furniture into one 120 ms blob. Bite 1b promoted from nicety to
+requirement.
+
 **Next:** nibble 4 (PR) for bite 1, then bite 2 — the N6-vs-AE3
 tiled-coverage comparison, carrying the model-variant confound
 explicitly.

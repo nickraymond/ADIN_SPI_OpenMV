@@ -929,6 +929,72 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 detail — the same demo on the AE3 (2026-08-19)
+
+Same scripts, same scene, board swapped. **AE3 on genuine stock
+`OpenMV v5.0.0; MicroPython v1.28.0-49`** (verified via `sys.version`;
+`/flash/main.py` is the stock LED blinker, so the board is fully
+restored — no bridge launcher, no S6 fixture). Identity cross-checked
+three ways: `os.uname().machine` = `OpenMV-AE3 with AE302F80F55D5AE`,
+USB serial `0829c14000000000` matching the by-id string in §S8, free
+heap 4.09 MB, and `/rom/yolov8n_192.tflite` = **1,994,976 B** (the AE3
+variant, vs the N6's 3,233,408) plus the audio models the N6 lacks.
+
+**VGA (640×400 — both boards letterbox to 16:10), per-frame:**
+
+| stage | N6 | AE3 | AE3 / N6 |
+|---|---|---|---|
+| capture | 0.2 ms | 11.6 ms | 58× |
+| inference (yolov8n_192) | 23.5 ms | 27–28 ms | **1.2×** |
+| blob search | 11.0 ms | 15.6 ms | 1.4× |
+| **JPEG encode** | 3.9 ms | **73.8 ms** | **19×** |
+| model load | 2.2 ms | 51.0 ms | 23× |
+| model arena | 196 KB | 791 KB | 4× |
+| **delivered fps** | **~19** | **7.6** | 0.4× |
+
+Zero resyncs on the AE3 throughout; board work (11.6+27.3+15.6+73.8 =
+128 ms → 7.8 fps) accounts for the delivered 7.6, so the transport is
+not involved.
+
+**The gap is almost entirely the JPEG encoder, not the NPU.** Inference
+is within 20% between the two boards — the AE3's Ethos-class NPU is
+competitive, and it is running a smaller model variant. What separates
+them is that **the AE3 has no hardware JPEG** (vendor-verified in D41)
+and encodes VGA in software at 73.8 ms, 58% of its entire frame budget.
+This is the S22/S23 finding reproduced from a completely independent
+direction: those sprints spent an arc getting VGA colour from 7.41 to
+12.53 fps by attacking exactly this term with 4:2:0 and MVE
+vectorization. **The stock-firmware AE3 measured here (73.8 ms encode,
+7.6 fps) sits right where S23 started**, which is a useful sanity check
+on both efforts. Blob search, by contrast, is only 1.4× — it is plain
+CPU work on both boards.
+
+**Colour thresholds are a property of the scene, not of the object
+(measured, and it cost the first attempt).** With ~20 purple and pink
+balls at 2–3 m under room lighting, the default purple box found
+**nothing**. Sampling the actual frame explained why — LAB as the sensor
+reports it, not as the eye sees it:
+
+| sample | L | a | b |
+|---|---|---|---|
+| pink ball (most chromatic pixels) | 37–49 | **29–30** | 1–15 |
+| purple ball | 22–32 | **5–7** | −3…17 |
+| wooden floor | 48 | 9 | 21 |
+| white wall | 63 | −10 | −13 |
+
+The default demanded `b` in −75…−10 (the blue side) and **no ball is
+there** — indoors these balls are barely chromatic and slightly warm.
+Re-thresholding on the measured values (`15,70,18,60,-30,18`) picked the
+pink balls up immediately, 7–8 blobs tracked.
+
+**A single LAB box provably cannot cover both colours in this scene.**
+The purple balls sit at `a`=5–7, *less* magenta than the floor at `a`=9,
+so no `a` bound separates them; and widening `L` to catch them by
+lightness instead swallows the dark box and TV — tried, and it merged
+the furniture into ONE blob at 120 ms/frame (4.4 fps). So bite 1b
+(a LIST of thresholds, one per colour) is not a convenience, it is the
+only thing that makes a mixed-colour scene work.
+
 **Live stream at each capture size (measured 2026-08-19, `--framesize`).**
 The sweep table above prices capture+inference only; these rows are the
 whole delivered pipeline including overlay, JPEG, base64 and USB:
