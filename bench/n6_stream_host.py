@@ -12,7 +12,8 @@ browser can watch live.
                                     --blob-label ball
 
 Nothing is written to the board -- the script runs from RAM and ``/flash`` is
-never touched. Needs pyserial; stdlib otherwise.
+never touched. Needs ``mpremote`` (its transport does the raw-REPL attach) and
+``pyserial``; stdlib otherwise.
 
 **Ctrl-C to stop, never ``kill -9``.** The clean path interrupts the board and
 leaves the raw REPL; SIGTERM/SIGHUP are handled and unwind the same way. A
@@ -327,40 +328,30 @@ class SerialBoard:
     and executed from RAM, exactly as ``mpremote run`` would.
     """
 
-    #: pyboard.py chunks raw-REPL writes so the board's input buffer keeps up.
-    CHUNK = 256
-    CHUNK_PAUSE_S = 0.01
-
     def __init__(self, port, baudrate=115200):
-        import serial                      # lazy: unit tests need no pyserial
+        # The ATTACH uses mpremote's own transport rather than a hand-rolled
+        # handshake -- reuse before rewriting, and the hand-rolled one was
+        # measurably worse: it timed out on an AE3 that mpremote had just
+        # talked to happily (5 s vs mpremote's 10 s, and no raw-paste
+        # support). Only the attach comes from mpremote; the READ loop stays
+        # ours, which is the half that has to avoid mpremote's
+        # accumulate-and-rescan behaviour (see the module docstring).
+        from mpremote.transport_serial import SerialTransport
+        import serial
         self._serial = serial
         self.port = port
-        self.ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
+        self._transport = SerialTransport(port, baudrate=baudrate)
+        self.ser = self._transport.serial
+        self.ser.timeout = 0.1              # bound our own read loop
         self._buf = bytearray()
 
-    def _read_until(self, token, timeout_s=5.0):
-        deadline = time.monotonic() + timeout_s
-        seen = bytearray()
-        while time.monotonic() < deadline:
-            seen += self.ser.read(256)
-            if token in seen:
-                return bytes(seen)
-        raise TimeoutError("N6 %s: never sent %r during raw-REPL entry "
-                           "(saw %r)" % (self.port, token, bytes(seen[-80:])))
-
     def start(self, script_text):
-        """Interrupt whatever is running, enter the raw REPL, run the script."""
-        self.ser.write(b"\r\x03\x03")       # Ctrl-C twice: stop main.py
-        time.sleep(0.2)
-        self.ser.reset_input_buffer()
-        self.ser.write(b"\r\x01")           # Ctrl-A: raw REPL
-        self._read_until(b"raw REPL; CTRL-B to exit")
-        payload = script_text.encode("utf-8")
-        for i in range(0, len(payload), self.CHUNK):
-            self.ser.write(payload[i:i + self.CHUNK])
-            time.sleep(self.CHUNK_PAUSE_S)
-        self.ser.write(b"\x04")             # Ctrl-D: execute
-        self._read_until(b"OK")
+        """Enter the raw REPL and start the script running from RAM."""
+        # soft_reset=True gives the script a clean heap, which matters much
+        # more on the AE3 (3.9 MB free, and the model arena alone is 791 KB)
+        # than on the N6's 25.6 MB.
+        self._transport.enter_raw_repl(soft_reset=True)
+        self._transport.exec_raw_no_follow(script_text)
         return self
 
     def readline(self):
@@ -394,17 +385,23 @@ class SerialBoard:
                 return b""
 
     def stop(self):
+        """Interrupt the script and leave the board at a usable REPL.
+
+        Best-effort throughout: if the board has already gone (a yanked
+        cable), there is nothing to tidy and failing here would mask the
+        real event.
+        """
         try:
             self.ser.write(b"\r\x03\x03")   # interrupt the running script
             time.sleep(0.1)
-            self.ser.write(b"\r\x02")       # Ctrl-B: back to the friendly REPL
+            self._transport.exit_raw_repl()  # Ctrl-B: friendly REPL
             time.sleep(0.1)
-        except self._serial.SerialException:
+        except Exception:
             pass
         finally:
             try:
-                self.ser.close()
-            except self._serial.SerialException:
+                self._transport.close()
+            except Exception:
                 pass
 
 
@@ -498,8 +495,18 @@ def find_port(explicit=None):
     return ports[0]
 
 
+#: Backoff for reconnect attempts, in seconds, then the last value repeats.
+#: NOT a flat retry: on the AE3, repeated raw-REPL attaches are themselves a
+#: known way to wedge the board -- roughly 4-6 attaches after a teardown and
+#: it starts refusing below the Python level, curable only by a power cycle
+#: (TRACKER S23 bite R). A viewer that hammers a quiet port is not resilient,
+#: it is the fault. Backing off also gives a board that is merely slow to
+#: boot (the AE3 takes seconds on csi.reset) time to arrive.
+RETRY_BACKOFF_S = (2, 5, 10, 20, 30)
+
+
 def supervise(port_hint, script_text, latest, stats, state,
-              retry_s=2.0, settle_s=1.0):
+              retry_s=None, settle_s=1.0, backoff=RETRY_BACKOFF_S):
     """Keep a board stream running, reconnecting when the board comes back.
 
     Bumping the USB connector while aiming the camera ends the stream. That is
@@ -509,23 +516,39 @@ def supervise(port_hint, script_text, latest, stats, state,
     way; nothing here writes to the board).
     """
     first = True
+    fails = 0
+
+    def _backoff():
+        """Seconds to wait after `fails` consecutive failures."""
+        if retry_s is not None:            # tests pin this
+            return retry_s
+        return backoff[min(fails - 1, len(backoff) - 1)]
+
     while not state.get("quit"):
         try:
             port = find_port(port_hint)
             board = SerialBoard(port).start(script_text)
         except PortError as exc:
-            stats.status = "waiting for board: %s" % exc
-            time.sleep(retry_s)
+            fails += 1
+            stats.status = "waiting for board: %s (retry in %gs)" % (
+                exc, _backoff())
+            time.sleep(_backoff())
             continue
         except ImportError:
             stats.status = "pyserial missing"
             state["fatal"] = "pyserial missing -- pip3 install --user pyserial"
             return
         except (OSError, TimeoutError) as exc:
-            stats.status = "board not answering on %s: %s" % (port, exc)
-            time.sleep(retry_s)
+            fails += 1
+            wait = _backoff()
+            stats.status = ("board not answering on %s after %d attempt(s): %s "
+                            "(retry in %gs)" % (port, fails, exc, wait))
+            print("board: attach failed (%d): %s -- waiting %gs"
+                  % (fails, exc, wait), flush=True)
+            time.sleep(wait)
             continue
 
+        fails = 0
         if not first:
             stats.reconnects += 1
         first = False
