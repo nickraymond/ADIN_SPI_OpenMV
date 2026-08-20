@@ -17,6 +17,54 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-20 (evening) — S8 bite A DEMO PASSED; B0+B1 closed: both boards run our own compiled models
+
+**Branch:** `claude/s8-cv-detector-ladder-bbfa8d`, PR #49. Bench: both
+cameras on nereus000's new 3D-printed mount, side-by-side viewer on :8090.
+
+**Done:**
+- **Bite A demo PASSED (Nick).** Per-board thresholds, per-board pixel
+  floors, a live overlay toggle, and tuning driven by measured LAB rather
+  than guesswork. Ground truth 11 pink / 10 purple; both boards converge at
+  pink 10 / purple 7 with one ambiguous merge. 117 host tests.
+- **B1 CLOSED — the whole compile→deploy→run route works on BOTH boards**,
+  using OpenMV's own tooling (`tools/modelc.py`) and the compilers already
+  in the SDK. AE3: vela → `/flash` → 1.66 ms vs the vendor's 1.81 ms. N6:
+  stedgeai → ROMFS image over USB DFU alt 3 → 2.75 ms vs the vendor's
+  2.76 ms. No ST-LINK needed.
+- **B0**: Mac training host up, MPS training works, export chain proven —
+  and its one gap identified (NCHW float32 vs the boards' NHWC uint8).
+- Folded PR #48 (the other session's two-board viewer + AE3-vs-N6
+  head-to-head) into this branch; wrote 6 tests for the merge seams.
+
+**Broke/surprised us:**
+- **One threshold cannot serve two sensors.** Same scene, same script: AE3
+  5 blobs, N6 18. The N6's blue cast puts its pink balls at b≈−16.7, inside
+  the default purple box; the AE3's sit at −6.5, outside it. Per-board
+  thresholds AND per-board pixel floors are both required, both measured.
+- **The N6 rejects bytes it already runs.** Our compiled model was
+  byte-identical to the one in its ROM, loaded fine from `/rom` and failed
+  from `/flash` — stedgeai's relocatable binary wants params in XIP flash.
+- **`mpremote romfs deploy` would have destroyed the vendor models**: it
+  reads OpenMV's 24 MB partition as `size 0`. Not attempted; DFU alt 3 was
+  the right route and never touches BOOTLOADER, so it stays recoverable.
+- Every miss Nick circled was a NEAR miss with an exact cause — a pink ball
+  at L 31.2 against an L-32 floor, three N6 pinks at a 24.2–25.8 against an
+  a-26 floor. Measuring the pixels beat nudging the numbers.
+- A test caught my own parser bug: `pink:1,2,3,4,5,6` parsed as a *board*
+  named "pink", structurally identical to a valid `--blob-thresh`.
+
+**Nick's product read, recorded because it moves the board decision:** the
+AE3 is **not** out of the running. Its lower fps and lack of a hardware JPEG
+encoder were expected to disqualify it; on this task they do not — accuracy
+matches or beats the N6, which loses more balls at the edges of its FOV.
+
+**Next:** **B2 — the from-scratch two-colour detector.** Capture with bite
+A's `--save-frames` (its per-class boxes are the auto-labels), label, train
+on the Mac, export NHWC uint8, compile and deploy by the now-proven routes.
+Start with a small classifier/FOMO-style model, NOT YOLO — OpenMV's
+maintainers report stock Ultralytics INT8 export failing ST's compiler.
+
 ## 2026-08-20 (later) — S8 bite A shipped + PR #48 folded in; `b.code` settled by probe; both boards now on nereus000
 
 **Branch:** `claude/s8-cv-detector-ladder-bbfa8d`. Bench: both cameras on

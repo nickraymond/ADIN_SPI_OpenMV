@@ -854,6 +854,147 @@ class TestLabBoxOverlap(unittest.TestCase):
         self.assertAlmostEqual(pairs[0][2], 0.0877, places=3)
 
 
+class TestPerBoardThresholds(unittest.TestCase):
+    """Two sensors, two threshold sets -- measured, not speculative.
+
+    The N6's blue cast puts its pink balls ~10 LAB units lower in b than the
+    AE3's, so one shared box gave 5 blobs on one board and 18 on the other.
+    """
+
+    def test_parses_label_name_and_values(self):
+        self.assertEqual(H.parse_board_thresh("AE3:pink:32,75,14,32,-16,6"),
+                         ("AE3", ("pink", (32, 75, 14, 32, -16, 6))))
+
+    def test_rejects_a_spec_without_a_board(self):
+        with self.assertRaises(ValueError):
+            H.parse_board_thresh("pink:1,2,3,4,5,6")
+
+    def test_unknown_board_label_is_rejected_not_ignored(self):
+        # A threshold that silently applies to nothing looks exactly like a
+        # threshold that does not work.
+        args = H.parse_args(["--board-thresh", "TYPO:pink:1,2,3,4,5,6"])
+        with self.assertRaises(ValueError) as cm:
+            H.board_thresh_map(args, ["AE3", "N6"])
+        self.assertIn("TYPO", str(cm.exception))
+
+    def test_duplicate_colour_for_one_board_is_rejected(self):
+        args = H.parse_args(["--board-thresh", "AE3:pink:1,2,3,4,5,6",
+                             "--board-thresh", "AE3:pink:7,8,9,10,11,12"])
+        with self.assertRaises(ValueError):
+            H.board_thresh_map(args, ["AE3"])
+
+    def test_each_board_keeps_its_own_boxes(self):
+        args = H.parse_args(["--board-thresh", "AE3:pink:32,75,14,32,-16,6",
+                             "--board-thresh", "N6:pink:30,80,26,50,-30,-2"])
+        m = H.board_thresh_map(args, ["AE3", "N6"])
+        self.assertEqual(m["AE3"][0][1], (32, 75, 14, 32, -16, 6))
+        self.assertEqual(m["N6"][0][1], (30, 80, 26, 50, -30, -2))
+
+    def test_cfg_takes_an_explicit_class_list(self):
+        # This is what makes per-board board scripts possible: each view
+        # renders its own _CFG rather than sharing one.
+        args = H.parse_args([])
+        cfg = H.cfg_from_args(args, [("pink", (1, 2, 3, 4, 5, 6))])
+        self.assertEqual(cfg["blob_classes"], [("pink", (1, 2, 3, 4, 5, 6))])
+
+    def test_two_boards_produce_different_scripts(self):
+        args = H.parse_args([])
+        a = H.build_board_script_text(H.cfg_from_args(
+            args, [("pink", (32, 75, 14, 32, -16, 6))]))
+        b = H.build_board_script_text(H.cfg_from_args(
+            args, [("pink", (30, 80, 26, 50, -30, -2))]))
+        self.assertNotEqual(a, b)
+        self.assertIn("-16", a.split("\n")[0])
+        self.assertIn("-30", b.split("\n")[0])
+
+
+class TestPerBoardPixels(unittest.TestCase):
+    def test_parses_and_applies(self):
+        args = H.parse_args(["--board-pixels", "AE3:60"])
+        self.assertEqual(H.board_pixels_map(args, ["AE3"]), {"AE3": 60})
+        cfg = H.cfg_from_args(args, None, pixels=60)
+        self.assertEqual((cfg["blob_pixels"], cfg["blob_area"]), (60, 60))
+
+    def test_unknown_board_is_rejected(self):
+        args = H.parse_args(["--board-pixels", "NOPE:60"])
+        with self.assertRaises(ValueError):
+            H.board_pixels_map(args, ["AE3"])
+
+    def test_non_numeric_is_rejected(self):
+        args = H.parse_args(["--board-pixels", "AE3:lots"])
+        with self.assertRaises(ValueError):
+            H.board_pixels_map(args, ["AE3"])
+
+    def test_default_falls_back_to_the_global_flag(self):
+        args = H.parse_args(["--blob-pixels", "150"])
+        self.assertEqual(H.cfg_from_args(args)["blob_pixels"], 150)
+
+
+class TestOverlayToggle(unittest.TestCase):
+    """The overlay is drawn ON THE BOARD, so a live toggle rebuilds its script."""
+
+    def test_cfg_overlay_can_be_overridden(self):
+        args = H.parse_args([])
+        self.assertTrue(H.cfg_from_args(args, None, overlay=True)["overlay"])
+        self.assertFalse(H.cfg_from_args(args, None, overlay=False)["overlay"])
+
+    def test_set_overlay_rebuilds_the_script(self):
+        args = H.parse_args([])
+        v = H.BoardView("AE3", "/dev/x")
+        v.make_script = lambda on: H.build_board_script_text(
+            H.cfg_from_args(args, None, overlay=on))
+        v.set_overlay(False)
+        self.assertFalse(v.overlay)
+        self.assertIn("'overlay': False", v.script_text.split("\n")[0])
+        v.set_overlay(True)
+        self.assertIn("'overlay': True", v.script_text.split("\n")[0])
+
+    def test_counts_survive_with_the_overlay_off(self):
+        # Turning the picture clean must not turn the numbers off -- that is
+        # the whole point of the toggle.
+        cfg = H.cfg_from_args(H.parse_args([]), None, overlay=False)
+        self.assertFalse(cfg["overlay"])
+        self.assertTrue(cfg["blobs"])
+
+    def test_supervise_accepts_a_script_callable(self):
+        # The supervisor must re-read the script on each attach, or a toggle
+        # would only take effect after a manual restart.
+        seen = []
+
+        class FakeBoard:
+            def __init__(self, port):
+                pass
+
+            def start(self, text):
+                seen.append(text)
+                return self
+
+            def readline(self):
+                return b""
+
+            def stop(self):
+                pass
+
+        stats, latest = H.Stats(), H.Latest()
+        state = {"quit": False}
+        texts = iter(["FIRST", "SECOND"])
+        real_b, real_r, real_f = H.SerialBoard, H.reader_loop, H.find_port
+        H.SerialBoard = FakeBoard
+        H.find_port = lambda hint: "/dev/fake"
+
+        def fake_reader(out, l, st, s_, saver=None):
+            if len(seen) >= 2:
+                s_["quit"] = True
+
+        H.reader_loop = fake_reader
+        try:
+            H.supervise(None, lambda: next(texts), latest, stats, state,
+                        retry_s=0, settle_s=0)
+        finally:
+            H.SerialBoard, H.reader_loop, H.find_port = real_b, real_r, real_f
+        self.assertEqual(seen, ["FIRST", "SECOND"])
+
+
 class TestMergedTwoBoardSeams(unittest.TestCase):
     """The seams where bite A meets the side-by-side viewer.
 

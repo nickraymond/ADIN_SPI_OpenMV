@@ -17,6 +17,41 @@ Docs map — read per the ritual, don't skip it:
 Layout: `firmware/` (AE3 MicroPython, later C) · `pi/` (overlays, services,
 shim, stream server) · `bench/` (benchmarks, counters) · `docs/diagrams/`.
 
+## Reporting to Nick
+
+**At every milestone, lead with a tight summary — not a transcript.** A
+milestone is a bite finishing, a nibble gate, a merge landing, a demo
+passing, or a blocker that changes the plan. Nick reads these to decide
+what happens next, so they are a planning instrument, not a status dump.
+
+**Always these three headings, in this order, as bullets — never prose:**
+
+```
+**What happened**
+- ...
+**What I learned**
+- ...
+**What's next**
+- ...
+```
+
+- **Bullets, not paragraphs.** One idea per bullet, plain language.
+- **TWO bullets per section. Maximum.** This is a hard cap, not a target.
+  If something does not make the cut it belongs in the PR, DESIGN or
+  DEV_LOG — the point of the cap is to force the ranking, so combine
+  related items rather than splitting hairs to smuggle a third in.
+- **Technical comparisons go in a table**, never in prose: measured vs
+  expected, board vs board, option A vs option B, before vs after. A
+  comparison spread across sentences is unreadable and hides the delta.
+- **Lead with the decision he owns.** If a finding changes the plan, it is
+  the first bullet under *What I learned*, not buried under what was built.
+- **Say what is NOT done** under *What's next* — owed demos, unverified
+  assumptions, anything that passed a test but not hardware.
+- **No re-derivation.** Facts already in SPEC/DESIGN/TRACKER are referenced,
+  not re-explained.
+- Long output is for artifacts (PR bodies, DESIGN entries, DEV_LOG), read on
+  purpose. A chat reply is read to make a decision.
+
 ## Engineering values (apply to every bite)
 
 1. **Boring, debuggable engineering.** Small modules, explicit control flow,
