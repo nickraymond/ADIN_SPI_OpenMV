@@ -908,6 +908,71 @@ class TestPerBoardThresholds(unittest.TestCase):
         self.assertIn("-30", b.split("\n")[0])
 
 
+class TestOverlayToggle(unittest.TestCase):
+    """The overlay is drawn ON THE BOARD, so a live toggle rebuilds its script."""
+
+    def test_cfg_overlay_can_be_overridden(self):
+        args = H.parse_args([])
+        self.assertTrue(H.cfg_from_args(args, None, overlay=True)["overlay"])
+        self.assertFalse(H.cfg_from_args(args, None, overlay=False)["overlay"])
+
+    def test_set_overlay_rebuilds_the_script(self):
+        args = H.parse_args([])
+        v = H.BoardView("AE3", "/dev/x")
+        v.make_script = lambda on: H.build_board_script_text(
+            H.cfg_from_args(args, None, overlay=on))
+        v.set_overlay(False)
+        self.assertFalse(v.overlay)
+        self.assertIn("'overlay': False", v.script_text.split("\n")[0])
+        v.set_overlay(True)
+        self.assertIn("'overlay': True", v.script_text.split("\n")[0])
+
+    def test_counts_survive_with_the_overlay_off(self):
+        # Turning the picture clean must not turn the numbers off -- that is
+        # the whole point of the toggle.
+        cfg = H.cfg_from_args(H.parse_args([]), None, overlay=False)
+        self.assertFalse(cfg["overlay"])
+        self.assertTrue(cfg["blobs"])
+
+    def test_supervise_accepts_a_script_callable(self):
+        # The supervisor must re-read the script on each attach, or a toggle
+        # would only take effect after a manual restart.
+        seen = []
+
+        class FakeBoard:
+            def __init__(self, port):
+                pass
+
+            def start(self, text):
+                seen.append(text)
+                return self
+
+            def readline(self):
+                return b""
+
+            def stop(self):
+                pass
+
+        stats, latest = H.Stats(), H.Latest()
+        state = {"quit": False}
+        texts = iter(["FIRST", "SECOND"])
+        real_b, real_r, real_f = H.SerialBoard, H.reader_loop, H.find_port
+        H.SerialBoard = FakeBoard
+        H.find_port = lambda hint: "/dev/fake"
+
+        def fake_reader(out, l, st, s_, saver=None):
+            if len(seen) >= 2:
+                s_["quit"] = True
+
+        H.reader_loop = fake_reader
+        try:
+            H.supervise(None, lambda: next(texts), latest, stats, state,
+                        retry_s=0, settle_s=0)
+        finally:
+            H.SerialBoard, H.reader_loop, H.find_port = real_b, real_r, real_f
+        self.assertEqual(seen, ["FIRST", "SECOND"])
+
+
 class TestMergedTwoBoardSeams(unittest.TestCase):
     """The seams where bite A meets the side-by-side viewer.
 

@@ -40,6 +40,7 @@ import os
 import signal
 import sys
 import threading
+import urllib.parse
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -385,6 +386,18 @@ class BoardView:
         # ~10 LAB units lower in b than the AE3's).
         self.classes = list(classes or [])
         self.script_text = script_text
+        self.overlay = True
+        #: () -> script text for the CURRENT overlay setting. Set by main();
+        #: the supervisor re-reads it on every attach, so flipping the toggle
+        #: and dropping the board is all a live change needs.
+        self.make_script = None
+
+    def set_overlay(self, on):
+        """Flip the board-side overlay and rebuild this board's script."""
+        self.overlay = bool(on)
+        if self.make_script is not None:
+            self.script_text = self.make_script(self.overlay)
+        return self.overlay
 
     def snapshot(self):
         s = self.stats.snapshot()
@@ -567,8 +580,32 @@ def make_multi_handler(views):
             if path == "/" or path.startswith("/index"):
                 self._body(multi_page(views).encode(), "text/html; charset=utf-8")
                 return
+            if path == "/api/overlay":
+                # Flip the BOARD-side overlay. The picture is drawn on the
+                # board before the JPEG is made, so the host cannot strip it
+                # after the fact -- the board script is rebuilt and the stream
+                # re-attached. Counts keep flowing either way.
+                q = urllib.parse.parse_qs(self.path.partition("?")[2])
+                on = q.get("on", ["1"])[0] not in ("0", "false", "off")
+                for v in views:
+                    v.set_overlay(on)
+                    v.state["restart"] = True
+                    b = v.state.get("board")
+                    if b is not None:
+                        try:
+                            b.stop()          # reader ends -> supervisor
+                        except Exception:     # re-attaches with the new script
+                            pass
+                self._body(json.dumps({"overlay": on}).encode(),
+                           "application/json")
+                return
             if path == "/api/boards":
-                body = json.dumps([v.snapshot() for v in views]).encode()
+                rows = []
+                for v in views:
+                    r = v.snapshot()
+                    r["overlay"] = v.overlay
+                    rows.append(r)
+                body = json.dumps(rows).encode()
                 self._body(body, "application/json")
                 return
             parts = path.strip("/").split("/")
@@ -637,9 +674,19 @@ pre{color:#8c8;white-space:pre-wrap;font-size:12px;text-align:left;margin:6px 0}
 @media(max-width:760px){.row{flex-direction:column}}
 </style></head><body>
 <h1>OpenMV side-by-side &mdash; same script, same scene, different silicon</h1>
+<div style="text-align:center;margin:0 0 8px">
+<label style="color:#9ab;font-size:13px;cursor:pointer">
+<input type="checkbox" id="ov" checked onchange="setOverlay(this.checked)">
+ draw boxes on the image (off = see what the camera sees; counts keep working)
+</label> <span id="ovs" style="color:#777;font-size:12px"></span></div>
 <div class="row">%s</div>
 <script>
 const N=%d;
+async function setOverlay(on){
+ const s=document.getElementById('ovs'); s.textContent=' restarting streams\u2026';
+ try{ await fetch('/api/overlay?on='+(on?1:0)); }catch(e){}
+ setTimeout(()=>{ s.textContent=''; }, 4000);
+}
 setInterval(async()=>{
  let js;
  try{ js = await (await fetch('/api/boards')).json(); }catch(e){ return; }
@@ -647,6 +694,8 @@ setInterval(async()=>{
   // Board identity comes from the board itself, never from the label we
   // typed -- with two boards attached, a mislabelled panel is how a wrong
   // number gets published (DESIGN "S8 detail CORRECTION").
+  if(i===0){ const c=document.getElementById('ov');
+             if(c && j.overlay!==undefined) c.checked=!!j.overlay; }
   const t=document.getElementById('t'+i);
   if(t) t.textContent = j.label + (j.board ? '  \\u2014  '+j.board : '');
   const dead = j.stale_s === null || j.stale_s > 3;
@@ -898,7 +947,7 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
-def cfg_from_args(args, classes=None):
+def cfg_from_args(args, classes=None, overlay=None):
     cfg = {
         "framesize": args.framesize,
         "quality": args.quality,
@@ -915,7 +964,10 @@ def cfg_from_args(args, classes=None):
         "blob_scan": args.blob_scan,
         # Training frames must be pixel-clean; the blob pass still runs and
         # still reports its boxes, so the labels survive -- only drawing stops.
-        "overlay": not args.save_frames,
+        # The same flag backs the live UI toggle: counts keep coming while the
+        # picture goes clean, which is what "what is the camera actually
+        # seeing?" needs.
+        "overlay": (not args.save_frames) if overlay is None else bool(overlay),
     }
     if classes is None:
         try:
@@ -1026,6 +1078,9 @@ def supervise(port_hint, script_text, latest, stats, state,
     first = True
     fails = 0
 
+    def _script():
+        return script_text() if callable(script_text) else script_text
+
     def _backoff():
         """Seconds to wait after `fails` consecutive failures."""
         if retry_s is not None:            # tests pin this
@@ -1035,7 +1090,7 @@ def supervise(port_hint, script_text, latest, stats, state,
     while not state.get("quit"):
         try:
             port = find_port(port_hint)
-            board = SerialBoard(port).start(script_text)
+            board = SerialBoard(port).start(_script())
         except PortError as exc:
             fails += 1
             stats.status = "waiting for board: %s (retry in %gs)" % (
@@ -1064,7 +1119,7 @@ def supervise(port_hint, script_text, latest, stats, state,
             continue
 
         fails = 0
-        if not first:
+        if not first and not state.pop("restart", False):
             stats.reconnects += 1
         first = False
         state["board"] = board
@@ -1143,8 +1198,10 @@ def main(argv=None):
         view.classes = overrides.get(view.label, global_classes)
         view.labels = [n for n, _ in view.classes] or [args.blob_label]
         view.stats = Stats(labels=view.labels)
-        view.script_text = build_board_script_text(
-            cfg_from_args(args, view.classes))
+        view.make_script = (lambda classes: lambda on: build_board_script_text(
+            cfg_from_args(args, classes, overlay=on)))(view.classes)
+        view.overlay = not args.save_frames
+        view.script_text = view.make_script(view.overlay)
         if view.label in overrides:
             print("board %-6s thresholds: %s"
                   % (view.label, ", ".join(n for n, _ in view.classes)),
@@ -1200,8 +1257,8 @@ def main(argv=None):
         # reconnect loop, so a board that drops out cannot stall the other.
         threading.Thread(
             target=supervise,
-            args=(view.port, view.script_text, view.latest, view.stats,
-                  view.state),
+            args=(view.port, (lambda v: lambda: v.script_text)(view),
+                  view.latest, view.stats, view.state),
             kwargs={"saver": view.saver,
                     "on_done": (lambda lbl=view.label: _finished(lbl))},
             daemon=True).start()
