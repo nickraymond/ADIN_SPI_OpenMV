@@ -105,18 +105,37 @@ enumerating perfectly) — state 2's signature, which would exonerate our
 patches, but CONFOUNDED: the S6 fixture was running under MicroPython
 v1.28 rather than the line it was written for. Not counted as evidence.
 
-**Bench state:** AE3 restored and verified, board at REPL, units DOWN,
-scene=ref. `usb-storage` currently UNBOUND from the AE3's MSC interface
-(rebinds on the next re-enumeration). S6 fixture files were erased by
-the IDE and are NOT yet restored (needed only for the session-end
-fixture rule). Evidence banked: `docs/evidence/` + `~/biteR_wedge_evidence/`.
+**DURABLE FIX SHIPPED (Nick's call, then "stop the hunt"):**
+`pi/ae3_flash/99-ae3-no-msc.rules` — udev keeps usb-storage OFF the
+AE3's mass-storage interface, matched on interface CLASS (8/6/80,
+verified against the live device: 1-2:1.2 reads class=08 sub=06
+proto=50) rather than an interface number, so a firmware that reorders
+interfaces cannot silently re-enable the disk. INSTALLED on nereus000
+and VERIFIED against a real board reset — the event that livelocked
+cycle 7: `sda` gone, usb-storage unbound, **reset delta 0**, CDC and
+by-id intact. Caveat recorded honestly: the rule unbinds moments AFTER
+the kernel binds (dmesg still logs "Mass Storage device detected"), so
+a narrow race remains in principle; empirically the block device never
+survives to be probed.
 
-**Next:** (1) Nick's call on a durable udev rule to stop probing the
-AE3's MSC volume — it would remove a whole class of phantom "sick
-board" events; (2) teach the reproducer to detect a reset storm in
-dmesg and classify it, so mode A is auto-excluded from the hunt;
-(3) then keep hunting the no-reset silent refusal, which is now the
-ONLY unexplained state.
+**Bench state at session end:** AE3 on fw `1e56071e…` + ELF
+`39717d44…` (both byte-verified), **S6 fixture RESTORED to /flash and
+verified on the board** (all six files size-exact — the standing
+session-end rule), units DOWN on both Pis, no-MSC udev rule installed,
+bus quiet. Evidence banked: `docs/evidence/` + `~/biteR_wedge_evidence/`.
+Note the bridge files (bm_bridge.py, uart_codec.py, boot_report.py,
+bm_he.elf, ref_scene) remain staged alongside the fixture, so the next
+demo day is one demo_up away.
+
+**HUNT STOPPED here by Nick after the rule landed.** Bite R is not
+closed but it is much smaller: three of its symptoms are explained and
+one (the reset livelock) now has a shipped fix. What remains for
+whoever picks it up: (1) teach the reproducer to detect a reset storm
+in dmesg and classify it, so mode A can never again masquerade as the
+thing being hunted; (2) hunt the no-reset silent refusal — the ONLY
+unexplained state left, and the one the 22:03 capture documents;
+(3) the step-3 pre-SHM-128K bisect is now LOW value — the MPU
+attributes were measured identical on wedged and healthy boots.
 
 ---
 
