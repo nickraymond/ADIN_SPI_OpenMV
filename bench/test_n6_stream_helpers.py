@@ -144,6 +144,81 @@ class TestReaderLoop(unittest.TestCase):
         self.assertFalse(state["alive"])
 
 
+class TestBandwidth(unittest.TestCase):
+    """Bandwidth must come from delivered bytes, never from the q setting."""
+
+    def test_mbps_over_the_window(self):
+        # 3 frames at t=0,1,2 -> 2 s span, 2 payloads counted after the first.
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 2.0, 2.0]))
+        for _ in range(3):
+            s.note({"b64": 1000}, 125_000)      # 125 kB = 1 Mbit
+        self.assertAlmostEqual(s.mbps(), 1.0, places=6)
+
+    def test_wire_rate_uses_the_base64_size_not_the_jpeg(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 1.0]))
+        s.note({"b64": 200_000}, 100_000)
+        s.note({"b64": 250_000}, 125_000)
+        self.assertAlmostEqual(s.mbps(), 1.0, places=6)        # jpeg bytes
+        self.assertAlmostEqual(s.wire_mbps(), 2.0, places=6)   # base64 bytes
+
+    def test_zero_before_two_frames(self):
+        s = H.Stats(clock=_clock_over([0.0]))
+        s.note({"b64": 10}, 10)
+        self.assertEqual(s.mbps(), 0.0)
+        self.assertEqual(s.wire_mbps(), 0.0)
+
+    def test_kb_per_frame_is_a_mean_of_delivered_payloads(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 1.0]))
+        s.note({}, 1024)
+        s.note({}, 3072)
+        self.assertAlmostEqual(s.kb_per_frame(), 2.0)
+
+    def test_window_is_bounded(self):
+        s = H.Stats(clock=_clock_over([float(i) for i in range(200)]))
+        for _ in range(100):
+            s.note({"b64": 10}, 10)
+        self.assertLessEqual(len(s._win_bytes), H.Stats.WINDOW)
+        self.assertLessEqual(len(s._win_wire), H.Stats.WINDOW)
+
+
+class TestBannerFields(unittest.TestCase):
+    """The #I banner is the provenance record: geometry, q, and which model."""
+
+    BANNER = (b'#I {"board":"OpenMV-AE3 with X","fw":"v5","framesize":"VGA",'
+              b'"w":640,"h":400,"pixfmt":"RGB565",'
+              b'"model":"/rom/yolov8n_192.tflite","model_bytes":1994976,'
+              b'"model_in":"((1, 192, 192, 3),)","model_out":"((1, 5, 756),)",'
+              b'"arena":791056,"labels":["person"],"quality":50,"heap":1}\n')
+
+    def _stats_after_banner(self):
+        latest, stats = H.Latest(), H.Stats()
+        H.reader_loop(_stream(self.BANNER), latest, stats, {"alive": True})
+        return stats.snapshot()
+
+    def test_geometry_reaches_the_snapshot(self):
+        snap = self._stats_after_banner()
+        self.assertEqual((snap["framesize"], snap["w"], snap["h"]),
+                         ("VGA", 640, 400))
+        self.assertEqual(snap["pixfmt"], "RGB565")
+
+    def test_quality_reaches_the_snapshot(self):
+        self.assertEqual(self._stats_after_banner()["quality"], 50)
+
+    def test_model_identity_reaches_the_snapshot(self):
+        snap = self._stats_after_banner()
+        self.assertEqual(snap["model_bytes"], 1994976)   # settles apples-to-apples
+        self.assertIn("192", snap["model_in"])
+        self.assertEqual(snap["labels"], ["person"])
+        self.assertEqual(snap["arena"], 791056)
+
+    def test_missing_banner_leaves_safe_defaults(self):
+        # No banner yet: the page must render, not crash on undefined.
+        snap = H.Stats().snapshot()
+        self.assertEqual(snap["framesize"], "")
+        self.assertIsNone(snap["quality"])
+        self.assertEqual(snap["model_bytes"], -1)
+
+
 class TestStaleness(unittest.TestCase):
     """A frozen stream and a motionless scene look identical on screen.
 

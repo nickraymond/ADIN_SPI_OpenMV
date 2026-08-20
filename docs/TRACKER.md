@@ -1967,6 +1967,25 @@ unowned side quest.
       the S23 encoder arc started (7.41 fps). Full table + the LAB
       threshold analysis in DESIGN §S24. **Ops cost: I wedged the AE3
       once** (below) — the fix is committed.
+- [~] **Bite 5b — provenance on the side-by-side page (Nick, 2026-08-20).
+      CODE DONE, NOT DEPLOYED — another agent holds the Pi; changes are
+      staged for them to fold in.** Four additions, all measured rather
+      than assumed: **capture** (framesize name + real pixel w×h +
+      pixel format), **encode** (JPEG q *and* the measured KB/frame,
+      because the programmed q says what was asked for and only the
+      bytes say what came out), **bandwidth** (Mbps of image data and
+      Mbps actually on the USB wire — base64 makes those differ by
+      ~4/3, over the same rolling window as fps), and **model identity**
+      (filename, **byte size**, input shape, arena, labels).
+      **The model row answers "apples to apples?" with a NO on the page:
+      the two boards ship different yolov8n binaries — 1.90 MB on the
+      AE3 vs 3.08 MB on the N6, arenas 791 KB vs 196 KB — under the same
+      filename.** That confound has been carried in prose since the S8
+      correction; it is now on screen next to every number it affects.
+      Note there is no separate "N6 bitrate" setting to report: both
+      boards run the same `to_jpeg(quality=50)` path, so q is identical
+      by construction and the honest differentiator is the measured
+      byte rate. Host suite 44 → **53**.
 - [ ] **Bite 6 — frame-validity gate before inference (NEW, and it is a
       PRODUCT requirement).** In the dark the AE3 reports `person 0.87`
       on a full-frame box every frame. Root-caused from pixel stats

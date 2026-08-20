@@ -120,12 +120,15 @@ class Stats:
     def __init__(self, clock=time.monotonic):
         self._clock = clock
         self._times = []
+        self._win_bytes = []
+        self._win_wire = []
         self.frames = 0
         self.bytes = 0
         self.det = 0
         self.blobs = 0
         self.info = ""
         self.board = ""    # e.g. "OpenMV N6 with STM32N657X0"
+        self.info_fields = {}   # parsed #I banner: geometry, model, q
         self.junk = []
         self.lab = None
         self.resyncs = 0        # frames dropped to a framing/length fault
@@ -145,13 +148,48 @@ class Stats:
         for k in self._acc:
             self._acc[k] += hdr.get(k, 0)
         self._times.append(now)
+        # Bandwidth is measured over the SAME rolling window as fps, from the
+        # JPEG bytes actually delivered -- never from the quality setting or a
+        # nominal rate. A programmed q says what was asked for; only the bytes
+        # say what came out, and on these boards that varies with the scene by
+        # more than a factor of two.
+        self._win_bytes.append(nbytes)
+        # Wire cost is the base64 payload actually carried over USB, which the
+        # board reports per frame -- ~4/3 of the JPEG. Reporting only the image
+        # rate would understate what the link is really moving.
+        self._win_wire.append(hdr.get("b64", 0))
         del self._times[:-self.WINDOW]
+        del self._win_bytes[:-self.WINDOW]
+        del self._win_wire[:-self.WINDOW]
 
     def fps(self):
         if len(self._times) < 2:
             return 0.0
         span = self._times[-1] - self._times[0]
         return (len(self._times) - 1) / span if span > 0 else 0.0
+
+    def _window_span(self):
+        return (self._times[-1] - self._times[0]) if len(self._times) >= 2 else 0.0
+
+    def mbps(self):
+        """Delivered image bandwidth, megabits/s, over the fps window."""
+        span = self._window_span()
+        if span <= 0:
+            return 0.0
+        # The first sample's bytes belong to a frame that arrived before the
+        # window opened, so pair N-1 intervals with the last N-1 payloads.
+        return sum(self._win_bytes[1:]) * 8.0 / span / 1e6
+
+    def wire_mbps(self):
+        """Bytes actually crossing USB (base64), megabits/s, same window."""
+        span = self._window_span()
+        if span <= 0:
+            return 0.0
+        return sum(self._win_wire[1:]) * 8.0 / span / 1e6
+
+    def kb_per_frame(self):
+        n = len(self._win_bytes)
+        return (sum(self._win_bytes) / n / 1024.0) if n else 0.0
 
     def _mean_ms(self, key):
         return round(self._acc[key] / self.frames / 1000.0, 1) if self.frames else 0.0
@@ -175,6 +213,22 @@ class Stats:
             # board look identical otherwise.
             "stale_s": (round(self._clock() - self.last_frame_at, 1)
                         if self.last_frame_at is not None else None),
+            "mbps": round(self.mbps(), 2),
+            "wire_mbps": round(self.wire_mbps(), 2),
+            "kb_frame": round(self.kb_per_frame(), 1),
+            # Everything the board reported about itself at startup: capture
+            # geometry, JPEG q, and which model binary it actually loaded.
+            "framesize": self.info_fields.get("framesize", ""),
+            "w": self.info_fields.get("w", 0),
+            "h": self.info_fields.get("h", 0),
+            "pixfmt": self.info_fields.get("pixfmt", ""),
+            "quality": self.info_fields.get("quality", None),
+            "model": self.info_fields.get("model", ""),
+            "model_bytes": self.info_fields.get("model_bytes", -1),
+            "model_in": self.info_fields.get("model_in", ""),
+            "model_out": self.info_fields.get("model_out", ""),
+            "arena": self.info_fields.get("arena", -1),
+            "labels": self.info_fields.get("labels", []),
             "cap_ms": self._mean_ms("cap_us"),
             "inf_ms": self._mean_ms("inf_us"),
             "blob_ms": self._mean_ms("blob_us"),
@@ -266,7 +320,9 @@ def reader_loop(out, latest, stats, state):
         elif line.startswith(b"#I "):
             stats.info = line[3:].decode("utf-8", "replace")
             try:
-                stats.board = json.loads(stats.info).get("board", "")
+                fields = json.loads(stats.info)
+                stats.info_fields = fields
+                stats.board = fields.get("board", "")
             except ValueError:
                 stats.board = ""
             print("board: %s" % stats.info, flush=True)
@@ -399,11 +455,24 @@ setInterval(async()=>{
      ? 'background:#a11;color:#fff;padding:5px;font-weight:700' : '';
   }
   const s=document.getElementById('s'+i);
+  const mb = n => (n<0||n===undefined) ? '?' : (n/1048576).toFixed(2)+' MB';
+  // Model identity is spelled out per panel so "apples to apples?" is
+  // answerable on screen. The two boards ship DIFFERENT binaries under the
+  // same filename, so the byte count is the field that settles it.
+  const model = (j.model||'(none)').replace(/^.*\\//,'') +
+      '  ' + mb(j.model_bytes) +
+      (j.model_in ? '  in '+j.model_in : '') +
+      (j.labels && j.labels.length ? '  ['+j.labels.join(',')+']' : '');
   if(s) s.textContent =
-   'fps '+j.fps+'   frames '+j.frames+'   blobs '+j.blobs+'   det '+j.det+'\\n'+
-   'inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
-   'capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
-   'resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
+   'capture   '+(j.framesize||'?')+'  '+j.w+'\\u00d7'+j.h+'  '+(j.pixfmt||'')+'\\n'+
+   'encode    JPEG q'+(j.quality===null?'?':j.quality)+
+       '   '+j.kb_frame+' KB/frame  (measured)\\n'+
+   'bandwidth '+j.mbps+' Mbps image   '+j.wire_mbps+' Mbps on USB\\n'+
+   'model     '+model+'\\n'+
+   'rate      '+j.fps+' fps   inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
+   '          capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
+   'found     '+j.blobs+' blobs   '+j.det+' detections\\n'+
+   'health    resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
    j.port;
  });
 },500)</script></body></html>""" % (panels, len(views))
