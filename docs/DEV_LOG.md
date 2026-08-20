@@ -17,6 +17,50 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-20 (night) — S25 bites 1+2 SHIPPED AND DEMO'D: the workbench page starts/stops the ball demo; AE3 quick-reattach wedge found, fenced with a settle window, cleared by physical replug
+
+**Branch:** `claude/nereus-vision-workbench-4d2268`. Bench: both boards on
+nereus000; `workbench.service` installed ENABLED by Nick and proven across
+a reboot.
+
+**Done:**
+- **Bite 1 (menu + passive preflight)** and **bite 2 (runner + single-owner
+  board lock) shipped; Nick ran the demo — PASS** (start from the page →
+  LIVE with hyperlink → stop → settle countdown → start again). 61 host
+  tests. Page at :8088, enabled at boot.
+- Recipe format: strict-schema TOML (unknown keys are errors), per-recipe
+  `thumbnail` (confined `/thumbs/` route; ball demo ships a live-captured
+  side-by-side frame) and per-recipe `services` (no standing unit list —
+  three of the old six units belong to the parked two-Pi T1L bench).
+- Runner: health-gated LIVE (poll the recipe's URL until 200), SIGINT →
+  SIGTERM → STUCK ladder with **`signal.SIGKILL` pinned out of the source
+  by a test**, foreign port holders refused BY NAME and never killed,
+  pidfile adoption across workbench restarts (proven live through Nick's
+  unit install).
+
+**Broke/surprised us:**
+- **The AE3 wedges on quick stop→start** (Nick's test): raw-repl refusal,
+  viewer stuck at "could not enter raw repl (retry in 30s)". Recovery by
+  the book — stop all contact, 70 s silence, one `mpremote reset`, twice —
+  did NOT clear it: this is S23 bite R's power-cycle-only refusal state,
+  and only a **physical replug** cleared it (Pi 5 never cuts VBUS; a Pi
+  reboot demonstrably left it wedged). Product fix shipped: runner
+  SETTLE=35 s window after stop/failure before the same boards can start,
+  countdown on the page. The viewer's own 5-attempt + 30 s retry loop is
+  part of the problem (continuous port contact during the refusal) — not
+  fixed, noted for bite R's file.
+- **The N6 sat in DFU mode 18:32–18:41 and recovered on its own**
+  (dmesg: `37c5:9206 "OpenMV Camera (DFU Mode)"` on the N6's port, then
+  back to VCP). Unattributed; harmless this time; do not assume benign.
+- `pkill -INT -f workbench.py` over ssh matches its own bash wrapper
+  (exit 255) — same `pgrep -f` trap as the 2026-08-20 session note.
+
+**Next:** bite 3 (state reconciliation: verify firmware label + model
+sha256, repair only drift, report loudly; deploy routes proven in S8 B1 —
+NEVER DFU alt 0) · bite 4 (second recipe + "how to add a test" doc) · then
+back to S8 bite B2 (the custom two-colour detector) with the workbench as
+the known-good-state substrate.
+
 ## 2026-08-20 (evening) — S8 bite A DEMO PASSED; B0+B1 closed: both boards run our own compiled models
 
 **Branch:** `claude/s8-cv-detector-ladder-bbfa8d`, PR #49. Bench: both
