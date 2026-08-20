@@ -276,3 +276,43 @@ re-forked.
 
 Nibble 1 = plan first, my gate before code. Short actionable replies.
 ```
+
+## 10 — Ready to paste: S25 — nereus000 as the machine-vision workbench (written 2026-08-20)
+
+```
+Run /agent-entry. Sprint S25 on a fresh branch from main -- turn nereus000
+into the machine-vision workbench. S8's CV work is PARKED at bite B2 (the
+custom two-colour model); this sprint comes first because every future test
+needs a way to get the hardware into a known-good state without a human
+flashing things by hand.
+
+Goal: boot the Pi, open a page, pick a test, and the Pi puts the OpenMV
+boards into that test's known-good state and runs it. Each released test
+setup adds a menu entry.
+
+SETTLED -- do not re-derive (TRACKER S25 and DESIGN carry the detail):
+- REUSE, do not rewrite. S18 was tombstoned precisely because it shipped
+  the substrate this sprint needs: pi/bench_web/bench_web.py + tests,
+  pi/services/bench-web.service and five sibling units, and
+  pi/bm_bench/{demo_up,bench-ctl,chain_status,deploy}.sh. This sprint is a
+  menu and a runner on top of those.
+- BOTH boards are on nereus000 (D44). They enumerate BACKWARDS from the
+  guess: the N6 is usb-MicroPython_Pyboard_Virtual_Comm_Port... (37c5:1206)
+  and the AE3 is usb-OpenMV_OpenMV_Camera_0829c14... (37c5:16e3). Always
+  the by-id path; ttyACM<n> is enumeration order and not stable.
+- Deploy routes are PROVEN (S8 B1, ml/README.md): AE3 = copy a
+  vela-compiled .tflite to /flash. N6 = build a ROMFS image and write
+  ROMFS0 over USB DFU alt 3 (no ST-LINK; never write alt 0 BOOTLOADER, and
+  a bad ROMFS write stays recoverable). mpremote romfs deploy would DESTROY
+  the vendor models -- it reads OpenMV's partition as size 0.
+- The first recipe already exists in full: the S8 two-colour ball demo,
+  per-board thresholds and per-board pixel floors, in PR #50's demo block.
+
+THE HAZARD THIS SPRINT MUST DESIGN AROUND: port ownership. Two processes on
+one board wedges it -- that happened repeatedly on 2026-08-20, and a menu
+that can launch anything makes it trivially easy. The single-owner board
+lock is a REQUIREMENT of bite 2, not a nicety.
+
+Nibble 1 = plan first, my gate before code. Short actionable replies, and
+use the milestone report format in CLAUDE.md.
+```
