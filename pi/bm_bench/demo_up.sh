@@ -30,7 +30,7 @@ P=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00
 REPO="$HOME/ADIN_SPI_OpenMV"
 LAUNCHER="$REPO/firmware/bm_bridge/main_bridge.py"
 # sha16 of firmware/bm_bridge/main_bridge.py (the bridge launcher)
-WANT_MAIN="170e637ce5d8c8bb"
+WANT_MAIN="a74280262c9122df"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -112,7 +112,8 @@ print("MISSING:" + ",".join(missing) if missing else "staged-files-ok")
 # have confirmed the B2 mechanism was destroyed by exactly this).
 mkdir -p "$HOME/bridge_traces"
 STAMP=$(date +%Y%m%dT%H%M%S)
-for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt; do
+for tf in bridge_trace.txt bridge_trace.prev.txt bridge_crash.txt \
+             boot_report.txt boot_report.prev.txt; do
   mpr cp ":/flash/$tf" "$HOME/bridge_traces/${STAMP}_$tf" \
     >/dev/null 2>&1 || true
 done
@@ -121,14 +122,24 @@ echo "bridge traces preserved to ~/bridge_traces/${STAMP}_*"
 # S18: keep /flash's bridge code in step with the checkout (this is how
 # the 20 s REINIT_MIN_QUIET_MS build finally deploys — B2 left the 6 s
 # build on the board). sha16 compare, copy only on mismatch, re-verify.
+# NOTE the two traps here, both measured live 2026-08-19 (the "v3 demo_up
+# silent-fail" of TRACKER bite R was exactly this, not a sick board):
+#   * `2>/dev/null` swallowed mpr's own fail message AND the xtrace, so a
+#     genuine double-attach-failure left NO diagnosis at all;
+#   * mpr's fail() calls `exit 1`, and inside $( ) that exits the
+#     SUBSHELL immediately -- the `|| echo missing` never runs, the
+#     assignment carries status 1, and `set -e` kills the script without
+#     printing a thing.
+# So: let stderr through, and never let the substitution's status reach
+# errexit -- an unreadable sha is data ("attach-failed"), not a silent death.
 board_sha() {
   mpr exec \
     "import hashlib; h=hashlib.sha256(); h.update(open('/flash/$1','rb').read()); print(h.digest().hex()[:16])" \
-    2>/dev/null || echo "missing"
+    || echo "missing"
 }
-for f in bm_bridge.py uart_codec.py; do
+for f in bm_bridge.py uart_codec.py boot_report.py; do
   WANT=$(sha256sum "$REPO/firmware/bm_bridge/$f" | cut -c1-16)
-  GOT=$(board_sha "$f")
+  GOT=$(board_sha "$f") || GOT="attach-failed"
   if [[ "$GOT" != *"$WANT"* ]]; then
     MPR_T=90 mpr cp "$REPO/firmware/bm_bridge/$f" ":/flash/$f" >/dev/null
     GOT=$(board_sha "$f")

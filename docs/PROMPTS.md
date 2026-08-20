@@ -215,3 +215,57 @@ Cross-cable side door DOWN since the Pi move (reseat = calm-day item).
 
 Nibble 1 = plan first, my gate before code. Short actionable replies.
 ```
+
+## 9 — Ready to paste: S8 CV — custom detector on AE3 + N6 (written 2026-08-20, after the S24 fold)
+
+```
+Run /agent-entry. Sprint S8 on a fresh branch from main -- the CV
+sprint, reshaped and now leading the ladder. S23 is PARKED at GOLD
+12.53; no VGA speed work until detector numbers exist.
+
+Context that is SETTLED -- do not re-derive (TRACKER S8 carries the
+full verified-facts block; read it before touching hardware):
+- The stock ROM detectors are ONE class. /rom/yolov8n_192.tflite
+  emits output_shape (1, 5, 756) = 4 box coords + 1 class ("person").
+  A pink ball is unreachable by ANY configuration change. That is why
+  a custom model is mandatory, not a preference.
+- N6 = Neural-ART on STM32N657X0. AE3 = 2x Ethos-U55 -> Vela.
+  Both boards run OpenMV v5.0.0 / MicroPython v1.28.0-49 and both load
+  .tflite through the ml module.
+- N6 measured: yolov8n_192 inference 20.7 / 23.7 / 32.2 ms at
+  QVGA/VGA/HD; capture+inference end-to-end 47.9 / 41.8 / 30.2 fps;
+  capture is DMA-hidden at 0.2 ms so inference is the whole budget.
+- Verify firmware with sys.version, NOT os.uname().
+- The sensor letterboxes to 16:10: QVGA 320x200, VGA 640x400, HD
+  1280x800. OpenMV v5 draw_* takes a TUPLE first arg.
+- Nothing autostarts on the N6; /flash/main.py is the stock blinker.
+  The device node is NOT stable -- re-resolve the port every attempt.
+
+The ladder (TRACKER S8 has the detail):
+A. multi-colour blob thresholds -- the CLASSIC-CV CONTROL the ML
+   numbers get compared against. Small, and bite C has no baseline
+   without it.
+B1. does a stock int8 .tflite run on Neural-ART, or does it need an
+    stedgeai compile pass? Settle BY TEST, not by reading: load a
+    candidate, print output_shape, time predict against 23.7 ms -- a
+    CPU fallback is obvious in the number. NEEDS MY GO: first bite
+    that writes to the board and downloads a model.
+B2. the from-scratch "pink ball vs purple ball" detector, trained,
+    compiled per target, deployed to BOTH boards.
+C. end-to-end capture -> detect -> count at 1 m and 2 m, per board and
+   per method, with PIXELS-ON-TARGET recorded next to the distance.
+D. the board-decision number: HD tiled arithmetic, N6 vs AE3, carrying
+   the model-variant confound explicitly.
+
+Acceptance trap to design around from the start: prove the model runs
+ON THE NPU, not silently on the CPU. A rejected .tflite still returns
+correct answers, just slowly -- "it inferred" is not the artifact.
+
+Hardware: N6 on the Mac's USB (no bench hardware needed for A/B1/D).
+The AE3 lives on nereus000 with the bench stack restored -- board
+access per ae3-board-access, one command then hand off, and note the
+no-MSC udev rule is installed there. Reuse bench/n6_stream_{board,
+host}.py and bench/ae3_npu_bench.py; do not start a third harness.
+
+Nibble 1 = plan first, my gate before code. Short actionable replies.
+```

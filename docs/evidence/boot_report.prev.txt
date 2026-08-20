@@ -1,0 +1,50 @@
+== boot_report boot t=1228 ==
+mpu type=00001000 ctrl=00000007 mair0=aaff0422 mair1=00000044
+mpu r00 rbar=02000002 rlar=023fffe5
+mpu r01 rbar=08000002 rlar=0827ffe5
+mpu r02 rbar=1a000003 rlar=1affffe3
+mpu r03 rbar=80000006 rlar=8057ffe7
+mpu r04 rbar=83000003 rlar=83ffffe3
+mpu r05 rbar=a0000006 rlar=bfffffe9
+mpu r06 rbar=c0000006 rlar=dfffffe9
+mpu r07 rbar=8047e007 rlar=00000000
+mpu r08 rbar=8057e007 rlar=00000000
+mpu r09 rbar=00000000 rlar=00000000
+mpu r10 rbar=00000000 rlar=00000000
+mpu r11 rbar=00000000 rlar=00000000
+mpu r12 rbar=00000000 rlar=00000000
+mpu r13 rbar=00000000 rlar=00000000
+mpu r14 rbar=00000000 rlar=00000000
+mpu r15 rbar=00000000 rlar=00000000
+probe shm_rsc @60000000 = 00000001
+probe shm_vring1 @60000400 = 0000e100
+probe shm_vring0 @60001400 = 00002000
+probe shm_pool @60002400 = 00002008
+probe shm_upper @60010000 = fa6da000
+probe shm_last @6001fffc = 74df96a6
+probe status_page @600bfe00 = 424d4845
+== boot_report post-he-start t=2816 ==
+mpu type=00001000 ctrl=00000007 mair0=aaff0422 mair1=00000044
+mpu r00 rbar=02000002 rlar=023fffe5
+mpu r01 rbar=08000002 rlar=0827ffe5
+mpu r02 rbar=1a000003 rlar=1affffe3
+mpu r03 rbar=80000006 rlar=8057ffe7
+mpu r04 rbar=83000003 rlar=83ffffe3
+mpu r05 rbar=a0000006 rlar=bfffffe9
+mpu r06 rbar=c0000006 rlar=dfffffe9
+mpu r07 rbar=60000003 rlar=6001ffe9
+mpu r08 rbar=8057e007 rlar=00000000
+mpu r09 rbar=00000000 rlar=00000000
+mpu r10 rbar=00000000 rlar=00000000
+mpu r11 rbar=00000000 rlar=00000000
+mpu r12 rbar=00000000 rlar=00000000
+mpu r13 rbar=00000000 rlar=00000000
+mpu r14 rbar=00000000 rlar=00000000
+mpu r15 rbar=00000000 rlar=00000000
+probe shm_rsc @60000000 = 00000001
+probe shm_vring1 @60000400 = 00000000
+probe shm_vring0 @60001400 = 00002000
+probe shm_pool @60002400 = 00002008
+probe shm_upper @60010000 = fa6da000
+probe shm_last @6001fffc = 74df96a6
+probe status_page @600bfe00 = 424d4845

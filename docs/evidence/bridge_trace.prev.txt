@@ -1,0 +1,28 @@
+1712 bridge up, cfg {"scene": "ref"}
+1844 kbd_intr disabled
+2591 camera: ceiling claimed 1280x800 RGB565 (pre-HE)
+2753 he loaded, bm-wire announced
+99681 link up (first VCP bytes seen)
+129744 stats {"pump_batch_max": 1, "unknown_cmds": 0, "pi2he_frames": 0, "vcp_writes": 4, "he2pi_frames": 3, "oversize": 0, "cap_chunks": 0, "cap_ept_us": 0, "relay_enc_us": 384, "he2pi_bytes": 237, "vcp_bytes": 262, "pi2he_bytes": 0, "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0, "relay_enc_max_us": 131, "vcp_max_us": 71, "cap_ept_slow": 0, "cap_frames": 0, "frag_errors": 0, "cap_ept_max_us": 0, "cap_pump_us": 0, "pump_calls": 3, "cap_bytes": 0, "pump_msgs": 3, "vcp_us": 172} splitter f=0 e=0 qdrops=0
+129808 vcp quiet 30000 ms -- pi side gone, exiting
+129870 exit stats {"pump_batch_max": 1, "unknown_cmds": 0, "pi2he_frames": 0, "vcp_writes": 5, "he2pi_frames": 4, "oversize": 0, "cap_chunks": 0, "cap_ept_us": 0, "relay_enc_us": 516, "he2pi_bytes": 316, "vcp_bytes": 349, "pi2he_bytes": 0, "cap_asm_us": 0, "cap_send_us": 0, "cap_msgs": 0, "relay_enc_max_us": 132, "vcp_max_us": 71, "cap_ept_slow": 0, "cap_frames": 0, "frag_errors": 0, "cap_ept_max_us": 0, "cap_pump_us": 0, "pump_calls": 4, "cap_bytes": 0, "pump_msgs": 4, "vcp_us": 202} splitter f=0 e=0 qdrops=0
+129930 exit gate opens=0 refusals=0 worst_wait=0 ms
+---- HE ring (exit) ----
+Unable to load configs from flash.Unable to load configs from flash.Unable to load configs from flash.ip: ll=FE80::BE9C:0:0:3
+ip: ucast=FD00::BE9C:0:0:3
+BM DFU Subsystem thread started
+Transitioning to state: Idle
+Subscribing to Topic: 000000000000000lx/sys_inf/req
+Added topic 000000000000000lx/sys_inf/req to BCMP resource table.
+Subscribing to Topic: bus_power_controller/timing/req
+Added topic bus_power_controller/timing/req to BCMP resource table.
+Subscribing to Topic: camera/control/req
+Added topic camera/control/req to BCMP resource table.
+bm stack RUNNING, node 0xbe9c000000000003
+Deleting negotiation timer on port: 1
+Network Device Port 1: up
+Renegotiated on port: 1
+Network Device Port 1: down
+
+---- end ring ----
+130122 he stopped

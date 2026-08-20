@@ -1,0 +1,217 @@
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly
+boot: launcher start
+exit: main() returned cleanly

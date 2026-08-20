@@ -1654,6 +1654,14 @@ def main():
 
     rp = he.start()
     _trace("he loaded, bm-wire announced")
+    try:
+        # S23 bite R: second boot_report snapshot -- the MPU/SHM state
+        # AFTER the HE ELF load + openamp bring-up is the one a cache-
+        # attribute bug would corrupt. Non-fatal by contract.
+        import boot_report
+        boot_report.dump("post-he-start")
+    except Exception:
+        pass
     # capwait counter probe: rpmsg arrivals during encode (enc_qin).
     engine.q_probe = lambda: he.count
 

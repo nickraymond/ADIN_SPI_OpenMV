@@ -17,6 +17,221 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-20 — Ladder resequenced: CV leads. S18/S19 dead, S22 closed, S8 reshaped to NEXT, S23 parked
+
+**Branch:** `claude/ae3-board-states-root-cause-33011e`. Planning
+session with Nick after the bite R night; no bench work.
+
+**Nick's calls, in order:**
+- **S18 and S19 are DEAD.** Dropped from the ladder as *tombstones*,
+  not deletions: S18 shipped the infrastructure the bench runs on every
+  session (the two systemd units, demo_up, bench-ctl, chain_status,
+  ref-scene, MEAS_FPS), and deleting the provenance of live tooling
+  would cost the next agent a day. The compare/gallery tool "works well
+  enough for now" — further work parked until it needs changes. S19's
+  unowned findings explicitly survive it.
+- **CV leads.** Nick: *"before I spend any more time trying to make the
+  VGA faster it's important to get the AE3 and N6 running a custom
+  urchin model so that I can benchmark performance."* The prior CV
+  sprint is **S8**, whose bite 1 (NPU bench, 2026-08-11) already
+  concluded that all ROM detectors are person-class-only and that a
+  custom Vela-compiled detector is required either way — and whose
+  cross-board table carries the caveat that the two boards ship
+  DIFFERENT model binaries, so it is "not a silicon shoot-out". One
+  custom model on both boards is precisely what removes that confound.
+- **S8 reshaped and promoted to NEXT**, old gate ("runs after the
+  BM-native arc; board risk gates CV investment") OVERRIDDEN — CV is
+  now the board-selection input. Bite A = **"pink ball vs purple ball"**
+  (Nick's call): a deliberately easy, classic-CV target to prove the
+  whole train→compile→deploy path before any urchin labelling exists,
+  split A1 (toolchain, sourced from vendor docs — **the N6's NPU is NOT
+  an Ethos-U55 and this repo has no verified note on it**) / A2 (the
+  detector), with a STOP gate between. Acceptance names the trap:
+  **prove it runs on the NPU, not silently on the CPU** — a rejected
+  .tflite still returns correct answers, just slowly. Bite B =
+  end-to-end capture→detect→count at **1 m vs 2 m**, with
+  **pixels-on-target recorded next to the distance** so the numbers
+  transfer to urchins and the T2 ≥24–32 px floor. Bite C = the urchin
+  model once a labelled set exists. S8's old pipeline/alert bites moved
+  to S21 so the two sprints stop describing the same work.
+- **S22 CLOSED on the shipped work.** Goal met by bite 1 (HE flood fix:
+  u16 vring-index wrap in `rr_poll_n`, one wrap-safe cast, proven
+  on-chain at the exact rate+duration that killed the live demo —
+  10-min QVGA color 28.23 fps, 16,939 frames, ledger-exact) and bite 2
+  (the headroom table was reviewed and ACTED ON: it became S23's bite
+  list, 7.41 → 12.53 fps). **Its one debt is carried, not buried:**
+  bite 1b's q90 burst loss is investigated-but-unfixed (every hop
+  exonerated except the telemetry fork's internals) and now lives in
+  the retitled "Flagged, not owned by any bite yet" list, cross-
+  referenced from the S21 bite that will inherit it — evidence stills
+  are exactly the q90-class payload that defect bites.
+- **S23 PARKED** at GOLD 12.53 with bites S (overlap the HE feed) and 3
+  (re-measure + guardrails) unstarted.
+
+**Measured en route (planning input, not a bench session):** both
+boards are on nereus000 and healthy — AE3 and N6 each report OpenMV
+v5.0.0 / MicroPython v1.28.0-49 and expose the `ml` module loading
+`.tflite` from ROM. So S8 A1 is likely CONFIRMING "one trained source,
+two compilations, one load API" rather than discovering two unrelated
+paths. The N6 is `usb-MicroPython_Pyboard_...FS_Mode_0200...-if00`
+(ttyACM1) — distinct by-id from the AE3, so the S8 standing rule
+(always connect by-id, never auto-connect) matters more than ever now
+that both boards are targets.
+
+**Reconciled with S24 at merge time (this branch was cut before S24
+landed on main).** S24 — N6 CV baseline, opened by Nick the same
+evening — was already running the N6 half of exactly this work, and it
+**answers one of the questions this plan flagged as open**: the N6's
+accelerator is **Neural-ART on STM32N657X0**, verified live, not an
+Ethos-U55. Its bite 3 owns the remaining `stedgeai`-vs-direct-load
+question, so S8 takes that answer instead of re-deriving it. S24 also
+supplies the hard justification for S8's bite A: `/rom/yolov8n_192.tflite`
+emits `output_shape (1, 5, 756)` = 4 box coords + ONE class ("person"),
+so a pink ball is unreachable by configuration — a custom model is
+mandatory, not a preference. S8 keeps the AE3 half plus the cross-board
+custom model and REUSES S24's `bench/n6_stream_{board,host}.py` harness
+rather than starting a third one. S24 is Mac-only, S8 wants the bench,
+so neither blocks the other.
+
+**Then Nick folded S24 into S8** (same session, after reading the
+reconciliation): S24 was only a separate sprint because S8 was gated
+behind S13, and that gate had just been overridden — so the reason for
+the split had dissolved and two sprints describing CV would only split
+the evidence. S24 bite 1 stays delivered and kept (demo PASSED, PR #45
+merged); bites 1b/2/3 became S8 bites A/D/B1; and S24's verified
+hardware-facts block MOVED into S8, because it is operational guidance
+the next session needs in front of it rather than history. S8's bite
+list is now A (multi-colour blob baseline — the classic-CV control the
+ML numbers get compared against), B1 (does a stock int8 .tflite run on
+Neural-ART or need `stedgeai` — settle by test, needs Nick's go as the
+first bite that writes to the board), B2 (the from-scratch two-colour
+detector), C (end-to-end at 1 m vs 2 m), D (the board-decision number),
+E (urchin). Kickoff prompt written as PROMPTS.md §9.
+
+**Execution order now: S8 → S21 → S20**, with S23's leftovers and bite
+R slotted at Nick's call.
+
+---
+
+## 2026-08-19/20 (night) — Sprint S23 bite R: the reproducer works, load does NOT cause the wedge, and a NEW host-side failure mode (usb-storage reset livelock) is found and reproduced twice
+
+**Branch:** `claude/ae3-board-states-root-cause-33011e`. Nibble-1 plan
+approved by Nick, then "go with v2", then a firmware round trip at his
+request. Bench: Nick handed over hardware for the night.
+
+**Shipped (tests 0 -> 50, all green; bridge 373, units 43 unchanged):**
+- `pi/bm_bench/repro_attach.py` — scripted cold-boot -> lifecycle ->
+  attach-ladder cycles. Every refusal is screened against the bridge
+  state machine BEFORE it may count (verdict table in the header); a
+  true anomaly STOPS the run and preserves the wedge as the specimen.
+- `firmware/bm_bridge/boot_report.py` — MPU walk (ARMv8-M regs verified
+  against the vendored CM55 FreeRTOS port + CMSIS mpu_armv8.h) and SHM
+  probes to /flash at boot and post-he.start, one generation kept.
+- `pi/bm_bench/bench_chain.py` — v2 load: drives bm-light + telemetry +
+  bench-ctl, streams a real row, proves load from BOTH ends (receiver
+  ledger AND the board's cap_frames); either reading zero = cycle VOID.
+- demo_up: syncs/preserves boot_report, and the silent-fail is FIXED.
+
+**RESULT 1 — v1 (no load): 8/8 clean, 64/64 attaches.** Its own artifacts
+said why it proved nothing: exit stats `cap_frames=0`. It tore down
+bridges that had never carried traffic.
+
+**RESULT 2 — v2 (real load): 6/6 clean, 48 attaches, then aborted.**
+VGA color 623 frames x3 and HD mono 220 x3, gaps=0 dropped=0
+pub_errs=0, receiver ledger == board cap_frames EXACTLY every cycle.
+**So streaming load before the teardown does NOT cause the refusal.**
+That hypothesis is not supported.
+
+**RESULT 3 (the big one) — a NEW failure mode, host-side, reproduced
+twice: the usb-storage reset livelock.** udev/blkid probes the AE3's
+mass-storage volume (SCSI READ(10), 4 blocks @ LBA 0) while the board
+is not servicing MSC; the read fails (hostbyte=0x07 DID_ERROR);
+usb-storage escalates to a USB device reset; the reset re-triggers the
+probe; loop, ~46 resets/minute, indefinitely. **Every reset re-binds
+cdc_acm, so any in-flight mpremote session dies and by-id flickers** —
+i.e. it presents EXACTLY as "could not enter raw repl" / "board fell
+off the bus", with a perfectly healthy board underneath.
+It is a RACE, hence intermittent: 37 clean SCSI attaches tonight vs 6
+failed reads; cycles 1-6 attached in ~1 s, cycle 7 took 7 s then
+failed. Cure: unbind usb-storage from the MSC interface only (CDC
+untouched) — `echo "1-2:1.2" > /sys/bus/usb/drivers/usb-storage/unbind`;
+verified twice, board immediately reachable after.
+**Correction to the mid-session read:** the first storm was blamed on
+an MSC mount done to read evidence. WRONG — it recurred tonight with
+no mount anywhere. The mount was coincidence.
+
+**RESULT 4 — warm reset does NOT clear SRAM9 (measured).** Read off the
+board's MSC volume with ZERO REPL contact (an attach would have
+soft-reset and rotated the evidence away). The wedged generation's
+report vs a post-unplug boot: MPU regions IDENTICAL (region 7 =
+0x60000000-0x6001FFFF, AttrIndx 4 -> MAIR1 0x44 = Normal
+Non-cacheable in BOTH — so patches 0004/0005 set the attributes
+correctly even on the boot that wedged, evidence AGAINST the step-3
+bisect premise). What differs is CONTENT: warm boots come up carrying
+the previous generation's rsc/vring/pool AND the HE "BMHE" magic
+already at the status page before he.start; after a physical unplug the
+same addresses are random with no magic. **`mpremote reset` and a
+physical unplug are NOT the same boot** — the ops recipe says they are.
+`bench_chain.sram_state_at_boot()` now classifies every boot; all 6 v2
+cycles logged `sram=warm`.
+
+**RESULT 5 — the v3 demo_up silent-fail was a SCRIPT DEFECT, not a sick
+board.** Reproduced live. `mpr`'s fail() calls `exit 1` inside
+`GOT=$(board_sha ...)`, which exits the SUBSHELL — the `|| echo missing`
+never runs, the assignment carries rc=1, `set -e` kills demo_up — and
+`2>/dev/null` on the same line swallowed the reason. Fixed; 3 tests pin
+it. The underlying double-attach-failure is still real and still bite R's.
+
+**STILL UNEXPLAINED (bite R's remaining core): the silent refusal with
+NO resets.** 22:03: USB healthy, cdc_acm bound, zero resets in dmesg,
+~59 min after boot (past the 600 s phase-1 ceiling, so no legal bridge
+could hold the port), refused raw-REPL TWICE through a properly-armed
+45 s window. Not the storm, not state confusion, not the script defect.
+
+**Firmware round trip (Nick's request):** flashed stock v5.0.0
+(byte-verified), Nick yolo-tested, IDE-erased the filesystem; restored
+fw `1e56071e…` byte-for-byte + `bm_he.elf` `39717d44…` hashed ON the
+board + demo_up staging. **Caught en route: the two banked bm_he.elf
+copies DIFFER** — `~/bm_bench/` is `89cc92ff` (stale), `~/bm_he/` is
+`39717d44` (correct). Using the wrong one would have silently poisoned
+every later measurement.
+En route a mute-on-CDC state appeared on STOCK firmware (zero bytes to
+mpremote, to raw Ctrl-C, and to the S6 fixture's own JSON, while
+enumerating perfectly) — state 2's signature, which would exonerate our
+patches, but CONFOUNDED: the S6 fixture was running under MicroPython
+v1.28 rather than the line it was written for. Not counted as evidence.
+
+**DURABLE FIX SHIPPED (Nick's call, then "stop the hunt"):**
+`pi/ae3_flash/99-ae3-no-msc.rules` — udev keeps usb-storage OFF the
+AE3's mass-storage interface, matched on interface CLASS (8/6/80,
+verified against the live device: 1-2:1.2 reads class=08 sub=06
+proto=50) rather than an interface number, so a firmware that reorders
+interfaces cannot silently re-enable the disk. INSTALLED on nereus000
+and VERIFIED against a real board reset — the event that livelocked
+cycle 7: `sda` gone, usb-storage unbound, **reset delta 0**, CDC and
+by-id intact. Caveat recorded honestly: the rule unbinds moments AFTER
+the kernel binds (dmesg still logs "Mass Storage device detected"), so
+a narrow race remains in principle; empirically the block device never
+survives to be probed.
+
+**Bench state at session end:** AE3 on fw `1e56071e…` + ELF
+`39717d44…` (both byte-verified), **S6 fixture RESTORED to /flash and
+verified on the board** (all six files size-exact — the standing
+session-end rule), units DOWN on both Pis, no-MSC udev rule installed,
+bus quiet. Evidence banked: `docs/evidence/` + `~/biteR_wedge_evidence/`.
+Note the bridge files (bm_bridge.py, uart_codec.py, boot_report.py,
+bm_he.elf, ref_scene) remain staged alongside the fixture, so the next
+demo day is one demo_up away.
+
+**HUNT STOPPED here by Nick after the rule landed.** Bite R is not
+closed but it is much smaller: three of its symptoms are explained and
+one (the reset livelock) now has a shipped fix. What remains for
+whoever picks it up: (1) teach the reproducer to detect a reset storm
+in dmesg and classify it, so mode A can never again masquerade as the
+thing being hunted; (2) hunt the no-reset silent refusal — the ONLY
+unexplained state left, and the one the 22:03 capture documents;
+(3) the step-3 pre-SHM-128K bisect is now LOW value — the MPU
+attributes were measured identical on wedged and healthy boots.
 ## 2026-08-19 (late) — S24 OPENED: OpenMV N6 CV baseline — headless live detection stream + first measured sweep (no bench hardware touched)
 
 **Branch:** `sprint/24-n6-cv-baseline`. New sprint, Nick's call (D43),
