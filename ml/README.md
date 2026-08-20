@@ -43,7 +43,68 @@ export half of this stack is version-fragile — see the trap below.
   anchors for a 192 px input. This independently confirms the reading of the
   ROM model's `(1, 5, 756)` as 4 + ONE class (SPEC, DESIGN §S24).
 
-## The blocker this bite found (B1's subject — do not re-derive)
+## Compiling for the boards (B1) — SOLVED, and it needs no new tooling
+
+**OpenMV already ships both compilers and the script that drives them.** Do
+not build a conversion pipeline; use `ml/compile_model.sh`, which calls
+OpenMV's own `tools/modelc.py` — the same script that builds the models in
+the boards' ROM.
+
+```bash
+ml/compile_model.sh ae3 model.tflite     # ARM Vela      -> Ethos-U55
+ml/compile_model.sh n6  model.tflite     # ST Edge AI    -> Neural-ART
+```
+
+| | AE3 | N6 |
+|---|---|---|
+| compiler | `vela 5.0.0` | `ST Edge AI Core 4.0.0` |
+| lives in | `~/openmv-sdk-1.6.0-linux-x86_64/python/bin` | `.../stedgeai/Utilities/linux` |
+| args (from the board's `romfs_config.json`) | `--system-config RTSS_HP_DTCM_MRAM --accelerator-config ethos-u55-256 --memory-mode Shared_Sram --optimise Performance` | `--target stm32n6`, profile `default` |
+| output | Vela-optimised `.tflite` | Neural-ART binary **renamed** `.tflite` |
+| reports NPU placement? | **yes** — accelerator config + estimated ms | not directly |
+
+Both are linux-x86_64, so they run in the `firmware-builder` container that
+`firmware/openmv_build/` already sets up. **The N6 additionally needs
+`/sdk/gcc/bin` on PATH** — `stedgeai --relocatable` links with
+`arm-none-eabi-gcc` and dies with a bare `not found` *after* appearing to
+generate successfully.
+
+**Verified by reproducing the vendor's own artifacts byte-for-byte** (the
+strongest check available without a board):
+
+| model | our N6 compile | shipped in the N6's ROM |
+|---|---|---|
+| `person_detect.tflite` | 274,272 B | 274,272 B |
+| `fomo_face_detection.tflite` | 64,064 B | 64,064 B |
+
+Vela also prints an inference-time estimate at compile time (0.47 ms for
+fomo_face_detection at `Ethos_U55_256`), which answers "is it on the NPU?"
+*before* anything is deployed.
+
+## The remaining gap: getting OUR model into that shape
+
+`modelc.py` takes an int8/uint8 **NHWC** `.tflite`. OpenMV's own source
+models look like this — the spec by example:
+
+| | our ultralytics export | OpenMV's `yolov8n_192.tflite` source |
+|---|---|---|
+| input | `(1, 3, 192, 192)` float32 NCHW | `(1, 192, 192, 3)` **uint8**, scale 1/255, zp 0 |
+| output | `(1, 84, 756)` float32 | `(1, 5, 756)` float32 |
+
+**Known-hard, per OpenMV's own maintainers:** stock Ultralytics INT8 export
+emits unquantized layers and ST's compiler rejects the result (`Oauto did not
+find valid compile options`). They point at ST's `YOLOv8-STEdgeAI` example
+and Roboflow's `ultralytics-openmv` fork instead. Sources:
+[N6/Ultralytics thread](https://forums.openmv.io/t/openmv-n6-yolo8n-model-trained-with-ultralytics-issues/11571),
+[hard-fault thread](https://forums.openmv.io/t/custom-yolov8-model-hard-faults-on-n6-when-loaded-via-ml-model/11633),
+[roboflow/ultralytics-openmv](https://github.com/roboflow/ultralytics-openmv).
+
+**So YOLO is the wrong first target.** The sprint's goal is to prove
+train → compile → deploy → test, and a small classifier or FOMO-style
+detector clears that path with far less toolchain risk — `fomo_face_detection`
+is 57 KB and compiles for both boards today.
+
+## Older notes (B0)
 
 **The exported model is not deployable to either board as it stands.**
 
