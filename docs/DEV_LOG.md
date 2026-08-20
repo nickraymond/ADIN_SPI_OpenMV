@@ -78,8 +78,23 @@ paths. The N6 is `usb-MicroPython_Pyboard_...FS_Mode_0200...-if00`
 (always connect by-id, never auto-connect) matters more than ever now
 that both boards are targets.
 
-**Execution order now: S8 → S21 → S20**, with S23's leftovers and bite
-R slotted at Nick's call.
+**Reconciled with S24 at merge time (this branch was cut before S24
+landed on main).** S24 — N6 CV baseline, opened by Nick the same
+evening — was already running the N6 half of exactly this work, and it
+**answers one of the questions this plan flagged as open**: the N6's
+accelerator is **Neural-ART on STM32N657X0**, verified live, not an
+Ethos-U55. Its bite 3 owns the remaining `stedgeai`-vs-direct-load
+question, so S8 takes that answer instead of re-deriving it. S24 also
+supplies the hard justification for S8's bite A: `/rom/yolov8n_192.tflite`
+emits `output_shape (1, 5, 756)` = 4 box coords + ONE class ("person"),
+so a pink ball is unreachable by configuration — a custom model is
+mandatory, not a preference. S8 keeps the AE3 half plus the cross-board
+custom model and REUSES S24's `bench/n6_stream_{board,host}.py` harness
+rather than starting a third one. S24 is Mac-only, S8 wants the bench,
+so neither blocks the other.
+
+**Execution order now: S24 (running) → S8 → S21 → S20**, with S23's
+leftovers and bite R slotted at Nick's call.
 
 ---
 
@@ -202,6 +217,146 @@ thing being hunted; (2) hunt the no-reset silent refusal — the ONLY
 unexplained state left, and the one the 22:03 capture documents;
 (3) the step-3 pre-SHM-128K bisect is now LOW value — the MPU
 attributes were measured identical on wedged and healthy boots.
+## 2026-08-19 (late) — S24 OPENED: OpenMV N6 CV baseline — headless live detection stream + first measured sweep (no bench hardware touched)
+
+**Branch:** `sprint/24-n6-cv-baseline`. New sprint, Nick's call (D43),
+after a plan review. Runs on the **Mac** over USB; nereus000/001 and the
+AE3 were not involved, so S23 bite R is re-ordered, not displaced.
+
+**Done:**
+- **Reviewed Nick's proposed benchmark plan before writing code** and
+  found half of it already existed: DESIGN §S8's "AE3" table from
+  2026-08-11 was measured on **this N6** (a mis-attribution its own
+  correction records). Confirmed same board/ROM by matching the tells —
+  `yolov8n_192` = 3,233,408 B and 25.6 MB heap. So the new content is
+  capture-in-the-loop, e2e fps, the size sweep and provenance.
+- **Shipped the viewer the OpenMV IDE can't provide** (no IDE build
+  runs on macOS 14.6.1): `bench/n6_stream_board.py` (runs under
+  `mpremote run` — **nothing written to the board**) +
+  `bench/n6_stream_host.py` (decodes, serves multipart MJPEG on the
+  `pi/stream/stream_server.py` pattern) + **19 host tests**.
+  Base64 payload rather than the project's framed-binary format,
+  deliberately: `mpremote run` returns stdout through the raw REPL,
+  which ends on byte `0x04`, and JPEGs contain `0x04`.
+- `--tune` mode draws a centre target and reports its mean LAB with a
+  suggested `--blob-thresh`, so a colour threshold is read off a real
+  object under real light rather than guessed from a colour name.
+- **Measured** (full tables in DESIGN §S24 detail): yolov8n_192
+  **20.7 / 23.7 / 32.2 ms** mean at QVGA/VGA/HD, p95 within 0.5 ms of
+  mean; **capture+inference e2e 47.9 / 41.8 / 30.2 fps**; all 9 ROM
+  models timed (3.5 → 65.3 ms). Live stream 22.6 fps at VGA with the
+  blob overlay on.
+
+**Broke/surprised us:**
+- **`mpremote run` is not a transport — Nick caught it as "a still
+  image, not a live stream".** The viewer decayed from ~20 fps to under
+  2 and wedged. The per-frame counters settled it: **board-side work was
+  flat at 38.5 ms/frame first-to-last**, so the board was fine and the
+  output path was losing data. Two faults: `bufsize=0` made pipe
+  `readline()` read a byte per syscall, and — the real one — the decay
+  scales with *total output*, i.e. `mpremote run` accumulating and
+  rescanning its raw-REPL buffer. Proven by piping `mpremote run`
+  straight to a file (fastest possible consumer) and still getting
+  ~1.5 fps. **Fixed by owning the port with pyserial and driving the raw
+  REPL directly** (`SerialBoard`), the same shape as
+  `pi/stream/usb_frame_source.py`. Result: **1,020 frames / 11.3 MB at
+  23.3 fps, zero resyncs**, vs a wedge by frame ~703 before. mpremote is
+  still the right tool for the bounded sweep runs.
+- **The failure mode was a plausible still image** — indistinguishable
+  from a live stream of a stationary scene. A `resyncs` counter now sits
+  next to fps in the HUD so it announces itself.
+- **The stream ran 324 clean frames with every draw call wrong.** The
+  scene was a ceiling — zero detections, zero blobs — so no draw path
+  ever executed. It would have crashed the instant it saw anything to
+  draw. Caught only by forcing a wide-open blob threshold to make the
+  draw path run. Rule 4, in its purest form: the artifacts were real
+  JPEGs, the fps was real, and the code was still broken.
+- **OpenMV v5 changed the drawing API**: `draw_*` take a tuple first
+  arg (`draw_rectangle((x,y,w,h))`), blob fields are attributes
+  (`b.rect`, not `b.rect()`), `get_statistics()` returns a namedtuple
+  (`st.l_mean`), and `Image` has no `bpp()`. Four separate TypeErrors.
+- **The `csi` module's framesize constants are not the sensor's
+  ladder** — `SXGAM`/`WQXGA2` are exported and refused
+  (`Sensor control failed.`). Sensor letterboxes to 16:10 everywhere:
+  VGA is **640×400**.
+- Model load is ~2.2 ms — the tflite is memory-mapped from ROM, not
+  copied. It is not a cost.
+- `os.uname()` does not carry the OpenMV build (only MicroPython
+  `1.28.0`); `sys.version` does. The S7 lesson, re-confirmed.
+
+**Late additions (same session), from Nick's questions at the bench:**
+- **"Can it detect sports ball?" — No, and the output tensor settles
+  it.** `/rom/yolov8n_192.tflite` reports `output_shape (1, 5, 756)`.
+  A YOLOv8 detect head is `(batch, 4 + num_classes, anchors)`, so 5 = 4
+  box coords + **one** class, where an 80-class COCO export would be
+  `(1, 84, …)`; 756 = 24²+12²+6² accounts for the anchors at 192 px.
+  The ROM model was exported single-class. No threshold, label file or
+  postprocessor change can reach the other 79 classes. Promoted bite 3
+  to "ship a real multi-class detector" with ST's int8 COCO yolov8n
+  (192 px variant) as the concrete candidate; the unverified part —
+  whether `ml.Model` takes a stock int8 tflite on the NPU or needs an
+  `stedgeai` compile — is flagged, not guessed, with a cheap experiment
+  written down to settle it.
+- **"What is a blob?"** Not ML at all: `find_blobs()` thresholds pixels
+  in LAB colour space and groups touching in-range pixels into
+  connected components. It found the balls because they are a distinct
+  colour, and it has no concept of what a ball is. Labels were being
+  drawn but unreadable — cyan text on a bright scene — so blob labels
+  are now outlined (1 px black offset, `draw_label`), numbered, and
+  named via `--blob-label ball`.
+- **Took the N6 off the USB bus with `kill -9`.** SIGKILL skipped
+  `board.stop()`, leaving the board streaming into a closed endpoint
+  from inside the raw REPL; the device node vanished and it went
+  missing from `system_profiler` entirely. **A Mac cannot power-cycle
+  the port** — no uhubctl equivalent — so it needed a physical replug
+  from Nick. SIGTERM/SIGHUP now unwind through the Ctrl-C path; SIGKILL
+  is uncatchable and is simply the thing not to do. This is the Mac-side
+  cousin of the bench's AE3 enumeration lesson.
+
+- **"It stopped when I moved the camera. Bad cable?"** Not the cable
+  necessarily — nudging the connector is enough: the reader died on
+  `SerialException: [Errno 6] Device not configured`, and because that
+  escaped the reader thread, the HTTP server kept serving the last frame
+  with live-looking stats (`fps 19.9, frames 5840`). **That is the same
+  symptom as the two earlier bugs in this bite** (unexercised draw path;
+  mpremote decay) — a frozen stream and a motionless scene look
+  identical, so liveness must be measured and shown, never inferred.
+  Shipped: the exception is caught, a `supervise()` loop reconnects
+  (re-resolving the port each time, since the node moved 1101→1201
+  across the replug), and the page now carries `stale_s`, a
+  `reconnects` count and a red **NOT LIVE** banner.
+  **The reconnect test then found a second bug**: the raw REPL's
+  end-of-execution `0x04` arrives with NO trailing newline, so the
+  line-oriented `readline()` blocked forever when a script returned and
+  the supervisor never learned the stream had ended. Fixed by looking
+  for the EOT in the buffer rather than at the head of a completed line;
+  verified end-to-end with a self-terminating board script — **180
+  frames across 6 cycles, `reconnects 5`**. Suite 19 → **30**.
+- **No, nothing autostarts on the board** (Nick asked). `/flash/main.py`
+  is the stock LED blinker and stays that way; the stream script is
+  pushed into the raw REPL and runs from RAM, so a power cycle leaves
+  the board blinking and not streaming. The host viewer is what
+  restarts — now automatically.
+
+**DEMO PASSED (Nick, same evening).** Live in a browser with labelled
+tracking boxes. His readings, banked in DESIGN §S24: **six balls
+detected simultaneously at ~2 m** indoors under room lighting, and
+**~1 W board draw** (method not recorded — order-of-magnitude, not
+instrumented; ST's published figure is <0.75 W for YOLOv8n at 30 fps,
+not directly comparable since ours is the whole board also capturing at
+VGA, JPEG-encoding and streaming over USB). Nick also threw **pink**
+balls into a purple-tuned scene and they were correctly ignored — pink's
+`b` channel sits outside the purple LAB box. That is the threshold
+working, not a fault; matching several colours at once is fenced as
+bite 1b rather than smuggled into the demo.
+
+**Next:** nibble 4 (PR) for bite 1, then bite 2 — the N6-vs-AE3
+tiled-coverage comparison, carrying the model-variant confound
+explicitly.
+
+**Bench state:** untouched. The N6's `/flash/main.py` is still its stock
+LED blinker; no firmware written; no ADIN, no Pi, no AE3 contact. The N6
+itself is off the USB bus pending a replug (above).
 
 ---
 

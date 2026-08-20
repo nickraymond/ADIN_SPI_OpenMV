@@ -1,27 +1,42 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-20 (**LADDER RESEQUENCED (Nick): CV LEADS.**
-S18 and S19 are DEAD (tombstoned above — S18's units/demo_up/bench-ctl
+*Last updated: 2026-08-20 (**LADDER RESEQUENCED (Nick): CV LEADS —
+and S24 is already running it on the N6.** Reconciled with S24 at merge
+time: **S24 (N6 CV baseline) stays exactly as it is** — running, Mac-
+only, no bench hardware — and it now OWNS the N6 half of the CV work,
+including the `stedgeai`-vs-direct-load toolchain question (its bite 3).
+**S18 and S19 are DEAD** (tombstoned — S18's units/demo_up/bench-ctl
 still run the bench; the compare tool "works well enough", parked).
-**S8 is reshaped and NEXT**: a from-scratch custom detector that
-compiles and deploys to BOTH the AE3 and the N6, starting with a
-deliberately easy "pink ball vs purple ball" target to kick the tires
-on the whole path before any urchin labelling — then end-to-end
-capture→detect→count metrics at 1 m vs 2 m, pixels-on-target recorded.
-S8's old gate (runs after S9–S13) is overridden: CV is now the
-board-selection input. S8's pipeline/alert bites moved to S21. **S23 is
-PARKED at GOLD 12.53** with bites S and 3 unstarted — no more VGA speed
-work until the detector numbers exist. **S23 bite R** (board-state root
-cause) stays open with ONE unexplained state; three of its symptoms are
-explained and the usb-storage reset livelock now has a shipped fix
-(`pi/ae3_flash/99-ae3-no-msc.rules`). Execution order now: **S8 → S21 →
-S20**, with S23's leftovers and bite R slotted at Nick's call.
-**S22 CLOSED 2026-08-20** on its shipped work (HE flood fix proven
-on-chain; the headroom table became S23) — its one debt, bite 1b's q90
-burst loss, is carried into the unowned-findings list and referenced
-from the S21 bite that will inherit it.
-Previous:*
+**S22 CLOSED** on its shipped work, its one debt (bite 1b's q90 burst
+loss) carried into the unowned-findings list, not buried. **S8 is
+reshaped**: a from-scratch custom detector — "pink ball vs purple ball"
+first, to kick the tires before any urchin labelling — that compiles
+and deploys to BOTH boards, then end-to-end capture→detect→count at 1 m
+vs 2 m with pixels-on-target recorded. S8's old gate (runs after S9–S13)
+is overridden: CV is the board-selection input now. **S24's one-class
+finding is exactly why S8 bite A exists** — `/rom/yolov8n_192.tflite`
+emits `(1, 5, 756)` = 4 box coords + ONE class ("person"), so a pink
+ball is unreachable by configuration and a custom model is mandatory,
+not a preference. S8's pipeline/alert bites moved to S21. **S23 is
+PARKED at GOLD 12.53** (bites S and 3 unstarted) — no more VGA speed
+work until detector numbers exist. **S23 bite R** stays open with ONE
+unexplained state; three symptoms are explained and the usb-storage
+reset livelock has a shipped fix (`pi/ae3_flash/99-ae3-no-msc.rules`).
+Execution order now: **S24 (running) → S8 → S21 → S20**, with S23's
+leftovers and bite R slotted at Nick's call. Previous:*
+*2026-08-19 latest+4 (**NEW SPRINT S24 — N6 CV BASELINE —
+OPENED AND RUNNING (Nick's call, D43). Bite 1 DELIVERS: a headless live
+detection stream from the OpenMV N6 into a browser, no OpenMV IDE
+(there is no macOS 14 build), plus the first N6 capture-size sweep.**
+Measured on fw `OpenMV v5.0.0 / MicroPython v1.28.0-49`: yolov8n_192
+inference 20.7 ms @QVGA · 23.7 @VGA · 32.2 @HD, and **capture+inference
+end-to-end 47.9 / 41.8 / 30.2 fps** — the vendor's "~30 fps YOLOv8-class"
+claim holds, and holds at **HD**, not VGA. Capture is fully DMA-hidden
+(0.2 ms); inference is the whole budget. **This runs on the Mac over USB
+and touches NO bench hardware** — nereus000/001 and the AE3 are
+untouched, so S23 bite R is not blocked, only re-ordered by Nick.
+Deliverables: `bench/n6_stream_{board,host}.py` + 19 host tests. Previous:*
 *2026-08-19 latest+3 (**S23 GOLD: the invariant is
 NAMED — it is the serialized HE round-trip, not capture and not a
 fixed 13 ms.** Two instrumented CLEAN rows: 12.15 (counters) → 12.53
@@ -1153,6 +1168,173 @@ clean), so the burst defect does not block the targets; it still owes
 the q90-class stills rung. **Needs:** Mac docker loop, bench; no new
 hardware.
 
+### S24 — N6 CV baseline  `[~]`  ← **RUNNING (Nick, 2026-08-19 — D43)**
+**Goal:** measure what the OpenMV N6's Neural-ART NPU actually delivers
+on the stock firmware's models, and give Nick a live detection view he
+can point at real objects — both **headless**, because there is no
+OpenMV IDE build that launches on this Mac.
+
+**Why it is its own sprint and not S8:** S8 is the AE3's edge-CV
+bring-up and is gated behind S13. This is board-selection input for a
+*different* board, it needs no bench hardware, and it runs entirely on
+the Mac over USB — so it neither blocks nor is blocked by the S23/S8
+ladder. Nick opened it explicitly rather than letting it ride as an
+unowned side quest.
+
+**Hardware facts, all verified live this session — do not re-litigate:**
+- Board reports `OpenMV v5.0.0; MicroPython v1.28.0-49`, built
+  2026-07-02, `OpenMV N6 with STM32N657X0`, free heap **25.6 MB**. On
+  macOS it enumerates as `/dev/cu.usbmodem1101` (VID `37c5`).
+- **Verify firmware with `sys.version`, NOT `os.uname()`** — uname's
+  `release` is the MicroPython version (`1.28.0`) and carries no OpenMV
+  build. Same trap the S7 flash work recorded.
+- `/rom` carries 9 `.tflite` + 3 cascades; `yolov8n_192.tflite` is
+  **3,233,408 B** — the N6 variant, ~1.6× the AE3's 1,994,976 B, so
+  cross-board latency is model-variant-confounded (DESIGN §S8
+  correction). `force_int_quant.tflite` has a non-image input `(1, 36)`
+  and is correctly SKIPped.
+- **`yolov8n_192` and `yolo_lc_192` are single-class ("person")** — the
+  label files read `person` and nothing else. Zero detections on any
+  non-person scene is the CORRECT artifact, not a broken run.
+- **The sensor letterboxes to 16:10 at every size**: QVGA = 320×200,
+  VGA = **640×400**, HD = 1280×800. `SXGAM` and `WQXGA2` are exported
+  by the `csi` module but the sensor REFUSES them (`Sensor control
+  failed.`) — the module's constant list is not the sensor's ladder.
+- **OpenMV v5 `draw_*` takes a TUPLE first argument**
+  (`draw_rectangle((x,y,w,h))`, `draw_string((x,y), s)`,
+  `draw_cross((x,y))`); the older `x, y, w, h` spelling raises
+  `TypeError: object 'int' isn't a tuple or list`. Blob fields and
+  `get_statistics()` means are **attributes**, not methods (`b.rect`,
+  `st.l_mean`). Found the hard way — see bite 1's latent-bug note.
+- Model load is **~2.2 ms**: the tflite is memory-mapped from ROM, not
+  copied into the heap. Loading is not a cost worth optimizing.
+- **`/rom/yolov8n_192.tflite` is a ONE-CLASS model, and the output
+  tensor proves it**: `output_shape` is `(1, 5, 756)`. A YOLOv8 detect
+  head emits `(batch, 4 + num_classes, anchors)`, so 5 = 4 box coords +
+  **1 class**; an 80-class COCO export would be `(1, 84, …)`. (756 =
+  24²+12²+6², the anchor count for a 192 px input at strides 8/16/32 —
+  the shape is fully accounted for.) **"sports ball" is therefore
+  unreachable by any configuration change** — there is no channel for
+  it. An 80-class detector means shipping a different model: ST
+  publishes an int8 COCO `yolov8n` for STM32N6 at 192/256/320/416 —
+  that is bite 3's subject, and whether OpenMV loads it directly or it
+  needs an `stedgeai` compile pass is UNVERIFIED (sources conflict) —
+  flag, don't guess.
+- **Nothing autostarts on the board.** `/flash/main.py` is the stock LED
+  blinker and stays that way; the stream script is pushed into the raw
+  REPL and runs from RAM. So a power cycle or replug leaves the board
+  blinking and NOT streaming — the host viewer is what must be
+  (re)started. It now reconnects by itself, including across a replug,
+  because **the device node is not stable**: this board moved from
+  `usbmodem1101` to `usbmodem1201`, so the port is re-resolved on every
+  attempt rather than cached.
+- **A nudged USB connector ends the stream** (`SerialException: [Errno 6]
+  Device not configured` — seen just from moving the camera). That used
+  to kill the reader thread silently while the page kept serving the
+  last frame with live-looking stats. The viewer now catches it,
+  reconnects, and reports `stale_s` + a red NOT LIVE banner. **Three
+  distinct bugs in this bite produced the same symptom — a plausible
+  still image** (unexercised draw path, mpremote decay, serial drop); a
+  frozen stream and a motionless scene are indistinguishable by eye, so
+  liveness has to be measured and displayed, never inferred.
+- **Stop the stream viewer with Ctrl-C, never `kill -9`.** A SIGKILL
+  skips the board teardown and leaves it streaming into a closed
+  endpoint from inside the raw REPL; measured once, it took the N6 off
+  the USB bus completely (device node gone, absent from
+  `system_profiler`) and needed a **physical replug** — a Mac cannot
+  power-cycle the port the way `uhubctl` can on the Pi. SIGTERM/SIGHUP
+  are now handled and unwind through the clean path.
+- **`mpremote run` is fine for bounded output and unusable as a
+  continuous transport** — it accumulates and rescans the script's whole
+  output, so a stream decays with total bytes (measured: ~20 fps → <2
+  fps, wedged by frame ~703, board-side work flat at 38.5 ms
+  throughout). The stream viewer drives the raw REPL over **pyserial**
+  instead; the sweep tables were collected with mpremote and are fine.
+  Firmware is **v5.0.0, the current stable release** (published
+  2026-07-02, matching the board's build date; the newer `development`
+  tag is explicitly unstable). Not updated, per scope.
+
+- [~] **Bite 1 — headless live detection stream + first sweep.**
+      Board side `bench/n6_stream_board.py` runs under `mpremote run`
+      (**nothing is written to the board; `/flash` is never touched**),
+      does snapshot → yolov8n predict → overlay → JPEG, and prints each
+      frame as a `#F` JSON header plus a base64 payload. Host side
+      `bench/n6_stream_host.py` decodes it and serves multipart MJPEG,
+      following `pi/stream/stream_server.py` so both viewers behave the
+      same. **Base64, not the project's framed-binary wire format, is
+      deliberate:** `mpremote run` returns stdout through the raw REPL,
+      which terminates on byte `0x04`, and JPEG payloads contain `0x04`
+      freely — base64 costs ~33% and removes the whole failure class.
+      A `--tune` mode draws a centre target and reports its mean LAB,
+      so a colour threshold gets read off a real object under real
+      light instead of guessed from a colour name.
+      Host tests: **19** (`bench/test_n6_stream_helpers.py`) — threshold
+      arithmetic, stats means, and the reader's rejection paths (short
+      payload, non-JPEG, junk lines surfaced not swallowed).
+      → **MEASURED 2026-08-19** (tables in DESIGN §S24 detail):
+      yolov8n_192 mean inference **20.7 / 23.7 / 32.2 ms** at
+      QVGA/VGA/HD, p95 within 0.5 ms of mean; **capture+inference
+      end-to-end 47.9 / 41.8 / 30.2 fps**; capture is DMA-hidden at
+      0.2 ms, so inference is essentially the entire frame budget. All
+      9 ROM models timed (3.5 ms fomo → 65.3 ms hand_landmarks).
+      Live stream measured **22.6 fps at VGA** with the purple-blob
+      overlay on, the delta being JPEG encode (3.8 ms), blob search
+      (10.6 ms) and the base64/serial hop.
+      **A latent bug worth recording:** the first stream ran clean for
+      324 frames while every draw call was wrong, because the scene had
+      zero detections and zero blobs so no draw path ever executed. It
+      would have crashed the instant Nick pointed it at his objects.
+      Caught only by forcing a wide-open blob threshold to make the
+      draw path run — an exit code and a flowing stream proved nothing
+      (CLAUDE.md rule 4).
+      → **DEMO RUN BY NICK 2026-08-19 — PASS.** Live in a browser,
+      tracking balls with labelled boxes. His bench readings, recorded
+      in DESIGN §S24: **six balls detected simultaneously at ~2 m**
+      indoors under room lighting, and **~1 W board draw** during the
+      test (method not recorded — an order-of-magnitude reading, not an
+      instrumented figure; re-measure deliberately before relying on
+      it). Remaining: nibble 4 (PR).
+- [ ] **Bite 1b — match more than one colour at once (NEW, from the
+      demo).** Nick threw pink balls into a purple-tuned scene and they
+      were correctly ignored — the threshold is a single LAB box, and
+      pink's `b` sits outside the purple range. `find_blobs` already
+      accepts a LIST of thresholds; the board script passes exactly one
+      and the host exposes a single `--blob-thresh`. Small change:
+      repeatable `--blob-thresh`, one colour per box, each drawn in its
+      own colour. Until then `--tune` reads a threshold off whatever
+      object is actually in front of the lens, which is the honest way
+      to get one anyway.
+- [ ] **Bite 2 — the number that decides the board.** Re-run S8's HD
+      tiled-coverage arithmetic on these N6 latencies and put it next
+      to the AE3's, so "N6 vs AE3 for edge CV" is a measured comparison
+      rather than two tables from different sessions. Must carry the
+      model-variant confound explicitly (the two boards ship different
+      yolov8n binaries). Feeds Nick's board decision; no new hardware.
+- [ ] **Bite 3 — a real multi-class detector on the N6.** Promoted from
+      "feasibility" by Nick's question 2026-08-19 (he wants "sports
+      ball", a COCO class): the ROM model's `(1, 5, 756)` output proves
+      it carries **one** class, so no configuration reaches the other
+      79. Concrete first target: ST's int8 COCO `yolov8n` for STM32N6
+      (192 px variant matches the ROM model's input exactly), which
+      would give all 80 classes including `sports ball`.
+      **Open question to settle FIRST, by test not by reading:** does
+      OpenMV's `ml.Model` load a stock int8 `.tflite` and run it on the
+      Neural-ART NPU, or must it be compiled with `stedgeai` first?
+      Sources conflict, and the answer decides whether this is an
+      afternoon or a toolchain bite. Cheap experiment: put one
+      candidate on `/flash`, load it, print `output_shape`, time
+      `predict` against the ROM model's 23.7 ms — a CPU fallback will
+      be obvious in the number. **Needs Nick's go: it is the first bite
+      that writes to the board and the first that downloads a model.**
+**Demo (Nick):** `python3 bench/n6_stream_host.py --tune` → open
+`http://localhost:8090/` → the live feed shows the scene with the
+centre LAB readout; re-run with the suggested `--blob-thresh` and the
+four purple balls get tracked boxes while the HUD reports inference ms
+and fps. Plus the DESIGN §S24 tables reviewed together.
+**Needs:** the N6 on the Mac's USB and `mpremote`. **No bench hardware,
+no ADIN, no flashing, no firmware update** — the AE3 and both Pis are
+untouched, by design.
+
 ---
 
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
@@ -1391,7 +1573,11 @@ transport swapped later.*
 ### S8 — Custom detector: a from-scratch model on AE3 + N6  `[ ]`  ← **NEXT (Nick 2026-08-20)**
 *(Was "Edge CV bring-up (T2)". Its old gate — "runs AFTER the BM-native
 arc S9–S13; board risk gates CV investment" — is **OVERRIDDEN by Nick
-2026-08-20**: CV is now the board-selection input, so it leads. Encoder
+2026-08-20**: CV is now the board-selection input, so it leads.
+**Runs alongside S24, which owns the N6 baseline and its toolchain
+question** — S8 is the AE3 half plus the cross-board custom model; S24
+is the N6's measured floor. Neither blocks the other: S24 is Mac-only,
+S8 wants the bench. Encoder
 fps work (S23 bites S and 3) waits behind these numbers — Nick: get a
 custom model benchmarking on both boards before spending more on VGA.)*
 **Goal:** prove the ENTIRE custom-model path — train, compile, deploy,
@@ -1414,16 +1600,24 @@ any urchin labelling effort is spent.
       compiles and deploys to BOTH boards (Nick 2026-08-20).**
       Deliberately a classic-CV-easy target: ground truth is countable
       by eye, the dataset is a bench afternoon, and the point is to kick
-      the tires on the complete path rather than to do ML. Two halves,
+      the tires on the complete path rather than to do ML. **S24 already
+      proved this bite is mandatory rather than optional**: its
+      `/rom/yolov8n_192.tflite` emits `output_shape (1, 5, 756)` = 4 box
+      coords + exactly ONE class ("person"), so a pink ball is
+      unreachable by ANY configuration change — there is no channel for
+      it. A custom model is the only route, on either board. Two halves,
       with a gate between them:
       **A1 — the toolchain, sourced and never assumed.** AE3 = 2×
-      Ethos-U55 (SPEC §140) → Vela. **The N6's accelerator is a
-      DIFFERENT part with a different compiler, and this repo has NO
-      verified note on it** — so it gets read out of vendor docs, not
-      guessed (CLAUDE.md rule 3). Measured 2026-08-20: both boards run
+      Ethos-U55 (SPEC §140) → Vela. **N6 = Neural-ART on STM32N657X0 —
+      verified live by S24, so this is no longer an open question**;
+      what IS open is whether OpenMV loads an ST-published int8 model
+      directly or it needs an `stedgeai` compile pass (sources conflict).
+      **That question is OWNED BY S24 BITE 3 — do not duplicate it
+      here; take S24's answer.** Measured 2026-08-20: both boards run
       OpenMV v5.0.0 / MicroPython v1.28.0-49 and both expose the `ml`
       module loading `.tflite` from ROM/flash — so the shape to CONFIRM
-      is "one trained source, two compilations, one load API".
+      is "one trained source, two compilations, one load API", and the
+      AE3/Vela half is the part S8 genuinely owns.
       Deliverable: a reproducible compile→deploy→run path per board,
       written down. **GATE: if either board has no viable path, STOP and
       re-plan with Nick before any dataset effort is spent.**
@@ -1451,8 +1645,12 @@ any urchin labelling effort is spent.
 **Demo (Nick):** the same custom two-ball model running on AE3 **and**
 N6; one table of end-to-end capture→detect→count fps and count accuracy
 at 1 m and 2 m for both boards, pixels-on-target recorded alongside.
-**Needs:** bench time; both boards on nereus000 (both present and
-healthy 2026-08-20); a training host; vendor docs for the N6 NPU path.
+**Needs:** bench time; the AE3 on nereus000; a training host; **S24's
+bite-3 answer for the N6 compile path** (do not re-derive it).
+**Reuse before rewriting:** S24 shipped `bench/n6_stream_{board,host}.py`
+(+19 host tests) — a headless capture→infer→view harness for the N6.
+Bite B's end-to-end measurement should extend that and
+`bench/ae3_npu_bench.py`, not start a third harness.
 **Note:** the old S8 bites "detect/track/count pipeline" and "alert +
 evidence-JPEG path" have MOVED to S21 — S8 is now detector + numbers,
 S21 is the product feature built on top.
@@ -1501,7 +1699,9 @@ live bite, and nothing here should be assumed benign because it is old.)*
 - lwIP netif integration in OpenMV firmware (C) — MicroPython sockets over T1L
 - N6 evaluation for H.264 path (needs OpenMV answer on VENC MicroPython API)
   — now formally owns the public-stream cell (720p ≥24 fps) of the SPEC
-  requirement matrix; AE3 confirmed as this project's platform (Nick)
+  requirement matrix; AE3 confirmed as this project's platform (Nick).
+  **The CV half of this item was pulled out and scheduled 2026-08-19 as
+  sprint S24 (N6 CV baseline); the H.264/VENC question stays iceboxed.**
 - SG JP1/JP4 breakout confirmation (would clean up the S4 harness)
 - Power-gating architecture (AE3 supervisor + load switch) from board-selection analysis
 - ~~bm_core port (post-S7 decision)~~ → scheduled 2026-08-11 as sprint S10
