@@ -13,7 +13,8 @@ browser can watch live.
     python3 bench/n6_stream_host.py --blob-thresh pink:... --save-frames data/raw
 
 Nothing is written to the board -- the script runs from RAM and ``/flash`` is
-never touched. Needs pyserial; stdlib otherwise.
+never touched. Needs ``mpremote`` (its transport does the raw-REPL attach) and
+``pyserial``; stdlib otherwise.
 
 **Ctrl-C to stop, never ``kill -9``.** The clean path interrupts the board and
 leaves the raw REPL; SIGTERM/SIGHUP are handled and unwind the same way. A
@@ -45,16 +46,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BOARD_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "n6_stream_board.py")
 
-_PAGE = """<!doctype html><html><head><title>OpenMV N6 &mdash; live detection</title>
+_PAGE = """<!doctype html><html><head><title>OpenMV &mdash; live detection</title>
 <style>body{margin:0;background:#111;color:#ddd;font-family:ui-monospace,monospace;
 text-align:center}img{max-width:100%;image-rendering:pixelated}
 #s{color:#8c8;white-space:pre-wrap;font-size:13px}h3{margin:8px;font-weight:600}</style>
 </head><body>
-<h3>OpenMV N6 &mdash; yolov8n_192 + colour blobs</h3>
+<h3 id="h">OpenMV &mdash; live detection</h3>
 <div id="b"></div>
 <img src="/stream"/>
 <pre id="s">connecting&hellip;</pre>
 <script>setInterval(async()=>{try{const r=await fetch('/stats.json');const j=await r.json();
+// Name the board on screen: with two OpenMV boards on USB, an unlabelled
+// reading is how a table gets attributed to the wrong silicon.
+if(j.board) document.getElementById('h').textContent = j.board;
 // A frozen stream and a motionless scene look identical. Say which it is.
 const dead = j.stale_s === null || j.stale_s > 3;
 const b=document.getElementById('b');
@@ -173,11 +177,15 @@ class Stats:
         self.amb = 0
         self.saved = 0
         self._times = []
+        self._win_bytes = []
+        self._win_wire = []
         self.frames = 0
         self.bytes = 0
         self.det = 0
         self.blobs = 0
         self.info = ""
+        self.board = ""    # e.g. "OpenMV N6 with STM32N657X0"
+        self.info_fields = {}   # parsed #I banner: geometry, model, q
         self.junk = []
         self.lab = None
         self.resyncs = 0        # frames dropped to a framing/length fault
@@ -202,13 +210,48 @@ class Stats:
         for k in self._acc:
             self._acc[k] += hdr.get(k, 0)
         self._times.append(now)
+        # Bandwidth is measured over the SAME rolling window as fps, from the
+        # JPEG bytes actually delivered -- never from the quality setting or a
+        # nominal rate. A programmed q says what was asked for; only the bytes
+        # say what came out, and on these boards that varies with the scene by
+        # more than a factor of two.
+        self._win_bytes.append(nbytes)
+        # Wire cost is the base64 payload actually carried over USB, which the
+        # board reports per frame -- ~4/3 of the JPEG. Reporting only the image
+        # rate would understate what the link is really moving.
+        self._win_wire.append(hdr.get("b64", 0))
         del self._times[:-self.WINDOW]
+        del self._win_bytes[:-self.WINDOW]
+        del self._win_wire[:-self.WINDOW]
 
     def fps(self):
         if len(self._times) < 2:
             return 0.0
         span = self._times[-1] - self._times[0]
         return (len(self._times) - 1) / span if span > 0 else 0.0
+
+    def _window_span(self):
+        return (self._times[-1] - self._times[0]) if len(self._times) >= 2 else 0.0
+
+    def mbps(self):
+        """Delivered image bandwidth, megabits/s, over the fps window."""
+        span = self._window_span()
+        if span <= 0:
+            return 0.0
+        # The first sample's bytes belong to a frame that arrived before the
+        # window opened, so pair N-1 intervals with the last N-1 payloads.
+        return sum(self._win_bytes[1:]) * 8.0 / span / 1e6
+
+    def wire_mbps(self):
+        """Bytes actually crossing USB (base64), megabits/s, same window."""
+        span = self._window_span()
+        if span <= 0:
+            return 0.0
+        return sum(self._win_wire[1:]) * 8.0 / span / 1e6
+
+    def kb_per_frame(self):
+        n = len(self._win_bytes)
+        return (sum(self._win_bytes) / n / 1024.0) if n else 0.0
 
     def _mean_ms(self, key):
         return round(self._acc[key] / self.frames / 1000.0, 1) if self.frames else 0.0
@@ -229,18 +272,63 @@ class Stats:
             "resyncs": self.resyncs,
             "reconnects": self.reconnects,
             "status": self.status,
+            "board": self.board,
             # Seconds since the last frame. The viewer keeps showing the last
             # good JPEG when the board goes away, so the page MUST be able to
             # tell a live stream from a frozen one -- a still scene and a dead
             # board look identical otherwise.
             "stale_s": (round(self._clock() - self.last_frame_at, 1)
                         if self.last_frame_at is not None else None),
+            "mbps": round(self.mbps(), 2),
+            "wire_mbps": round(self.wire_mbps(), 2),
+            "kb_frame": round(self.kb_per_frame(), 1),
+            # Everything the board reported about itself at startup: capture
+            # geometry, JPEG q, and which model binary it actually loaded.
+            "framesize": self.info_fields.get("framesize", ""),
+            "w": self.info_fields.get("w", 0),
+            "h": self.info_fields.get("h", 0),
+            "pixfmt": self.info_fields.get("pixfmt", ""),
+            "quality": self.info_fields.get("quality", None),
+            "model": self.info_fields.get("model", ""),
+            "model_bytes": self.info_fields.get("model_bytes", -1),
+            "model_in": self.info_fields.get("model_in", ""),
+            "model_out": self.info_fields.get("model_out", ""),
+            "arena": self.info_fields.get("arena", -1),
+            "labels": self.info_fields.get("labels", []),
             "cap_ms": self._mean_ms("cap_us"),
             "inf_ms": self._mean_ms("inf_us"),
             "blob_ms": self._mean_ms("blob_us"),
             "enc_ms": self._mean_ms("enc_us"),
             "info": self.info,
         }
+
+
+class BoardView:
+    """One board's stream: its label, its port, and its live state.
+
+    The comparison view is just a list of these. Everything that was
+    per-process in the single-board design (Latest, Stats, the supervisor's
+    state dict) is per-view here, so one board disconnecting or wedging
+    cannot disturb the other -- which is the point of watching two at once.
+    """
+
+    def __init__(self, label, port=None, labels=None, saver=None):
+        self.label = label
+        self.port = port
+        self.latest = Latest()
+        self.stats = Stats(labels=labels)
+        self.state = {"alive": True, "quit": False, "board": None}
+        # Per-board capture: two boards writing frame_000001.jpg into one
+        # directory would overwrite each other, and the dataset wants to know
+        # which sensor produced which frame regardless -- one model deploys to
+        # both, so "which camera shot this" is a training-relevant field.
+        self.saver = saver
+
+    def snapshot(self):
+        s = self.stats.snapshot()
+        s["label"] = self.label
+        s["port"] = self.port or "(auto)"
+        return s
 
 
 class FrameSaver:
@@ -367,6 +455,12 @@ def reader_loop(out, latest, stats, state, saver=None):
                                       % str(exc).encode("utf-8", "replace"))
         elif line.startswith(b"#I "):
             stats.info = line[3:].decode("utf-8", "replace")
+            try:
+                fields = json.loads(stats.info)
+                stats.info_fields = fields
+                stats.board = fields.get("board", "")
+            except ValueError:
+                stats.board = ""
             print("board: %s" % stats.info, flush=True)
         elif line.startswith(b"#D "):
             # A CLEAN completion, not a disconnect: the board hit --max-frames
@@ -381,6 +475,154 @@ def reader_loop(out, latest, stats, state, saver=None):
             print("board: %s" % text, flush=True)
     state["alive"] = False
     print("board: stream ended", flush=True)
+
+
+def make_multi_handler(views):
+    """Routes for N boards: /s/<i>/stream, /s/<i>/stats.json, /s/<i>/frame.jpg.
+
+    Everything is served same-origin from one process so the page can fetch
+    each board's stats without CORS, and so one browser tab shows both.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def _body(self, body, ctype):
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _view(self, idx):
+            return views[idx] if 0 <= idx < len(views) else None
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            if path == "/" or path.startswith("/index"):
+                self._body(multi_page(views).encode(), "text/html; charset=utf-8")
+                return
+            if path == "/api/boards":
+                body = json.dumps([v.snapshot() for v in views]).encode()
+                self._body(body, "application/json")
+                return
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "s" and parts[1].isdigit():
+                view = self._view(int(parts[1]))
+                if view is None:
+                    self.send_error(404)
+                    return
+                if parts[2] == "stats.json":
+                    self._body(json.dumps(view.snapshot()).encode(),
+                               "application/json")
+                elif parts[2] == "frame.jpg":
+                    frame, _ = view.latest.get()
+                    if frame:
+                        self._body(frame, "image/jpeg")
+                    else:
+                        self.send_error(503, "no frame yet")
+                elif parts[2] == "stream":
+                    self._mjpeg(view)
+                else:
+                    self.send_error(404)
+                return
+            self.send_error(404)
+
+        def _mjpeg(self, view):
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            last = -1
+            try:
+                while True:
+                    frame, seq = view.latest.get()
+                    if frame and seq != last:
+                        last = seq
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                        self.wfile.write(b"Content-Length: %d\r\n\r\n" % len(frame))
+                        self.wfile.write(frame)
+                        self.wfile.write(b"\r\n")
+                    time.sleep(0.01)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    return Handler
+
+
+def multi_page(views):
+    """Side-by-side comparison page, one panel per board, in argument order."""
+    panels = "\n".join(
+        '<div class="p"><h2 id="t%d">%s</h2><div class="ban" id="b%d"></div>'
+        '<img src="/s/%d/stream"/><pre id="s%d">connecting&hellip;</pre></div>'
+        % (i, v.label, i, i, i) for i, v in enumerate(views))
+    return """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenMV &mdash; side by side</title><style>
+body{margin:0;background:#111;color:#ddd;font-family:ui-monospace,monospace}
+h1{font-size:15px;margin:10px;text-align:center;color:#9ab;font-weight:600}
+.row{display:flex;gap:10px;padding:0 10px 12px;align-items:flex-start}
+.p{flex:1 1 0;min-width:0;text-align:center}
+.p h2{font-size:14px;margin:4px 0;color:#fff}
+img{width:100%%;height:auto;image-rendering:pixelated;background:#000;
+    border:1px solid #333;border-radius:4px}
+pre{color:#8c8;white-space:pre-wrap;font-size:12px;text-align:left;margin:6px 0}
+.ban{font-weight:700;border-radius:3px}
+@media(max-width:760px){.row{flex-direction:column}}
+</style></head><body>
+<h1>OpenMV side-by-side &mdash; same script, same scene, different silicon</h1>
+<div class="row">%s</div>
+<script>
+const N=%d;
+setInterval(async()=>{
+ let js;
+ try{ js = await (await fetch('/api/boards')).json(); }catch(e){ return; }
+ js.forEach((j,i)=>{
+  // Board identity comes from the board itself, never from the label we
+  // typed -- with two boards attached, a mislabelled panel is how a wrong
+  // number gets published (DESIGN "S8 detail CORRECTION").
+  const t=document.getElementById('t'+i);
+  if(t) t.textContent = j.label + (j.board ? '  \\u2014  '+j.board : '');
+  const dead = j.stale_s === null || j.stale_s > 3;
+  const b=document.getElementById('b'+i);
+  if(b){
+   b.textContent = dead ? ('\\u25CF NOT LIVE \\u2014 '+j.status) : '';
+   b.style.cssText = dead
+     ? 'background:#a11;color:#fff;padding:5px;font-weight:700' : '';
+  }
+  const s=document.getElementById('s'+i);
+  const mb = n => (n<0||n===undefined) ? '?' : (n/1048576).toFixed(2)+' MB';
+  // Model identity is spelled out per panel so "apples to apples?" is
+  // answerable on screen. The two boards ship DIFFERENT binaries under the
+  // same filename, so the byte count is the field that settles it.
+  const model = (j.model||'(none)').replace(/^.*\\//,'') +
+      '  ' + mb(j.model_bytes) +
+      (j.model_in ? '  in '+j.model_in : '') +
+      (j.labels && j.labels.length ? '  ['+j.labels.join(',')+']' : '');
+  // Per-class counts, from bite A: "5 blobs" cannot be checked against a
+  // scene holding 3 pink and 2 purple balls, and bite C's baseline is exactly
+  // that check. `amb` is blobs that matched more than one colour box.
+  const per = (j.blob_labels||[]).map((n,i)=>n+' '+((j.blob_counts||[])[i]||0))
+      .join('   ');
+  if(s) s.textContent =
+   'capture   '+(j.framesize||'?')+'  '+j.w+'\\u00d7'+j.h+'  '+(j.pixfmt||'')+'\\n'+
+   'encode    JPEG q'+(j.quality===null?'?':j.quality)+
+       '   '+j.kb_frame+' KB/frame  (measured)\\n'+
+   'bandwidth '+j.mbps+' Mbps image   '+j.wire_mbps+' Mbps on USB\\n'+
+   'model     '+model+'\\n'+
+   'rate      '+j.fps+' fps   inference '+j.inf_ms+' ms   encode '+j.enc_ms+' ms\\n'+
+   '          capture '+j.cap_ms+' ms   blobs '+j.blob_ms+' ms\\n'+
+   'found     '+j.blobs+' blobs   '+j.det+' detections\\n'+
+   (per ? '          '+per+(j.amb ? '   ambiguous '+j.amb : '')+'\\n' : '')+
+   (j.saved ? 'captured  '+j.saved+' frames saved\\n' : '')+
+   'health    resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
+   j.port;
+ });
+},500)</script></body></html>""" % (panels, len(views))
 
 
 def make_handler(latest, stats):
@@ -453,53 +695,54 @@ class SerialBoard:
     and executed from RAM, exactly as ``mpremote run`` would.
     """
 
-    #: pyboard.py chunks raw-REPL writes so the board's input buffer keeps up.
-    CHUNK = 256
-    CHUNK_PAUSE_S = 0.01
-
     def __init__(self, port, baudrate=115200):
-        import serial                      # lazy: unit tests need no pyserial
+        # The ATTACH uses mpremote's own transport rather than a hand-rolled
+        # handshake -- reuse before rewriting, and the hand-rolled one was
+        # measurably worse: it timed out on an AE3 that mpremote had just
+        # talked to happily (5 s vs mpremote's 10 s, and no raw-paste
+        # support). Only the attach comes from mpremote; the READ loop stays
+        # ours, which is the half that has to avoid mpremote's
+        # accumulate-and-rescan behaviour (see the module docstring).
+        from mpremote.transport_serial import SerialTransport
+        import serial
         self._serial = serial
         self.port = port
-        self.ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
+        self._transport = SerialTransport(port, baudrate=baudrate)
+        self.ser = self._transport.serial
+        self.ser.timeout = 0.1              # bound our own read loop
         self._buf = bytearray()
-
-    def _read_until(self, token, timeout_s=5.0):
-        deadline = time.monotonic() + timeout_s
-        seen = bytearray()
-        while time.monotonic() < deadline:
-            seen += self.ser.read(256)
-            if token in seen:
-                return bytes(seen)
-        raise TimeoutError("N6 %s: never sent %r during raw-REPL entry "
-                           "(saw %r)" % (self.port, token, bytes(seen[-80:])))
+        self.last_error = ""   # board traceback captured at end-of-execution
+        self.end_reason = ""   # "eot" (script ended) vs "usb" (link dropped)
 
     def start(self, script_text):
-        """Interrupt whatever is running, enter the raw REPL, run the script."""
-        self.ser.write(b"\r\x03\x03")       # Ctrl-C twice: stop main.py
-        time.sleep(0.2)
-        self.ser.reset_input_buffer()
-        self.ser.write(b"\r\x01")           # Ctrl-A: raw REPL
-        self._read_until(b"raw REPL; CTRL-B to exit")
-        payload = script_text.encode("utf-8")
-        for i in range(0, len(payload), self.CHUNK):
-            self.ser.write(payload[i:i + self.CHUNK])
-            time.sleep(self.CHUNK_PAUSE_S)
-        self.ser.write(b"\x04")             # Ctrl-D: execute
-        self._read_until(b"OK")
+        """Enter the raw REPL and start the script running from RAM."""
+        # soft_reset=True gives the script a clean heap, which matters much
+        # more on the AE3 (3.9 MB free, and the model arena alone is 791 KB)
+        # than on the N6's 25.6 MB.
+        self._transport.enter_raw_repl(soft_reset=True)
+        self._transport.exec_raw_no_follow(script_text)
         return self
 
     def readline(self):
         """One line, or b'' at end of execution. Buffered over raw reads."""
         while True:
             # The raw REPL's end-of-execution 0x04 arrives with NO trailing
-            # newline, so it must be looked for in the buffer rather than at
-            # the head of a completed line -- otherwise a script that returns
-            # leaves this blocked forever waiting for a newline that is never
-            # coming, and the supervisor never learns the stream ended.
-            eot = self._buf.find(b"\x04")
+            # newline, so it cannot be found by scanning for line ends alone --
+            # a returning script would otherwise leave this blocked forever on
+            # a newline that never comes. But only position 0 counts: that is
+            # where the REPL puts it, once the preceding line has been
+            # consumed. A 0x04 deeper in the buffer is corruption (base64 and
+            # JSON headers contain no 0x04), and treating THAT as end-of-stream
+            # tore down a healthy stream over one bad byte.
             nl = self._buf.find(b"\n")
-            if eot >= 0 and (nl < 0 or eot < nl):
+            if self._buf[:1] == b"\x04":
+                # The raw REPL frames a run as: OK <stdout> 0x04 <stderr> 0x04 >
+                # so the board's traceback lives AFTER this first 0x04.
+                # Returning here without reading it discards the only
+                # explanation of why a stream ended -- which left "stream
+                # ended / reconnect" cycling with no visible cause.
+                self.end_reason = "eot"
+                self.last_error = self._read_error_tail()
                 return b""
             if nl >= 0:
                 line = bytes(self._buf[:nl])
@@ -507,30 +750,61 @@ class SerialBoard:
                 return line + b"\n"
             try:
                 chunk = self.ser.read(65536)
-            except (self._serial.SerialException, OSError):
+            except (self._serial.SerialException, OSError) as exc:
                 # The board went away mid-read -- a nudged USB connector is
                 # enough ("[Errno 6] Device not configured"). Ending the
                 # stream cleanly lets the supervisor reconnect; letting the
                 # exception escape would kill the reader thread and leave the
                 # viewer serving a stale frame forever.
+                # Recorded distinctly from "eot": a script that ended and a
+                # USB link that dropped need completely different fixes, and
+                # they were previously indistinguishable in the log.
+                self.end_reason = "usb: %s" % exc
                 return b""
             if chunk:
                 self._buf += chunk
             elif not self.ser.is_open:
                 return b""
 
+    def _read_error_tail(self, limit=2048, timeout_s=1.0):
+        """Text the board printed after end-of-execution: its traceback.
+
+        Bounded in both bytes and time -- this runs on the teardown path and
+        must never be what hangs a reconnect.
+        """
+        del self._buf[:1]                       # consume the first 0x04
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and len(self._buf) < limit:
+            if b"\x04" in self._buf:
+                break
+            try:
+                chunk = self.ser.read(512)
+            except Exception:
+                break
+            if chunk:
+                self._buf += chunk
+        end = self._buf.find(b"\x04")
+        tail = bytes(self._buf[:end if end >= 0 else len(self._buf)])
+        return tail.decode("utf-8", "replace").strip()
+
     def stop(self):
+        """Interrupt the script and leave the board at a usable REPL.
+
+        Best-effort throughout: if the board has already gone (a yanked
+        cable), there is nothing to tidy and failing here would mask the
+        real event.
+        """
         try:
             self.ser.write(b"\r\x03\x03")   # interrupt the running script
             time.sleep(0.1)
-            self.ser.write(b"\r\x02")       # Ctrl-B: back to the friendly REPL
+            self._transport.exit_raw_repl()  # Ctrl-B: friendly REPL
             time.sleep(0.1)
-        except self._serial.SerialException:
+        except Exception:
             pass
         finally:
             try:
-                self.ser.close()
-            except self._serial.SerialException:
+                self._transport.close()
+            except Exception:
                 pass
 
 
@@ -553,8 +827,20 @@ class QuietServer(ThreadingHTTPServer):
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", default=None,
-                    help="serial device (default: the sole /dev/cu.usbmodem*)")
+                    help="serial device for single-board mode (default: the "
+                         "only OpenMV board present)")
+    ap.add_argument("--board", action="append", default=None,
+                    metavar="LABEL=PORT",
+                    help="add a board to the side-by-side view; repeatable, "
+                         "and panels appear left-to-right in the order given. "
+                         "e.g. --board AE3=/dev/serial/by-id/usb-OpenMV_... "
+                         "--board N6=/dev/serial/by-id/usb-MicroPython_...")
     ap.add_argument("--http-port", type=int, default=8090)
+    ap.add_argument("--bind", default="127.0.0.1",
+                    help="HTTP bind address. Defaults to localhost only. Pass "
+                         "0.0.0.0 to watch from another device on the same "
+                         "network -- that PUBLISHES THE CAMERA FEED to every "
+                         "host on that network, unauthenticated.")
     ap.add_argument("--framesize", default="VGA",
                     help="csi framesize NAME, e.g. QVGA VGA HD SXGAM (default VGA)")
     ap.add_argument("--quality", type=int, default=50)
@@ -627,27 +913,90 @@ class PortError(Exception):
     """No usable serial device right now (may simply be mid-reconnect)."""
 
 
-def find_port(explicit=None):
-    """Resolve the N6's serial device, failing with something actionable.
+def lan_addresses():
+    """This host's non-loopback IPv4 addresses, for printing a reachable URL."""
+    import socket
+    addrs = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None,
+                                       socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in addrs:
+                addrs.append(ip)
+    except socket.gaierror:
+        pass
+    if not addrs:
+        # getaddrinfo can miss the Wi-Fi address; ask the routing table.
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 80))    # TEST-NET-1, never actually sent
+            addrs.append(s.getsockname()[0])
+        except OSError:
+            pass
+        finally:
+            s.close()
+    return addrs
 
-    Note the device node is NOT stable across replugs -- this board came back
-    as usbmodem1201 after having been usbmodem1101 -- so the reconnect path
-    re-resolves it every attempt rather than caching it.
+
+#: Where a board turns up, per platform. On Linux ALWAYS prefer
+#: /dev/serial/by-id -- ttyACM numbering is assignment-order and swaps between
+#: boots, and this project has already published a table attributed to the
+#: wrong board because bare mpremote grabbed the first CDC device
+#: (DESIGN "S8 detail CORRECTION"). by-id encodes the USB serial, so it names
+#: one specific board forever.
+PORT_GLOBS = {
+    "darwin": ("/dev/cu.usbmodem*",),
+    "linux": ("/dev/serial/by-id/usb-OpenMV*",
+              "/dev/serial/by-id/usb-MicroPython*"),
+}
+
+
+def port_candidates():
+    """Serial devices that look like an OpenMV board, on this platform."""
+    import glob
+    key = "darwin" if sys.platform == "darwin" else "linux"
+    found = []
+    for pattern in PORT_GLOBS[key]:
+        for p in sorted(glob.glob(pattern)):
+            if p not in found:
+                found.append(p)
+    return found
+
+
+def find_port(explicit=None):
+    """Resolve a board's serial device, failing with something actionable.
+
+    The device node is NOT stable -- on macOS this board came back as
+    usbmodem1201 after having been usbmodem1101, and on Linux ttyACM numbering
+    is assignment-order -- so the reconnect path re-resolves every attempt
+    rather than caching, and by-id is preferred where it exists.
     """
     if explicit:
         return explicit
-    import glob
-    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
+    ports = port_candidates()
     if not ports:
-        raise PortError("no /dev/cu.usbmodem* found -- is the N6 plugged in?")
+        raise PortError("no OpenMV board found (looked for %s) -- plugged in?"
+                        % ", ".join(PORT_GLOBS[
+                            "darwin" if sys.platform == "darwin" else "linux"]))
     if len(ports) > 1:
-        raise PortError("several boards present (%s) -- choose one with --port"
-                        % ", ".join(ports))
+        raise PortError("several boards present -- name one with --port:\n  %s"
+                        % "\n  ".join(ports))
     return ports[0]
 
 
+#: Backoff for reconnect attempts, in seconds, then the last value repeats.
+#: NOT a flat retry: on the AE3, repeated raw-REPL attaches are themselves a
+#: known way to wedge the board -- roughly 4-6 attaches after a teardown and
+#: it starts refusing below the Python level, curable only by a power cycle
+#: (TRACKER S23 bite R). A viewer that hammers a quiet port is not resilient,
+#: it is the fault. Backing off also gives a board that is merely slow to
+#: boot (the AE3 takes seconds on csi.reset) time to arrive.
+RETRY_BACKOFF_S = (2, 5, 10, 20, 30)
+
+
 def supervise(port_hint, script_text, latest, stats, state,
-              retry_s=2.0, settle_s=1.0, saver=None, on_done=None):
+              retry_s=None, settle_s=1.0, backoff=RETRY_BACKOFF_S,
+              saver=None, on_done=None):
     """Keep a board stream running, reconnecting when the board comes back.
 
     Bumping the USB connector while aiming the camera ends the stream. That is
@@ -657,23 +1006,46 @@ def supervise(port_hint, script_text, latest, stats, state,
     way; nothing here writes to the board).
     """
     first = True
+    fails = 0
+
+    def _backoff():
+        """Seconds to wait after `fails` consecutive failures."""
+        if retry_s is not None:            # tests pin this
+            return retry_s
+        return backoff[min(fails - 1, len(backoff) - 1)]
+
     while not state.get("quit"):
         try:
             port = find_port(port_hint)
             board = SerialBoard(port).start(script_text)
         except PortError as exc:
-            stats.status = "waiting for board: %s" % exc
-            time.sleep(retry_s)
+            fails += 1
+            stats.status = "waiting for board: %s (retry in %gs)" % (
+                exc, _backoff())
+            time.sleep(_backoff())
             continue
         except ImportError:
-            stats.status = "pyserial missing"
-            state["fatal"] = "pyserial missing -- pip3 install --user pyserial"
+            stats.status = "pyserial or mpremote missing"
+            state["fatal"] = ("pyserial/mpremote missing -- "
+                              "pip3 install --user pyserial mpremote")
             return
-        except (OSError, TimeoutError) as exc:
-            stats.status = "board not answering on %s: %s" % (port, exc)
-            time.sleep(retry_s)
+        # Deliberately broad. mpremote raises TransportError, which is NOT an
+        # OSError, so an OSError-only clause let it escape and KILL this
+        # supervisor thread -- the board then never reconnected while its
+        # panel kept showing the last frame. Any attach failure must back off
+        # and retry, never take the thread down; a supervisor that can die is
+        # not a supervisor.
+        except Exception as exc:
+            fails += 1
+            wait = _backoff()
+            stats.status = ("board not answering on %s after %d attempt(s): %s "
+                            "(retry in %gs)" % (port, fails, exc, wait))
+            print("board: attach failed (%d): %s -- waiting %gs"
+                  % (fails, exc, wait), flush=True)
+            time.sleep(wait)
             continue
 
+        fails = 0
         if not first:
             stats.reconnects += 1
         first = False
@@ -695,7 +1067,15 @@ def supervise(port_hint, script_text, latest, stats, state,
                 on_done()
             return
 
-        stats.status = "board disconnected -- reconnecting"
+        reason = getattr(board, "end_reason", "") or "unknown"
+        why = getattr(board, "last_error", "") or ""
+        print("board: stream ended (%s)" % reason, flush=True)
+        if why:
+            stats.status = "board stopped: %s" % why.splitlines()[-1][:90]
+            stats.junk.append(why.encode("utf-8", "replace")[:400])
+            print("board: STOPPED WITH AN ERROR ->\n%s" % why, flush=True)
+        else:
+            stats.status = "board disconnected -- reconnecting"
         print("board: disconnected -- will reconnect", flush=True)
         try:
             board.stop()
@@ -707,35 +1087,82 @@ def supervise(port_hint, script_text, latest, stats, state,
         time.sleep(settle_s)
 
 
+def parse_board_specs(specs, labels=None):
+    """``["AE3=/dev/x", "N6=/dev/y"]`` -> ``[BoardView, ...]`` in order."""
+    views = []
+    for spec in specs:
+        if "=" not in spec:
+            raise SystemExit("--board wants LABEL=PORT, got %r" % spec)
+        label, port = spec.split("=", 1)
+        label, port = label.strip(), port.strip()
+        if not label or not port:
+            raise SystemExit("--board wants a non-empty LABEL and PORT: %r"
+                             % spec)
+        views.append(BoardView(label, port, labels=labels))
+    dupes = {v.port for v in views}
+    if len(dupes) != len(views):
+        raise SystemExit("the same port was given twice -- each board needs "
+                         "its own device")
+    return views
+
+
 def main(argv=None):
     args = parse_args(argv)
     cfg = cfg_from_args(args)          # SystemExit on a malformed threshold
     labels = class_labels(args)
     script_text = build_board_script_text(cfg)
 
-    saver = None
+    if args.board:
+        views = parse_board_specs(args.board, labels)
+    else:
+        views = [BoardView("OpenMV", args.port, labels=labels)]
+
     if args.save_frames:
-        saver = FrameSaver(args.save_frames, args.save_every, labels)
-        print("saving 1 frame in %d to %s -- overlay OFF (training frames must "
-              "be clean); boxes go to index.jsonl"
-              % (saver.every, args.save_frames), flush=True)
+        for view in views:
+            view.saver = FrameSaver(os.path.join(args.save_frames, view.label),
+                                    args.save_every, labels)
+            print("saving 1 frame in %d to %s -- overlay OFF (training frames "
+                  "must be clean); boxes go to index.jsonl"
+                  % (view.saver.every, view.saver.dir), flush=True)
 
-    latest, stats = Latest(), Stats(labels=labels)
-    state = {"alive": True, "quit": False, "board": None}
-
-    httpd = QuietServer(("127.0.0.1", args.http_port),
-                        make_handler(latest, stats))
+    httpd = QuietServer((args.bind, args.http_port),
+                        make_multi_handler(views))
+    if args.bind not in ("127.0.0.1", "localhost"):
+        print("WARNING: bound to %s -- the camera feed is reachable by any "
+              "host on this network, with no authentication." % args.bind,
+              flush=True)
+        for addr in lan_addresses():
+            print("  http://%s:%d/" % (addr, args.http_port), flush=True)
     url = "http://localhost:%d/" % args.http_port
     bounded = bool(args.max_frames) or args.max_seconds < 3600
     print("open %s  (%s)"
           % (url, "ends by itself after the bounded run" if bounded
              else "Ctrl-C to stop"), flush=True)
 
-    threading.Thread(
-        target=supervise,
-        args=(args.port, script_text, latest, stats, state, 2.0, 1.0, saver,
-              httpd.shutdown),
-        daemon=True).start()
+    # A bounded run (--max-frames) ends when EVERY board has finished, not
+    # when the first one does -- otherwise the faster board tears down the
+    # viewer while the slower one is still mid-run, which on a two-board
+    # comparison silently truncates exactly the row being measured.
+    finished = set()
+    finished_lock = threading.Lock()
+
+    def _finished(label):
+        with finished_lock:
+            finished.add(label)
+            if len(finished) == len(views):
+                httpd.shutdown()
+
+    for view in views:
+        # One supervisor thread per board: an independent attach, reader and
+        # reconnect loop, so a board that drops out cannot stall the other.
+        threading.Thread(
+            target=supervise,
+            args=(view.port, script_text, view.latest, view.stats, view.state),
+            kwargs={"saver": view.saver,
+                    "on_done": (lambda lbl=view.label: _finished(lbl))},
+            daemon=True).start()
+        print("board %-6s -> %s" % (view.label, view.port or "(auto)"),
+              flush=True)
 
     # SIGTERM must unwind through the same path as Ctrl-C. A stop that skips
     # board.stop() leaves the board streaming into a closed endpoint from
@@ -754,20 +1181,31 @@ def main(argv=None):
         print("\nstopping...", flush=True)
     finally:
         httpd.server_close()
-        state["quit"] = True
-        board = state.get("board")
-        if board is not None:
-            board.stop()
-        s = stats.snapshot()
-        print("frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
-              "inference %.1f ms  blobs %.1f ms  encode %.1f ms"
-              % (s["frames"], s["fps"], s["resyncs"], s["reconnects"],
-                 s["inf_ms"], s["blob_ms"], s["enc_ms"]), flush=True)
-        if saver is not None:
-            print("saved %d frames to %s (index.jsonl)"
-                  % (saver.saved, saver.dir), flush=True)
-        if stats.junk:
-            print("junk lines seen (last 5): %r" % (stats.junk[-5:],), flush=True)
+        # Every board gets its teardown even if one of them raises: leaving a
+        # board streaming into a closed endpoint is what takes it off the USB
+        # bus, and on a two-board bench that would strand the other one too.
+        for view in views:
+            view.state["quit"] = True
+            board = view.state.get("board")
+            if board is not None:
+                try:
+                    board.stop()
+                except Exception as exc:
+                    print("board %s: teardown failed: %s" % (view.label, exc),
+                          flush=True)
+        for view in views:
+            s = view.stats.snapshot()
+            print("%-6s frames %d  mean fps %.1f  resyncs %d  reconnects %d  "
+                  "inference %.1f ms  blobs %.1f ms  encode %.1f ms"
+                  % (view.label, s["frames"], s["fps"], s["resyncs"],
+                     s["reconnects"], s["inf_ms"], s["blob_ms"], s["enc_ms"]),
+                  flush=True)
+            if view.saver is not None:
+                print("  saved %d frames to %s (index.jsonl)"
+                      % (view.saver.saved, view.saver.dir), flush=True)
+            if view.stats.junk:
+                print("  junk (last 3): %r" % (view.stats.junk[-3:],),
+                      flush=True)
     return 0
 
 

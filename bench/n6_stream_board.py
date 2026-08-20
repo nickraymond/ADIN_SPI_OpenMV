@@ -29,6 +29,7 @@
 
 import csi
 import gc
+import os
 import time
 import binascii
 
@@ -263,13 +264,51 @@ def main():
         model, has_pp = make_model(MODEL, THRESHOLD)
         labels = load_labels(MODEL)
 
-    # One banner line the host echoes verbatim -- provenance for the results table.
+    # Model provenance, so "is this apples to apples?" is answerable from the
+    # page instead of from memory. The two boards ship DIFFERENT yolov8n
+    # binaries under the same filename (S8 correction), so the FILE SIZE is
+    # the field that actually settles it -- read from os.stat, which cannot
+    # fail, rather than a model attribute that might not exist on a given
+    # firmware. Everything else is best-effort.
+    minfo = {"path": MODEL if DETECT else "", "bytes": -1,
+             "in": "", "out": "", "arena": -1}
+    if DETECT:
+        try:
+            minfo["bytes"] = os.stat(MODEL)[6]
+        except OSError:
+            pass
+        for key, attr in (("in", "input_shape"), ("out", "output_shape")):
+            try:
+                minfo[key] = str(getattr(model, attr))
+            except Exception:
+                pass
+        for attr in ("ram_size", "ram"):
+            try:
+                minfo["arena"] = int(getattr(model, attr))
+                break
+            except Exception:
+                pass
+
+    # One banner line the host echoes verbatim -- provenance for the results
+    # table. `board` is NOT decoration: with an N6 and an AE3 both on USB, a
+    # table attributed to the wrong board is the exact failure this project
+    # has already shipped once (DESIGN "S8 detail CORRECTION"). Every row
+    # should carry the board that produced it.
     img = csi0.snapshot()
-    print("#I {\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,\"model\":\"%s\","
+    # Union of both sessions' banner fields: model provenance (which binary,
+    # how big, what shape) from the head-to-head work, blob-class provenance
+    # from bite A. Both are answers to "apples to apples?" -- the model half
+    # for the boards, the blob half for the control method.
+    print("#I {\"board\":%s,\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,"
+          "\"pixfmt\":\"RGB565\",\"model\":\"%s\",\"model_bytes\":%d,"
+          "\"model_in\":%s,\"model_out\":%s,\"arena\":%d,"
           "\"labels\":%s,\"quality\":%d,\"heap\":%d,\"blob_classes\":%s,"
           "\"blob_scan\":\"%s\",\"overlay\":%d}"
-          % (_json_str(sys.version), FRAMESIZE, img.width(), img.height(),
-             MODEL if DETECT else "", _json_list(labels), QUALITY, gc.mem_free(),
+          % (_json_str(os.uname().machine), _json_str(sys.version),
+             FRAMESIZE, img.width(), img.height(),
+             minfo["path"], minfo["bytes"],
+             _json_str(minfo["in"]), _json_str(minfo["out"]), minfo["arena"],
+             _json_list(labels), QUALITY, gc.mem_free(),
              _json_list([c[0] for c in BLOB_CLASSES]), BLOB_SCAN, OVERLAY))
 
     threshes = [c[1] for c in BLOB_CLASSES]

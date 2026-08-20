@@ -182,6 +182,81 @@ class TestReaderLoop(unittest.TestCase):
         self.assertFalse(state["alive"])
 
 
+class TestBandwidth(unittest.TestCase):
+    """Bandwidth must come from delivered bytes, never from the q setting."""
+
+    def test_mbps_over_the_window(self):
+        # 3 frames at t=0,1,2 -> 2 s span, 2 payloads counted after the first.
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 2.0, 2.0]))
+        for _ in range(3):
+            s.note({"b64": 1000}, 125_000)      # 125 kB = 1 Mbit
+        self.assertAlmostEqual(s.mbps(), 1.0, places=6)
+
+    def test_wire_rate_uses_the_base64_size_not_the_jpeg(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 1.0]))
+        s.note({"b64": 200_000}, 100_000)
+        s.note({"b64": 250_000}, 125_000)
+        self.assertAlmostEqual(s.mbps(), 1.0, places=6)        # jpeg bytes
+        self.assertAlmostEqual(s.wire_mbps(), 2.0, places=6)   # base64 bytes
+
+    def test_zero_before_two_frames(self):
+        s = H.Stats(clock=_clock_over([0.0]))
+        s.note({"b64": 10}, 10)
+        self.assertEqual(s.mbps(), 0.0)
+        self.assertEqual(s.wire_mbps(), 0.0)
+
+    def test_kb_per_frame_is_a_mean_of_delivered_payloads(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0, 1.0]))
+        s.note({}, 1024)
+        s.note({}, 3072)
+        self.assertAlmostEqual(s.kb_per_frame(), 2.0)
+
+    def test_window_is_bounded(self):
+        s = H.Stats(clock=_clock_over([float(i) for i in range(200)]))
+        for _ in range(100):
+            s.note({"b64": 10}, 10)
+        self.assertLessEqual(len(s._win_bytes), H.Stats.WINDOW)
+        self.assertLessEqual(len(s._win_wire), H.Stats.WINDOW)
+
+
+class TestBannerFields(unittest.TestCase):
+    """The #I banner is the provenance record: geometry, q, and which model."""
+
+    BANNER = (b'#I {"board":"OpenMV-AE3 with X","fw":"v5","framesize":"VGA",'
+              b'"w":640,"h":400,"pixfmt":"RGB565",'
+              b'"model":"/rom/yolov8n_192.tflite","model_bytes":1994976,'
+              b'"model_in":"((1, 192, 192, 3),)","model_out":"((1, 5, 756),)",'
+              b'"arena":791056,"labels":["person"],"quality":50,"heap":1}\n')
+
+    def _stats_after_banner(self):
+        latest, stats = H.Latest(), H.Stats()
+        H.reader_loop(_stream(self.BANNER), latest, stats, {"alive": True})
+        return stats.snapshot()
+
+    def test_geometry_reaches_the_snapshot(self):
+        snap = self._stats_after_banner()
+        self.assertEqual((snap["framesize"], snap["w"], snap["h"]),
+                         ("VGA", 640, 400))
+        self.assertEqual(snap["pixfmt"], "RGB565")
+
+    def test_quality_reaches_the_snapshot(self):
+        self.assertEqual(self._stats_after_banner()["quality"], 50)
+
+    def test_model_identity_reaches_the_snapshot(self):
+        snap = self._stats_after_banner()
+        self.assertEqual(snap["model_bytes"], 1994976)   # settles apples-to-apples
+        self.assertIn("192", snap["model_in"])
+        self.assertEqual(snap["labels"], ["person"])
+        self.assertEqual(snap["arena"], 791056)
+
+    def test_missing_banner_leaves_safe_defaults(self):
+        # No banner yet: the page must render, not crash on undefined.
+        snap = H.Stats().snapshot()
+        self.assertEqual(snap["framesize"], "")
+        self.assertIsNone(snap["quality"])
+        self.assertEqual(snap["model_bytes"], -1)
+
+
 class TestStaleness(unittest.TestCase):
     """A frozen stream and a motionless scene look identical on screen.
 
@@ -323,13 +398,131 @@ class TestSerialBoardReadline(unittest.TestCase):
         self.assertEqual(b.readline(), b'#D {"frames":2}\n')
         self.assertEqual(b.readline(), b"")
 
-    def test_eot_before_a_later_newline_still_ends(self):
+    def test_eot_at_buffer_start_ends(self):
         b = _board_over([b"\x04junk\n"])
         self.assertEqual(b.readline(), b"")
+
+    def test_stray_eot_mid_line_does_NOT_end_the_stream(self):
+        # base64 and the JSON headers contain no 0x04, so one deeper in a
+        # line is corruption. Treating it as end-of-stream tore down a
+        # healthy stream over a single bad byte.
+        b = _board_over([b"abc\x04def\n", b"next\n"])
+        self.assertEqual(b.readline(), b"abc\x04def\n")
+        self.assertEqual(b.readline(), b"next\n")
 
     def test_binary_payload_bytes_survive(self):
         b = _board_over([b"\xff\xd8\xff\xe0 payload\n"])
         self.assertEqual(b.readline(), b"\xff\xd8\xff\xe0 payload\n")
+
+
+class TestBoardSpecs(unittest.TestCase):
+    def test_parses_in_order(self):
+        vs = H.parse_board_specs(["AE3=/dev/ttyACM0", "N6=/dev/ttyACM1"])
+        self.assertEqual([(v.label, v.port) for v in vs],
+                         [("AE3", "/dev/ttyACM0"), ("N6", "/dev/ttyACM1")])
+
+    def test_order_is_left_to_right(self):
+        vs = H.parse_board_specs(["L=/dev/a", "R=/dev/b"])
+        self.assertEqual(vs[0].label, "L")   # panel order is argument order
+
+    def test_rejects_missing_equals(self):
+        with self.assertRaises(SystemExit):
+            H.parse_board_specs(["noequals"])
+
+    def test_rejects_empty_label_or_port(self):
+        for bad in (["=/dev/x"], ["A="]):
+            with self.assertRaises(SystemExit):
+                H.parse_board_specs(bad)
+
+    def test_rejects_the_same_port_twice(self):
+        # Two panels on one device would silently show the same board.
+        with self.assertRaises(SystemExit):
+            H.parse_board_specs(["A=/dev/x", "B=/dev/x"])
+
+    def test_views_are_independent(self):
+        a, b = H.parse_board_specs(["A=/dev/x", "B=/dev/y"])
+        a.stats.note({"inf_us": 1000}, 10)
+        self.assertEqual(a.stats.frames, 1)
+        self.assertEqual(b.stats.frames, 0)     # one board cannot skew another
+        a.latest.put(1, b"\xff\xd8x")
+        self.assertEqual(b.latest.get(), (b"", -1))
+
+
+class TestSupervisorSurvivesAttachErrors(unittest.TestCase):
+    """A supervisor that can die is not a supervisor.
+
+    mpremote raises TransportError, which is NOT an OSError. An
+    OSError-only clause let it escape and kill the thread outright: on
+    nereus000 the N6's panel then sat on its last frame forever while the
+    AE3 beside it streamed happily. Any attach failure must back off and
+    retry.
+    """
+
+    def _run_with_failing_attach(self, exc):
+        state = {"quit": False}
+        calls = {"n": 0}
+
+        def boom(port, baudrate=115200):
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                state["quit"] = True
+            raise exc
+
+        real = H.SerialBoard
+        H.SerialBoard = boom
+        try:
+            stats = H.Stats()
+            H.supervise("/dev/x", "src", H.Latest(), stats, state, retry_s=0)
+        finally:
+            H.SerialBoard = real
+        return calls["n"], stats
+
+    def test_survives_a_non_oserror_transport_failure(self):
+        class TransportError(Exception):
+            pass
+        n, stats = self._run_with_failing_attach(TransportError("failed to access"))
+        self.assertGreaterEqual(n, 3)          # retried, did not die
+        self.assertIn("not answering", stats.status)
+
+    def test_survives_an_oserror_too(self):
+        n, _ = self._run_with_failing_attach(OSError("device busy"))
+        self.assertGreaterEqual(n, 3)
+
+
+class TestMultiPage(unittest.TestCase):
+    def test_one_panel_and_route_per_board(self):
+        vs = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"])
+        page = H.multi_page(vs)
+        for token in ('id="t0"', 'id="t1"', "/s/0/stream", "/s/1/stream",
+                      "const N=2", "AE3", "N6"):
+            self.assertIn(token, page)
+
+    def test_single_board_still_renders(self):
+        page = H.multi_page([H.BoardView("solo", "/dev/a")])
+        self.assertIn("/s/0/stream", page)
+        self.assertNotIn("/s/1/stream", page)
+
+    def test_snapshot_carries_label_and_port(self):
+        v = H.BoardView("AE3", "/dev/ttyACM0")
+        snap = v.snapshot()
+        self.assertEqual(snap["label"], "AE3")
+        self.assertEqual(snap["port"], "/dev/ttyACM0")
+
+
+class TestPortCandidates(unittest.TestCase):
+    def test_linux_prefers_by_id(self):
+        # by-id encodes the USB serial; ttyACM numbering is assignment-order
+        # and swaps between boots. Getting this wrong is how a table gets
+        # attributed to the wrong board.
+        for pat in H.PORT_GLOBS["linux"]:
+            self.assertIn("/dev/serial/by-id/", pat)
+
+    def test_linux_matches_both_product_strings(self):
+        # The AE3 enumerates as "OpenMV Camera", the N6 as a MicroPython
+        # Pyboard VCP -- measured on nereus000. Both must be found.
+        pats = H.PORT_GLOBS["linux"]
+        self.assertTrue(any("OpenMV" in p for p in pats))
+        self.assertTrue(any("MicroPython" in p for p in pats))
 
 
 class TestConfig(unittest.TestCase):
@@ -602,6 +795,77 @@ class TestReaderLoopSaves(unittest.TestCase):
                           {"alive": True}, Full(d))
             self.assertEqual(stats.frames, 1)        # the stream survives
             self.assertTrue(any(b"save failed" in j for j in stats.junk))
+
+
+class TestMergedTwoBoardSeams(unittest.TestCase):
+    """The seams where bite A meets the side-by-side viewer.
+
+    Neither side's suite covered these, because neither side had both halves.
+    """
+
+    def test_blob_labels_reach_every_board(self):
+        views = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"],
+                                    ["pink", "purple"])
+        self.assertEqual([v.stats.labels for v in views],
+                         [["pink", "purple"], ["pink", "purple"]])
+
+    def test_each_board_reports_its_own_per_class_counts(self):
+        views = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"],
+                                    ["pink", "purple"])
+        views[0].stats.note({"blobs": 5, "bc": [3, 2], "amb": 0}, 10)
+        views[1].stats.note({"blobs": 4, "bc": [2, 2], "amb": 1}, 10)
+        snaps = [v.snapshot() for v in views]
+        self.assertEqual([s["blob_counts"] for s in snaps], [[3, 2], [2, 2]])
+        self.assertEqual([s["amb"] for s in snaps], [0, 1])
+        self.assertEqual([s["label"] for s in snaps], ["AE3", "N6"])
+
+    def test_the_page_shows_the_per_class_readout(self):
+        views = H.parse_board_specs(["AE3=/dev/a"], ["pink"])
+        page = H.multi_page(views)
+        self.assertIn("blob_labels", page)
+        self.assertIn("ambiguous", page)
+
+    def test_two_boards_capture_into_separate_directories(self):
+        # Both boards number frames from 0; one shared directory would mean
+        # the second board silently overwrites the first board's dataset.
+        with tempfile.TemporaryDirectory() as d:
+            views = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"], ["pink"])
+            for v in views:
+                v.saver = H.FrameSaver(os.path.join(d, v.label), 1, ["pink"])
+                v.saver.put({"seq": 0, "bb": []}, b"\xff\xd8" + v.label.encode())
+            self.assertEqual(sorted(os.listdir(d)), ["AE3", "N6"])
+            for v in views:
+                path = os.path.join(d, v.label, "frame_000000.jpg")
+                self.assertEqual(open(path, "rb").read(),
+                                 b"\xff\xd8" + v.label.encode())
+
+    def test_supervise_takes_saver_and_on_done_as_keywords(self):
+        # The merge changed this signature from both sides at once; positional
+        # threading of `saver` into the backoff slot would be silent.
+        import inspect
+        params = inspect.signature(H.supervise).parameters
+        for name in ("saver", "on_done", "backoff", "retry_s"):
+            self.assertIn(name, params)
+        self.assertIsNone(params["saver"].default)
+        self.assertIsNone(params["on_done"].default)
+
+    def test_a_bounded_run_waits_for_every_board(self):
+        # The faster board must not tear the viewer down while the slower one
+        # is still running -- that truncates the row being measured.
+        views = H.parse_board_specs(["AE3=/dev/a", "N6=/dev/b"], ["pink"])
+        shutdowns = []
+        finished, lock = set(), __import__("threading").Lock()
+
+        def _finished(label):
+            with lock:
+                finished.add(label)
+                if len(finished) == len(views):
+                    shutdowns.append(True)
+
+        _finished("AE3")
+        self.assertEqual(shutdowns, [])          # one board done: keep serving
+        _finished("N6")
+        self.assertEqual(shutdowns, [True])      # both done: shut down
 
 
 if __name__ == "__main__":

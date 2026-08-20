@@ -791,6 +791,21 @@ numbers; S21 = the product feature built on it.
       2026-08-20; see "Flagged, not owned by any bite yet"). Evidence
       stills are exactly the q90-class payload that defect bites; size
       this bite expecting to fix it, not to discover it.
+> **Scoping input from S24 (2026-08-19) — read DESIGN §S24 "what
+> detection rate does an application actually need?" before sizing this
+> sprint.** The required fps follows from `2 × speed ÷ object length`,
+> and it splits the product line in two: **fish and jellyfish are
+> throughput problems** (~2–3 fps needed, favouring the N6) while
+> **urchins and kelp are energy problems** (1 frame per 80 s to per
+> 4 hours — 7 fps is 560× to 10⁵× oversampled, and the AE3's
+> 4.3×-better mJ/inference decides it). **No single board wins the
+> product line.** Critically, the fish case is squeezed from both sides:
+> single-pass downscale is fast enough to track but too coarse to detect
+> at range, tiled HD restores the size floor but drops to 0.91 fps,
+> below the ~2.8 fps tracking needs — so **a custom detector with a
+> larger input is what makes fish counting possible, not an
+> optimisation.** Input speeds/sizes are unvalidated estimates (SPEC
+> §Open questions) — Nick to check before designing to them.
 Urchin/target counting ON THE HP CORE (NPU; HE has no room/NPU access —
 D29 context). Requires a custom Vela-compiled detector (S8 finding:
 ROM detectors are person-class-only; HD tiled = 1.2 fps). Alerts +
@@ -1189,6 +1204,50 @@ blob overlay on. Full tables: DESIGN §S24 detail.
 **The verified hardware facts moved to S8** — they are operational
 guidance the next session needs in front of it, not history.
 
+**DELIVERED AFTER THE FOLD (2026-08-19 evening → 2026-08-20).** This
+work landed while S24 was being closed, so it is recorded here and its
+open items are routed into S8 rather than re-splitting the sprint:
+
+- `[x]` **AE3 run of the same demo + hardware ranking.** Same scripts,
+  board swapped. **The AE3 wins on energy and the N6 on throughput, and
+  the ranking inverts by workload** — inference 27.5 vs 23.7 ms (1.2×,
+  and confounded by different model binaries) but JPEG encode 73.8 vs
+  3.9 ms (19×), so delivered 7.6 vs ~19 fps; against that, **5.5 mJ vs
+  23.7 mJ per inference (AE3 4.3× better)** from Nick's ~0.2 W vs ~1.0 W
+  readings. Fish/jelly want throughput (N6); urchins/kelp want energy
+  (AE3). Tables + caveats: DESIGN §S24 ranking.
+- `[x]` **Side-by-side viewer** (`--board LABEL=PORT`, repeatable): both
+  boards in one page from one process, per-board supervisor threads,
+  panels showing capture geometry, JPEG q **and measured KB/frame**,
+  image vs USB-wire Mbps, and **model filename + byte size** — which
+  puts the apples-to-apples question on screen and answers it NO
+  (1.90 MB AE3 vs 3.08 MB N6 under the same filename). Ran live on
+  nereus000. Host suite **53**.
+- `[ ]` **OWED — the AE3's inference-only ceiling.** The demo's fps is a
+  *streaming* ceiling; an application reporting results never pays the
+  encode. Currently a **bound, 26–36/s** (36 if its 11.6 ms capture
+  overlaps inference, 26 if serial; the N6's is measured at 42). ~2 min
+  of board time. **This is the number a customer's application is
+  limited by** — it should not stay a bound.
+- `[ ]` **→ S8: frame-validity gate before inference (PRODUCT
+  REQUIREMENT).** In the dark the AE3 reports `person 0.87` on a
+  full-frame box: its sensor crushes the scene to **90.6% exactly-zero
+  pixels** and the network's head emits a fixed confident output when
+  fed zeros (the N6, whose exposure yields mean luma 12.1 with no zero
+  pixels, correctly detects nothing). **A subsea node sits in darkness
+  routinely, so this would emit confident false counts all night.**
+  Gate on mean luma / non-zero fraction upstream of `predict()`.
+  First confirm in daylight that it vanishes — if it survives good
+  light, the model/NPU path is suspect and this diagnosis is wrong.
+- `[ ]` **→ S8: AE3 low-light exposure.** Same evidence, separate
+  problem: the N6 gets a usable dim image where the AE3 gets zeros. A
+  camera that goes blind below some light level bounds the product
+  regardless of the detector.
+- `[ ]` **→ S8/S21: Pi Zero 2 W + IMX on the same axis** (Nick's next
+  step). Measure **mJ per inference**, not fps, so all three boards land
+  on one comparable scale. Prior: no NPU, 1–2 W baseline = 5–10× the
+  AE3's *total* draw before any work.
+
 ---
 
 **RESUME-ON-HARDWARE (first thing when PCBAs arrive):** S9 bite-3
@@ -1428,10 +1487,12 @@ transport swapped later.*
 *(Was "Edge CV bring-up (T2)". Its old gate — "runs AFTER the BM-native
 arc S9–S13; board risk gates CV investment" — is **OVERRIDDEN by Nick
 2026-08-20**: CV is now the board-selection input, so it leads.
-**Runs alongside S24, which owns the N6 baseline and its toolchain
-question** — S8 is the AE3 half plus the cross-board custom model; S24
-is the N6's measured floor. Neither blocks the other: S24 is Mac-only,
-S8 wants the bench. Encoder
+**S24 is CLOSED and folded in** (2026-08-20) — its round-2 work (the
+AE3-vs-N6 head-to-head, the side-by-side viewer, the dark-frame
+false-detection finding) merged here via PR #48, and its open items are
+routed into S8's bites below. The "S24 is Mac-only, S8 wants the bench"
+split is dead with it: **both boards are on nereus000** (D44), so S8
+owns one bench and one harness. Encoder
 fps work (S23 bites S and 3) waits behind these numbers — Nick: get a
 custom model benchmarking on both boards before spending more on VGA.)*
 **Goal:** prove the ENTIRE custom-model path — train, compile, deploy,
