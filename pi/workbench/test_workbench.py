@@ -378,13 +378,23 @@ class TestRunner(unittest.TestCase):
     def setUp(self):
         d = tempfile.mkdtemp(prefix="wb_run_")
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self.probe_calls = []
+        self.repair_calls = []
         self.r = Runner(repo=d, pidfile=os.path.join(d, "run.json"),
-                        logpath=os.path.join(d, "run.log"))
+                        logpath=os.path.join(d, "run.log"),
+                        probe=self._fail_probe, repair=self._fail_repair)
         self.r.POLL = 0.05
         self.r.GRACE_INT = 1.0
         self.r.GRACE_TERM = 1.0
         self.r.HEALTH_TIMEOUT = 5.0
+        self.r.RECON_GAP = 0.0
         self.addCleanup(self._cleanup_child)
+
+    def _fail_probe(self, by_id, paths):
+        self.fail("probe called for a recipe that declares no state")
+
+    def _fail_repair(self, by_id, src, path):
+        self.fail("repair called unexpectedly")
 
     def _cleanup_child(self):
         # Test hygiene only -- the product never SIGKILLs.
@@ -404,9 +414,9 @@ class TestRunner(unittest.TestCase):
 
     def test_start_to_live_without_health_then_stop(self):
         self.r.start(run_recipe(SLEEPER), READY)
-        self.assertEqual(self.r.state, "starting")
-        self.assertTrue(os.path.exists(self.r.pidfile))
+        self.assertIn(self.r.state, ("reconciling", "starting", "live"))
         self.wait_state("live")
+        self.assertTrue(os.path.exists(self.r.pidfile))
         self.assertEqual(self.r.stop(), "idle")
         self.assertFalse(os.path.exists(self.r.pidfile))
         self.assertIsNone(self.r.recipe)
@@ -506,10 +516,10 @@ class TestRunner(unittest.TestCase):
         self.assertIn("999", msg)
         self.assertIn("will not kill", msg)
 
-    def test_bad_exec_is_a_refusal_not_a_crash(self):
-        with self.assertRaises(StartRefused):
-            self.r.start(run_recipe(["/no/such/binary"]), READY)
-        self.assertEqual(self.r.state, "idle")
+    def test_bad_exec_fails_loudly_not_a_crash(self):
+        self.r.start(run_recipe(["/no/such/binary"]), READY)
+        self.wait_state("failed")
+        self.assertIn("cannot exec", self.r.error)
 
     def test_recipe_without_run_refused(self):
         with self.assertRaises(StartRefused):
@@ -555,6 +565,164 @@ class TestRunner(unittest.TestCase):
         self.assertEqual(r2.recipe["name"], "rt")
         self.assertEqual(r2.stop(), "idle")
         self.assertFalse(self.r._alive())
+
+
+class TestReconcile(unittest.TestCase):
+    """Bite 3: verify declared state, repair ONLY drift, report loudly.
+    Probes/repairs are injected fakes -- the mpremote transport is a thin
+    proven shell; the logic under test is drift handling."""
+
+    GOOD_SHA = "ab" * 32
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="wb_recon_")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        self.probes = []      # scripted responses, popped in order
+        self.probe_log = []
+        self.repair_log = []
+        self.r = Runner(repo=self.d, pidfile=os.path.join(self.d, "run.json"),
+                        logpath=os.path.join(self.d, "run.log"),
+                        probe=self._probe, repair=self._repair)
+        self.r.POLL = 0.05
+        self.r.GRACE_INT = 1.0
+        self.r.GRACE_TERM = 1.0
+        self.r.RECON_GAP = 0.0
+        self.addCleanup(self._cleanup_child)
+
+    def _cleanup_child(self):
+        if self.r.pid:
+            try:
+                os.killpg(self.r.pid, signal.SIGKILL)  # test hygiene only
+            except OSError:
+                pass
+
+    def _probe(self, by_id, paths):
+        self.probe_log.append((by_id, tuple(paths)))
+        resp = self.probes.pop(0)
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
+
+    def _repair(self, by_id, src, path):
+        self.repair_log.append((by_id, src, path))
+
+    def wait_state(self, *states, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.r.state in states:
+                return self.r.state
+            time.sleep(0.02)
+        self.fail("state %r never reached %r" % (self.r.state, states))
+
+    def _recipe_fw(self, fw="v5.0.0"):
+        r = run_recipe(SLEEPER)
+        r["boards"][0]["firmware"] = fw
+        return r
+
+    def _recipe_model(self, sha=GOOD_SHA, src="ml/artifacts/m.tflite"):
+        r = run_recipe(SLEEPER)
+        r["boards"][0]["models"] = [{"name": "m", "path": "/flash/m.tflite",
+                                     "sha256": sha, "src": src}]
+        if src:
+            full = os.path.join(self.d, src)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as fh:
+                fh.write(b"model bytes")
+        return r
+
+    def _art_sha(self):
+        import hashlib as h
+        return h.sha256(b"model bytes").hexdigest()
+
+    def test_clean_state_probes_once_and_goes_live(self):
+        self.probes = [{"version": "3.x; OpenMV v5.0.0", "models": {}}]
+        self.r.start(self._recipe_fw(), READY)
+        self.wait_state("live")
+        self.assertEqual(len(self.probe_log), 1)
+        checks = self.r.snapshot()["reconcile"][0]["checks"]
+        self.assertTrue(checks[0]["ok"])
+        self.r.stop()
+
+    def test_firmware_drift_fails_never_repairs(self):
+        self.probes = [{"version": "3.x; OpenMV v9.9.9", "models": {}}]
+        self.r.start(self._recipe_fw(), READY)
+        self.wait_state("failed")
+        self.assertIn("firmware drift", self.r.error)
+        self.assertIn("v9.9.9", self.r.error)
+        self.assertEqual(self.repair_log, [])
+        self.assertGreater(self.r.snapshot()["settle_s"], 0)
+
+    def test_model_drift_with_src_repairs_and_reverifies(self):
+        good = self._art_sha()
+        r = self._recipe_model(sha=good)
+        self.probes = [
+            {"version": "x", "models": {"/flash/m.tflite": (None, "ENOENT")}},
+            {"version": "x", "models": {"/flash/m.tflite": (good, None)}}]
+        self.r.start(r, READY)
+        self.wait_state("live")
+        self.assertEqual(len(self.repair_log), 1)
+        self.assertEqual(self.repair_log[0][2], "/flash/m.tflite")
+        self.assertEqual(len(self.probe_log), 2)  # probe + re-verify
+        checks = self.r.snapshot()["reconcile"][0]["checks"]
+        self.assertTrue(checks[0]["repaired"])
+        self.r.stop()
+
+    def test_clean_model_does_no_writes(self):
+        good = self._art_sha()
+        r = self._recipe_model(sha=good)
+        self.probes = [{"version": "x",
+                        "models": {"/flash/m.tflite": (good, None)}}]
+        self.r.start(r, READY)
+        self.wait_state("live")
+        self.assertEqual(self.repair_log, [])
+        self.assertEqual(len(self.probe_log), 1)
+        self.r.stop()
+
+    def test_drift_without_src_is_reported_not_repaired(self):
+        r = self._recipe_model(src=None)
+        r["boards"][0]["models"][0]["src"] = None
+        self.probes = [{"version": "x",
+                        "models": {"/flash/m.tflite": (None, "ENOENT")}}]
+        self.r.start(r, READY)
+        self.wait_state("failed")
+        self.assertIn("manual", self.r.error)
+        self.assertEqual(self.repair_log, [])
+
+    def test_wrong_repo_artifact_refuses_to_repair(self):
+        # Declared sha doesn't match the artifact on disk: repairing would
+        # push the WRONG bytes -- the recipe is the broken thing.
+        r = self._recipe_model(sha="cd" * 32)
+        self.probes = [{"version": "x",
+                        "models": {"/flash/m.tflite": (None, "ENOENT")}}]
+        self.r.start(r, READY)
+        self.wait_state("failed")
+        self.assertIn("fix the recipe", self.r.error)
+        self.assertEqual(self.repair_log, [])
+
+    def test_unverified_repair_fails(self):
+        good = self._art_sha()
+        r = self._recipe_model(sha=good)
+        self.probes = [
+            {"version": "x", "models": {"/flash/m.tflite": (None, "ENOENT")}},
+            {"version": "x", "models": {"/flash/m.tflite": ("00" * 32,
+                                                            None)}}]
+        self.r.start(r, READY)
+        self.wait_state("failed")
+        self.assertIn("did NOT verify", self.r.error)
+
+    def test_probe_failure_fails_and_arms_settle(self):
+        self.probes = [workbench.ReconcileFailed(
+            "probe of usb-x timed out after 30s")]
+        self.r.start(self._recipe_fw(), READY)
+        self.wait_state("failed")
+        self.assertIn("timed out", self.r.error)
+        self.assertGreater(self.r.snapshot()["settle_s"], 0)
+
+    def test_no_declared_state_means_no_board_contact(self):
+        self.r.start(run_recipe(SLEEPER), READY)  # probe would pop IndexError
+        self.wait_state("live")
+        self.assertEqual(self.probe_log, [])
+        self.r.stop()
 
 
 # ---------------------------------------------------------------------------

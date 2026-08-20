@@ -141,6 +141,9 @@ function globalBar() {
         href="${openUrl(run.opens)}">Open demo → ${openUrl(run.opens)}</a>` : "");
   else if (run.state === "starting")
     status = `<span class="starting">STARTING: ${esc(run.title)}…</span>`;
+  else if (run.state === "reconciling")
+    status = `<span class="starting">PREPARING: ${esc(run.title)} —
+      verifying board state…</span>`;
   else if (run.state === "stopping")
     status = `<span class="starting">stopping (SIGINT sent, waiting for
       clean teardown)…</span>`;
@@ -185,6 +188,9 @@ function recipeCard(r) {
   const settling = (run.settle_s || 0) > 0;
   const startable = ["idle","failed"].includes(run.state) && !busy && !settling;
   let status = "";
+  if (active && run.state === "reconciling")
+    status = `<div class="statusline starting">verifying board state
+      (firmware, models)…</div>`;
   if (active && run.state === "starting")
     status = `<div class="statusline starting">starting… waiting for the
       app's page to answer</div><pre class="log">${esc(run.log_tail)}</pre>`;
@@ -199,6 +205,14 @@ function recipeCard(r) {
   if (active && run.state === "failed")
     status = `<div class="statusline failed">FAILED — ${esc(run.error)}</div>
       <pre class="log">${esc(run.log_tail)}</pre>`;
+  if (active && (run.reconcile || []).length) {
+    const rows = run.reconcile.flatMap(b => (b.checks || []).map(c =>
+      `<tr><td>${esc(b.label)}</td><td>${esc(c.kind)}${c.path ?
+        " " + esc(c.path) : ""}</td>
+       <td class="${c.ok ? "ready" : "err"}">${c.ok ? "ok" : "DRIFT"}${
+        c.repaired ? " (repaired)" : ""}</td></tr>`));
+    status += `<table style="margin:.3rem 0">${rows.join("")}</table>`;
+  }
   const thumb = r.thumbnail
     ? `<img class="thumb" src="/${esc(r.thumbnail)}" alt="demo preview">` : "";
   return `<div class="card"><div class="rowflex"><div class="grow">
