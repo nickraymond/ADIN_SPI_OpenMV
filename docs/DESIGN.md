@@ -929,6 +929,434 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 bite 5 — side-by-side on nereus000, and an AE3 firmware surprise
+
+Both boards attached to nereus000, one process, one page, panels
+left-to-right. Ports resolved by **by-id** (ttyACM numbering is
+assignment-order and swaps between boots), and the two boards enumerate
+under *different* product strings — the AE3 as `usb-OpenMV_OpenMV_Camera_
+0829c14000000000-if00` (37c5:16e3), the N6 as
+`usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_0200230004…-if00`
+(37c5:1206) — so an `OpenMV*`-only glob finds one and silently misses
+the other.
+
+**⚠ The AE3 on nereus000 is NOT running the firmware the laptop AE3 was.**
+Measured from the boards' own banners, same script, same day:
+
+| | laptop AE3 | nereus000 AE3 |
+|---|---|---|
+| `sys.version` | `OpenMV v5.0.0; MicroPython v1.28.0-49` | `OpenMV v5.0.0-52.g7d4dbf7ab2.dirty; MicroPython 11852aa3d0-dirty` |
+| build | genuine stock release | **the S23 patched dev build** (`7d4dbf7`+patches) |
+| **VGA JPEG encode** | **73.8 ms** | **46.2 ms** |
+| delivered fps | 7.6 | 9.6 |
+
+`7d4dbf7ab2` is exactly the base commit the repo's custom firmware is
+built from and `.dirty` means local patches on top — i.e. the sticky-fb
+and **MVE-vectorized jpege** work from S18 B4 / S23 bite 1.
+
+**⚠ CORRECTION — the 73.8 → 46.2 ms encode delta is CONFOUNDED and must
+not be quoted as an MVE measurement.** It was first written up here as
+an independent corroboration of S23's 1.55× MVE figure. It is not, and
+Nick supplied the reason: **the nereus000 room was dark during this
+run, while the laptop AE3 was pointed at a lit scene.** JPEG encode time
+tracks image content, and the frames confirm it — 9,985 B here against
+~16,700 B on the laptop, so the dark frame is ~60% the size. An
+easier-to-encode scene is enough to explain much of the difference on
+its own.
+
+What survives, and what does not:
+
+- **CONFIRMED: the two AE3s run different firmware.** The banner strings
+  are definitive and content-independent (`v5.0.0` vs
+  `v5.0.0-52.g7d4dbf7ab2.dirty`).
+- **NOT ESTABLISHED: how much of 1.60× is the MVE patch.** Direction is
+  consistent with it, magnitude is unattributable across two different
+  scenes. The apparent 3% agreement with S23's 1.55× is coincidence
+  dressed as evidence.
+- **To measure it honestly:** run both firmwares against **the stored
+  reef reference scene** (`bench/assets/ref_scene`), which is exactly
+  why S0/S22/S23 used a fixed image rather than the camera — content
+  held constant, so encode time is attributable to code. `--no-detect`
+  plus a ref-image source would do it in minutes on one board, reflashed
+  between runs.
+
+**Consequence for the ranking table above: the 7.6 fps AE3 row is the
+STOCK number and stays correct as such** — it and the N6's ~19 fps were
+taken on the same lit scene, so that comparison is sound. The 9.6 fps
+patched-AE3 figure is a dark-room number and is **not** comparable to
+either; do not use it to restate the AE3-vs-N6 gap.
+
+**Standing lesson (third time this bite):** every fps and encode figure
+in S24 is scene-dependent, so a row is only comparable to another row
+shot on the same scene. The side-by-side view is immune to this by
+construction — both boards see the same room at the same instant —
+which is precisely what makes it the right instrument for board
+comparison, and makes cross-session single-board numbers the wrong one.
+
+**Bench hazard flagged:** both AE3s report USB serial
+`0829c14000000000` and machine id `AE302F80F55D5AE`. Either this is one
+board that was reflashed between the two sessions, or **the AE3's USB
+serial is a non-unique default** — in which case `by-id` cannot tell two
+AE3s apart and only the firmware banner can. The N6's serial
+(`020023000450433547373200`) looks like a real per-die UID by contrast.
+Unresolved; flagged in SPEC §Open questions. **Until it is resolved,
+trust the `#I` banner's `fw` string, not the port name, to say which
+AE3 produced a number.**
+
+**A black frame makes the detector confidently wrong — and that is a
+PRODUCT finding, not a bench curiosity.** In the dark room the AE3
+reported `person 0.87` on a full-frame box, every frame. It is not the
+drawing code and not the custom firmware; the model really does return
+that. Measured from the two boards' own frames, same room, same instant:
+
+| | mean luma | pixels exactly zero | range | detections |
+|---|---|---|---|---|
+| AE3 | **1.4** | **90.6%** | 0–96 | **person 0.87 (full frame)** |
+| N6 | 12.1 | **0%** | 4–30 | none |
+
+The AE3's sensor crushes the scene to **all zeros** with sparse hot-pixel
+noise; the N6's auto-exposure lifts the same room to a dim but fully
+populated image. So the AE3 is feeding the network a near-constant
+all-zero tensor — thoroughly out of distribution. A CNN given a constant
+input produces activations dominated by its biases, and the detection
+head settles on a fixed output; **0.87 is not a perception, it is what
+this network emits when fed zeros.** The N6, with a non-degenerate frame,
+correctly reports nothing. Both boards run a model with the same
+`(1, 5, 756)` output, verified individually, so the difference tracks the
+INPUT, not the silicon and not the firmware.
+
+Falsifiable, and cheap to check: **in daylight the false detection should
+vanish.** If it survives good light, the model or the NPU path is
+genuinely suspect and this explanation is wrong.
+
+**Why it matters beyond the bench:** a subsea node will sit in darkness
+routinely — at night, at depth, with the light off to save power. A
+detector that returns `person 0.87` on a black frame will happily
+generate confident false counts and alerts all night. **A frame-validity
+gate is therefore a product requirement, not polish**: cheap to
+implement (mean luma / fraction of non-zero pixels, both already
+computed by `get_statistics`), and it belongs upstream of `predict()` so
+the NPU is not even asked. Also worth pursuing separately: the AE3's
+exposure/gain in low light, since the N6 clearly extracts a usable
+signal from the same scene where the AE3 gets nothing.
+
+**Side-by-side numbers — VGA, DARK ROOM, both boards simultaneous:**
+
+| stage | AE3 (patched) | N6 | ratio |
+|---|---|---|---|
+| capture | 11.0 ms | 0.2 ms | 55× |
+| inference | 28.7 ms | 23.4 ms | **1.23×** |
+| blob search | 12.1 ms | 7.6 ms | 1.6× |
+| JPEG encode | 46.2 ms | 3.8 ms | **12×** |
+| **delivered** | **9.6 fps** | **28.9 fps** | 3.0× |
+
+**These two columns ARE comparable to each other** — same room, same
+instant, same script — which is the whole value of the side-by-side.
+They are **not** comparable to the lit-room rows elsewhere in §S24.
+
+Read that way it reproduces the lit-room conclusion on its own terms:
+**inference differs by only 1.23× while JPEG encode differs by 12×**, so
+the encoder is the AE3's binding constraint regardless of scene or
+firmware. Note both encode figures fell in the dark (AE3 73.8→46.2,
+N6 3.9→3.8) but the N6's barely moved — it has hardware doing the work,
+so content costs it almost nothing, while the AE3's software encoder
+pays for every detail in the frame. That asymmetry is itself a result.
+
+Validation in a dark room deliberately did NOT lean on `blobs`/`det`,
+which are correctly zero with no coloured objects lit: the checks were
+frames advancing, `stale_s` ~0, valid SOI/EOI with `SOF0 640×400` on
+both panels, and distinct SHA-256 per panel (proving two real boards
+rather than one stream mirrored).
+
+The N6's 28.9 fps sits right at its board-work limit (35 ms → 28.6
+predicted), beating the ~19 measured on the Mac — so the Mac's serial
+read path, not the board, was costing that difference.
+
+### S24 — what detection rate does an application actually need? (2026-08-19)
+
+Prompted by Nick asking where ~7 fps is *useful*. The rate is not set by
+the animal, it is set by **how far the target moves between frames
+relative to its own size**: once displacement exceeds roughly half a
+body length, frame-to-frame association breaks and "one individual seen
+twice" becomes indistinguishable from "two individuals" — which is the
+whole game when the deliverable is a count.
+
+    fps_min  ≈  2 × speed ÷ object length          (tracking / no double-count)
+    fps_min  ≈  N × speed ÷ FOV width              (don't miss a transit, N frames per crossing)
+
+⚠ **The speed and size figures below are order-of-magnitude estimates,
+NOT measured and NOT sourced — they are flagged in SPEC §Open questions
+and need Nick's field validation before anything is designed to them.**
+The arithmetic and the conclusions are what this section is for; the
+inputs are placeholders with the right exponent.
+
+| application | speed | size | fps needed | 7 fps is |
+|---|---|---|---|---|
+| **Fish, cruising** | ~0.25 m/s | ~18 cm | **~2.8** | 2.5× headroom — matched |
+| Fish, burst/startle | ~2 m/s | ~18 cm | ~22 | 3× too slow, tracks break |
+| **Jellyfish at an inlet** | ~0.3 m/s | ~30 cm | **~2** | 3.5× headroom |
+| **Urchins crawling** | ~3 cm/min | ~8 cm | ~1 frame/80 s | **~560× oversampled** |
+| **Kelp growth** | ~30 cm/day | ~10 cm | ~1 frame/4 h | **~10⁵× oversampled** |
+
+**Two regimes, and the board ranking INVERTS between them:**
+
+- **Fish and jellyfish are throughput problems.** A few fps is what
+  separates a correct count from a double count, so the N6's 2.5×
+  delivered-fps advantage is real product value. The jellyfish-inlet
+  case is additionally bounded by transit sampling — at 0.3 m/s through
+  a ~2 m FOV an individual crosses in ~7 s, so even 1 fps sees it, and
+  7 fps buys drift direction and density rather than mere presence.
+- **Urchins and kelp are energy problems, not rate problems.** At 7 fps
+  an urchin survey produces ~560 near-identical frames per frame that
+  carries new information; kelp is two further orders of magnitude out.
+  The correct design is duty-cycling — wake, infer once, sleep — and
+  there **the AE3's 5.5 mJ/inference is the whole decision**: at one
+  inference per minute a season of monitoring is a battery-sizing
+  exercise, and 4.3× energy is 4.3× deployment endurance.
+
+**There is therefore no single "better board" across the product line.**
+Fish/jelly favour the N6; urchin/kelp favour the AE3 decisively.
+
+**The fish case is squeezed from both sides, and this is the measured
+reason S8's conclusion stands.** The 7 fps figure comes from
+*single-pass downscale* (the whole frame resized to 192×192), which is
+temporally fine for cruising fish but puts a fish at range below the
+~24–32 px detection floor — so only near fish are seen. Restore the size
+floor by tiling HD and the rate collapses to **0.91 fps, now BELOW the
+~2.8 fps tracking needs**. Fast enough to track is too coarse to detect
+at range; fine enough to detect at range is too slow to track. Neither
+board escapes it (the NPUs are within 20%), so **a custom detector with
+a larger input — fewer tiles for the same coverage — is not an
+optimisation for the fish product, it is what makes it possible.**
+Urchins and kelp are immune to the squeeze: they hold still, so 40 tiles
+at 1.1 s costs nothing that matters.
+
+### S24 — what "fps" means here, and which ceiling binds (2026-08-19)
+
+Nick asked whether the demo's 7.6 fps was frames-with-inference or a mix.
+**It is 1:1** — verified from `n6_stream_board.py`'s loop, which is
+strictly serial with no skipping and no frame dropping:
+
+    capture -> predict -> draw -> blob search -> JPEG -> transmit
+
+so 7.6 fps means 7.6 captures, 7.6 `predict()` calls, 7.6 JPEGs and 7.6
+delivered frames — the same number throughout.
+
+**But that number is the wrong ceiling to quote at a customer**, because
+it prices a pipeline that also encodes and streams every frame. On the
+AE3, JPEG alone is 73.8 ms of a 128 ms frame — **58% of the budget spent
+producing a picture for a human**. An application that reports counts or
+alerts never pays it. Three distinct ceilings, and the product picks:
+
+| pipeline | AE3 | N6 |
+|---|---|---|
+| **Inference only** (detect, transmit results) | ~26–36 /s † | 42 /s |
+| Inference + occasional evidence still | near inference-only | ~42 /s |
+| Inference + continuous video (what §S24 measured) | 7.6 | ~19 |
+
+† **bounded, not measured**: 36/s if capture overlaps inference, 26/s if
+the AE3's 11.6 ms capture is serial. On the N6 capture is provably
+hidden (41.8 measured vs 42.2 theoretical at VGA); the AE3 equivalent
+was not captured before the board stopped answering. **Owed.**
+
+**The binding constraint for the actual product is neither — it is
+tiling.** `predict()` resizes the whole frame to the model's 192×192
+input, so the demo runs ONE inference over the full field of view at
+heavily reduced resolution; a target at range falls below the ~24–32 px
+detection floor (S8). Real coverage needs tiles, and then:
+
+- HD 1280×800, 192×192 model, 32 px overlap = **40 tiles**
+- AE3: 40 × 27.5 ms = 1.10 s → **0.91 fps**
+- N6: 40 × 23.7 ms = 0.95 s → **1.05 fps**
+
+Both **below the T2 ≥3 fps gate**, independently reproducing S8's
+conclusion on current silicon and current models.
+
+**Consequence for using fps as a ranking criterion: don't, directly.**
+It conflates three independent terms. Rank on the terms instead:
+
+    detection_fps = 1 / (tiles × inference_ms + capture + encoding you actually need)
+
+1. **Inference rate at the required input size** — the only fps-like
+   figure that is a property of the silicon rather than the pipeline.
+   The two boards are a coin flip here (36 vs 42 /s, and even that is
+   model-variant-confounded).
+2. **Tiles needed for the FOV and smallest target** — a lens and
+   geometry decision, not a compute one, and it multiplies straight
+   into frame time. Going 40 tiles → 12 buys more than any board swap
+   on this list.
+3. **Energy per inference**, on a power budget — where the AE3 wins
+   4.3× (ranking table below).
+
+So the board choice is close to a coin flip on throughput and decided by
+power; **what unlocks the product is a custom detector with a larger
+input** (fewer tiles), not faster silicon. That is S8's standing finding,
+now re-derived from two boards' measurements.
+
+### S24 — hardware ranking: N6 vs AE3 (2026-08-19)
+
+Both boards ran the **same scripts on the same scene** at VGA. Power
+figures are **Nick's bench readings** (method not recorded — treat as
+order-of-magnitude, and see the caveats below); everything else is
+measured by the counters in `bench/n6_stream_{board,host}.py`.
+
+| | OpenMV N6 | OpenMV AE3 | winner |
+|---|---|---|---|
+| **Board power (running yolov8n)** | ~1.0 W | **~0.2 W** | AE3 **5×** |
+| Delivered fps, VGA + overlay | **~19** | 7.6 | N6 2.5× |
+| Inference latency, yolov8n_192 | **23.7 ms** | 27.5 ms | N6 1.2× |
+| Inference rate (NPU alone) | **42.2 /s** | 36.4 /s | N6 1.2× |
+| **Energy per inference** | 23.7 mJ | **5.5 mJ** | AE3 **4.3×** |
+| **Energy per delivered frame** | 52.6 mJ | **26.3 mJ** | AE3 **2.0×** |
+| Delivered fps per watt | 19 | **38** | AE3 2.0× |
+| JPEG encode, VGA | **3.9 ms** | 73.8 ms | N6 **19×** |
+| Capture | **0.2 ms** | 11.6 ms | N6 |
+| Blob search (CPU), VGA | **11.0 ms** | 15.6 ms | N6 1.4× |
+| Free heap | **25.6 MB** | 4.09 MB | N6 6× |
+| Model arena (same model) | **196 KB** | 791 KB | N6 4× |
+| Hardware JPEG | **yes** | no (D41) | N6 |
+| Max capture | HD 1280×800 | HD 1280×800 | tie |
+
+**The ranking depends entirely on the workload, and the two answers are
+opposite:**
+
+- **Streaming video → N6.** Its hardware JPEG is the whole story: 3.9 ms
+  vs 73.8 ms, which is 58% of the AE3's frame budget. That single term
+  is why the N6 delivers 2.5× the fps despite the NPUs being within 20%
+  of each other.
+- **Duty-cycled inference on a power budget → AE3, decisively.** At
+  **5.5 mJ per inference vs 23.7 mJ it is 4.3× cheaper per detection**,
+  and that is the metric that matters for a battery- or PoDL-fed node
+  that wakes, looks, decides, and sleeps. It wins on energy per frame
+  (2.0×) even in the streaming case it loses on throughput.
+
+**The NPUs are close; the SoCs are not.** Inference differs by 1.2× —
+and the AE3 is running a *smaller* model binary (1,994,976 B vs
+3,233,408 B), so even that gap is confounded. What separates the boards
+is everything around the NPU: the N6 spends silicon on a JPEG encoder
+and 25.6 MB of heap and pays ~1 W for it; the AE3 omits both and runs
+the same detector for a fifth of the power.
+
+**Caveats that must travel with these numbers:**
+
+1. **Both power figures are single bench readings with the method not
+   recorded.** They are 5× apart, which is far outside any plausible
+   reading error, so the *direction* is safe — but do not quote 0.2 W
+   or 1.0 W as instrumented values. A deliberate re-measure (idle vs
+   inference-only vs full stream, same instrument, same conditions on
+   both boards) is owed before any of this sizes a power budget.
+2. **This is whole-board 5 V draw**, not SoC or NPU power — regulators,
+   sensor, USB PHY and LEDs included. Correct for comparing boards
+   running the same workload; useless for attributing power to the NPU.
+3. **The two boards ship different yolov8n binaries**, so the inference
+   comparison is model-variant-confounded (the standing §S8 caveat).
+4. The AE3 rows were taken while it was also JPEG-encoding and
+   streaming over USB, i.e. its *worst* case for power. A duty-cycled
+   inference-only workload should draw less still.
+
+**Forward-looking, for the Pi Zero 2 W comparison (not yet measured):**
+a Pi Zero 2 W has **no NPU**, so yolov8n runs on CPU, and its expected
+1–2 W baseline is **5–10× the AE3's total draw before it does any
+work**. If the AE3 holds at 5.5 mJ per inference, the interesting
+number to put next to it is not the Pi's fps but its **mJ per
+inference** — that is where an accelerator-less SoC should lose by one
+to two orders of magnitude. Worth measuring exactly that way so the
+three boards land on one axis.
+
+### S24 detail — the same demo on the AE3 (2026-08-19)
+
+Same scripts, same scene, board swapped. **AE3 on genuine stock
+`OpenMV v5.0.0; MicroPython v1.28.0-49`** (verified via `sys.version`;
+`/flash/main.py` is the stock LED blinker, so the board is fully
+restored — no bridge launcher, no S6 fixture). Identity cross-checked
+three ways: `os.uname().machine` = `OpenMV-AE3 with AE302F80F55D5AE`,
+USB serial `0829c14000000000` matching the by-id string in §S8, free
+heap 4.09 MB, and `/rom/yolov8n_192.tflite` = **1,994,976 B** (the AE3
+variant, vs the N6's 3,233,408) plus the audio models the N6 lacks.
+
+**VGA (640×400 — both boards letterbox to 16:10), per-frame:**
+
+| stage | N6 | AE3 | AE3 / N6 |
+|---|---|---|---|
+| capture | 0.2 ms | 11.6 ms | 58× |
+| inference (yolov8n_192) | 23.5 ms | 27–28 ms | **1.2×** |
+| blob search | 11.0 ms | 15.6 ms | 1.4× |
+| **JPEG encode** | 3.9 ms | **73.8 ms** | **19×** |
+| model load | 2.2 ms | 51.0 ms | 23× |
+| model arena | 196 KB | 791 KB | 4× |
+| **delivered fps** | **~19** | **7.6** | 0.4× |
+
+Zero resyncs on the AE3 throughout; board work (11.6+27.3+15.6+73.8 =
+128 ms → 7.8 fps) accounts for the delivered 7.6, so the transport is
+not involved.
+
+**The gap is almost entirely the JPEG encoder, not the NPU.** Inference
+is within 20% between the two boards — the AE3's Ethos-class NPU is
+competitive, and it is running a smaller model variant. What separates
+them is that **the AE3 has no hardware JPEG** (vendor-verified in D41)
+and encodes VGA in software at 73.8 ms, 58% of its entire frame budget.
+This is the S22/S23 finding reproduced from a completely independent
+direction: those sprints spent an arc getting VGA colour from 7.41 to
+12.53 fps by attacking exactly this term with 4:2:0 and MVE
+vectorization. **The stock-firmware AE3 measured here (73.8 ms encode,
+7.6 fps) sits right where S23 started**, which is a useful sanity check
+on both efforts. Blob search, by contrast, is only 1.4× — it is plain
+CPU work on both boards.
+
+**Colour thresholds are a property of the scene, not of the object
+(measured, and it cost the first attempt).** With ~20 purple and pink
+balls at 2–3 m under room lighting, the default purple box found
+**nothing**. Sampling the actual frame explained why — LAB as the sensor
+reports it, not as the eye sees it:
+
+| sample | L | a | b |
+|---|---|---|---|
+| pink ball (most chromatic pixels) | 37–49 | **29–30** | 1–15 |
+| purple ball | 22–32 | **5–7** | −3…17 |
+| wooden floor | 48 | 9 | 21 |
+| white wall | 63 | −10 | −13 |
+
+The default demanded `b` in −75…−10 (the blue side) and **no ball is
+there** — indoors these balls are barely chromatic and slightly warm.
+Re-thresholding on the measured values (`15,70,18,60,-30,18`) picked the
+pink balls up immediately, 7–8 blobs tracked.
+
+**A single LAB box provably cannot cover both colours in this scene.**
+The purple balls sit at `a`=5–7, *less* magenta than the floor at `a`=9,
+so no `a` bound separates them; and widening `L` to catch them by
+lightness instead swallows the dark box and TV — tried, and it merged
+the furniture into ONE blob at 120 ms/frame (4.4 fps). So bite 1b
+(a LIST of thresholds, one per colour) is not a convenience, it is the
+only thing that makes a mixed-colour scene work.
+
+**Live stream at each capture size (measured 2026-08-19, `--framesize`).**
+The sweep table above prices capture+inference only; these rows are the
+whole delivered pipeline including overlay, JPEG, base64 and USB:
+
+| stream config | delivered fps | inference ms | blob ms | encode ms |
+|---|---|---|---|---|
+| VGA + blob overlay | ~19 | 23.5 | 11.0 | 3.9 |
+| **HD, no blob overlay** | **15.9** | 35.2 | — | 15.9 |
+| HD + blob overlay (150 px floor) | 6.6 | 32.3 | 87.0 | 16.1 |
+| HD + blob overlay (600 px floor) | 7.1 | 35.3 | 76.4 | 16.1 |
+
+All rows zero resyncs. **HD streams fine; the blob overlay is what costs
+it.** `find_blobs` scans every pixel, so it grows ~7–8× from VGA to HD
+(11 → 76–87 ms) and becomes the single largest term in the frame — more
+than twice inference. Raising the pixel floor 4× (the right scaling,
+since an object covers 4× the pixels at HD) only recovers ~11 ms,
+which locates the cost in the **per-pixel threshold scan, not in blob
+merging** — so there is no threshold that makes HD blobs cheap.
+
+**The important asymmetry: HD helps the blob detector and does nothing
+for the NPU.** `predict()` resizes every frame to the model's 192×192
+input regardless of capture size, so a distant object lands on the same
+number of model pixels at HD as at VGA (HD costs 12 ms more purely in
+preprocessing). The blob path, by contrast, works on the full-resolution
+frame and gets 4× the pixels on target. So HD is the right choice when
+the goal is segmenting small or distant coloured objects, and pointless
+when the goal is feeding the detector.
+
 **Bench observations from Nick's live demo (2026-08-19).** Measured by
 Nick at the bench during bite 1's demo, recorded here as his readings:
 

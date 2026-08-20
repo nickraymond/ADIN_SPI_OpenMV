@@ -365,7 +365,89 @@ balls into a purple-tuned scene and they were correctly ignored — pink's
 working, not a fault; matching several colours at once is fenced as
 bite 1b rather than smuggled into the demo.
 
-**Next:** nibble 4 (PR) for bite 1, then bite 2 — the N6-vs-AE3
+**AE3 run, same evening (Nick handed the board over).** Stock `v5.0.0`
+verified, `/flash/main.py` is the stock LED blinker. **VGA 7.6 fps vs
+the N6's ~19, and the gap is the JPEG encoder, not the NPU** —
+inference 27–28 ms vs 23.5 (1.2×), encode **73.8 ms vs 3.9 (19×)**,
+58% of the AE3's frame budget. Independently reproduces the S22/S23
+premise: the stock AE3 measured here sits right where the S23 encoder
+arc started (7.41 fps). Tables in DESIGN §S24.
+
+**I wedged the AE3, and the cause was my own retry loop.** The
+hand-rolled raw-REPL handshake failed (5 s timeout where mpremote
+allows 10, no raw-paste), and the supervisor then retried every 2 s —
+~20 attaches in 45 s, against a documented wedge threshold of 4–6
+(S23 bite R). It then refused mpremote too (`could not enter raw
+repl`); Nick's physical replug cured it, as the docs say it must.
+Two fixes shipped: the attach now uses **mpremote's own
+`SerialTransport`** (reuse before rewriting — only the attach; the read
+loop stays ours), and retries **back off 2/5/10/20/30 s** with the
+attempt count in the status line. Four clean start/stop cycles since,
+no refusals. **A viewer that hammers a quiet port is not resilient, it
+is the fault.**
+
+**Colour thresholds are a property of the scene, not the object.** The
+default purple box found nothing on ~20 purple/pink balls at 2–3 m.
+Sampling the frame: pink reaches `a`=29–30 with `b`=1–15, purple sits
+at `a`=5–7, the floor at `a`=9/`b`=21 — and the default demanded `b` in
+−75…−10, where **no ball is**. Re-thresholding on measured values
+tracked the pink balls immediately. **One box cannot cover both**:
+purple is less magenta than the floor, and widening `L` instead merged
+the furniture into one 120 ms blob. Bite 1b promoted from nicety to
+requirement.
+
+**THE RANKING FLIPPED ON POWER (Nick measured it).** AE3 **~0.2 W**
+running yolov8n against the N6's **~1.0 W**. Worked through in DESIGN
+§S24 ranking: **N6 wins delivered throughput** 19 vs 7.6 fps — which is
+entirely its hardware JPEG (3.9 vs 73.8 ms) — while **the AE3 wins
+energy by 4.3×: 5.5 mJ vs 23.7 mJ per inference**, and 2.0× per
+delivered frame. The NPUs are within 1.2×, and even that is confounded
+by the AE3 running a smaller model binary, so the separation is
+everything *around* the NPU: the N6 spends silicon on a JPEG encoder and
+25.6 MB of heap and pays ~1 W; the AE3 omits both and runs the same
+detector for a fifth of the power. **For a duty-cycled subsea node,
+energy per inference is the metric that matters and the AE3 wins it.**
+Both power numbers are single uninstrumented readings — 5× apart so the
+direction is safe, but the magnitudes are owed a deliberate re-measure
+before they size a power budget.
+
+**"fps" disambiguated (Nick asked whether 7.6 fps was frames-with-
+inference or a mix).** It is **1:1** — the board loop is strictly serial
+with no skipping, so 7.6 fps = 7.6 inferences. But that is the wrong
+ceiling to quote: it prices a pipeline that also encodes and streams
+every frame, and on the AE3 JPEG alone is 58% of the budget. Three
+ceilings recorded in DESIGN §S24 (inference-only ~26–36/s AE3 vs 42 N6;
+inference+stills; inference+video 7.6 vs 19), plus the point that binds
+the actual product: **tiling**. HD at a 192 px model = 40 tiles →
+**0.91 fps AE3 / 1.05 N6, both below the T2 ≥3 fps gate** — S8's
+conclusion re-derived from two boards. Ranking guidance: don't sort on
+fps, sort on inference-rate × tiles × energy, because *what unlocks the
+product is a custom detector with a larger input, not faster silicon*.
+
+**CORRECTION — do NOT count this session's late port failures as an
+attach-refusal incident.** After the ranking work, `mpremote` twice
+reported "may be in use by another program" and I diagnosed a wedge
+needing a replug. **Wrong: Nick was removing the board.** Confirmed
+after the fact — zero OpenMV devices in `system_profiler`, no
+`/dev/cu.usbmodem*`. The single REAL wedge this session was the earlier
+one I caused with the 2 s retry loop (fixed with backoff + mpremote's
+transport). **S23 bite R's evidence base must not gain a phantom
+incident from this.**
+
+**Bench state: the AE3 was returned to Nick and is off the laptop.** Both
+boards are stock `v5.0.0` with stock `/flash/main.py`; nothing was ever
+written to either.
+
+**Owed, and blocked only on hardware:** the AE3's true inference-only
+ceiling (a ~2 min run of `sweep.py`) — currently a **bound, 26–36/s**,
+depending on whether its 11.6 ms capture overlaps inference the way the
+N6's provably does. That is the number a customer's inference
+application would actually be limited by, so it should not stay a
+bound.
+
+**Next:** nibble 4 (PR) for bite 1, then **bite 4 — Pi Zero 2 W + IMX on
+the same axis** (Nick): measure **mJ per inference**, not fps, so all
+three boards land on one comparable scale. Then bite 2 — the N6-vs-AE3
 tiled-coverage comparison, carrying the model-variant confound
 explicitly.
 

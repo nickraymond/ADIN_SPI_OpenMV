@@ -134,6 +134,47 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **ANSWERED 2026-08-19 (Nick): it is ONE physical AE3, reflashed.**
+  Another agent flashed custom firmware onto it to push VGA fps, which
+  is why the same board reported stock `v5.0.0` on the laptop and
+  `v5.0.0-52.g7d4dbf7ab2.dirty` on nereus000. **No conclusion about USB
+  serial uniqueness can be drawn** — the two readings were never two
+  boards. The practical rule stands anyway and for a better reason:
+  **the `#I` banner's `fw` string identifies the firmware a measurement
+  was taken on, and the port name cannot.** Original entry:
+- ~~**Is the AE3's USB serial unique? Two AE3s reported the SAME one
+  (raised 2026-08-19, S24 bite 5).**~~ The AE3 Nick handed over ran genuine
+  stock `OpenMV v5.0.0; MicroPython v1.28.0-49`; the AE3 on nereus000
+  runs the patched dev build `v5.0.0-52.g7d4dbf7ab2.dirty` — measurably
+  different (VGA JPEG encode 73.8 vs 46.2 ms). **Yet both report USB
+  serial `0829c14000000000` and machine id `AE302F80F55D5AE`.** Either
+  one board was reflashed between sessions, or the AE3's USB serial is a
+  **non-unique default**, in which case `/dev/serial/by-id` cannot
+  distinguish two AE3s on one host and the standing "always use by-id"
+  rule does not protect against AE3-vs-AE3 mix-ups. The N6's serial
+  (`020023000450433547373200`) looks like a real per-die UID by
+  contrast. **Verifiable:** put both AE3s on one host and read their
+  by-id names; or read the UID register on each. **Until resolved, the
+  `#I` banner's `fw` string — not the port name — is what identifies
+  which AE3 produced a measurement.**
+
+- **Target speeds and sizes for the rate-requirement model are NOT
+  measured — Nick to validate from field observation (raised
+  2026-08-19, S24).** DESIGN §S24 derives the detection rate each
+  application needs from `fps_min ≈ 2 × speed ÷ object length`, and the
+  arithmetic drives a real conclusion (fish/jelly are throughput
+  problems favouring the N6; urchins/kelp are energy problems favouring
+  the AE3 by 4.3×). But the inputs — reef fish cruise ~0.25 m/s and
+  burst ~2 m/s at ~18 cm; jellyfish drift ~0.3 m/s at ~30 cm; urchins
+  ~3 cm/min at ~8 cm; kelp ~30 cm/day — are **order-of-magnitude
+  estimates from general knowledge, with no source and no measurement.**
+  They have the right exponent, which is enough to separate a 7 fps
+  problem from a 1-frame-per-4-hours problem, and NOT enough to size a
+  product. Also unvalidated: the assumed ~2 m field of view in the
+  jellyfish transit calculation, which depends on lens and standoff.
+  **Verifiable:** Nick's own dive/field observations, or a short
+  reef-footage measurement, replacing each row with a sourced figure.
+
 - **ANSWERED 2026-08-18 (S22 bite 2 desk check, vendor-sourced): the
   Alif Ensemble E3 has NO hardware JPEG or video codec.** Its
   image/graphics accelerators are the D/AVE 2D GPU (vector graphics),
