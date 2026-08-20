@@ -954,19 +954,44 @@ Measured from the boards' own banners, same script, same day:
 built from and `.dirty` means local patches on top — i.e. the sticky-fb
 and **MVE-vectorized jpege** work from S18 B4 / S23 bite 1.
 
-**This is an independent corroboration of the S23 MVE encoder work,
-arrived at from a completely different direction.** S23 measured MVE DCT
-+ colour-convert at **1.55×** on VGA colour encode (65.9 → 42.4 ms) using
-the bridge's enc-matrix instrumentation. This viewer, which shares no
-code with that path and calls plain `img.to_jpeg(quality=50)`, measures
-**73.8 → 46.2 ms = 1.60×** between a stock and a patched AE3. Two
-unrelated instruments agreeing to within 3% is strong evidence both are
-measuring something real.
+**⚠ CORRECTION — the 73.8 → 46.2 ms encode delta is CONFOUNDED and must
+not be quoted as an MVE measurement.** It was first written up here as
+an independent corroboration of S23's 1.55× MVE figure. It is not, and
+Nick supplied the reason: **the nereus000 room was dark during this
+run, while the laptop AE3 was pointed at a lit scene.** JPEG encode time
+tracks image content, and the frames confirm it — 9,985 B here against
+~16,700 B on the laptop, so the dark frame is ~60% the size. An
+easier-to-encode scene is enough to explain much of the difference on
+its own.
+
+What survives, and what does not:
+
+- **CONFIRMED: the two AE3s run different firmware.** The banner strings
+  are definitive and content-independent (`v5.0.0` vs
+  `v5.0.0-52.g7d4dbf7ab2.dirty`).
+- **NOT ESTABLISHED: how much of 1.60× is the MVE patch.** Direction is
+  consistent with it, magnitude is unattributable across two different
+  scenes. The apparent 3% agreement with S23's 1.55× is coincidence
+  dressed as evidence.
+- **To measure it honestly:** run both firmwares against **the stored
+  reef reference scene** (`bench/assets/ref_scene`), which is exactly
+  why S0/S22/S23 used a fixed image rather than the camera — content
+  held constant, so encode time is attributable to code. `--no-detect`
+  plus a ref-image source would do it in minutes on one board, reflashed
+  between runs.
 
 **Consequence for the ranking table above: the 7.6 fps AE3 row is the
-STOCK number and stays correct as such.** A patched AE3 delivers 9.6 fps
-at VGA, closing the gap to the N6 from 2.5× to 2.0× — the encoder
-remains the AE3's binding constraint even after a 1.6× improvement to it.
+STOCK number and stays correct as such** — it and the N6's ~19 fps were
+taken on the same lit scene, so that comparison is sound. The 9.6 fps
+patched-AE3 figure is a dark-room number and is **not** comparable to
+either; do not use it to restate the AE3-vs-N6 gap.
+
+**Standing lesson (third time this bite):** every fps and encode figure
+in S24 is scene-dependent, so a row is only comparable to another row
+shot on the same scene. The side-by-side view is immune to this by
+construction — both boards see the same room at the same instant —
+which is precisely what makes it the right instrument for board
+comparison, and makes cross-session single-board numbers the wrong one.
 
 **Bench hazard flagged:** both AE3s report USB serial
 `0829c14000000000` and machine id `AE302F80F55D5AE`. Either this is one
@@ -978,19 +1003,37 @@ Unresolved; flagged in SPEC §Open questions. **Until it is resolved,
 trust the `#I` banner's `fw` string, not the port name, to say which
 AE3 produced a number.**
 
-**Side-by-side numbers (VGA, same scene, simultaneous):**
+**Side-by-side numbers — VGA, DARK ROOM, both boards simultaneous:**
 
-| stage | AE3 (patched) | N6 |
-|---|---|---|
-| capture | 11.0 ms | 0.2 ms |
-| inference | 28.7 ms | 23.4 ms |
-| blob search | 12.1 ms | 7.6 ms |
-| JPEG encode | 46.2 ms | 3.8 ms |
-| **delivered** | **9.6 fps** | **28.9 fps** |
+| stage | AE3 (patched) | N6 | ratio |
+|---|---|---|---|
+| capture | 11.0 ms | 0.2 ms | 55× |
+| inference | 28.7 ms | 23.4 ms | **1.23×** |
+| blob search | 12.1 ms | 7.6 ms | 1.6× |
+| JPEG encode | 46.2 ms | 3.8 ms | **12×** |
+| **delivered** | **9.6 fps** | **28.9 fps** | 3.0× |
 
-Both zero resyncs. The N6's 28.9 here beats the ~19 measured on the Mac
-and sits right at its board-work limit (35 ms → 28.6 fps predicted), so
-the Mac's serial read path — not the board — was costing the difference.
+**These two columns ARE comparable to each other** — same room, same
+instant, same script — which is the whole value of the side-by-side.
+They are **not** comparable to the lit-room rows elsewhere in §S24.
+
+Read that way it reproduces the lit-room conclusion on its own terms:
+**inference differs by only 1.23× while JPEG encode differs by 12×**, so
+the encoder is the AE3's binding constraint regardless of scene or
+firmware. Note both encode figures fell in the dark (AE3 73.8→46.2,
+N6 3.9→3.8) but the N6's barely moved — it has hardware doing the work,
+so content costs it almost nothing, while the AE3's software encoder
+pays for every detail in the frame. That asymmetry is itself a result.
+
+Validation in a dark room deliberately did NOT lean on `blobs`/`det`,
+which are correctly zero with no coloured objects lit: the checks were
+frames advancing, `stale_s` ~0, valid SOI/EOI with `SOF0 640×400` on
+both panels, and distinct SHA-256 per panel (proving two real boards
+rather than one stream mirrored).
+
+The N6's 28.9 fps sits right at its board-work limit (35 ms → 28.6
+predicted), beating the ~19 measured on the Mac — so the Mac's serial
+read path, not the board, was costing that difference.
 
 ### S24 — what detection rate does an application actually need? (2026-08-19)
 
