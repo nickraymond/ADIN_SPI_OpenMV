@@ -316,3 +316,66 @@ lock is a REQUIREMENT of bite 2, not a nicety.
 Nibble 1 = plan first, my gate before code. Short actionable replies, and
 use the milestone report format in CLAUDE.md.
 ```
+
+## 11 — Ready to paste: S8 bite B2a — close the export gap (Mac-only, runs in PARALLEL with S25)
+
+```
+Run /agent-entry. S8 bite B2a on a fresh branch from main.
+
+HARD CONSTRAINT, READ FIRST: another session owns nereus000 and BOTH OpenMV
+boards for sprint S25. This bite is MAC-ONLY. Do not ssh to nereus000, do
+not touch /dev/serial, do not start the side-by-side viewer, do not flash
+anything. If you think you need a board, you have misunderstood the bite --
+stop and say so.
+
+Goal: produce a model WE trained that BOTH board compilers accept. Not an
+accurate detector -- the FORMAT. Accuracy is bite B2 proper; this bite
+removes the one thing blocking it.
+
+The gap (measured, S8 B0, ml/README.md -- do not re-derive):
+  our ultralytics export   (1, 3, 192, 192) float32 NCHW
+  OpenMV's source models   (1, 192, 192, 3) uint8, scale 1/255, zp 0
+ultralytics 8.4.124's only TFLite path is LiteRT, which emits NCHW float32
+and never transposes. `tflite` is gone from export_formats() and
+export_saved_model no longer calls onnx2tf.
+
+SETTLED -- do not re-derive:
+- Both compilers already exist and work on this Mac, in the OpenMV SDK:
+  ml/compile_model.sh ae3|n6 <model.tflite>. Verified byte-exact against
+  the vendor's shipped artifacts. They run in the firmware-builder docker
+  container; the N6 path also needs /sdk/gcc/bin on PATH.
+- Training env: ~/nereus_ml/venvs/train (py3.11, torch 2.12.1 + MPS,
+  ultralytics 8.4.124, pinned in ml/requirements-train.txt). Datasets,
+  runs and weights live in ~/nereus_ml, NOT in the repo.
+- ml/chain_proof.py re-runs train -> export -> INSPECT and reports whether
+  the artifact is actually deployable. Extend it; do not start a new one.
+- START SMALL, NOT WITH YOLO. OpenMV's own maintainers report stock
+  Ultralytics INT8 export emitting unquantized layers that ST's compiler
+  rejects outright ("Oauto did not find valid compile options"), and point
+  at ST's YOLOv8-STEdgeAI / Roboflow's ultralytics-openmv fork. A small
+  classifier or FOMO-style detector clears this path with far less risk --
+  fomo_face_detection is 57 KB and compiles for both boards today.
+
+Candidate routes, pick by TEST not by reading:
+  1. torch -> ONNX -> onnx2tf -> int8/uint8 NHWC tflite, with onnx2tf
+     pinned independently of ultralytics (my lean: a future ultralytics
+     bump then cannot silently break the export again)
+  2. train in TF/Keras directly and use TFLiteConverter with a
+     representative dataset, which is the shape OpenMV's own models have
+  3. an older ultralytics whose tflite export still goes through onnx2tf
+
+ACCEPTANCE, and it is the whole point:
+  ml/compile_model.sh ae3 <ours.tflite>   succeeds, and Vela reports the
+      accelerator configuration + an inference-time estimate
+  ml/compile_model.sh n6  <ours.tflite>   succeeds
+  the input tensor reads (1, H, W, C) uint8 -- NHWC, not NCHW
+A model that compiles for only ONE board is a partial result worth
+reporting, not a failure to hide.
+
+Leave a deployable artifact + its provenance sidecar so the moment the
+bench frees up it can be flashed by the proven routes (AE3 -> /flash,
+N6 -> ROMFS over DFU alt 3) with no rework.
+
+Nibble 1 = plan first, Nick's gate before code. Short actionable replies,
+and use the milestone report format in CLAUDE.md.
+```
