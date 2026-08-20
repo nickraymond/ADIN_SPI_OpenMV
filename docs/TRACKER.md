@@ -1921,6 +1921,17 @@ unowned side quest.
       it.** Both power figures are single uninstrumented bench readings
       — direction is safe at 5× apart, magnitudes are owed a deliberate
       re-measure.
+- [ ] **Bite 1e — the AE3's true inference-only ceiling (OWED, ~2 min
+      of board time).** The demo's 7.6 fps is a *streaming* ceiling; an
+      inference application that reports results rather than video never
+      pays the 73.8 ms encode. That ceiling is currently a **bound,
+      26–36/s** — 36 if the AE3's 11.6 ms capture overlaps inference,
+      26 if it is serial. The N6's is measured (capture provably hidden:
+      41.8 vs 42.2 theoretical); the AE3's is not, because the board
+      went back to Nick first. Run `bench/probes`-style `sweep.py` at
+      QVGA/VGA/HD. **This is the number a customer's application is
+      actually limited by** — it should not stay a bound. Also record
+      whether capture overlaps, since that is the whole spread.
 - [ ] **Bite 4 — Pi Zero 2 W + IMX sensor on the same axis (NEXT,
       Nick).** Deploy the same or a comparable detector and measure
       **mJ per inference**, not just fps — that is the axis that makes

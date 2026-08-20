@@ -929,6 +929,68 @@ differ from the older OpenMV API and every one of them bit):
   `st.l_mean()`.
 - `Image` has no `bpp()` accessor.
 
+### S24 — what "fps" means here, and which ceiling binds (2026-08-19)
+
+Nick asked whether the demo's 7.6 fps was frames-with-inference or a mix.
+**It is 1:1** — verified from `n6_stream_board.py`'s loop, which is
+strictly serial with no skipping and no frame dropping:
+
+    capture -> predict -> draw -> blob search -> JPEG -> transmit
+
+so 7.6 fps means 7.6 captures, 7.6 `predict()` calls, 7.6 JPEGs and 7.6
+delivered frames — the same number throughout.
+
+**But that number is the wrong ceiling to quote at a customer**, because
+it prices a pipeline that also encodes and streams every frame. On the
+AE3, JPEG alone is 73.8 ms of a 128 ms frame — **58% of the budget spent
+producing a picture for a human**. An application that reports counts or
+alerts never pays it. Three distinct ceilings, and the product picks:
+
+| pipeline | AE3 | N6 |
+|---|---|---|
+| **Inference only** (detect, transmit results) | ~26–36 /s † | 42 /s |
+| Inference + occasional evidence still | near inference-only | ~42 /s |
+| Inference + continuous video (what §S24 measured) | 7.6 | ~19 |
+
+† **bounded, not measured**: 36/s if capture overlaps inference, 26/s if
+the AE3's 11.6 ms capture is serial. On the N6 capture is provably
+hidden (41.8 measured vs 42.2 theoretical at VGA); the AE3 equivalent
+was not captured before the board stopped answering. **Owed.**
+
+**The binding constraint for the actual product is neither — it is
+tiling.** `predict()` resizes the whole frame to the model's 192×192
+input, so the demo runs ONE inference over the full field of view at
+heavily reduced resolution; a target at range falls below the ~24–32 px
+detection floor (S8). Real coverage needs tiles, and then:
+
+- HD 1280×800, 192×192 model, 32 px overlap = **40 tiles**
+- AE3: 40 × 27.5 ms = 1.10 s → **0.91 fps**
+- N6: 40 × 23.7 ms = 0.95 s → **1.05 fps**
+
+Both **below the T2 ≥3 fps gate**, independently reproducing S8's
+conclusion on current silicon and current models.
+
+**Consequence for using fps as a ranking criterion: don't, directly.**
+It conflates three independent terms. Rank on the terms instead:
+
+    detection_fps = 1 / (tiles × inference_ms + capture + encoding you actually need)
+
+1. **Inference rate at the required input size** — the only fps-like
+   figure that is a property of the silicon rather than the pipeline.
+   The two boards are a coin flip here (36 vs 42 /s, and even that is
+   model-variant-confounded).
+2. **Tiles needed for the FOV and smallest target** — a lens and
+   geometry decision, not a compute one, and it multiplies straight
+   into frame time. Going 40 tiles → 12 buys more than any board swap
+   on this list.
+3. **Energy per inference**, on a power budget — where the AE3 wins
+   4.3× (ranking table below).
+
+So the board choice is close to a coin flip on throughput and decided by
+power; **what unlocks the product is a custom detector with a larger
+input** (fewer tiles), not faster silicon. That is S8's standing finding,
+now re-derived from two boards' measurements.
+
 ### S24 — hardware ranking: N6 vs AE3 (2026-08-19)
 
 Both boards ran the **same scripts on the same scene** at VGA. Power

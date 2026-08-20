@@ -196,6 +196,40 @@ Both power numbers are single uninstrumented readings — 5× apart so the
 direction is safe, but the magnitudes are owed a deliberate re-measure
 before they size a power budget.
 
+**"fps" disambiguated (Nick asked whether 7.6 fps was frames-with-
+inference or a mix).** It is **1:1** — the board loop is strictly serial
+with no skipping, so 7.6 fps = 7.6 inferences. But that is the wrong
+ceiling to quote: it prices a pipeline that also encodes and streams
+every frame, and on the AE3 JPEG alone is 58% of the budget. Three
+ceilings recorded in DESIGN §S24 (inference-only ~26–36/s AE3 vs 42 N6;
+inference+stills; inference+video 7.6 vs 19), plus the point that binds
+the actual product: **tiling**. HD at a 192 px model = 40 tiles →
+**0.91 fps AE3 / 1.05 N6, both below the T2 ≥3 fps gate** — S8's
+conclusion re-derived from two boards. Ranking guidance: don't sort on
+fps, sort on inference-rate × tiles × energy, because *what unlocks the
+product is a custom detector with a larger input, not faster silicon*.
+
+**CORRECTION — do NOT count this session's late port failures as an
+attach-refusal incident.** After the ranking work, `mpremote` twice
+reported "may be in use by another program" and I diagnosed a wedge
+needing a replug. **Wrong: Nick was removing the board.** Confirmed
+after the fact — zero OpenMV devices in `system_profiler`, no
+`/dev/cu.usbmodem*`. The single REAL wedge this session was the earlier
+one I caused with the 2 s retry loop (fixed with backoff + mpremote's
+transport). **S23 bite R's evidence base must not gain a phantom
+incident from this.**
+
+**Bench state: the AE3 was returned to Nick and is off the laptop.** Both
+boards are stock `v5.0.0` with stock `/flash/main.py`; nothing was ever
+written to either.
+
+**Owed, and blocked only on hardware:** the AE3's true inference-only
+ceiling (a ~2 min run of `sweep.py`) — currently a **bound, 26–36/s**,
+depending on whether its 11.6 ms capture overlaps inference the way the
+N6's provably does. That is the number a customer's inference
+application would actually be limited by, so it should not stay a
+bound.
+
 **Next:** nibble 4 (PR) for bite 1, then **bite 4 — Pi Zero 2 W + IMX on
 the same axis** (Nick): measure **mJ per inference**, not fps, so all
 three boards land on one comparable scale. Then bite 2 — the N6-vs-AE3
