@@ -1797,10 +1797,15 @@ needs a measured reason.
       down the release step so adding a menu entry is a documented act.
 
 **Open questions for Nick, flagged not guessed:**
-- **Exposure.** This UI can reflash and power-cycle hardware, so it is more
-  sensitive than the video feed. Proposal: bind to the LAN with a loud banner
-  and no auth for now (the bench is on a trusted network), revisited if it
-  ever leaves it. **Nick's call.**
+- **Exposure — ANSWERED (Nick, 2026-08-20): serve it on the wifi, no auth.**
+  So the page binds to `0.0.0.0` and anything on the wifi can drive it. The
+  consequence is recorded, not argued: this UI can reflash boards and restart
+  hardware, so on that network it is an unauthenticated control surface, not
+  just a viewer. It therefore ships with the same loud bind banner the stream
+  viewer already prints, and **the runner must refuse anything destructive it
+  cannot undo** — bite 3 repairs drift, and BOOTLOADER is never written (S8
+  B1), so a bad recipe stays recoverable. Revisit if the bench ever leaves a
+  trusted network.
 - **Sudo steps.** Installing/enabling units and udev rules needs sudo, which
   the agent does not have — those stay one-time copy-pasteable commands for
   Nick, exactly as `pi/ae3_flash/README.md` already does.

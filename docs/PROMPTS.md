@@ -308,6 +308,13 @@ SETTLED -- do not re-derive (TRACKER S25 and DESIGN carry the detail):
 - The first recipe already exists in full: the S8 two-colour ball demo,
   per-board thresholds and per-board pixel floors, in PR #50's demo block.
 
+EXPOSURE IS DECIDED (Nick): serve the page on the WIFI, bind 0.0.0.0, NO
+auth. Keep the loud bind banner the stream viewer already prints. Because
+it is an unauthenticated control surface that can reflash boards, the
+runner must refuse anything it cannot undo -- never write DFU alt 0
+(BOOTLOADER), and let bite 3's reconciliation repair drift rather than
+having a button that can brick a board.
+
 THE HAZARD THIS SPRINT MUST DESIGN AROUND: port ownership. Two processes on
 one board wedges it -- that happened repeatedly on 2026-08-20, and a menu
 that can launch anything makes it trivially easy. The single-owner board
