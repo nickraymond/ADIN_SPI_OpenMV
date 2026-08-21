@@ -1675,9 +1675,33 @@ any urchin labelling effort is spent.
       ship different yolov8n binaries (1,994,976 B AE3 vs 3,233,408 B
       N6), which is exactly the confound bite B's single custom model
       finally removes. Feeds Nick's board decision; no new hardware.
+- [ ] **Bite D2 — surface model confidence values (Nick's question,
+      2026-08-21).** The FOMO head computes a per-cell class probability
+      and the harness currently throws it away at the margin threshold.
+      Put a confidence on each model detection: `mb` boxes carry a conf
+      field, the overlay label reads "pink 0.87", the page HUD shows it.
+      NOTE the blob baseline CANNOT have one — `find_blobs` is a hard
+      LAB threshold, a pixel passes or it does not; nearest analogue is
+      pixel count, already shown. Document that asymmetry on the page
+      rather than inventing a fake blob confidence. *Verifiable:* live
+      page shows per-detection conf for the model panels; a ball
+      half-out of threshold shows visibly lower conf than a centred one.
 - [ ] **Bite E — the urchin model.** Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
+      **Demo bar set by Nick 2026-08-21: a truly custom urchin model
+      running on BOTH boards with a screen showing the urchins — the
+      project's HIL. This demo is the GATE for sprint S26 below.**
+      What carries over from B2 unchanged: the whole toolchain (capture
+      rig, labels.jsonl format, trainer, int8 export, both compile+
+      deploy routes, recipe/page). What is genuinely different: labels
+      cannot come from a colour threshold (urchins are texture/shape,
+      not a LAB box — B3's GUI is the labelling path), the scene is
+      underwater (turbidity/lighting; pixels-on-target ≥24–32 px sets
+      range and may force a larger input than 192 — the S24 finding),
+      and the tiny colour-separable net will likely need more capacity
+      (bigger backbone; hue augmentation becomes legal again since
+      colour is no longer the class).
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
@@ -1881,6 +1905,28 @@ pick the S8 ball demo, watch both boards come up streaming with the tuned
 per-board thresholds, stop it, and see the ports released.
 **Needs:** bench time; sudo for the one-time unit install.
 
+
+### S26 — solo ML pipeline: take the training wheels off  `[ ]`  *(stub — added 2026-08-21 at Nick's direction. **GATED behind S8 bite E's demo**: a truly custom urchin model running on both boards with the urchin HIL screen. Runs only after that passes.)*
+**Goal:** Nick drives dataset → train → evaluate → deploy **solo, no agent
+in the loop**. B2 built the plumbing; this sprint builds the judgment
+layer — every check the agent performed by hand becomes a printed verdict.
+- [ ] **Report cards.** `relabel`/labelling emits a label sanity report
+      (count distributions vs expected, flagged frames); `train.py` emits
+      a training report (metrics, worst-frame overlays, pass/fail vs the
+      previous model). *Verifiable:* "is this model good?" answerable
+      from the report alone.
+- [ ] **One-command pipeline driver.** `ml/pipeline` wraps train → export
+      → compile (both targets) → NPU acceptance check into one command
+      with one PASS/FAIL summary; runbook section in `ml/README.md`.
+- [ ] **Deploy from the page.** Rides S25 bite 3 reconciliation: bump the
+      model sha256 in the recipe, the workbench repairs the drift. No
+      hand-driven DFU/mpremote in the happy path.
+- [ ] **Scored evaluation on the page.** Bite C's harness surfaced as a
+      page view: counts vs ground truth, per board, per method.
+**Demo (Nick):** starting from a folder of new images, Nick ships a
+retrained model to both boards and reads its scorecard — without Claude.
+**Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
+urchin HIL demo); S25 bite 3.
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
