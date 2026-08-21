@@ -58,6 +58,21 @@ ae3-board-access, one op per invocation.
   B1 file made a correct flash look like a hash MISMATCH — rm first.
 - Nick's "2 m" run was actually ~1 m (his call, fine) — dirs still say
   run2_2m; treat both as 1 m.
+- **AE3 raw-repl refusal, incident #7 — and the first on the NON-bridge
+  stack (bite R evidence).** Nick's first demo click failed: the
+  workbench probe got `could not enter raw repl`. Diagnosis by the book:
+  device enumerated, no port holders, dmesg clean (NO usb-storage reset
+  storm — the livelock variant ruled out). One serialized recovery
+  (75 s zero-contact + single `mpremote reset`) REFUSED (`b''` read) —
+  the power-cycle-only variant. **Physical replug cleared it (Nick);
+  demo re-run passed.** Why it matters for bite R: all six prior
+  incidents were post-bridge-teardown on the SHM-128K bridge stack;
+  this one is on the S18 sticky-fb build running only pyserial
+  raw-repl streams — session traffic was cp + probe run + one
+  stream start/stop + the failed probe (~the 4–6-attach pattern).
+  The bridge lifecycle is NOT a necessary condition; attach count /
+  raw-repl traffic looks closer to the mechanism. Nick flags this as
+  needing a fix soon — see bite R.
 
 **Next:** Nick runs the demo (one click on :8088). Then bite C metrics
 (count accuracy vs ground truth per board/method/distance) — the eval

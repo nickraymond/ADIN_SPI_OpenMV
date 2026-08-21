@@ -1138,7 +1138,18 @@ precedent for repo-carried firmware patches.
       HD's 72 ms/frame ept-block is the same disease. Acceptance:
       vga-color-15 ≥ 15.0 CLEAN ledger-exact, HD mono ≥ 3.5 held,
       10-min soak.
-- [~] **Bite R — attach-refusal / boot-state anomaly root cause
+- [~] **Bite R — attach-refusal / boot-state anomaly root cause.
+      INCIDENT #7 (2026-08-20 late night, S8 B2 demo) — the first on the
+      NON-bridge stack, and it reshapes the suspect list:** AE3 on the
+      S18 sticky-fb build (`7d4dbf7ab2.dirty`), NO bridge loaded, only
+      pyserial raw-repl streams + mpremote ops (cp, probe run, one
+      stream start/stop, then the workbench start probe refused).
+      Enumerated, zero holders, dmesg clean of usb-storage resets; one
+      serialized 75 s-silence + single `mpremote reset` recovery REFUSED;
+      physical replug cleared it. **The bridge lifecycle is therefore NOT
+      a necessary condition — the common factor across all seven is
+      accumulated raw-repl attach/teardown traffic.** Nick 2026-08-20:
+      this is now an issue we need to solve soon.
       ← IN PROGRESS (reproducer + instrument SHIPPED; see DEV_LOG
       2026-08-19/20 night). FINDINGS: (a) load does NOT cause it — 6/6
       clean loaded cycles, ledger-exact both ends; (b) NEW host-side
