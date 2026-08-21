@@ -1702,6 +1702,13 @@ any urchin labelling effort is spent.
       and the tiny colour-separable net will likely need more capacity
       (bigger backbone; hue augmentation becomes legal again since
       colour is no longer the class).
+      **Dataset source EXISTS (Nick, 2026-08-21): thousands of urchin
+      images on hand; label status UNCONFIRMED — Nick to confirm.
+      Treated as solved-by-source come training time. If they arrive
+      labelled, the new work is a one-bite converter (their format →
+      labels.jsonl) and B3's GUI becomes review/spot-fix rather than
+      from-scratch labelling; if unlabelled, B3 is the labelling path.
+      Either way B3 gets built first and against these images.**
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
