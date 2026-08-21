@@ -1587,11 +1587,23 @@ any urchin labelling effort is spent.
       compiler outright and point at ST's YOLOv8-STEdgeAI / Roboflow's
       `ultralytics-openmv` fork — so YOLO is the wrong FIRST target; a small
       classifier or FOMO-style detector clears the path with far less risk.
-- [ ] **Bite B2 — the from-scratch two-colour detector.** NEXT. Collect and
-      label the two-ball set (bite A's `--save-frames` is the capture rig and
-      its per-class boxes are the auto-labels), train on the Mac, export to
-      NHWC uint8, compile per target, deploy to both boards by the proven
-      routes above.
+- [~] **Bite B2 — the from-scratch two-colour detector.** CODE + DEPLOY +
+      MEASURE DONE 2026-08-20 (late night); **remaining: Nick's demo + PR.**
+      Delivered on branch `claude/two-colour-detector-s8-b2-ea5ca7`:
+      693-frame two-board capture (one 10-min bench window) → offline
+      relabel (`ml/fomo/relabel.py` — board labels had measured defects:
+      N6 pink collapse, shirt-as-purple) → from-scratch Conv/BN/ReLU FOMO
+      (`ml/fomo/train.py`, 119 KB int8 uint8-io; int8≈float, P/R ~0.73/0.87
+      vs noisy auto-labels) → compiled+deployed by the B1 routes →
+      **measured on-board: AE3 5.51 ms (/flash, sha verified), N6 6.36 ms
+      (ROMFS DFU alt 3, partition read-back MATCH, /rom 18 entries
+      intact)** — the NPU class on both; acceptance met. Harness grew a
+      FOMO model mode (mc counts on the wire, model-vs-blob side by side);
+      suite 134. Recipe `s8-two-colour-model` ships models[] sha256 for
+      S25 bite 3. **Known model debts (sized, not hidden): learned the
+      USPS-box lettering as purple (label noise), dim-pink recall on the
+      AE3, exact-count weak vs noisy labels. All data ~1 m (Nick's call
+      at capture time).** Keras BN-momentum trap recorded in DEV_LOG.
       **B1 — does a stock int8 `.tflite` run on the NPU?** *(was S24
       bite 3, promoted by Nick's "sports ball" question.)* The ROM
       model's `(1, 5, 756)` output proves it carries ONE class, so no
