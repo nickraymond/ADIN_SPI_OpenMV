@@ -1598,8 +1598,9 @@ any urchin labelling effort is spent.
       compiler outright and point at ST's YOLOv8-STEdgeAI / Roboflow's
       `ultralytics-openmv` fork — so YOLO is the wrong FIRST target; a small
       classifier or FOMO-style detector clears the path with far less risk.
-- [~] **Bite B2 — the from-scratch two-colour detector.** CODE + DEPLOY +
-      MEASURE DONE 2026-08-20 (late night); **remaining: Nick's demo + PR.**
+- [x] **Bite B2 — the from-scratch two-colour detector. DEMO RUN BY NICK
+      2026-08-20 (late night) — PASS (on the second click; the first hit
+      bite R incident #7, cleared by replug). PR #55 OPEN.**
       Delivered on branch `claude/two-colour-detector-s8-b2-ea5ca7`:
       693-frame two-board capture (one 10-min bench window) → offline
       relabel (`ml/fomo/relabel.py` — board labels had measured defects:
@@ -1640,6 +1641,19 @@ any urchin labelling effort is spent.
       measured per-inference time consistent with the tables above.
       **GATE: if either board has no viable path, STOP and re-plan with
       Nick before any dataset effort is spent.**
+- [ ] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
+      passed; NEXT working session).** Nick reviews ALL training frames
+      himself in a GUI, corrects the auto-label boxes by hand, and can
+      label beyond colour classes (the class list must not be hard-wired
+      to pink/purple — bite E's urchins ride the same tool). Scope: browse
+      the capture set (frames + labels.jsonl), draw/move/delete/reclass
+      boxes, keyboard-fast, save back to the same labels.jsonl format so
+      `ml/fomo/train.py` consumes corrections with zero changes. The B2
+      debts this directly attacks: the learned USPS-lettering false
+      purple, dim-pink misses, and exact-count weakness vs noisy labels.
+      *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
+      the corrected set moves val precision measurably; the corrected
+      labels.jsonl round-trips through the trainer unchanged in format.
 - [ ] **Bite C — end-to-end metrics: capture → detect → count, at 1 m
       and 2 m (Nick 2026-08-20).** Not inference-only — the whole chain,
       which is exactly what the per-tile numbers could not tell us.

@@ -74,11 +74,12 @@ ae3-board-access, one op per invocation.
   raw-repl traffic looks closer to the mechanism. Nick flags this as
   needing a fix soon — see bite R.
 
-**Next:** Nick runs the demo (one click on :8088). Then bite C metrics
-(count accuracy vs ground truth per board/method/distance) — the eval
-harness in train.py is the starting point. Model quality debts, sized:
-label-noise FPs (USPS box), dim-pink recall on the AE3, exact-count still
-weak vs noisy labels.
+**Next:** ~~Nick runs the demo~~ → **DEMO PASSED (Nick, same night; first
+click hit bite R incident #7, replug cleared it). PR #55 open.** Next
+session = **bite B3 (NEW, Nick's call): label-review GUI** — he reviews
+ALL training frames, corrects boxes by hand, classes beyond colour;
+saves back to labels.jsonl so the trainer consumes corrections
+unchanged. Then bite C metrics. Model debts sized in bite B2's entry.
 
 **Branch:** `claude/nereus-vision-workbench-4d2268`. Bench: both boards on
 nereus000; `workbench.service` installed ENABLED by Nick and proven across
