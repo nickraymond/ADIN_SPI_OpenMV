@@ -71,7 +71,6 @@ is the fallback, dive not gated).
 
 ---
 
-## 2026-08-20 (night) — S25 bites 1+2 SHIPPED AND DEMO'D: the workbench page starts/stops the ball demo; AE3 quick-reattach wedge found, fenced with a settle window, cleared by physical replug
 ## 2026-08-21 — S8 D2 code+tests: per-detection confidence on the wire, overlay, and page; near-collision with the parallel B2 session caught before board contact
 
 **Branch:** `claude/s8-d2-model-confidence`. No board contact this session.
@@ -193,6 +192,11 @@ session = **bite B3 (NEW, Nick's call): label-review GUI** — he reviews
 ALL training frames, corrects boxes by hand, classes beyond colour;
 saves back to labels.jsonl so the trainer consumes corrections
 unchanged. Then bite C metrics. Model debts sized in bite B2's entry.
+
+
+---
+
+## 2026-08-20 (night) — S25 bites 1+2 SHIPPED AND DEMO'D: the workbench page starts/stops the ball demo; AE3 quick-reattach wedge found, fenced with a settle window, cleared by physical replug
 
 **Branch:** `claude/nereus-vision-workbench-4d2268`. Bench: both boards on
 nereus000; `workbench.service` installed ENABLED by Nick and proven across
