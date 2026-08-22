@@ -42,13 +42,64 @@ class TestSetDiscovery(unittest.TestCase):
             self.assertEqual(G.find_sets(root),
                              ["run1/AE3", "run2/N6"])
 
+    def test_finds_flat_single_level_sets_too(self):
+        # The S26 urchin corpora: labels.jsonl directly in <source>/.
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "urchinbot")
+            os.makedirs(d)
+            with open(os.path.join(d, "labels.jsonl"), "w") as fh:
+                fh.write(json.dumps(rec()) + "\n")
+            write_set(root, "roboflow", "rf100", [rec()])
+            self.assertEqual(G.find_sets(root),
+                             ["roboflow/rf100", "urchinbot"])
+
     def test_missing_root_is_empty_not_an_error(self):
         self.assertEqual(G.find_sets("/nonexistent/nowhere"), [])
 
+    def test_set_dir_accepts_one_or_two_segments(self):
+        self.assertEqual(G.set_dir("/root", "urchinbot"), "/root/urchinbot")
+        self.assertEqual(G.set_dir("/root", "run1/AE3"), "/root/run1/AE3")
+
     def test_set_dir_refuses_escapes(self):
-        for bad in ("../etc", "a/../../b", "a/b/c", "a", "run/..", "/abs/x"):
+        for bad in ("../etc", "a/../../b", "a/b/c", "run/..", "..", ".",
+                    "/abs/x"):
             with self.assertRaises(ValueError, msg=bad):
                 G.set_dir("/root", bad)
+
+
+class TestResolveImage(unittest.TestCase):
+    """S26 sources ship NESTED file paths (images/x.JPG, train/images/x.jpg);
+    the resolver must serve them and still refuse escapes."""
+
+    def test_nested_paths_resolve_inside_the_set(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "urchinbot", "images")
+            os.makedirs(d)
+            with open(os.path.join(d, "im1.JPG"), "wb") as fh:
+                fh.write(b"\xff\xd8")
+            p = G.resolve_image(root, "urchinbot", "images/im1.JPG")
+            self.assertEqual(p, os.path.realpath(os.path.join(d, "im1.JPG")))
+
+    def test_escapes_are_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "s"))
+            for bad in ("../other/x.jpg", "a/../../x.jpg", "..", "",
+                        "/etc/passwd", "a//b.jpg"):
+                with self.assertRaises(ValueError, msg=bad):
+                    G.resolve_image(root, "s", bad)
+
+    def test_symlink_out_of_the_set_is_refused(self):
+        # realpath-based confinement: a symlink pointing outside the set
+        # must not serve, even though its literal path looks clean.
+        with tempfile.TemporaryDirectory() as root:
+            sdir = os.path.join(root, "s")
+            os.makedirs(sdir)
+            outside = os.path.join(root, "secret.jpg")
+            with open(outside, "wb") as fh:
+                fh.write(b"\xff\xd8")
+            os.symlink(outside, os.path.join(sdir, "link.jpg"))
+            with self.assertRaises(ValueError):
+                G.resolve_image(root, "s", "link.jpg")
 
 
 class TestSaveRoundTrip(unittest.TestCase):

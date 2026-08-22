@@ -39,29 +39,51 @@ SAFE_SEG = re.compile(r"^[A-Za-z0-9._-]+$")
 # ---------------------------------------------------------------------------
 
 def find_sets(root):
-    """-> sorted ["run/board", ...] for every labels.jsonl under root."""
+    """-> sorted set ids: every dir holding a labels.jsonl, 1 or 2 levels
+    under root. Two layouts exist in the field: the two_ball captures are
+    <run>/<board>/, the S26 urchin corpora are flat <source>/ -- the GUI
+    serves both rather than forcing a restructure of source-faithful
+    trees."""
     out = []
     if not os.path.isdir(root):
         return out
-    for run in sorted(os.listdir(root)):
-        rdir = os.path.join(root, run)
-        if not os.path.isdir(rdir):
+    for a in sorted(os.listdir(root)):
+        adir = os.path.join(root, a)
+        if not os.path.isdir(adir):
             continue
-        for board in sorted(os.listdir(rdir)):
-            if os.path.isfile(os.path.join(rdir, board, "labels.jsonl")):
-                out.append("%s/%s" % (run, board))
+        if os.path.isfile(os.path.join(adir, "labels.jsonl")):
+            out.append(a)
+        for b in sorted(os.listdir(adir)):
+            if os.path.isfile(os.path.join(adir, b, "labels.jsonl")):
+                out.append("%s/%s" % (a, b))
     return out
 
 
 def set_dir(root, set_id):
-    """Confined resolve of "run/board" under root; ValueError on escape."""
+    """Confined resolve of a set id (1 or 2 segments) under root;
+    ValueError on escape."""
     parts = set_id.split("/")
-    if (len(parts) != 2
+    if (not 1 <= len(parts) <= 2
             or not all(SAFE_SEG.match(p) and p.strip(".") for p in parts)):
         # strip(".") guards "." and ".." -- the dot class in SAFE_SEG
         # admits them, and ".." is exactly the escape this refuses.
         raise ValueError("bad set id %r" % set_id)
-    return os.path.join(root, parts[0], parts[1])
+    return os.path.join(root, *parts)
+
+
+def resolve_image(root, set_id, rel):
+    """Confined resolve of a record's "file" value (which the S26 sources
+    ship as a NESTED relative path, e.g. images/x.JPG or
+    train/images/x.jpg) inside its set dir. ValueError on escape."""
+    base = os.path.realpath(set_dir(root, set_id))
+    parts = rel.split("/")
+    if not parts or not all(SAFE_SEG.match(p) and p.strip(".")
+                            for p in parts):
+        raise ValueError("bad image path %r" % rel)
+    path = os.path.realpath(os.path.join(base, *parts))
+    if not path.startswith(base + os.sep):
+        raise ValueError("image path escapes its set")
+    return path
 
 
 def load_records(root, set_id):
@@ -181,7 +203,8 @@ async function show(){
   sel=-1; hist=[]; dirty=false;
   const r=recs[idx]; if(!r) return;
   img=new Image();
-  await new Promise(res=>{ img.onload=res; img.src='img/'+setId+'/'+r.file; });
+  await new Promise(res=>{ img.onload=res;
+    img.src='img?set='+encodeURIComponent(setId)+'&f='+encodeURIComponent(r.file); });
   scale=Math.min(1.6, (window.innerWidth-40)/img.width);
   cv.width=img.width*scale; cv.height=img.height*scale;
   draw();
@@ -299,14 +322,14 @@ def make_handler(root):
                 if path.startswith("/api/set/"):
                     recs = load_records(root, path[len("/api/set/"):])
                     return self._send(200, json.dumps({"records": recs}))
-                if path.startswith("/img/"):
-                    rest = path[len("/img/"):]
-                    seg = rest.split("/")
-                    if len(seg) != 3 or not all(
-                            SAFE_SEG.match(p) and p.strip(".") for p in seg):
-                        return self._send(404, "bad image path", "text/plain")
-                    fp = os.path.join(set_dir(root, "/".join(seg[:2])),
-                                      seg[2])
+                if path == "/img":
+                    # /img?set=<id>&f=<relpath> -- query params because both
+                    # halves can contain slashes (2-segment sets, nested
+                    # source paths); confinement is resolve_image's job.
+                    from urllib.parse import parse_qs, urlparse
+                    q = parse_qs(urlparse(self.path).query)
+                    fp = resolve_image(root, q.get("set", [""])[0],
+                                       q.get("f", [""])[0])
                     with open(fp, "rb") as fh:
                         return self._send(200, fh.read(), "image/jpeg")
                 return self._send(404, "not found", "text/plain")
