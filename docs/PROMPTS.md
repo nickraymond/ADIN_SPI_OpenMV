@@ -368,3 +368,53 @@ BENCH RULES (new since S25 -- the workbench owns the boards now):
 Nibble 1 = plan first, my gate before code. Short actionable replies, and
 use the milestone report format in CLAUDE.md.
 ```
+
+## 12 — Ready to paste: S26 — urchin dataset access & validation (written 2026-08-21, parallel track)
+
+```
+Run /agent-entry. Sprint S26 on a fresh branch from main -- urchin dataset
+access & validation. This is a PARALLEL desk track: pure Mac/network work,
+ZERO bench hardware, ZERO board contact -- do not touch nereus000 or the
+OpenMV boards; the S8 ball sessions own them. Its output gates S8 bite E
+(the urchin model).
+
+THE SOURCE DOCUMENT: docs/urchin_datasets.md -- Nick's two-sweep research
+from 2026-08-17. Treat EVERY row as a claim until you have verified it;
+live counts in it are a date-stamped snapshot. S26 = turn that file into
+a verified inventory + a training-corpus plan with real numbers.
+
+SETTLED -- do not re-derive:
+- Headline finding (verify, don't re-search): no existing dataset labels
+  purple-vs-red urchins with boxes at scale. Urchinbot (CC-BY 4.0, 9,872
+  imgs / 44k boxes, temperate reef, pretrained YOLOv5 incl.) is the
+  pretraining anchor; iNaturalist/GBIF is the only purple-vs-red signal
+  (image-level, needs auto-boxing); DUO's 50k urchin boxes are
+  license-unstated -- fence research-only. The file's dead-ends list is
+  real work already done: extend it, never re-search it silently.
+- The 4-step data strategy at the file's end (backbone / species head /
+  domain fine-tune / NOAA yolo11 baseline) is the shape bite 3 fills in
+  with verified numbers -- not a thing to reinvent.
+
+RULES OF ENGAGEMENT:
+- ACCOUNT SIGNUPS, LOGINS, AND API KEYS ARE NICK'S HANDS, always (same
+  rule as sudo): prep the exact steps/URLs, hand them over, wait. Never
+  create accounts or enter credentials yourself.
+- Datasets land in ~/nereus_ml/datasets/<source>/ on the Mac -- NEVER in
+  the repo (worktrees; multi-GB). The repo gets the dossier, manifests
+  (sha256 + counts), and small sample crops only if tiny.
+- Licenses: capture the ACTUAL license text per source verbatim into the
+  dossier -- "the page said CC-BY" is not an artifact. FathomNet is
+  per-image licensing: filter and count CC0/CC-BY separately from NC/ND.
+- Trust artifacts: a download that "succeeded" but has no images failed.
+  Verify counts against claims, open real images, check boxes land on
+  urchins before a row is stamped verified.
+
+BITES (TRACKER S26): 1 = access + inventory verification (dossier rows:
+verified count / format / license / sample-viewed, dated). 2 = label
+quality + usable-volume-after-license-filter + NOAA yolo11 weights
+load-and-run on the Mac. 3 = the corpus plan mapped onto the 4-step
+strategy, reviewed with Nick, S8 bite E re-scoped against it.
+
+Nibble 1 = plan first, my gate before code/downloads over ~100 MB. Short
+actionable replies, milestone report format per CLAUDE.md.
+```
