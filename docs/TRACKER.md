@@ -1911,7 +1911,7 @@ image-level) is the species signal; DUO's 50k boxes are license-murky.
       each stamped with date + how it was checked. Dead-end rows recorded
       too (the file already carries a dead-ends list — extend it, never
       silently drop a source).
-- [~] **Bite 2 — label-quality + usable-volume review.** → DONE except FULL rung-A numbers (running overnight; provisional recorded). QA tallies + NOAA load-and-run in dossier §Bite-2 QA. On the verified
+- [~] **Bite 2 — label-quality + usable-volume review.** → DONE except the yolo11x FULL rung-A line (n FULL: mAP50=0.243; x provisional 0.334, completing). QA tallies + NOAA load-and-run in dossier §Bite-2 QA. On the verified
       samples: are boxes actually on urchins (spot-check N per source),
       does purple/red class fidelity hold in the two sources that claim
       it (74-img Roboflow set, iNat species labels), what volume SURVIVES
@@ -1921,7 +1921,7 @@ image-level) is the species signal; DUO's 50k boxes are license-murky.
       the strategy names. *Verifiable:* a per-source verdict table
       (usable boxes after filtering / quality notes / go-no-go) reviewed
       with Nick.
-- [~] **Bite 3 — the training-corpus plan.** → DRAFTED (docs/urchin_corpus_plan.md), 4 open decisions; awaiting Nick's review. Map verified sources onto
+- [x] **Bite 3 — the training-corpus plan.** → **APPROVED by Nick 2026-08-22** (docs/urchin_corpus_plan.md): all 4 decisions taken (DUO unfenced; Apache-2.0 family gated on a both-boards compiler check; red oversample+augment; S8 bite E re-scoped to train-compile-measure). Dive = GoPro + AE3 rig paired. Map verified sources onto
       the research file's 4-step strategy (backbone / species head /
       domain fine-tune / benchmark) with real numbers, storage laid out
       under `~/nereus_ml/datasets/` (NEVER in the repo — worktrees), and

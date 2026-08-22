@@ -1,6 +1,7 @@
-# Urchin training-corpus plan (S26 bite 3 — DRAFT for Nick's review)
+# Urchin training-corpus plan (S26 bite 3 — **APPROVED by Nick 2026-08-22**)
 
-Drafted 2026-08-21. Fills in the 4-step strategy from
+Drafted 2026-08-21; all four open decisions approved 2026-08-22 (see
+§Decisions). Fills in the 4-step strategy from
 `docs/urchin_datasets.md` with the numbers verified in S26 bites 1–2.
 Slots marked **[bite 2]** are measured before this plan is finalized.
 Verbatim license captures: `ml/urchin_data/licenses/`. Data:
@@ -121,16 +122,31 @@ run: config + git-sha + data-manifest hash recorded under
 `~/nereus_ml/runs/`. The repo gets: this plan, manifests, license
 captures, model cards, and eval-result tables.
 
-## Open decisions for the review (Nick)
+## Decisions (ALL APPROVED — Nick, 2026-08-22)
 
-1. Confirm DUO unfence (recommended above).
-2. Architecture family: Apache-2.0 (YOLOX/NanoDet) vs Ultralytics AGPL —
-   pending compiler verification on both boards.
-3. Red-class imbalance: oversample+augment (recommended) vs collect more
-   red (slower).
-4. S8 bite E re-scope: bite E consumes `corpus_v1` + this plan; its
-   first act is stage 0/rung A+B scoring on the boards' own compiled
-   baselines rather than fresh dataset work.
+1. **DUO unfenced for training.** figshare CC BY 4.0 declaration accepted
+   under the demo/open-release posture; lineage caveat stays on record;
+   attribute in the model card.
+2. **Architecture: Apache-2.0 family (YOLOX/NanoDet class), gated on a
+   compiler check** — one candidate must compile through BOTH Vela (AE3)
+   and stedgeai (N6) before stage 1 trains. If no Apache candidate
+   passes and an Ultralytics one does, AGPL is accepted and documented.
+   The compiler check is the FIRST task of the follow-on session.
+3. **Red imbalance: oversample + heavier augmentation now**; Nick's dive
+   footage is the targeted collection pass if rung B shows red recall
+   lagging.
+4. **S8 bite E re-scoped: train-compile-measure only.** Corpus + labels
+   are delivered (labels.jsonl, agreed convention); bite E starts with
+   board-compiled baseline scoring, then stage-1 training. No dataset
+   work remains in bite E. (Relayed to the S8 session 2026-08-22.)
+
+**Capture plan addendum (Nick, 2026-08-22): the dive runs GoPro 4K AND
+the AE3 dive rig together** — paired same-scene passes per the shot list
+(sync marker each sequence). Consequence: stage 3 gets true AE3-domain
+footage plus its 4K twin (the sensor-gap measurement), and rung C can be
+built per-camera. The rig itself is board-touching work owned by the S8
+arc (TRACKER flagged item, ~3-week deadline); GoPro-only remains the
+fallback if the rig slips — the dive is not gated on it.
 
 ## [bite 2] results (filled 2026-08-21; details in dossier §Bite-2 QA)
 
@@ -152,8 +168,13 @@ captures, model cards, and eval-result tables.
   banked for the iceboxed sun-star detector); 74-img is purple-ONLY
   (3 red boxes) → moved from "species seed" to hard-case eval; red
   seeding now rides GBIF + Nick's Channel Islands dive footage.
-- Still open: Urchinbot full-pull manifest; rung-A/B baseline mAP
-  scores; underwater/out-of-water auto-filter implementation.
+- Urchinbot full pull COMPLETE + verified (9,872/9,872, 34.8 GiB, zero
+  corrupt). **Rung-A FULL (983 imgs): yolo11n mAP50=0.243
+  mAP50-95=0.090 P=0.466 R=0.245; yolo11x completing (provisional
+  0.334/0.131/0.702/0.313 at n=690) — vs Urchinbot's published 0.908
+  ceiling on this data.** Still open: yolo11x FULL line (running),
+  rung-B (after stage-2 auto-boxing), underwater auto-filter
+  implementation (follow-on session).
 
 ## Flow (same diagram lives in the chat as a rendered file)
 
