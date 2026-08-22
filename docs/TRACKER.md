@@ -1682,7 +1682,18 @@ any urchin labelling effort is spent.
       *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
       the corrected set moves val precision measurably; the corrected
       labels.jsonl round-trips through the trainer unchanged in format.
-- [ ] **Bite C — end-to-end metrics: capture → detect → count.**
+- [~] **Bite C — end-to-end metrics: capture → detect → count.**
+      → **HARNESS DONE 2026-08-21 night (branch `claude/s8-c-metrics`,
+      stacked on B3; plan + 4 decision points approved by Nick incl. the
+      one-meter power swap): `--record/--truth/--run-label` on the stream
+      host (JSONL rows, truth typed at collection, paired blob+model on
+      the same frames), `bench/s8_report.py` (five table+chart views,
+      palette validated both modes, self-contained HTML → the report IS a
+      workbench chapter), `bench/s8_infer_probe.py` (inference-only
+      ceiling), campaign-runbook chapter + two guide cards. Suites 20 new,
+      all green; sample report rendered + inspected. REMAINING: Nick's
+      morning campaign (4 arrangements × 60 s + power readings + probes)
+      → the real report → PR.**
       **RESCOPED 2026-08-21 (Nick): DISTANCE IS DROPPED as an analysis
       axis — "I only ever setup the balls at an average 1.5 m distance",
       so the run1_1m/run2_2m names are not a true 1 m-vs-2 m variable.

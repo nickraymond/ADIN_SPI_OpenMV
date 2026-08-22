@@ -72,8 +72,22 @@ next") — B2's label-noise debts stay open in the two-ball model; the GUI
 is bite E's labelling path. Pattern → repo skill
 `.claude/skills/workbench-guide-card` + memory. B3 PR opened.
 
-**Next:** bite C (1 m/2 m end-to-end metrics, needs Nick at the bench) →
-bite D (desk arithmetic) → E/urchins on S26's corpus.
+**Same session, late — bite C harness staged for Nick's AM self-serve run
+(branch `claude/s8-c-metrics`, stacked on B3):** recorder (JSONL rows,
+truth typed at collection, paired blob+model per frame), s8_report.py
+(five table+chart views per Nick's Edge-Impulse ethos; distance DROPPED —
+Nick: balls only ever at ~1.5 m — px-on-target is the axis; palette
+validated via the dataviz checker, both modes), infer-only probe, campaign
+runbook chapter + report-placeholder chapter as guide cards. Peer exchange
+with the S26 session: corpus verified on disk (25,328 frames, 4 sets),
+label convention settled (single-class backbone, species via converters
+never sidecars — GUI edit-desync constraint), GUI grew flat-layout +
+nested-path support after artifact-checking their delivery. NOAA baseline
+collapse (0 turbid / 3–6 of 142 CA-barrens) = measured custom-model
+justification.
+
+**Next:** Nick's morning campaign (the workbench 📊 chapter is the
+runbook) → real report → C's PR; then bite D rides C's numbers.
 
 ## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
 
