@@ -1647,8 +1647,30 @@ any urchin labelling effort is spent.
       measured per-inference time consistent with the tables above.
       **GATE: if either board has no viable path, STOP and re-plan with
       Nick before any dataset effort is spent.**
-- [ ] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
-      passed; NEXT working session).** Nick reviews ALL training frames
+- [x] **Bite B3 — label-review GUI. CLOSED 2026-08-21 (Nick): tool + card
+      shipped and used live ("The GUI cookbook is great"); the ≥50-frame
+      correction sitting + retrain acceptance is WAIVED — Nick: "not going
+      to retrain, it's a ton of work and I want to get to the urchin work."
+      Consequence, recorded not buried: B2's label-noise debts
+      (USPS-lettering false purple, dim-pink recall, exact-count weakness)
+      stay OPEN in the shipped two-ball model; the GUI's real payoff is as
+      bite E's urchin labelling path. Pattern captured as the repo skill
+      `.claude/skills/workbench-guide-card`. PR open.**
+      → CODE + TESTS + REHEARSAL DONE 2026-08-21 (branch
+      `claude/s8-b3-label-gui`; plan + guide-card variant approved by Nick).
+      `ml/fomo/label_gui.py` (stdlib, Mac, LAN bind :8899): draw/move/
+      resize/delete/reclass, arrows autosave + mark reviewed, classes
+      extendable never hard-wired, atomic whole-file saves to the SAME
+      labels.jsonl; `relabel.py` now refuses to flatten reviewed frames
+      without `--force`. Workbench grew GUIDE CARDS (Nick's "cookbook
+      chapter" call): `guide=` recipes render as a 📖 link to a Pi-served
+      chapter — no boards, unstartable by schema AND by /api/start; first
+      chapter = guides/label-review.html with a live labeler-up badge.
+      Save path rehearsed on a dataset COPY, verified on disk. Suites:
+      +15 GUI, workbench→83, 231 green together. REMAINING: Nick's
+      correction sitting (≥50 frames) + retrain moving val precision +
+      the card demo on the Pi → PR.
+      *(original scope)* Nick reviews ALL training frames
       himself in a GUI, corrects the auto-label boxes by hand, and can
       label beyond colour classes (the class list must not be hard-wired
       to pink/purple — bite E's urchins ride the same tool). Scope: browse
@@ -1660,8 +1682,20 @@ any urchin labelling effort is spent.
       *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
       the corrected set moves val precision measurably; the corrected
       labels.jsonl round-trips through the trainer unchanged in format.
-- [ ] **Bite C — end-to-end metrics: capture → detect → count, at 1 m
-      and 2 m (Nick 2026-08-20).** Not inference-only — the whole chain,
+- [ ] **Bite C — end-to-end metrics: capture → detect → count.**
+      **RESCOPED 2026-08-21 (Nick): DISTANCE IS DROPPED as an analysis
+      axis — "I only ever setup the balls at an average 1.5 m distance",
+      so the run1_1m/run2_2m names are not a true 1 m-vs-2 m variable.
+      Pixels-on-target (measured per detection) replaces distance as the
+      continuous axis; accuracy-vs-px is the plot that transfers to
+      urchins and the T2 ≥24–32 px floor. Analytics shape (Nick's
+      Edge-Impulse ethos, proposed 2026-08-21, table+chart pairs, JSONL
+      rows as the artifact, static HTML report on a workbench card):
+      count-accuracy vs truth · accuracy-vs-px (money plot) · per-stage
+      cost bars (app path vs streaming overhead separated) ·
+      confidence-vs-px (D2's conf) · board scorecard (feeds bite D).**
+      *(original scope, distance references superseded)* Not
+      inference-only — the whole chain,
       which is exactly what the per-tile numbers could not tell us.
       Report per distance, per board, and **per method (blob baseline
       from bite A vs the custom model)**: end-to-end fps, the per-stage

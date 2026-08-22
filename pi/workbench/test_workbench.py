@@ -155,6 +155,45 @@ class TestSchema(unittest.TestCase):
         self.assertIsNone(out)
 
 
+class TestGuideCards(unittest.TestCase):
+    """S8 B3: a guide card is documentation in the menu -- it owns no boards
+    and can never be started. The schema enforces the split."""
+
+    def _guide(self, **over):
+        base = {"name": "how-to", "title": "A chapter",
+                "guide": "guides/how-to.html"}
+        base.update(over)
+        return base
+
+    def test_guide_card_valid_without_boards(self):
+        out, errs = errs_of(self._guide())
+        self.assertEqual(errs, [])
+        self.assertEqual(out["guide"], "guides/how-to.html")
+        self.assertEqual(out["boards"], [])
+        self.assertIsNone(out["run"])
+
+    def test_guide_confined_to_guides_dir(self):
+        for bad in ("../etc/x.html", "guides/../x.html", "x.html",
+                    "guides/x.txt", "/abs/guides/x.html"):
+            out, errs = errs_of(self._guide(guide=bad))
+            self.assertIsNone(out, bad)
+
+    def test_guide_cannot_be_half_runnable(self):
+        for extra in ({"run": {"argv": ["python3"]}},
+                      {"health": {"http": "http://x/"}},
+                      {"boards": [{"label": "A", "by_id": "usb-x-if00"}]},
+                      {"services": ["a.service"]}):
+            out, errs = errs_of(self._guide(**extra))
+            self.assertIsNone(out, extra)
+            self.assertTrue(any("guide card cannot carry" in e
+                                for e in errs), extra)
+
+    def test_run_recipes_carry_no_guide(self):
+        out, errs = errs_of(recipe())
+        self.assertEqual(errs, [])
+        self.assertIsNone(out["guide"])
+
+
 class TestRegistry(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="wb_recipes_")
@@ -243,6 +282,16 @@ class TestShippedRecipes(unittest.TestCase):
         self.assertTrue(
             os.path.exists(os.path.join(workbench.RECIPE_DIR,
                                         s8["thumbnail"])))
+
+    def test_label_review_guide_ships_and_names_the_gui(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        card = {r["name"]: r for r in recipes}["label-review"]
+        path = os.path.join(workbench.RECIPE_DIR, card["guide"])
+        self.assertTrue(os.path.exists(path))
+        body = open(path).read()
+        # The chapter must point at the real tool and the real start command.
+        self.assertIn("ml/fomo/label_gui.py", body)
+        self.assertIn(":8899", body)
 
 
 class FakeBench:
@@ -742,6 +791,12 @@ class TestHTTP(unittest.TestCase):
                      '\n[run]\nargv = ["python3", "-c", "pass"]\n')
         with open(os.path.join(cls.rdir, "broken.toml"), "w") as fh:
             fh.write("name = [unclosed\n")
+        os.makedirs(os.path.join(cls.rdir, "guides"))
+        with open(os.path.join(cls.rdir, "guides", "how.html"), "w") as fh:
+            fh.write("<h1>chapter</h1>")
+        with open(os.path.join(cls.rdir, "zz_guide.toml"), "w") as fh:
+            fh.write('name = "how-to"\ntitle = "A chapter"\n'
+                     'guide = "guides/how.html"\n')
         cls.tmp = tempfile.mkdtemp(prefix="wb_http_run_")
         cls.runner = Runner(repo=cls.tmp,
                             pidfile=os.path.join(cls.tmp, "run.json"),
@@ -783,9 +838,24 @@ class TestHTTP(unittest.TestCase):
         code, body = self.req("GET", "/api/recipes")
         self.assertEqual(code, 200)
         obj = json.loads(body)
-        self.assertEqual([r["name"] for r in obj["recipes"]], ["good-one"])
+        self.assertEqual([r["name"] for r in obj["recipes"]],
+                         ["good-one", "how-to"])
         self.assertEqual([p["file"] for p in obj["problems"]],
                          ["broken.toml"])
+
+    def test_guide_served_and_confined(self):
+        code, body = self.req("GET", "/guides/how.html")
+        self.assertEqual(code, 200)
+        self.assertIn(b"chapter", body)
+        for evil in ("/guides/../good.toml", "/guides/..%2Fgood.toml",
+                     "/guides/no.html", "/guides/how.txt"):
+            code, _ = self.req("GET", evil)
+            self.assertEqual(code, 404, evil)
+
+    def test_start_on_a_guide_card_is_refused(self):
+        code, body = self.req("POST", "/api/start", {"name": "how-to"})
+        self.assertEqual(code, 409)
+        self.assertIn("guide card", json.loads(body)["err"])
 
     def test_preflight_endpoint_shape(self):
         code, body = self.req("GET", "/api/preflight")

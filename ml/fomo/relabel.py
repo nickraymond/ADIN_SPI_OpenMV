@@ -120,7 +120,17 @@ def resolve_overlaps(boxes):
     return [b for k, b in zip(keep, boxes) if k]
 
 
-def main(root):
+def has_reviewed(path):
+    """True if any record in an existing labels.jsonl is hand-reviewed."""
+    try:
+        with open(path) as fh:
+            return any(json.loads(ln).get("reviewed") for ln in fh
+                       if ln.strip())
+    except OSError:
+        return False
+
+
+def main(root, force=False):
     for run in sorted(os.listdir(root)):
         rdir = os.path.join(root, run)
         if not os.path.isdir(rdir):
@@ -129,6 +139,14 @@ def main(root):
             bdir = os.path.join(rdir, board)
             idx = os.path.join(bdir, "index.jsonl")
             if not os.path.isfile(idx):
+                continue
+            # B3 guard: a re-run must NEVER silently flatten hand
+            # corrections back to auto-labels. The label GUI stamps
+            # "reviewed": true on every frame it saves.
+            if not force and has_reviewed(os.path.join(bdir, "labels.jsonl")):
+                print("%s/%s: SKIPPED -- labels.jsonl contains hand-reviewed "
+                      "frames (label_gui). Re-run with --force to discard "
+                      "the corrections." % (run, board))
                 continue
             thr = THRESHOLDS[board]
             minpx = MIN_PIXELS[board]
@@ -153,5 +171,7 @@ def main(root):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else
-         os.path.expanduser("~/nereus_ml/datasets/two_ball"))
+    args = [a for a in sys.argv[1:] if a != "--force"]
+    main(args[0] if args else
+         os.path.expanduser("~/nereus_ml/datasets/two_ball"),
+         force="--force" in sys.argv[1:])
