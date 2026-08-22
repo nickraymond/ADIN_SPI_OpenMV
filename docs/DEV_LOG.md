@@ -17,6 +17,60 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-21 (night) — S26 bites 1+2 done in one desk session: corpus verified, downloaded (~45 GB), license-captured, QA'd, converted for S8; NOAA baseline measured weak; bite-3 plan drafted
+
+**Branch:** `claude/urchin-dataset-s26-a1517e` (parallel desk track — ZERO
+board contact, as designed). Owner gate exercised throughout: Nick picked
+the corpus (Urchinbot + DUO + GBIF-clean + RF100 + 74-img; sea-urchin-body
+REJECTED), made the Roboflow account/key, and set the posture that decided
+the license calls (demo/open-release, not a commercial moat → DUO unfenced,
+NC data out, Apache-2.0 architecture preferred for adoptability).
+
+**Done:**
+- Every claim in docs/urchin_datasets.md verified or corrected; dossier
+  §Verification + §Bite-2 QA written; verbatim license captures + sha256
+  manifests in ml/urchin_data/. Counts held everywhere (Urchinbot
+  9,872/44,268 exact; DUO 7,782/50,156 exact; GBIF 13,387/3,666 exact);
+  the LICENSE layer moved: FathomNet 100% NC-ND (0 commercial boxes,
+  full 4,600-image audit), iNat ~85% NC (clean = 2,019 purple/574 red),
+  DUO figshare DECLARES CC BY 4.0, 74-img set is purple-ONLY (3 red).
+- Corpus ON DISK and artifact-verified: Urchinbot full 9,872/9,872
+  (34.8 GiB, 0 corrupt), DUO (md5 = figshare), GBIF clean 2,578 imgs +
+  provenance JSONL, RF100 + 74-img Roboflow exports (audits exact).
+- Live convention agreed with the S8 session (cross-session sync):
+  labels.jsonl converters shipped + run for all 4 box sources
+  (ml/urchin_data/convert.py, self-auditing); S8's GUI rehearsed against
+  our layouts. Pixels-on-target adopted as THE eval axis (distance
+  dropped — S8 relay: ball runs were all ~1.5 m).
+- NOAA yolo11n/x baselines run on the Mac: PROVISIONAL rung-A (n=690)
+  mAP50 0.225/0.334, R 0.23/0.31 — vs Urchinbot's published 0.908
+  ceiling on the same data. Custom model justified by measurement.
+  FULL rung-A (983 imgs) running overnight via ml/urchin_data/
+  eval_rung_a.py; recorded on completion.
+- Bite-3 plan DRAFTED (docs/urchin_corpus_plan.md) with flowchart;
+  4 open decisions for Nick's review. Starfish/sun-star detector
+  captured to Icebox (RF100's 10,270 starfish boxes banked).
+
+**Broke/surprised us:**
+- Three "successful" downloads that weren't (figshare 63-byte error body;
+  urllib CERTIFICATE_VERIFY_FAILED ×300 behind a pipe that swallowed rc)
+  — every one caught by artifact checks, none by exit codes. The rule
+  held: trust the bytes.
+- DUO ships a silently remapped YOLO labels dir (0=starfish 1=holothurian
+  2=echinus 3=scallop vs COCO order) and a val split that is a byte-copy
+  of test; Urchinbot's test.txt lacks a trailing newline (983 imgs, not
+  982) and its GitHub weights are UNLICENSED (dataset CC-BY, weights not).
+- Sakana (NOAA yolo11n's training set) is GONE from Roboflow Universe —
+  404 logged-out AND logged-in.
+
+**Next:** FULL rung-A lands overnight → dossier + S8 relay (queued).
+Then: bite-3 plan review with Nick (4 decisions), S8 bite E re-scope,
+nibble-4 PR for the sprint. NEW flagged item for Nick to size: AE3
+dive-recorder rig (~3-week deadline, board-touching → S8 arc; GoPro-only
+is the fallback, dive not gated).
+
+---
+
 ## 2026-08-20 (night) — S25 bites 1+2 SHIPPED AND DEMO'D: the workbench page starts/stops the ball demo; AE3 quick-reattach wedge found, fenced with a settle window, cleared by physical replug
 
 **Branch:** `claude/nereus-vision-workbench-4d2268`. Bench: both boards on

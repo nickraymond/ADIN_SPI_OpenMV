@@ -1,7 +1,23 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-21 (**NEW PARALLEL SPRINT S26 — urchin dataset
+*Last updated: 2026-08-21 night (**S26 bites 1+2 ESSENTIALLY DONE in one
+desk session — the corpus Nick picked (Urchinbot + DUO + GBIF-clean +
+RF100 + 74-img) is VERIFIED, DOWNLOADED (~45 GB incl. Urchinbot's full
+9,872/9,872, zero corrupt), license-captured verbatim, QA-spot-checked,
+and already converted to S8's labels.jsonl (convention agreed with the
+live S8 session; converters self-audit exact).** License layer moved
+hard: FathomNet = 100% NC-ND (zero commercial boxes); iNat clean subset
+= 2,019 purple / 574 red (~85% is NC); DUO's figshare DECLARES CC BY 4.0
+(unfenced by Nick's demo/open-release posture, lineage caveat recorded);
+74-img set is purple-ONLY (3 red boxes). NOAA yolo11 baselines run on
+the Mac: PROVISIONAL rung-A mAP50 0.225 (n) / 0.334 (x) vs Urchinbot's
+published 0.908 — the custom model is justified by measurement; FULL
+rung-A completing overnight. Bite 3 plan DRAFTED
+(docs/urchin_corpus_plan.md) awaiting Nick's review; axis = pixels-on-
+target (distance dropped, S8 relay). NEW flagged item: AE3 dive-recorder
+rig, ~3-week deadline (Nick's dive). Previous:*
+*2026-08-21 (**NEW PARALLEL SPRINT S26 — urchin dataset
 access & validation (Nick).** Desk-only track alongside S8's ball work:
 verify `docs/urchin_datasets.md` (Nick's 2026-08-17 research, now in-repo)
 source by source — access, real samples, label quality, license text —
@@ -1884,7 +1900,7 @@ purple-vs-red at scale; Urchinbot (CC-BY, 9,872 imgs/44k boxes) is the
 pretraining anchor; iNaturalist/GBIF (13,387 purple + 3,666 red,
 image-level) is the species signal; DUO's 50k boxes are license-murky.
 
-- [ ] **Bite 1 — access + inventory verification.** For every Tier-1/1b/2
+- [x] **Bite 1 — access + inventory verification.** → DONE 2026-08-21 (dossier §Verification; all rows stamped, dead-ends extended). For every Tier-1/1b/2
       source in `docs/urchin_datasets.md`: obtain access (agent preps the
       steps; **account signups and API keys are Nick's hands** — same rule
       as sudo), download a real sample, and verify the claims: image and
@@ -1895,7 +1911,7 @@ image-level) is the species signal; DUO's 50k boxes are license-murky.
       each stamped with date + how it was checked. Dead-end rows recorded
       too (the file already carries a dead-ends list — extend it, never
       silently drop a source).
-- [ ] **Bite 2 — label-quality + usable-volume review.** On the verified
+- [~] **Bite 2 — label-quality + usable-volume review.** → DONE except FULL rung-A numbers (running overnight; provisional recorded). QA tallies + NOAA load-and-run in dossier §Bite-2 QA. On the verified
       samples: are boxes actually on urchins (spot-check N per source),
       does purple/red class fidelity hold in the two sources that claim
       it (74-img Roboflow set, iNat species labels), what volume SURVIVES
@@ -1905,7 +1921,7 @@ image-level) is the species signal; DUO's 50k boxes are license-murky.
       the strategy names. *Verifiable:* a per-source verdict table
       (usable boxes after filtering / quality notes / go-no-go) reviewed
       with Nick.
-- [ ] **Bite 3 — the training-corpus plan.** Map verified sources onto
+- [~] **Bite 3 — the training-corpus plan.** → DRAFTED (docs/urchin_corpus_plan.md), 4 open decisions; awaiting Nick's review. Map verified sources onto
       the research file's 4-step strategy (backbone / species head /
       domain fine-tune / benchmark) with real numbers, storage laid out
       under `~/nereus_ml/datasets/` (NEVER in the repo — worktrees), and
@@ -1924,6 +1940,16 @@ weights running on one of them on the Mac.
 closed; each item now names its own origin. Nothing here is owned by a
 live bite, and nothing here should be assumed benign because it is old.)*
 
+- **AE3 dive-recorder rig (flagged 2026-08-21 night, S26 session; ~3-WEEK
+  DEADLINE — Nick's Channel Islands dive).** Nick's plan: GoPro 4K + the
+  AE3 in a waterproof housing recording VGA color locally, paired
+  same-scene passes in turbid water (stage-3/rung-C gold data,
+  docs/urchin_corpus_plan.md). OPEN HARDWARE QUESTIONS, not sized: battery
+  power inside a housing; the standalone record-to-storage path (rate,
+  medium, script) — the measured ~12.5 fps VGA color is the STREAMING
+  pipeline, local recording unverified. Board-touching → belongs to the
+  S8/bench arc; GoPro-only remains the fallback (the dive is not gated
+  on this rig). Nick to size in the AM.
 - **The q90 burst loss — S22 bite 1b, investigated but UNFIXED
   (carried 2026-08-20 at S22's closure).** Every hop is EXONERATED
   except the telemetry fork's internals: the q90 ref frame is really
