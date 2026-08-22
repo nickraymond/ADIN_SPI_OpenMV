@@ -30,19 +30,26 @@ RUNS = Path.home() / "nereus_ml" / "runs" / "stage1_yolox"
 
 
 class EMA:
-    def __init__(self, model, decay=0.9998):
+    """Ramped decay (YOLOX/ultralytics style): early updates copy the model
+    nearly directly, so the shadow never carries random-init pollution --
+    the stage1_v1 lesson (fixed decay scored 0.478 vs last.pt's 0.573)."""
+
+    def __init__(self, model, decay=0.9998, tau=2000):
         self.model = model
         self.decay = decay
+        self.tau = tau
+        self.updates = 0
         self.shadow = {k: v.detach().clone().float()
                        for k, v in model.state_dict().items()}
 
     @torch.no_grad()
     def update(self):
+        self.updates += 1
+        d = self.decay * (1 - math.exp(-self.updates / self.tau))
         for k, v in self.model.state_dict().items():
             s = self.shadow[k]
             if v.dtype.is_floating_point:
-                s.mul_(self.decay).add_(v.detach().float(),
-                                        alpha=1 - self.decay)
+                s.mul_(d).add_(v.detach().float(), alpha=1 - d)
             else:
                 s.copy_(v)
 
@@ -59,6 +66,10 @@ def main():
                     help="run N iterations then exit (loop proof + it/s)")
     ap.add_argument("--resume", default=None)
     ap.add_argument("--run-name", default=None)
+    ap.add_argument("--mosaic", type=float, default=0.0,
+                    help="mosaic probability (0 disables)")
+    ap.add_argument("--no-aug-epochs", type=int, default=10,
+                    help="final epochs with mosaic off (YOLOX recipe)")
     args = ap.parse_args()
 
     device = ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -82,10 +93,13 @@ def main():
         "arch": "yolox-nano conv-stem 1-class (compile-gate 2026-08-22)",
     }, indent=2))
 
-    ds = CorpusDataset(CORPUS / "train.jsonl", canvas=args.canvas, train=True)
+    ds = CorpusDataset(CORPUS / "train.jsonl", canvas=args.canvas, train=True,
+                       mosaic_prob=args.mosaic)
+    # persistent_workers=False on purpose: workers re-fork each epoch, so
+    # the mosaic-off toggle for the no-aug tail actually reaches them.
     dl = DataLoader(ds, batch_size=args.batch, shuffle=True,
                     num_workers=args.workers, drop_last=True,
-                    persistent_workers=args.workers > 0, pin_memory=False)
+                    persistent_workers=False, pin_memory=False)
 
     model = build_model(num_classes=1).to(device).train()
     # BN defaults per YOLOX exp
@@ -127,6 +141,10 @@ def main():
     it_global = start_epoch * iters_per_epoch
     t_start = time.time()
     for epoch in range(start_epoch, args.epochs):
+        if args.mosaic and epoch >= args.epochs - args.no_aug_epochs:
+            if ds.mosaic_prob:
+                print(f"epoch {epoch}: mosaic OFF (no-aug tail)")
+            ds.mosaic_prob = 0.0
         for i, (imgs, targets) in enumerate(dl):
             for g in opt.param_groups:
                 g["lr"] = lr_at(it_global)
