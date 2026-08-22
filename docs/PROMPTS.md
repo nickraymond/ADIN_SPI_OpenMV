@@ -418,3 +418,58 @@ strategy, reviewed with Nick, S8 bite E re-scoped against it.
 Nibble 1 = plan first, my gate before code/downloads over ~100 MB. Short
 actionable replies, milestone report format per CLAUDE.md.
 ```
+
+## 13 — Ready to paste: S8 bite E — urchin model: compile gate, then train (written 2026-08-22, after the S26 plan was minted)
+
+```
+Run /agent-entry. You are executing S8 bite E per the APPROVED corpus
+plan: docs/urchin_corpus_plan.md (Nick, 2026-08-22). That document is
+the contract — read it FIRST, then docs/urchin_datasets.md
+(§Verification + §Bite-2 QA) and ml/urchin_data/ (manifests, convert.py,
+eval_rung_a.py). This is Mac-side train-compile-measure work: NO bench
+hardware, NO board contact — nereus000 and both OpenMV boards belong to
+the S8 bench sessions; on-board deployment happens later through the S25
+workbench, coordinated with Nick.
+
+SETTLED — do not re-derive or re-litigate:
+- The corpus is FINAL and on disk under ~/nereus_ml/datasets/ with
+  labels.jsonl per source (S26 delivered; manifests + sha256 in repo).
+  Backbone = Urchinbot 44,268 + DUO 50,156 (UNFENCED, Nick) + RF100
+  25,299 boxes, single class "urchin". Species head = GBIF clean subset
+  (2,009 purple / 569 red, image-level; ~70-75% out-of-water — filter).
+  74-img set = hard-case eval, purple-only. NO dataset work remains.
+- Architecture decision (Nick): Apache-2.0 family (YOLOX/NanoDet class),
+  GATED on the compile check below. AGPL fallback only if no Apache
+  candidate passes both compilers — then documented, not debated.
+- Baseline to beat, rung A (983-img official Urchinbot test split, via
+  ml/urchin_data/eval_rung_a.py): yolo11n mAP50=0.243 / yolo11x 0.351.
+  Ceiling proof on the same data: Urchinbot's published 0.908.
+- Pixels-on-target is THE eval axis (distance is not a variable).
+  Targets ≥24-32 px min-side; downscale-augment Urchinbot into the
+  24-64 px band. labels.jsonl convention: absolute-pixel
+  [ci,x0,y0,w,h,pixels]; converters are the species source of truth.
+
+BITE E ORDER (each nibble-gated by Nick):
+1. COMPILE GATE FIRST, before any training: 1-2 untrained Apache-2.0
+   candidates (192-256 px input) int8-exported and pushed through BOTH
+   board compilers — Vela (AE3 Ethos-U55) AND stedgeai (N6 Neural-ART)
+   — reusing S8's phase-0 scaffold (ml/compile_model.sh; the S8 session
+   confirmed this is an afternoon, not a toolchain bite). Deliverable:
+   NPU placement report per candidate. STOP for Nick's pick.
+2. corpus_v1: merged training view under ~/nereus_ml/datasets/corpus_v1/
+   (symlink/manifest based, NO copies), Urchinbot official splits
+   respected (983-img test split NEVER trains).
+3. Stage-1 training on the gated architecture; score rung A; iterate
+   until decisively above 0.351; report vs baseline and ceiling.
+4. Stage-2 auto-box: stage-1 model over GBIF clean images, underwater/
+   junk filter (hands, dry, dead tests, specimens, larvae), species from
+   folder; rung B = ~150+150 hand-verified crops (Nick reviews in S8's
+   label GUI: python3 ml/fomo/label_gui.py ~/nereus_ml/datasets).
+
+RULES: venvs under ~/nereus_ml/venvs/, every training run records
+config + git sha + data-manifest hash under ~/nereus_ml/runs/; the repo
+gets manifests, model cards, and eval tables — never datasets or
+checkpoints. Trust artifacts, not exit codes: a "trained" model is a
+scored model. Long/expensive runs (>~30 min GPU/CPU) get my gate first.
+Milestone report format per CLAUDE.md.
+```
