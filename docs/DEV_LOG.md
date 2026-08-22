@@ -17,6 +17,40 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-22 (later) — S8 bite E steps 2+3: stage-1 TRAINED AND SCORED — rung-A mAP50 0.573 vs the 0.351 bar; int8 recompiled clean for both boards
+
+**Branch:** `claude/s8-bite-e-urchin-training-ce8830` (continuation of the
+compile-gate session after Nick approved YOLOX-Nano). Zero board contact.
+
+**Done:**
+- corpus_v1 built + fence-verified (19,904/96,326 train, val 976; builder
+  `ml/urchin_data/build_corpus_v1.py`, manifest with per-source shas).
+- YOLOX-Nano stage-1 trained on MPS (40 epochs, ~3 h, 4.3 it/s @ b32) and
+  scored on rung A: **0.573 mAP50 final** (0.225 → 0.455 → 0.514 → 0.573
+  at e0/10/20/39) vs yolo11n 0.243 / yolo11x 0.351 / ceiling 0.908.
+  Model card + eval table: `ml/yolox_urchin/STAGE1.md`.
+- Trained weights exported int8 + recompiled for BOTH boards
+  (`ml/yolox_urchin/export.py`): placement identical to the untrained
+  gate — AE3 single `ethos-u` op / N6 117-HW+2-hybrid+0-SW of 119.
+
+**Broke/surprised us:**
+- Urchinbot's official val.txt and test.txt share an image (im5348179.JPG;
+  true counts 7913/977/983 vs published 7912/976/982) — resolved to test,
+  recorded in the corpus manifest.
+- Naive random crops gave 70% target-free samples (box-aware crop fixed:
+  74% of boxes in the 24–64 px band, p50 34). Fixed-decay EMA scores ZERO
+  mid-run from init pollution (0.478 even at e39 vs last.pt 0.573) —
+  ramped decay is the queued fix; last.pt is the stage-1 model. Three
+  legacy `.type(str)` casts make stock YOLOX MPS-hostile — patched at
+  import in ml/yolox_urchin/model.py, third_party untouched.
+
+**Next:** stage 2 (auto-box GBIF via stage-1 model + underwater/junk
+filter, species crops, rung B ~150+150 for Nick's label-GUI sitting) —
+gated on Nick. Owed: int8-vs-float delta, on-board latency (bench
+sessions), PR for the bite.
+
+---
+
 ## 2026-08-22 — S8 bite E step 1: compile gate PASSED — Apache-2.0 holds, YOLOX-Nano recommended; STOPPED for Nick's pick
 
 **Branch:** `claude/s8-bite-e-urchin-training-ce8830` (Mac-side only — ZERO

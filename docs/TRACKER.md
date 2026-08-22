@@ -1,7 +1,16 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-22 (**S8 bite E step 1 — the architecture compile
+*Last updated: 2026-08-22 later (**S8 bite E stage 1 TRAINED AND SCORED:
+rung-A mAP50 0.573 vs yolo11x's 0.351 bar (yolo11n 0.243, ceiling
+0.908)** — YOLOX-Nano (Nick's pick after the gate) on corpus_v1
+(19,904/96,326, all test splits fenced; official val/test even share one
+image — resolved to test). Trained int8 recompiles clean for BOTH boards,
+placement identical to the gate (AE3 single `ethos-u` op; N6
+117-HW/2-hybrid/0-SW). Model card `ml/yolox_urchin/STAGE1.md`. NEXT =
+stage-2 GBIF auto-box + rung B (Nick's gate); owed: int8-vs-float delta,
+on-board latency (bench sessions), bite PR. Previous:*
+*2026-08-22 (**S8 bite E step 1 — the architecture compile
 gate — PASSED: Apache-2.0 holds, AGPL fallback dead.** YOLOX-Nano
 (conv-stem) is fully NPU-mapped on the AE3 (single `ethos-u` op, vela est
 28.1 ms) and 116/118 pure-HW epochs on the N6; NanoDet-Plus-m carries
@@ -1772,11 +1781,20 @@ any urchin labelling effort is spent.
       ShuffleNet channel shuffle both times. Report + deviations
       (Focus→conv stem; raw per-level head outputs):
       `ml/compile_gate_report.md`; run metadata
-      `~/nereus_ml/runs/compile_gate_2026-08-22.json`. **WAITING on
-      Nick's architecture pick (recommendation: YOLOX-Nano), then
-      corpus_v1 merged view → stage-1 training vs the 0.351 rung-A
-      bar.** Execution contract: docs/urchin_corpus_plan.md (approved
-      2026-08-22); kickoff PROMPTS.md §13.
+      `~/nereus_ml/runs/compile_gate_2026-08-22.json`.
+      **STEPS 2+3 DONE 2026-08-22 (Nick picked YOLOX-Nano): corpus_v1
+      built + fence-verified (19,904 imgs / 96,326 boxes; official
+      val/test even collide on one image — resolved to test) and stage-1
+      TRAINED + SCORED — rung-A mAP50 0.573 vs the 0.351 bar (curve
+      0.225/0.455/0.514/0.573 at e0/10/20/39). Trained int8 recompiles
+      clean for BOTH boards, placement identical to the gate. Model card
+      + eval table: `ml/yolox_urchin/STAGE1.md`.**
+      REMAINING in this bite: stage-2 GBIF auto-box + species crops +
+      rung B (Nick's label-GUI sitting); int8-vs-float delta; on-board
+      deploy + measured NPU latency + the HIL demo (bench sessions,
+      through the S25 workbench). Execution contract:
+      docs/urchin_corpus_plan.md (approved 2026-08-22); kickoff
+      PROMPTS.md §13.
       *(original scope)* Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
