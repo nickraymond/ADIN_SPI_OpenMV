@@ -1911,7 +1911,7 @@ image-level) is the species signal; DUO's 50k boxes are license-murky.
       each stamped with date + how it was checked. Dead-end rows recorded
       too (the file already carries a dead-ends list — extend it, never
       silently drop a source).
-- [~] **Bite 2 — label-quality + usable-volume review.** → DONE except the yolo11x FULL rung-A line (n FULL: mAP50=0.243; x provisional 0.334, completing). QA tallies + NOAA load-and-run in dossier §Bite-2 QA. On the verified
+- [x] **Bite 2 — label-quality + usable-volume review.** → DONE 2026-08-22. QA tallies + NOAA baselines in dossier §Bite-2 QA; rung-A FULL: yolo11n mAP50=0.243 / yolo11x 0.351 vs published ceiling 0.908. On the verified
       samples: are boxes actually on urchins (spot-check N per source),
       does purple/red class fidelity hold in the two sources that claim
       it (74-img Roboflow set, iNat species labels), what volume SURVIVES

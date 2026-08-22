@@ -169,12 +169,12 @@ fallback if the rig slips — the dive is not gated on it.
   (3 red boxes) → moved from "species seed" to hard-case eval; red
   seeding now rides GBIF + Nick's Channel Islands dive footage.
 - Urchinbot full pull COMPLETE + verified (9,872/9,872, 34.8 GiB, zero
-  corrupt). **Rung-A FULL (983 imgs): yolo11n mAP50=0.243
-  mAP50-95=0.090 P=0.466 R=0.245; yolo11x completing (provisional
-  0.334/0.131/0.702/0.313 at n=690) — vs Urchinbot's published 0.908
-  ceiling on this data.** Still open: yolo11x FULL line (running),
-  rung-B (after stage-2 auto-boxing), underwater auto-filter
-  implementation (follow-on session).
+  corrupt). **Rung-A FULL (983 imgs, official split) — the baseline bite E
+  must beat: yolo11n mAP50=0.243 mAP50-95=0.090 P=0.466 R=0.245;
+  yolo11x mAP50=0.351 mAP50-95=0.143 P=0.719 R=0.329. Ceiling
+  reference: Urchinbot's published 0.908 on this same data.**
+  Still open (follow-on session): rung-B (after stage-2 auto-boxing),
+  underwater auto-filter implementation.
 
 ## Flow (same diagram lives in the chat as a rendered file)
 

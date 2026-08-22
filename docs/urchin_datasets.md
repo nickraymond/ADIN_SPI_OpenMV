@@ -131,9 +131,18 @@ single class `urchin` confirmed, ~40–100 ms (n) / ~200–400 ms (x) per
 frame after warmup. Qualitative floor, 4 frames: clear Centro frame
 4–5 detections of 8 GT; **turbid kina frame 0 of 8; DUO moderate 0 of
 4; Caspar barrens 3–6 of 142.** The baselines collapse exactly in the
-turbid/small-target regimes our deployment lives in — early evidence
-that custom training is justified. Full rung-A scoring runs when the
-Urchinbot pull completes.
+turbid/small-target regimes our deployment lives in.
+
+**Rung-A FULL (2026-08-22, 983-img official Urchinbot test split,
+`ml/urchin_data/eval_rung_a.py`):**
+
+| Model | mAP50 | mAP50-95 | P | R |
+|---|---|---|---|---|
+| yolo11n | 0.243 | 0.090 | 0.466 | 0.245 |
+| yolo11x | 0.351 | 0.143 | 0.719 | 0.329 |
+
+Urchinbot's published model: mAP50 = 0.908 on this data — the ceiling
+proof. The custom model's acceptance bar sits between those numbers.
 
 **Standing corrections to rows above (verified deltas):**
 - FathomNet's "filter by license for commercial use" framing: structurally
