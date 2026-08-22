@@ -1681,8 +1681,20 @@ any urchin labelling effort is spent.
       ship different yolov8n binaries (1,994,976 B AE3 vs 3,233,408 B
       N6), which is exactly the confound bite B's single custom model
       finally removes. Feeds Nick's board decision; no new hardware.
-- [ ] **Bite D2 — surface model confidence values (Nick's question,
-      2026-08-21).** The FOMO head computes a per-cell class probability
+- [x] **Bite D2 — surface model confidence values (Nick's question,
+      2026-08-21). LIVE CHECK PASSED BY NICK 2026-08-21 ("confidence values
+      look good"); PR open.** Delivered on `claude/s8-d2-model-confidence`
+      (plan approved: per-detection confidence, no calibration sweep).
+      Conf = winner-softmax of the group's PEAK cell, computed ONLY for
+      margin-passing cells (a handful of exps/frame — the 576-exp cost that
+      justified skipping softmax stays skipped); `mb` boxes now
+      `[ci,x,y,w,h,conf%]` (int-only, wire encoder unchanged), overlay
+      reads "pink 0.87", page HUD gets a per-detection conf line with the
+      blob-asymmetry note inline. Suite 134→141; pre-D2 5-field boxes
+      tolerated unpadded. Bench note: dark-room frames give 0/0 on the
+      custom model on BOTH boards — no dark hallucination (contrast the
+      stock person model's S24 finding).
+      *(original scope)* The FOMO head computes a per-cell class probability
       and the harness currently throws it away at the margin threshold.
       Put a confidence on each model detection: `mb` boxes carry a conf
       field, the overlay label reads "pink 0.87", the page HUD shows it.

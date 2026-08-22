@@ -246,6 +246,7 @@ class Stats:
         self.labels = list(labels or [])
         self.blob_counts = [0] * len(self.labels)
         self.model_counts = []
+        self.model_boxes = []   # [class, x, y, w, h, conf%] per detection (D2)
         self.amb = 0
         self.saved = 0
         self._times = []
@@ -279,6 +280,10 @@ class Stats:
         # older script shows short-but-honest counts instead of a crash.
         self.blob_counts = list(hdr.get("bc", []))
         self.model_counts = list(hdr.get("mc", []))
+        # Model boxes verbatim, conf included. Boards running the pre-D2
+        # script send 5-field boxes; the page tolerates a missing conf
+        # rather than this parser padding one in.
+        self.model_boxes = list(hdr.get("mb", []))
         self.amb = hdr.get("amb", 0)
         self.lab = hdr.get("lab") or None
         for k in self._acc:
@@ -340,6 +345,7 @@ class Stats:
             "blob_labels": self.labels,
             "blob_counts": self.blob_counts,
             "model_counts": self.model_counts,
+            "model_boxes": self.model_boxes,
             "amb": self.amb,
             "saved": self.saved,
             "lab": self.lab,
@@ -744,6 +750,15 @@ setInterval(async()=>{
   const mlab = (j.labels && j.labels.length) ? j.labels : (j.blob_labels||[]);
   const mper = (j.model_counts||[]).map((c,i)=>(mlab[i]||('c'+i))+' '+c)
       .join('   ');
+  // Per-detection confidence (D2): one "pink 0.87" per model box, from the
+  // group's peak-cell softmax. Boxes from a pre-D2 board script have no
+  // 6th field and render without a number rather than with a fake one.
+  // The BLOB baseline deliberately has no confidence -- find_blobs is a
+  // hard LAB threshold (a pixel passes or it does not); its nearest
+  // analogue is the pixel count already shown in the blob line.
+  const mconf = (j.model_boxes||[]).map(b =>
+      (mlab[b[0]]||('c'+b[0])) + (b.length>5 ? ' '+(b[5]/100).toFixed(2) : ''))
+      .join('   ');
   if(s) s.textContent =
    'capture   '+(j.framesize||'?')+'  '+j.w+'\\u00d7'+j.h+'  '+(j.pixfmt||'')+'\\n'+
    'encode    JPEG q'+(j.quality===null?'?':j.quality)+
@@ -755,6 +770,7 @@ setInterval(async()=>{
    'found     '+j.blobs+' blobs   '+j.det+' detections\\n'+
    (per ? '          blobs: '+per+(j.amb ? '   ambiguous '+j.amb : '')+'\\n' : '')+
    (mper ? '          model: '+mper+(j.mdec_ms ? '   decode '+j.mdec_ms+' ms' : '')+'\\n' : '')+
+   (mconf ? '          conf:  '+mconf+'   (blobs: hard LAB threshold, no conf)\\n' : '')+
    (j.saved ? 'captured  '+j.saved+' frames saved\\n' : '')+
    'health    resyncs '+j.resyncs+'   reconnects '+j.reconnects+'\\n'+
    j.port;
