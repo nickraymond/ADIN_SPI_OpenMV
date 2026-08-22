@@ -77,19 +77,27 @@ dive**. NPS KFM archive footage stays a listed reserve (by-request via
 the program office) if volume runs short.
 
 *Dive shot list (one page, for the trip):* slow steady passes over
-urchin patches at ~1 m and ~2 m standoff (the two distances S8 bite C
-measures); a few fixed-count clusters (know N while filming — that is
-count ground truth); both species in one frame wherever reds appear;
-kelp-canopy light and open-barrens light; 4K if available, highest
-bitrate, horizontal, no strobes needed.
+urchin patches at a NEAR and a FAR standoff (~1 m and ~2 m as rough
+guides — the goal is to sweep pixels-on-target through and below the
+24–32 px floor, not to hit exact distances); a few fixed-count clusters
+(know N while filming — that is count ground truth); both species in
+one frame wherever reds appear; kelp-canopy light and open-barrens
+light; 4K if available, highest bitrate, horizontal, no strobes needed.
+
+**Eval-axis note (S8 relay of Nick, 2026-08-21): distance labels are
+NOT a variable** — the two-ball captures' "1 m / 2 m" run names were
+all really ~1.5 m, and S8 has dropped distance as an analysis axis.
+**Pixels-on-target is the axis** everywhere in this plan; metres appear
+only as capture instructions for producing a px sweep.
 
 **Stage 4 — Edge deployment + NPU proof.**
 Export int8; compile per board (Vela / `stedgeai`); deploy via the S25
 workbench recipe path. Acceptance is S8's hard rule: **measured
 per-inference latency consistent with the NPU tables, not "it
 inferred"** — a CPU fallback shows up in the number. End-to-end
-capture→detect→count at 1 m / 2 m with pixels-on-target recorded rides
-S8 bite C's harness.
+capture→detect→count rides S8 bite C's harness, swept over
+**pixels-on-target** (standoff distance is only the knob that produces
+it — see the eval-axis note below).
 
 ## Eval design — three rungs, increasing honesty
 
@@ -97,7 +105,7 @@ S8 bite C's harness.
 |---|---|---|---|
 | A | Urchinbot official test split (982 imgs, never trained on) | generic urchin-ness | ready now |
 | B | Hand-verified GBIF holdout (~150 purple + ~150 red crops, human-checked) | species accuracy | after stage-2 auto-boxing |
-| C | **GOLD: Nick's footage, hand-corrected** — counts at 1 m and 2 m, px-on-target logged | does it work for US, on-board | after the dive / bench captures |
+| C | **GOLD: Nick's footage, hand-corrected** — counts swept over pixels-on-target (px logged per measurement) | does it work for US, on-board | after the dive / bench captures |
 
 NOAA baselines get scored on A and B **[bite 2]** so every stage-1/2
 result has a floor to beat. Rung C is the only rung that counts for the
