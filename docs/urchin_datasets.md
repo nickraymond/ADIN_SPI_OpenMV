@@ -94,7 +94,7 @@ Method + verbatim license captures live in `ml/urchin_data/`
 
 | Source | Verified count | Format | License (captured verbatim) | Sample viewed | Verdict |
 |---|---|---|---|---|---|
-| **Urchinbot** | ✔ 9,872 imgs / 44,268 boxes / 3 spp (CSV parse; splits 7912/976/982) | YOLO + per-box CSV | ✔ CC-BY-4.0 (Zenodo API). ⚠ GitHub weights/code UNLICENSED | ✔ 300-img seeded sample; boxes overlaid on one frame, land on urchins | **GO** for backbone. Full pull is **~32 GB** (not 2–6): images live on public S3 per-row, gated on Nick |
+| **Urchinbot** | ✔ 9,872 imgs / 44,268 boxes / 3 spp (CSV parse; splits 7912/976/982) | YOLO + per-box CSV | ✔ CC-BY-4.0 (Zenodo API). ⚠ GitHub weights/code UNLICENSED | ✔ 300-img seeded sample; boxes overlaid on one frame, land on urchins | **GO** for backbone. **FULL SET ON DISK 2026-08-21**: 9,872/9,872 imgs, 34.8 GiB, zero corrupt (magic-checked) |
 | **FathomNet S. fragilis** | ✔ 23,061 boxes / 4,600 imgs (API, cross-checked) | via API | ✘ **ALL 4,600 imgs CC BY-NC-ND** (full-corpus audit, zero exceptions) | API-level only | **NO-GO commercial** — license filter leaves ZERO boxes. purpuratus=7, franciscanus=0 as claimed |
 | **iNat/GBIF** | ✔ 13,387 purple / 3,666 red (human-obs, exact match) | image-level, no boxes | ✔ per-record enum. **CC0+CC-BY only: 2,019 purple / 574 red** (~85% is NC) | ✔ 1/species pulled + confirmed | **GO, but 6–7× smaller than headline** after commercial filter. No account needed (API paging) |
 | **NOAA yolo11 weights** | ✔ both .pt downloaded, sha256'd | ultralytics .pt | yolo11x AGPL-3.0; yolo11n untagged (Ultralytics-derived) | load-and-run = bite 2 | **Benchmark-only** (AGPL lineage). ⚠ yolo11n's training set (Sakana) is GONE from Universe; yolo11x actually trained on Diad-3, not Sakana |

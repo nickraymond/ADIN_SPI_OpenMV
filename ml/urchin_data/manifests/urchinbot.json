@@ -10,8 +10,18 @@
     "format": "YOLO labels (labels.zip, 6135 files) + CSV with per-box tuples + splits 7912/976/982 (train/val/test)",
     "license": "CC-BY-4.0 (see licenses/urchinbot.md; GitHub weights UNLICENSED)"
   },
+  "images_full_pull": {
+    "date": "2026-08-21",
+    "verified": "9,872/9,872 files on disk, 0 missing, 0 empty, 0 bad JPEG magic, 37,416,027,364 bytes (34.8 GiB), 0 download failures",
+    "path": "~/nereus_ml/datasets/urchinbot/images/",
+    "tool": "download_full.py (8 workers; per-connection ~200 KB/s to ap-southeast-2 is the bottleneck — bump max_workers for any future re-pull)"
+  },
+  "corrections": [
+    "test split is 983 images, not 982 — test.txt lacks a trailing newline so `wc -l` undercounts by one; same applies to val.txt/train.txt style counts (976→977 val, 7912→7913 train unverified, count ids not lines)",
+    "2 CSV rows carry one duplicate box each (surfaced by ultralytics val dedup: im8473304, im8474833) — harmless, box totals elsewhere unaffected"
+  ],
   "notes": [
-    "Images NOT in the Zenodo record: fetched per-row from public S3 (gbe-uauckland, some imos-data). Full pull ~32 GB (sampled HEAD mean ~3.2 MB x 9872) — GATED, not downloaded.",
+    "Images NOT in the Zenodo record: fetched per-row from public S3 (gbe-uauckland, some imos-data).",
     "300-image seeded sample (seed=26, boxed rows) in sample_images/; boxes overlay-checked on one frame 2026-08-21, land plausibly on urchins.",
     "6279 rows have >=1 box vs 6135 label files — 144-file gap to reconcile in bite 2 (suspect: High_conf_clipped variant is the labels' source).",
     "3593 rows are negatives (zero boxes)."
