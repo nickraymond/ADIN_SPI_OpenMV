@@ -184,6 +184,20 @@ function belongsToRun(holder) {
 }
 
 function recipeCard(r) {
+  // Guide cards (S8 B3): a chapter in the cookbook, not a runnable demo.
+  // No boards, no Start -- the click opens the Pi-served instructions page.
+  if (r.guide) {
+    const thumb = r.thumbnail
+      ? `<img class="thumb" src="/${esc(r.thumbnail)}" alt="guide">` : "";
+    return `<div class="card"><div class="rowflex"><div class="grow">
+      <h2>📖 ${esc(r.title)}</h2>
+      ${r.summary ? `<div class="muted">${esc(r.summary)}</div>` : ""}
+      <a class="biglink" target="_blank"
+         href="/${esc(r.guide)}">Open guide →</a>
+      <div style="margin-top:.5rem"><span class="muted">recipe
+        <code>${esc(r.file)}</code></span></div>
+      </div>${thumb}</div></div>`;
+  }
   const active = run.recipe === r.name;
   const settling = (run.settle_s || 0) > 0;
   const startable = ["idle","failed"].includes(run.state) && !busy && !settling;

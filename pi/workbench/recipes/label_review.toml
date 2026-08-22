@@ -1,0 +1,14 @@
+# label_review.toml -- S8 B3: a GUIDE CARD, not a runnable demo.
+#
+# The label-review GUI runs on the MAC (the datasets live there, never on
+# the Pi or in the repo). This card is the cookbook chapter: clicking it
+# opens a Pi-served instructions page with the start command, the keyboard
+# reference, a live is-the-labeler-up badge, and the retrain step.
+#
+# A guide card carries no boards, no [run], no [health] -- the schema
+# refuses those combinations so a half-runnable recipe cannot exist.
+
+name = "label-review"
+title = "Label review (GUI on the Mac)"
+summary = "Correct the training-set boxes by hand and add classes -- the labeler runs on the Mac where the datasets live. This card opens the step-by-step chapter, with a live badge showing whether the labeler is up. From sprint S8 bite B3."
+guide = "guides/label-review.html"

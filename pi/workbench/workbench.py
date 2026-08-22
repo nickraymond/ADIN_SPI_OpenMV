@@ -66,7 +66,7 @@ DISK_MIN_FREE_MB = 500
 # ---------------------------------------------------------------------------
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
-            "boards", "run", "health"}
+            "boards", "run", "health", "guide"}
 BOARD_KEYS = {"label", "by_id", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd"}
@@ -75,6 +75,7 @@ HEALTH_KEYS = {"http"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 THUMB_RE = re.compile(r"^thumbs/[A-Za-z0-9._-]+$")
+GUIDE_RE = re.compile(r"^guides/[A-Za-z0-9._-]+\.html$")
 
 
 def _unknown(obj, allowed, where, errs):
@@ -164,6 +165,26 @@ def validate_recipe(obj, source):
                     % source)
         services = []
 
+    # A "guide card" (S8 B3): a documentation chapter in the menu. It runs
+    # nothing and owns no boards -- clicking it opens a page served from
+    # recipes/guides/. Mutually exclusive with run/health/boards/services so
+    # a half-and-half recipe cannot exist ambiguously.
+    guide = _str(obj, "guide", source, errs)
+    if guide:
+        if not GUIDE_RE.match(guide):
+            errs.append("%s: guide must look like guides/<file>.html "
+                        "(shipped in the recipes dir)" % source)
+        for k in ("run", "health", "boards", "services"):
+            if k in obj:
+                errs.append("%s: a guide card cannot carry '%s' -- it is "
+                            "documentation, not a runnable demo" % (source, k))
+        if errs:
+            return None, errs
+        return {"name": name, "title": title, "summary": summary,
+                "opens": None, "thumbnail": thumbnail, "services": [],
+                "boards": [], "run": None, "health": None,
+                "guide": guide}, []
+
     boards_raw = obj.get("boards")
     boards = []
     if not isinstance(boards_raw, list) or not boards_raw:
@@ -205,7 +226,7 @@ def validate_recipe(obj, source):
         return None, errs
     return {"name": name, "title": title, "summary": summary, "opens": opens,
             "thumbnail": thumbnail, "services": services, "boards": boards,
-            "run": run, "health": health}, []
+            "run": run, "health": health, "guide": None}, []
 
 
 def load_recipes(dirpath=RECIPE_DIR):
@@ -913,7 +934,22 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, runner.snapshot())
             if path.startswith("/thumbs/"):
                 return self._thumb(path[len("/thumbs/"):])
+            if path.startswith("/guides/"):
+                return self._guide(path[len("/guides/"):])
             self.send_error(404)
+
+        def _guide(self, name):
+            # Guide chapters (S8 B3): HTML shipped in recipes/guides/, same
+            # confinement rule as thumbnails.
+            if not re.match(r"^[A-Za-z0-9._-]+\.html$", name) or ".." in name:
+                return self.send_error(404, "no such guide")
+            path = os.path.join(recipe_dir, "guides", name)
+            try:
+                with open(path, "rb") as fh:
+                    body = fh.read()
+            except OSError:
+                return self.send_error(404, "no such guide")
+            self._send(200, body, "text/html; charset=utf-8")
 
         def _thumb(self, name):
             # Confinement: same rule as bench_web's captures -- 404 for
@@ -967,6 +1003,11 @@ def make_handler(cfg, runner: Runner):
                 return self._json(404, {"ok": False,
                                         "err": "no recipe named %r" % name})
             recipe = by_name[name]
+            if recipe.get("guide"):
+                return self._json(409, {"ok": False,
+                                        "err": "%r is a guide card -- it "
+                                        "documents a procedure, there is "
+                                        "nothing to run" % name})
             needed = {b["by_id"] for b in recipe["boards"]}
             states = [b for b in pf["boards"] if b["by_id"] in needed]
             try:
