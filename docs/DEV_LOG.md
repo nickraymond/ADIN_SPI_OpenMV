@@ -17,7 +17,69 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
-## 2026-08-20 (night) — S25 bites 1+2 SHIPPED AND DEMO'D: the workbench page starts/stops the ball demo; AE3 quick-reattach wedge found, fenced with a settle window, cleared by physical replug
+## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
+
+**Branch:** `claude/two-colour-detector-s8-b2-ea5ca7` (from main @ 42635ac).
+Bench via the workbench API only (start/stop + settle honoured); AE3 ops per
+ae3-board-access, one op per invocation.
+
+**Done:**
+- **The whole point of the sprint, proven:** a from-scratch two-colour FOMO
+  detector, trained on our own captures, deployed by the B1 routes, measured
+  **AE3 5.51 ms / N6 6.36 ms per inference** — the NPU class (vela est 2.04;
+  the 96 px FOMO anchors are 1.66/2.75), NOT a CPU fallback. sha256 verified
+  on both boards; N6 `/rom` intact at 18 entries after the DFU-alt-3 write.
+- Dataset: 693 labelled VGA frames (both boards, ~1 m, Nick scattering on a
+  30 s timer widget), captured in ONE 10-minute bench window via two bounded
+  runs. Auto-labels recomputed offline (`ml/fomo/relabel.py`) — see below.
+- Trainer/export: `ml/fomo/train.py` — plain Conv/BN/ReLU stride-8 net
+  (119 KB int8, uint8 io, scale 1/255), TFLiteConverter full-int8;
+  int8 ≈ float on eval (P/R ~0.73/0.87, count-MAE 1.3–2.0 at margin 0.5–1.0).
+- Harness: FOMO model mode in `n6_stream_{board,host}.py` (margin decode
+  ln(2) — no softmax on board; per-class `mc` counts on the wire; per-board
+  `--board-model`; model-vs-blob counts side by side in the HUD). Suite
+  117→134; workbench 61 green.
+- Recipe `s8-two-colour-model` with `models[]` sha256 declared (feeds S25
+  bite 3 reconciliation). **Dress-rehearsed via the API exactly as Nick's
+  click: state=live, both boards streaming, model counts on the page.**
+
+**Broke/surprised us:**
+- **Keras BatchNorm momentum trap:** with ~18 steps/epoch, the default 0.99
+  moving stats lag so far that train-mode loss hit 0.036 while
+  inference-mode was 1.12 on the SAME data — EarlyStopping then restored
+  garbage weights. Fix: momentum=0.9. First model looked "trained" and
+  detected nothing.
+- **Auto-label poison, seen only by rendering:** Nick's blue-gray shirt
+  labels as "purple" (a=3..5 vs balls ≥9 — the `a` channel is the only
+  separator), and specular highlights split balls (closing fixed). The
+  model still learned the USPS-box lettering as purple — visible as a
+  static phantom count in the live demo.
+- dfu-util refuses to overwrite an existing readback file and the stale
+  B1 file made a correct flash look like a hash MISMATCH — rm first.
+- Nick's "2 m" run was actually ~1 m (his call, fine) — dirs still say
+  run2_2m; treat both as 1 m.
+- **AE3 raw-repl refusal, incident #7 — and the first on the NON-bridge
+  stack (bite R evidence).** Nick's first demo click failed: the
+  workbench probe got `could not enter raw repl`. Diagnosis by the book:
+  device enumerated, no port holders, dmesg clean (NO usb-storage reset
+  storm — the livelock variant ruled out). One serialized recovery
+  (75 s zero-contact + single `mpremote reset`) REFUSED (`b''` read) —
+  the power-cycle-only variant. **Physical replug cleared it (Nick);
+  demo re-run passed.** Why it matters for bite R: all six prior
+  incidents were post-bridge-teardown on the SHM-128K bridge stack;
+  this one is on the S18 sticky-fb build running only pyserial
+  raw-repl streams — session traffic was cp + probe run + one
+  stream start/stop + the failed probe (~the 4–6-attach pattern).
+  The bridge lifecycle is NOT a necessary condition; attach count /
+  raw-repl traffic looks closer to the mechanism. Nick flags this as
+  needing a fix soon — see bite R.
+
+**Next:** ~~Nick runs the demo~~ → **DEMO PASSED (Nick, same night; first
+click hit bite R incident #7, replug cleared it). PR #55 open.** Next
+session = **bite B3 (NEW, Nick's call): label-review GUI** — he reviews
+ALL training frames, corrects boxes by hand, classes beyond colour;
+saves back to labels.jsonl so the trainer consumes corrections
+unchanged. Then bite C metrics. Model debts sized in bite B2's entry.
 
 **Branch:** `claude/nereus-vision-workbench-4d2268`. Bench: both boards on
 nereus000; `workbench.service` installed ENABLED by Nick and proven across

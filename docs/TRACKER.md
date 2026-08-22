@@ -1144,7 +1144,18 @@ precedent for repo-carried firmware patches.
       HD's 72 ms/frame ept-block is the same disease. Acceptance:
       vga-color-15 ≥ 15.0 CLEAN ledger-exact, HD mono ≥ 3.5 held,
       10-min soak.
-- [~] **Bite R — attach-refusal / boot-state anomaly root cause
+- [~] **Bite R — attach-refusal / boot-state anomaly root cause.
+      INCIDENT #7 (2026-08-20 late night, S8 B2 demo) — the first on the
+      NON-bridge stack, and it reshapes the suspect list:** AE3 on the
+      S18 sticky-fb build (`7d4dbf7ab2.dirty`), NO bridge loaded, only
+      pyserial raw-repl streams + mpremote ops (cp, probe run, one
+      stream start/stop, then the workbench start probe refused).
+      Enumerated, zero holders, dmesg clean of usb-storage resets; one
+      serialized 75 s-silence + single `mpremote reset` recovery REFUSED;
+      physical replug cleared it. **The bridge lifecycle is therefore NOT
+      a necessary condition — the common factor across all seven is
+      accumulated raw-repl attach/teardown traffic.** Nick 2026-08-20:
+      this is now an issue we need to solve soon.
       ← IN PROGRESS (reproducer + instrument SHIPPED; see DEV_LOG
       2026-08-19/20 night). FINDINGS: (a) load does NOT cause it — 6/6
       clean loaded cycles, ledger-exact both ends; (b) NEW host-side
@@ -1593,11 +1604,24 @@ any urchin labelling effort is spent.
       compiler outright and point at ST's YOLOv8-STEdgeAI / Roboflow's
       `ultralytics-openmv` fork — so YOLO is the wrong FIRST target; a small
       classifier or FOMO-style detector clears the path with far less risk.
-- [ ] **Bite B2 — the from-scratch two-colour detector.** NEXT. Collect and
-      label the two-ball set (bite A's `--save-frames` is the capture rig and
-      its per-class boxes are the auto-labels), train on the Mac, export to
-      NHWC uint8, compile per target, deploy to both boards by the proven
-      routes above.
+- [x] **Bite B2 — the from-scratch two-colour detector. DEMO RUN BY NICK
+      2026-08-20 (late night) — PASS (on the second click; the first hit
+      bite R incident #7, cleared by replug). PR #55 OPEN.**
+      Delivered on branch `claude/two-colour-detector-s8-b2-ea5ca7`:
+      693-frame two-board capture (one 10-min bench window) → offline
+      relabel (`ml/fomo/relabel.py` — board labels had measured defects:
+      N6 pink collapse, shirt-as-purple) → from-scratch Conv/BN/ReLU FOMO
+      (`ml/fomo/train.py`, 119 KB int8 uint8-io; int8≈float, P/R ~0.73/0.87
+      vs noisy auto-labels) → compiled+deployed by the B1 routes →
+      **measured on-board: AE3 5.51 ms (/flash, sha verified), N6 6.36 ms
+      (ROMFS DFU alt 3, partition read-back MATCH, /rom 18 entries
+      intact)** — the NPU class on both; acceptance met. Harness grew a
+      FOMO model mode (mc counts on the wire, model-vs-blob side by side);
+      suite 134. Recipe `s8-two-colour-model` ships models[] sha256 for
+      S25 bite 3. **Known model debts (sized, not hidden): learned the
+      USPS-box lettering as purple (label noise), dim-pink recall on the
+      AE3, exact-count weak vs noisy labels. All data ~1 m (Nick's call
+      at capture time).** Keras BN-momentum trap recorded in DEV_LOG.
       **B1 — does a stock int8 `.tflite` run on the NPU?** *(was S24
       bite 3, promoted by Nick's "sports ball" question.)* The ROM
       model's `(1, 5, 756)` output proves it carries ONE class, so no
@@ -1623,6 +1647,19 @@ any urchin labelling effort is spent.
       measured per-inference time consistent with the tables above.
       **GATE: if either board has no viable path, STOP and re-plan with
       Nick before any dataset effort is spent.**
+- [ ] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
+      passed; NEXT working session).** Nick reviews ALL training frames
+      himself in a GUI, corrects the auto-label boxes by hand, and can
+      label beyond colour classes (the class list must not be hard-wired
+      to pink/purple — bite E's urchins ride the same tool). Scope: browse
+      the capture set (frames + labels.jsonl), draw/move/delete/reclass
+      boxes, keyboard-fast, save back to the same labels.jsonl format so
+      `ml/fomo/train.py` consumes corrections with zero changes. The B2
+      debts this directly attacks: the learned USPS-lettering false
+      purple, dim-pink misses, and exact-count weakness vs noisy labels.
+      *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
+      the corrected set moves val precision measurably; the corrected
+      labels.jsonl round-trips through the trainer unchanged in format.
 - [ ] **Bite C — end-to-end metrics: capture → detect → count, at 1 m
       and 2 m (Nick 2026-08-20).** Not inference-only — the whole chain,
       which is exactly what the per-tile numbers could not tell us.
@@ -1644,12 +1681,39 @@ any urchin labelling effort is spent.
       ship different yolov8n binaries (1,994,976 B AE3 vs 3,233,408 B
       N6), which is exactly the confound bite B's single custom model
       finally removes. Feeds Nick's board decision; no new hardware.
+- [ ] **Bite D2 — surface model confidence values (Nick's question,
+      2026-08-21).** The FOMO head computes a per-cell class probability
+      and the harness currently throws it away at the margin threshold.
+      Put a confidence on each model detection: `mb` boxes carry a conf
+      field, the overlay label reads "pink 0.87", the page HUD shows it.
+      NOTE the blob baseline CANNOT have one — `find_blobs` is a hard
+      LAB threshold, a pixel passes or it does not; nearest analogue is
+      pixel count, already shown. Document that asymmetry on the page
+      rather than inventing a fake blob confidence. *Verifiable:* live
+      page shows per-detection conf for the model panels; a ball
+      half-out of threshold shows visibly lower conf than a centred one.
 - [ ] **Bite E — the urchin model.** Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
+      **Demo bar set by Nick 2026-08-21: a truly custom urchin model
+      running on BOTH boards with a screen showing the urchins — the
+      project's HIL. This demo is the GATE for sprint S27 below.**
+      What carries over from B2 unchanged: the whole toolchain (capture
+      rig, labels.jsonl format, trainer, int8 export, both compile+
+      deploy routes, recipe/page). What is genuinely different: labels
+      cannot come from a colour threshold (urchins are texture/shape,
+      not a LAB box — B3's GUI is the labelling path), the scene is
+      underwater (turbidity/lighting; pixels-on-target ≥24–32 px sets
+      range and may force a larger input than 192 — the S24 finding),
+      and the tiny colour-separable net will likely need more capacity
+      (bigger backbone; hue augmentation becomes legal again since
+      colour is no longer the class).
       **← the labelled set is S26's deliverable (parallel track, Nick
       2026-08-21): dataset access + validation runs alongside the ball
-      work and this bite consumes its verified corpus plan.**
+      work and this bite consumes its verified corpus plan.** If the
+      corpus arrives labelled, the new work here is a one-bite format
+      converter (their labels → labels.jsonl) and B3's GUI becomes
+      review/spot-fix rather than from-scratch labelling.
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
@@ -1918,6 +1982,29 @@ one sample image from each go source opened and looked at; NOAA baseline
 weights running on one of them on the Mac.
 **Needs:** Mac + network; Nick's hands for signups/keys; NO bench time.
 **Kickoff prompt:** PROMPTS.md §12.
+
+### S27 — solo ML pipeline: take the training wheels off  `[ ]`  *(stub — added 2026-08-21 at Nick's direction; renumbered S26→S27 at the 2026-08-21 merge, where the parallel dataset sprint had independently claimed S26. **GATED behind S8 bite E's demo**: a truly custom urchin model running on both boards with the urchin HIL screen. Runs only after that passes.)*
+**Goal:** Nick drives dataset → train → evaluate → deploy **solo, no agent
+in the loop**. B2 built the plumbing; this sprint builds the judgment
+layer — every check the agent performed by hand becomes a printed verdict.
+- [ ] **Report cards.** `relabel`/labelling emits a label sanity report
+      (count distributions vs expected, flagged frames); `train.py` emits
+      a training report (metrics, worst-frame overlays, pass/fail vs the
+      previous model). *Verifiable:* "is this model good?" answerable
+      from the report alone.
+- [ ] **One-command pipeline driver.** `ml/pipeline` wraps train → export
+      → compile (both targets) → NPU acceptance check into one command
+      with one PASS/FAIL summary; runbook section in `ml/README.md`.
+- [ ] **Deploy from the page.** Rides S25 bite 3 reconciliation: bump the
+      model sha256 in the recipe, the workbench repairs the drift. No
+      hand-driven DFU/mpremote in the happy path.
+- [ ] **Scored evaluation on the page.** Bite C's harness surfaced as a
+      page view: counts vs ground truth, per board, per method.
+**Demo (Nick):** starting from a folder of new images, Nick ships a
+retrained model to both boards and reads its scorecard — without Claude.
+**Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
+urchin HIL demo); S25 bite 3.
+
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
