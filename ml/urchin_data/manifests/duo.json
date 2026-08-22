@@ -1,0 +1,21 @@
+{
+  "source": "DUO (figshare article 25370527)",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/duo/",
+  "claims_vs_verified": {
+    "images": {"claim": 7782, "verified": 7782, "how": "COCO jsons: train 6671 + test 1111 unique; val is a byte-identical copy of test (checked by filename set AND md5 of samples)"},
+    "urchin_boxes": {"claim": 50156, "verified": 50156, "how": "echinus annotations, train 42955 + test 7201"},
+    "total_boxes": {"claim": "74.5k", "verified": 74515, "how": "unique train+test all classes (85,032 incl. the val duplicate)"},
+    "classes": ["echinus", "holothurian", "starfish", "scallop"],
+    "format": "COCO instances_{train,test,val}.json + images/{train,test,val}/ + YOLO-style labels/ dir",
+    "license": "figshare declares CC BY 4.0 — see licenses/duo.md for the lineage caveat"
+  },
+  "archives_sha256": {
+    "DUO.zip": {"bytes": 3390158070, "md5": "d2b1901ea741ec7223168e0f154f5f15", "md5_matches_figshare": true}
+  },
+  "notes": [
+    "Filenames restart at 1.jpg per split dir — cross-split name collisions are NOT image duplication (byte-checked); the only duplication is val==test by design.",
+    "Sample-viewed 2026-08-21: dense frame (71 echinus) has boxes on faint distant specks in heavy turbidity — labels include barely-visible targets; moderate frame (4 echinus) boxes land cleanly on dark spiny blobs. Per-source QA sampling = bite 2.",
+    "Very green/turbid aquaculture water throughout — the 'wrong water color' domain-gap caveat is visually confirmed."
+  ]
+}
