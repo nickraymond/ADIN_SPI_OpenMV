@@ -1,7 +1,13 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-20 night (**S25 bites 1+2 SHIPPED AND DEMO'D
+*Last updated: 2026-08-21 (**NEW PARALLEL SPRINT S26 — urchin dataset
+access & validation (Nick).** Desk-only track alongside S8's ball work:
+verify `docs/urchin_datasets.md` (Nick's 2026-08-17 research, now in-repo)
+source by source — access, real samples, label quality, license text —
+then a training-corpus plan with verified numbers. Gates S8 bite E; zero
+bench hardware. Kickoff = PROMPTS.md §12. Previous:*
+*2026-08-20 night (**S25 bites 1+2 SHIPPED AND DEMO'D
 (Nick): the workbench page on nereus000:8088 lists recipes, preflights the
 boards passively, and starts/stops the S8 ball demo with a single-owner
 board lock, health-gated LIVE, and a 35 s settle window after stop** —
@@ -1641,6 +1647,9 @@ any urchin labelling effort is spent.
 - [ ] **Bite E — the urchin model.** Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
+      **← the labelled set is S26's deliverable (parallel track, Nick
+      2026-08-21): dataset access + validation runs alongside the ball
+      work and this bite consumes its verified corpus plan.**
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
@@ -1860,6 +1869,55 @@ pick the S8 ball demo, watch both boards come up streaming with the tuned
 per-board thresholds, stop it, and see the ports released.
 **Needs:** bench time; sudo for the one-time unit install.
 
+
+### S26 — urchin dataset access & validation  `[ ]`  ← **PARALLEL TRACK (Nick 2026-08-21): runs alongside S8's ball work; its output gates S8 bite E (the urchin model)**
+**Goal:** turn the 2026-08-17 dataset research (`docs/urchin_datasets.md`)
+from claims into a VERIFIED inventory: access obtained, samples downloaded
+and eyeballed, label quality and license terms confirmed per source — so
+that when the ball detector proves the pipeline, the urchin data is
+already known-good and the training-corpus plan is a decision, not a hunt.
+
+**Why a parallel sprint:** pure Mac/desk work — zero bench hardware, zero
+board contact — so it cannot collide with the S8/S25 sessions. Headline
+from the research (verify, don't trust): NO existing dataset labels
+purple-vs-red at scale; Urchinbot (CC-BY, 9,872 imgs/44k boxes) is the
+pretraining anchor; iNaturalist/GBIF (13,387 purple + 3,666 red,
+image-level) is the species signal; DUO's 50k boxes are license-murky.
+
+- [ ] **Bite 1 — access + inventory verification.** For every Tier-1/1b/2
+      source in `docs/urchin_datasets.md`: obtain access (agent preps the
+      steps; **account signups and API keys are Nick's hands** — same rule
+      as sudo), download a real sample, and verify the claims: image and
+      box counts, label format, class lists, and the ACTUAL license text
+      captured verbatim. *Verifiable:* the dossier (`docs/urchin_datasets.md`
+      §Verification, new section) has a row per source with
+      verified-count / format / license / sample-viewed columns filled,
+      each stamped with date + how it was checked. Dead-end rows recorded
+      too (the file already carries a dead-ends list — extend it, never
+      silently drop a source).
+- [ ] **Bite 2 — label-quality + usable-volume review.** On the verified
+      samples: are boxes actually on urchins (spot-check N per source),
+      does purple/red class fidelity hold in the two sources that claim
+      it (74-img Roboflow set, iNat species labels), what volume SURVIVES
+      license filtering for commercial use (FathomNet NC/ND subsets out,
+      DUO fenced research-only). Grab NOAA's off-the-shelf yolo11 urchin
+      weights and confirm they load + run on the Mac — the free benchmark
+      the strategy names. *Verifiable:* a per-source verdict table
+      (usable boxes after filtering / quality notes / go-no-go) reviewed
+      with Nick.
+- [ ] **Bite 3 — the training-corpus plan.** Map verified sources onto
+      the research file's 4-step strategy (backbone / species head /
+      domain fine-tune / benchmark) with real numbers, storage laid out
+      under `~/nereus_ml/datasets/` (NEVER in the repo — worktrees), and
+      the auto-label-then-correct loop speced against what S8 B2's ball
+      pipeline actually shipped. *Verifiable:* written plan reviewed with
+      Nick; S8 bite E re-scoped against it.
+
+**Demo (Nick):** the verified dossier + verdict table reviewed together;
+one sample image from each go source opened and looked at; NOAA baseline
+weights running on one of them on the Mac.
+**Needs:** Mac + network; Nick's hands for signups/keys; NO bench time.
+**Kickoff prompt:** PROMPTS.md §12.
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
