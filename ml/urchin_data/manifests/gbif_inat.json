@@ -11,5 +11,13 @@
     "format": "image-level species labels, no boxes; per-record CC license enum + media URLs on inaturalist-open-data S3"
   },
   "access": "no account needed: search API paging covers ~17k records (well under the 100k offset cap); media served direct from S3 (2 samples pulled + viewed 2026-08-21, one per species, species visually confirmed)",
+  "downloaded": {
+    "date": "2026-08-21",
+    "what": "the full commercially-clean subset (CC0_1_0 + CC_BY_4_0), first still image per record, JPEG/PNG magic-checked at write",
+    "on_disk": {"purple": 2009, "red": 569, "bytes_approx": "3.5 GB", "path": "~/nereus_ml/datasets/gbif_inat/images/{purple,red}/"},
+    "records_jsonl": {"purple": 2019, "red": 574, "note": "per-record key/species/license/url/lat-lon/date — provenance for the data-product story"},
+    "failures": {"count": 15, "cause": "museum media servers (data.nhm.ac.uk, mediaphoto.mnhn.fr) 403 hotlink refusal — preserved-specimen records, not wanted for training"},
+    "tool": "download_clean.py (kept beside the data)"
+  },
   "notes": ["Tide-pool/out-of-water shots confirmed present in-sample — the underwater-filtering step in the strategy is real work, not a formality."]
 }
