@@ -1066,5 +1066,213 @@ class TestMergedTwoBoardSeams(unittest.TestCase):
         self.assertEqual(shutdowns, [True])      # both done: shut down
 
 
+class TestFomoDecode(unittest.TestCase):
+    """S8 B2: the board's FOMO grid decode, against hand-built logit grids.
+
+    Mirrors ml/fomo/train.py's decode; a bug here miscounts every demo frame.
+    """
+
+    @staticmethod
+    def grid(gh=6, gw=6):
+        # background logit 5.0 everywhere -- nothing fires by default
+        return [[[5.0, 0.0, 0.0] for _ in range(gw)] for _ in range(gh)]
+
+    def test_empty_grid_counts_nothing(self):
+        counts, boxes = B.fomo_decode(self.grid(), 3, 0.69)
+        self.assertEqual(counts, [0, 0])
+        self.assertEqual(boxes, [])
+
+    @staticmethod
+    def conf_pct(logits):
+        """Winner softmax as int percent -- the reference for the box field."""
+        import math
+        best = max(logits)
+        return int(100.0 / sum(math.exp(v - best) for v in logits) + 0.5)
+
+    def test_single_cell_single_count(self):
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]              # pink wins by 5 > margin
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [1, 0])
+        self.assertEqual(boxes, [(0, 3, 2, 1, 1, self.conf_pct([0.0, 5.0, 0.0]))])
+
+    def test_adjacent_same_class_cells_group_to_one(self):
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        g[2][4] = [0.0, 5.0, 0.0]
+        g[3][3] = [0.0, 5.0, 0.0]
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [1, 0])
+        # extent 2x2 cells
+        self.assertEqual(boxes, [(0, 3, 2, 2, 2, self.conf_pct([0.0, 5.0, 0.0]))])
+
+    def test_diagonal_cells_stay_separate(self):
+        g = self.grid()
+        g[1][1] = [0.0, 0.0, 5.0]
+        g[2][2] = [0.0, 0.0, 5.0]              # 4-connectivity: no diagonal
+        counts, _ = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [0, 2])
+
+    def test_adjacent_different_class_cells_stay_separate(self):
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        g[2][4] = [0.0, 0.0, 5.0]
+        counts, _ = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [1, 1])
+
+    def test_margin_is_respected(self):
+        g = self.grid()
+        g[2][3] = [0.0, 0.5, 0.0]              # beats bg by only 0.5 < 0.69
+        counts, _ = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [0, 0])
+
+    def test_background_never_counts_however_confident(self):
+        g = self.grid()
+        g[0][0] = [50.0, 0.0, 0.0]
+        counts, _ = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [0, 0])
+
+
+class TestFomoConfidence(unittest.TestCase):
+    """D2: per-detection confidence on the decoded boxes.
+
+    The bite's verifiable is physical (a half-out-of-threshold ball reads
+    lower than a centred one); its decode-level analogue is that weaker
+    winning logits produce a lower conf, which is what these pin.
+    """
+
+    grid = staticmethod(TestFomoDecode.grid)
+    conf_pct = staticmethod(TestFomoDecode.conf_pct)
+
+    def test_weak_margin_scores_below_strong(self):
+        g = self.grid()
+        g[1][1] = [0.0, 5.0, 0.0]              # decisive cell
+        g[4][4] = [0.0, 1.0, 0.0]              # barely past the 0.69 margin
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [2, 0])
+        by_pos = {(b[1], b[2]): b[5] for b in boxes}
+        self.assertGreater(by_pos[(1, 1)], by_pos[(4, 4)])
+
+    def test_group_conf_is_the_peak_cell(self):
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        g[2][4] = [0.0, 1.0, 0.0]              # same group, weaker cell
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [1, 0])
+        self.assertEqual(boxes[0][5], self.conf_pct([0.0, 5.0, 0.0]))
+
+    def test_margin_pass_implies_conf_at_least_half(self):
+        # ln(2) margin at 3 classes guarantees p(winner) >= 0.5 -- the
+        # documented reason the margin constant is 0.69. Conf must agree.
+        g = self.grid()
+        g[3][3] = [0.0, 0.70, 0.0]             # just past ln(2)
+        _, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertGreaterEqual(boxes[0][5], 50)
+        self.assertLessEqual(boxes[0][5], 100)
+
+    def test_conf_survives_the_wire_encoding(self):
+        # mb boxes must stay int-only lists: the board's _json_boxes/_json_ints
+        # encoder rejects floats by design.
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        _, boxes = B.fomo_decode(g, 3, 0.69)
+        for b in boxes:
+            for v in b:
+                self.assertIsInstance(v, int)
+        B._json_boxes(boxes)                   # must not raise
+
+
+class TestModelBoxesOnHost(unittest.TestCase):
+    """D2 host half: mb reaches the page snapshot verbatim, conf included."""
+
+    def _stats(self):
+        return H.Stats(clock=_clock_over([0.0, 1.0]))
+
+    def test_mb_reaches_snapshot(self):
+        s = self._stats()
+        s.note({"mb": [[0, 10, 20, 30, 30, 87], [1, 50, 60, 30, 30, 62]]}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"],
+                         [[0, 10, 20, 30, 30, 87], [1, 50, 60, 30, 30, 62]])
+
+    def test_pre_d2_five_field_boxes_pass_through_unpadded(self):
+        # An older board script sends no conf; the host must not invent one.
+        s = self._stats()
+        s.note({"mb": [[0, 10, 20, 30, 30]]}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"], [[0, 10, 20, 30, 30]])
+
+    def test_absent_mb_is_an_empty_list(self):
+        s = self._stats()
+        s.note({}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"], [])
+
+
+class TestModelKind(unittest.TestCase):
+    def test_auto_sniffs_filenames(self):
+        self.assertEqual(B.model_kind("/rom/yolov8n_192.tflite"), "yolo")
+        self.assertEqual(B.model_kind("/flash/nereus_two_ball.tflite"), "fomo")
+        self.assertEqual(B.model_kind("/rom/fomo_face_detection.tflite"), "fomo")
+        self.assertEqual(B.model_kind("/rom/person_detect.tflite"), "raw")
+
+
+class TestBoardModelMap(unittest.TestCase):
+    def _args(self, specs):
+        return types.SimpleNamespace(board_model=specs)
+
+    def test_maps_label_to_path(self):
+        m = H.board_model_map(self._args(["AE3:/flash/x.tflite",
+                                          "N6:/rom/y.tflite"]), ["AE3", "N6"])
+        self.assertEqual(m, {"AE3": "/flash/x.tflite", "N6": "/rom/y.tflite"})
+
+    def test_unknown_label_is_an_error(self):
+        with self.assertRaises(ValueError):
+            H.board_model_map(self._args(["XX:/flash/x.tflite"]), ["AE3"])
+
+    def test_missing_colon_is_an_error(self):
+        with self.assertRaises(ValueError):
+            H.board_model_map(self._args(["AE3=/flash/x.tflite"]), ["AE3"])
+
+    def test_none_means_empty(self):
+        self.assertEqual(H.board_model_map(self._args(None), ["AE3"]), {})
+
+
+class TestModelCountsOnTheWire(unittest.TestCase):
+    def test_stats_parses_mc_and_mdec(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0]), labels=["pink", "purple"])
+        s.note({"mc": [3, 2], "mdec_us": 8000}, 1000)
+        snap = s.snapshot()
+        self.assertEqual(snap["model_counts"], [3, 2])
+        self.assertEqual(snap["mdec_ms"], 8.0)
+
+    def test_missing_mc_is_empty_not_a_crash(self):
+        s = H.Stats(clock=_clock_over([0.0, 1.0]))
+        s.note({"det": 1}, 1000)
+        self.assertEqual(s.snapshot()["model_counts"], [])
+
+
+class TestPerBoardModelCfg(unittest.TestCase):
+    def _args(self, **kw):
+        base = dict(framesize="VGA", quality=50, max_seconds=3600,
+                    max_frames=0, model="/rom/yolov8n_192.tflite",
+                    model_kind="auto", model_labels=None, threshold=0.4,
+                    no_detect=False, no_blobs=False, blob_pixels=150,
+                    tune=False, blob_label="blob", blob_scan="codes",
+                    save_frames=None, blob_thresh=None)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def test_model_override_wins(self):
+        cfg = H.cfg_from_args(self._args(), classes=[], model="/flash/m.tflite")
+        self.assertEqual(cfg["model"], "/flash/m.tflite")
+
+    def test_no_override_keeps_global(self):
+        cfg = H.cfg_from_args(self._args(), classes=[])
+        self.assertEqual(cfg["model"], "/rom/yolov8n_192.tflite")
+
+    def test_model_labels_ride_the_cfg(self):
+        cfg = H.cfg_from_args(self._args(model_labels="pink, purple"),
+                              classes=[])
+        self.assertEqual(cfg["model_labels"], ["pink", "purple"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,0 +1,96 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Label review — cookbook</title><style>
+ body { background:#14171a; color:#dde3e8; font:15px/1.5 system-ui;
+        max-width:46rem; margin:0 auto; padding:1.2rem; }
+ h1 { font-size:1.3rem; } h2 { font-size:1.05rem; margin-top:1.4rem; }
+ code, pre { background:#1d2126; border:1px solid #2c333a; border-radius:5px; }
+ code { padding:.05rem .3rem; }
+ pre { padding:.6rem .8rem; overflow-x:auto; }
+ .muted { color:#8fa3b3; }
+ .badge { padding:.2rem .6rem; border-radius:5px; font-weight:700; }
+ .up { background:#1d4; color:#000; } .down { background:#555; color:#ddd; }
+ a { color:#6cf; }
+ .warn { border-left:3px solid #ca3; padding-left:.7rem; color:#e8d9a0; }
+</style></head><body>
+<h1>📖 Label review — correct the training boxes by hand</h1>
+<p class="muted">S8 bite B3. The GUI runs on the <b>Mac</b> (that is where
+the datasets live — never in the repo, never on the Pi). This page is the
+recipe card's "chapter": follow it top to bottom.</p>
+
+<p>Labeler status:
+ <span id="badge" class="badge down">checking…</span>
+ <a id="openlink" href="http://nicks-macbook-pro.local:8899/" target="_blank"
+    style="display:none">Open the labeler →</a>
+</p>
+
+<h2>1. Start the GUI on the Mac</h2>
+<pre>python3 ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/label_gui.py</pre>
+<p class="muted">Absolute path — runs from any directory, any python3 (the
+GUI is stdlib-only). Defaults: dataset
+<code>~/nereus_ml/datasets/two_ball</code>, LAN bind, port 8899. Stop with
+Ctrl-C — every frame is saved as you move off it, nothing is pending.</p>
+<p>If the venv does not exist yet (fresh Mac), rebuild it first:</p>
+<pre>/opt/homebrew/bin/python3.11 -m venv ~/nereus_ml/venvs/fomo
+~/nereus_ml/venvs/fomo/bin/pip install tensorflow</pre>
+<p class="muted">(TensorFlow is only needed for retraining, not for the GUI
+itself — the GUI is stdlib-only. Any python3 runs it.)</p>
+
+<h2>2. Open it</h2>
+<p>The badge above turns green when the labeler answers; the link appears
+next to it. The name is the Mac's Bonjour hostname
+(<code>scutil --get LocalHostName</code> → <code>Nicks-MacBook-Pro</code>,
+verified 2026-08-21 — NOT the shell's <code>hostname</code>). If
+<code>.local</code> does not resolve on your network, use the Mac's IP or
+tailnet name instead — the URL lives in ONE place in this file (the
+"Open the labeler" link's href; the status probe derives from it), in
+<code>pi/workbench/recipes/guides/label-review.html</code>.</p>
+
+<h2>3. Review frames</h2>
+<ul>
+ <li><b>←/→</b> moves between frames — moving off a frame <b>saves it and
+   marks it reviewed</b> (the ✓ and the reviewed count in the top bar)</li>
+ <li><b>space</b> jumps to the next unreviewed frame</li>
+ <li>drag on empty image = draw a box (current class) · drag inside a box =
+   move · drag its corner = resize · click = select</li>
+ <li><b>1–9</b> set the class (of the selected box, else the drawing class) ·
+   <b>x</b> delete · <b>u</b> undo</li>
+ <li><b>+ class</b> adds a new class (urchins ride this same tool — the
+   class list is never hard-wired). Classes can only be ADDED, never
+   removed: removal would renumber every existing box.</li>
+</ul>
+<p>Edits go straight back into the same <code>labels.jsonl</code> the
+trainer reads. There is no export step.</p>
+
+<h2>4. Retrain on the corrections</h2>
+<pre>~/nereus_ml/venvs/fomo/bin/python ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/train.py</pre>
+<p class="muted">Known B2 debts your corrections attack: the USPS-box
+lettering learned as purple, dim-pink recall on the AE3, exact-count
+weakness. Compare the printed val precision/recall against B2's
+0.73/0.87.</p>
+
+<p class="warn"><b>Do not re-run <code>ml/fomo/relabel.py</code> after
+correcting</b> — it regenerates auto-labels. It now refuses to overwrite a
+file containing reviewed frames unless given <code>--force</code>, which
+discards your corrections.</p>
+
+<h2>5. Ship the retrained model</h2>
+<p>Compile + deploy by the proven B1 routes
+(<code>ml/README.md</code>): AE3 = vela → <code>/flash</code>; N6 =
+ROMFS image → USB DFU alt 3 (never alt 0). Update the
+<code>s8-two-colour-model</code> recipe's sha256s so reconciliation owns
+the new bytes.</p>
+
+<script>
+// Reachability badge: no-cors fetch resolves iff SOMETHING answers there.
+// It cannot read the response (cross-origin) -- up/down is all it knows.
+const URL_ = document.getElementById('openlink').href;
+async function probe(){
+  const b=document.getElementById('badge'), a=document.getElementById('openlink');
+  try { await fetch(URL_, {mode:'no-cors', signal:AbortSignal.timeout(2500)});
+        b.textContent='RUNNING'; b.className='badge up';
+        a.style.display='inline'; }
+  catch(e){ b.textContent='not running — start it on the Mac (step 1)';
+            b.className='badge down'; a.style.display='none'; }
+}
+probe(); setInterval(probe, 5000);
+</script></body></html>

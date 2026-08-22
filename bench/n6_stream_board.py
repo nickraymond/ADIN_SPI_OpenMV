@@ -70,6 +70,17 @@ BLOB_SCAN = _CFG.get("blob_scan", "codes")
 # reports boxes, so the labels survive -- only the drawing stops.
 OVERLAY = _CFG.get("overlay", True)
 MAX_BOXES = _CFG.get("max_boxes", 32)         # bound the header line length
+# "auto" sniffs the filename; "yolo" and "fomo" force. The S8 B2 custom model
+# is FOMO-style: per-cell class logits on a stride-8 grid, no NMS, no anchors.
+MODEL_KIND = _CFG.get("model_kind", "auto")
+# Labels for models that ship no .txt next to them (the N6 ROMFS carries just
+# the .tflite); harmless for models that do -- the file wins when present.
+MODEL_LABELS = _CFG.get("model_labels", [])
+# Margin decode: a cell counts as class c when logit_c beats the best other
+# logit by this much. 0.69 = ln(2) makes p(c) >= 0.5 guaranteed at 3 classes
+# WITHOUT computing softmax -- 576 exp calls per frame is real time on the
+# AE3, two float compares is not.
+FOMO_MARGIN = _CFG.get("fomo_margin", 0.69)
 
 # One colour per class, cycled. Distinct at a glance on a JPEG at 2 m.
 PALETTE = ((0, 255, 255), (255, 0, 255), (255, 255, 0),
@@ -125,13 +136,119 @@ def load_labels(model_path):
         f.close()
 
 
+def model_kind(path):
+    if MODEL_KIND != "auto":
+        return MODEL_KIND
+    if "yolov8" in path:
+        return "yolo"
+    if "fomo" in path or "nereus" in path:
+        return "fomo"
+    return "raw"
+
+
 def make_model(path, threshold):
     """Load the model with a postprocessor when one is identifiable by name."""
     import ml
-    if "yolov8" in path:
+    if model_kind(path) == "yolo":
         from ml.postprocessing.ultralytics import YoloV8
-        return ml.Model(path, postprocess=YoloV8(threshold=threshold)), True
-    return ml.Model(path), False
+        return ml.Model(path, postprocess=YoloV8(threshold=threshold)), "yolo"
+    return ml.Model(path), model_kind(path)
+
+
+def _out_grid(out):
+    """predict() output -> the (gh, gw, nclass) tensor, tolerating a leading
+    batch axis and ndarray-vs-nested-list. Nothing here is assumed about the
+    array type beyond indexing and len() -- the ulab surface on this firmware
+    has not been exercised by this project before."""
+    o = out[0] if isinstance(out, (list, tuple)) else out
+    while True:
+        try:
+            shape = o.shape
+        except AttributeError:
+            shape = None
+        n = len(shape) if shape else None
+        if n == 4 or (n is None and len(o) == 1):
+            o = o[0]
+            continue
+        return o
+
+
+def fomo_decode(o, nclass, margin):
+    """(gh,gw,nclass) logits -> per-class cell groups via margin decode +
+    4-connected BFS. Returns (counts, boxes) with boxes in GRID cell units:
+    [class, gx, gy, gw, gh, conf]. conf is the winner's softmax probability
+    as an integer percent (D2), taken as the PEAK cell of the group. The
+    exps run only on cells that already passed the margin -- a handful per
+    frame -- so the 576-exp/frame cost that made the margin decode skip
+    softmax entirely stays skipped. Mirrors ml/fomo/train.py decode_grid --
+    keep the cell-selection rule matched (conf is additive, not selective)."""
+    from math import exp
+    gh, gw = len(o), len(o[0])
+    hits = []                       # (gy, gx, class)
+    grid = [[0] * gw for _ in range(gh)]     # 0 = bg, else class idx
+    conf = {}                       # (gy, gx) -> winner softmax prob
+    for gy in range(gh):
+        row = o[gy]
+        for gx in range(gw):
+            cell = row[gx]
+            best, second, bi = -1e9, -1e9, 0
+            for ci in range(nclass):
+                v = cell[ci]
+                if v > best:
+                    second, best, bi = best, v, ci
+                elif v > second:
+                    second = v
+            if bi != 0 and best - second > margin:
+                grid[gy][gx] = bi
+                # p(best) = 1/sum(exp(l_j - l_best)); every term <= 1, so
+                # no overflow, and the winner's own term is exp(0) = 1.
+                s = 0.0
+                for ci in range(nclass):
+                    s += exp(cell[ci] - best)
+                conf[(gy, gx)] = 1.0 / s
+                hits.append((gy, gx, bi))
+    counts = [0] * (nclass - 1)
+    boxes = []
+    seen = set()
+    for gy, gx, ci in hits:
+        if (gy, gx) in seen:
+            continue
+        stack = [(gy, gx)]
+        seen.add((gy, gx))
+        x0, x1, y0, y1 = gx, gx, gy, gy
+        peak = conf[(gy, gx)]
+        while stack:
+            cy, cx = stack.pop()
+            x0 = min(x0, cx); x1 = max(x1, cx)
+            y0 = min(y0, cy); y1 = max(y1, cy)
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ny, nx = cy + dy, cx + dx
+                if (0 <= ny < gh and 0 <= nx < gw and (ny, nx) not in seen
+                        and grid[ny][nx] == ci):
+                    seen.add((ny, nx))
+                    c = conf[(ny, nx)]
+                    if c > peak:
+                        peak = c
+                    stack.append((ny, nx))
+        counts[ci - 1] += 1
+        boxes.append((ci - 1, x0, y0, x1 - x0 + 1, y1 - y0 + 1,
+                      int(peak * 100 + 0.5)))
+    return counts, boxes
+
+
+def draw_fomo(img, boxes, labels, counts, gw, gh):
+    """One rect per cell group, scaled from grid to pixels, class-coloured.
+    Label reads "pink 0.87" (D2): the group's peak-cell confidence."""
+    w, h = img.width(), img.height()
+    for ci, gx, gy, gws, ghs, conf in boxes:
+        colour = class_colour(ci)
+        x = gx * w // gw
+        y = gy * h // gh
+        img.draw_rectangle((x, y, gws * w // gw, ghs * h // gh),
+                           color=colour, thickness=2)
+        name = labels[ci] if ci < len(labels) else str(ci)
+        draw_label(img, (x + 2, max(0, y - 18)),
+                   "%s %d.%02d" % (name, conf // 100, conf % 100), colour)
 
 
 def draw_detections(img, out, labels, colour=(255, 0, 0), draw=True):
@@ -259,10 +376,10 @@ def main():
 
     model = None
     labels = []
-    has_pp = False
+    kind = "raw"
     if DETECT:
-        model, has_pp = make_model(MODEL, THRESHOLD)
-        labels = load_labels(MODEL)
+        model, kind = make_model(MODEL, THRESHOLD)
+        labels = load_labels(MODEL) or list(MODEL_LABELS)
 
     # Model provenance, so "is this apples to apples?" is answerable from the
     # page instead of from memory. The two boards ship DIFFERENT yolov8n
@@ -326,12 +443,30 @@ def main():
 
         ndet = 0
         inf_us = 0
+        mdec_us = 0
+        mcounts = []
+        mboxes_px = []
         if model is not None:
             t_inf0 = time.ticks_us()
             out = model.predict([img])
             inf_us = time.ticks_diff(time.ticks_us(), t_inf0)
-            if has_pp:
+            if kind == "yolo":
                 ndet = draw_detections(img, out, labels, draw=OVERLAY)
+            elif kind == "fomo":
+                t_dec0 = time.ticks_us()
+                o = _out_grid(out)
+                nclass = len(o[0][0])
+                mcounts, mboxes = fomo_decode(o, nclass, FOMO_MARGIN)
+                mdec_us = time.ticks_diff(time.ticks_us(), t_dec0)
+                ndet = sum(mcounts)
+                gh, gw = len(o), len(o[0])
+                for ci, gx, gy, gws, ghs, conf in mboxes[:MAX_BOXES]:
+                    mboxes_px.append((ci, gx * img.width() // gw,
+                                      gy * img.height() // gh,
+                                      gws * img.width() // gw,
+                                      ghs * img.height() // gh, conf))
+                if OVERLAY:
+                    draw_fomo(img, mboxes, labels, mcounts, gw, gh)
 
         nblob = 0
         counts = [0] * len(BLOB_CLASSES)
@@ -361,11 +496,14 @@ def main():
 
         print("#F {\"seq\":%d,\"w\":%d,\"h\":%d,\"b64\":%d,\"jpeg\":%d,"
               "\"cap_us\":%d,\"inf_us\":%d,\"blob_us\":%d,\"enc_us\":%d,"
+              "\"mdec_us\":%d,"
               "\"det\":%d,\"blobs\":%d,\"bc\":%s,\"amb\":%d,\"bb\":%s,"
+              "\"mc\":%s,\"mb\":%s,"
               "\"lab\":[%d,%d,%d]}"
               % (seq, img.width(), img.height(), len(payload), len(jpg),
-                 cap_us, inf_us, blob_us, enc_us, ndet, nblob,
+                 cap_us, inf_us, blob_us, enc_us, mdec_us, ndet, nblob,
                  _json_ints(counts), amb, _json_boxes(boxes),
+                 _json_ints(mcounts), _json_boxes(mboxes_px),
                  int(lab[0]), int(lab[1]), int(lab[2])))
         sys.stdout.write(payload)
         sys.stdout.write("\n")
