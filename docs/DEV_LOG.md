@@ -44,9 +44,17 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   only); deleted twice — the still-running background build re-wrote it
   after the first rm. Artifact-check habit paid for itself.
 
-**Next:** Nick's live D2 check (Pi checkout → recipe restart → half-out
-ball reads lower conf) → D2 PR. Then bite B3 (label-review GUI, plan
-approved shape: local web GUI over labels.jsonl).
+**Same session, later:** bench staged for review through the workbench
+(stop→settle→start, LIVE in ~10 s on the D2 branch); dark-room frames
+verified by EYE (pulled JPEGs — black), so 0/0 counts were the correct
+artifact; custom model does NOT hallucinate on dark frames (contrast
+S24's stock-model finding). **Nick's live check PASSED ("confidence
+values look good") → D2 PR opened.** Old demo had been live ~19 h and
+stopped as `failed — exited rc=0 while live`; restarted clean; recurs →
+bite R's pile.
+
+**Next:** bite B3 (label-review GUI, plan approved shape: local web GUI
+over labels.jsonl).
 
 ## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
 
