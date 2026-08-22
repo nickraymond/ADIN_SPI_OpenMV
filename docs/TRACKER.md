@@ -1682,8 +1682,20 @@ any urchin labelling effort is spent.
       *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
       the corrected set moves val precision measurably; the corrected
       labels.jsonl round-trips through the trainer unchanged in format.
-- [ ] **Bite C — end-to-end metrics: capture → detect → count, at 1 m
-      and 2 m (Nick 2026-08-20).** Not inference-only — the whole chain,
+- [ ] **Bite C — end-to-end metrics: capture → detect → count.**
+      **RESCOPED 2026-08-21 (Nick): DISTANCE IS DROPPED as an analysis
+      axis — "I only ever setup the balls at an average 1.5 m distance",
+      so the run1_1m/run2_2m names are not a true 1 m-vs-2 m variable.
+      Pixels-on-target (measured per detection) replaces distance as the
+      continuous axis; accuracy-vs-px is the plot that transfers to
+      urchins and the T2 ≥24–32 px floor. Analytics shape (Nick's
+      Edge-Impulse ethos, proposed 2026-08-21, table+chart pairs, JSONL
+      rows as the artifact, static HTML report on a workbench card):
+      count-accuracy vs truth · accuracy-vs-px (money plot) · per-stage
+      cost bars (app path vs streaming overhead separated) ·
+      confidence-vs-px (D2's conf) · board scorecard (feeds bite D).**
+      *(original scope, distance references superseded)* Not
+      inference-only — the whole chain,
       which is exactly what the per-tile numbers could not tell us.
       Report per distance, per board, and **per method (blob baseline
       from bite A vs the custom model)**: end-to-end fps, the per-stage
