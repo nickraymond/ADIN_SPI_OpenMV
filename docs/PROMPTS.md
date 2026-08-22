@@ -316,3 +316,105 @@ lock is a REQUIREMENT of bite 2, not a nicety.
 Nibble 1 = plan first, my gate before code. Short actionable replies, and
 use the milestone report format in CLAUDE.md.
 ```
+
+## 11 — Ready to paste: S8 bite B2 — the from-scratch two-colour detector (written 2026-08-20 night)
+
+```
+Run /agent-entry. Sprint S8, bite B2, on a fresh branch from main -- the
+from-scratch two-colour detector. The whole point: our OWN trained weights
+through the ALREADY-PROVEN route (collect -> label -> train -> export ->
+compile -> deploy -> measure) on BOTH boards. This is the bite the last
+three sprints cleared the road for.
+
+SETTLED -- do not re-derive (S8 B0/B1 in TRACKER, ml/README.md, PR #50):
+- The compile+deploy route is PROVEN on both boards. AE3 = vela 5.0.0 ->
+  copy .tflite to /flash (our compile ran 1.66 ms vs vendor 1.81). N6 =
+  stedgeai 4.0.0 -> ROMFS image -> USB DFU alt 3 (2.75 ms vs 2.76).
+  NEVER write DFU alt 0 (BOOTLOADER). NEVER `mpremote romfs deploy` -- it
+  reads OpenMV's partition as size 0 and would destroy the vendor models.
+  The N6 canNOT load models from /flash (stedgeai binaries want XIP) --
+  its deploy is a partition flash, full stop.
+- Training host = the Mac (~/nereus_ml venv: python 3.11, torch 2.12.1
+  MPS, ultralytics 8.4.124; ml/chain_proof.py re-verifies the chain).
+- KNOWN BLOCKER, planned around, not discovered: ultralytics' only
+  TFLite path (LiteRT) emits NCHW float32; the boards want NHWC uint8
+  (OpenMV source models are (1,192,192,3) uint8, scale 1/255), and
+  OpenMV's maintainers report stock Ultralytics INT8 export failing
+  stedgeai outright. So bite B2 starts with a SMALL CLASSIFIER or
+  FOMO-style detector, NOT YOLO.
+- Data collection rig exists: bite A's `--save-frames` +` index.jsonl`
+  (its per-class blob boxes are the auto-labels). Ground truth scene:
+  11 pink / 10 purple balls; blob baseline converges at 10/7.
+- Acceptance trap (bite B's own words): prove the model runs ON THE NPU,
+  not silently on the CPU -- the evidence is a measured per-inference
+  time consistent with the 1.66/2.75 ms class, never "it inferred".
+
+BENCH RULES (new since S25 -- the workbench owns the boards now):
+- Both boards on nereus000, ALWAYS by-id (N6 = "MicroPython Pyboard
+  Virtual Comm Port" 37c5:1206; AE3 = "OpenMV Camera" 37c5:16e3 -- yes,
+  backwards from the guess).
+- Before ANY board contact, check http://nereus000:8088/api/runner and
+  /api/preflight. If a demo is LIVE, stop it from the page or
+  POST /api/stop -- never kill its process, never open a held port.
+  After any stop, the AE3 needs the 35 s settle window the page enforces
+  -- do not race it with mpremote.
+- ae3-board-access skill BEFORE any mpremote against the AE3; one op per
+  invocation, no retry loops, 60 s+ silence between attempts.
+- Deliverable hand-off: release the detector as a workbench recipe
+  (pi/workbench/recipes/, thumbnail + [health]) so the demo is one click
+  -- S25 bite 3's reconciliation can then own its model drift (declare
+  models[] with src + sha256).
+
+Nibble 1 = plan first, my gate before code. Short actionable replies, and
+use the milestone report format in CLAUDE.md.
+```
+
+## 12 — Ready to paste: S26 — urchin dataset access & validation (written 2026-08-21, parallel track)
+
+```
+Run /agent-entry. Sprint S26 on a fresh branch from main -- urchin dataset
+access & validation. This is a PARALLEL desk track: pure Mac/network work,
+ZERO bench hardware, ZERO board contact -- do not touch nereus000 or the
+OpenMV boards; the S8 ball sessions own them. Its output gates S8 bite E
+(the urchin model).
+
+THE SOURCE DOCUMENT: docs/urchin_datasets.md -- Nick's two-sweep research
+from 2026-08-17. Treat EVERY row as a claim until you have verified it;
+live counts in it are a date-stamped snapshot. S26 = turn that file into
+a verified inventory + a training-corpus plan with real numbers.
+
+SETTLED -- do not re-derive:
+- Headline finding (verify, don't re-search): no existing dataset labels
+  purple-vs-red urchins with boxes at scale. Urchinbot (CC-BY 4.0, 9,872
+  imgs / 44k boxes, temperate reef, pretrained YOLOv5 incl.) is the
+  pretraining anchor; iNaturalist/GBIF is the only purple-vs-red signal
+  (image-level, needs auto-boxing); DUO's 50k urchin boxes are
+  license-unstated -- fence research-only. The file's dead-ends list is
+  real work already done: extend it, never re-search it silently.
+- The 4-step data strategy at the file's end (backbone / species head /
+  domain fine-tune / NOAA yolo11 baseline) is the shape bite 3 fills in
+  with verified numbers -- not a thing to reinvent.
+
+RULES OF ENGAGEMENT:
+- ACCOUNT SIGNUPS, LOGINS, AND API KEYS ARE NICK'S HANDS, always (same
+  rule as sudo): prep the exact steps/URLs, hand them over, wait. Never
+  create accounts or enter credentials yourself.
+- Datasets land in ~/nereus_ml/datasets/<source>/ on the Mac -- NEVER in
+  the repo (worktrees; multi-GB). The repo gets the dossier, manifests
+  (sha256 + counts), and small sample crops only if tiny.
+- Licenses: capture the ACTUAL license text per source verbatim into the
+  dossier -- "the page said CC-BY" is not an artifact. FathomNet is
+  per-image licensing: filter and count CC0/CC-BY separately from NC/ND.
+- Trust artifacts: a download that "succeeded" but has no images failed.
+  Verify counts against claims, open real images, check boxes land on
+  urchins before a row is stamped verified.
+
+BITES (TRACKER S26): 1 = access + inventory verification (dossier rows:
+verified count / format / license / sample-viewed, dated). 2 = label
+quality + usable-volume-after-license-filter + NOAA yolo11 weights
+load-and-run on the Mac. 3 = the corpus plan mapped onto the 4-step
+strategy, reviewed with Nick, S8 bite E re-scoped against it.
+
+Nibble 1 = plan first, my gate before code/downloads over ~100 MB. Short
+actionable replies, milestone report format per CLAUDE.md.
+```

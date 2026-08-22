@@ -1,4 +1,8 @@
-# CLAUDE.md — BM Camera Node: Native ADIN1110 Video Path
+# CLAUDE.md — BM Camera Node: ADIN1110 Video Path + Machine-Vision Workbench
+
+Two arcs share this repo: the Bristlemouth/T1L camera-node path (parked
+awaiting replacement link hardware) and the active machine-vision arc —
+custom detectors on the OpenMV AE3 + N6, benched by the S25 workbench.
 
 ## Start here, every session
 
@@ -14,8 +18,26 @@ Docs map — read per the ritual, don't skip it:
 - `docs/DEV_LOG.md` — session log, newest first
 - `docs/PROMPTS.md` — Nick's kickoff prompts
 
-Layout: `firmware/` (AE3 MicroPython, later C) · `pi/` (overlays, services,
-shim, stream server) · `bench/` (benchmarks, counters) · `docs/diagrams/`.
+Layout: `firmware/` (AE3 MicroPython + C: bm_he/he_spike/bm_bridge, openmv
+patches) · `pi/` (overlays, services, stream shim, `workbench/` = S25 recipe
+menu/runner, `bench_web/`, `bm_bench/`, `ae3_flash/`) · `bench/` (benchmarks,
+counters, CV harnesses) · `ml/` (Mac-side training/toolchain: compile +
+deploy recipes, chain_proof) · `docs/diagrams/`.
+
+## Bench standing facts (they bite every session)
+
+- **Both OpenMV boards live on nereus000's USB.** Address them ONLY by
+  `/dev/serial/by-id/…` — `ttyACM<n>` is enumeration order. The names are
+  backwards from the guess: the **N6** is `usb-MicroPython_Pyboard_…`,
+  the **AE3** is `usb-OpenMV_OpenMV_Camera_…` (SPEC §Board identity).
+- **One owner per board port, ever.** Before any board contact check the
+  workbench (`http://nereus000:8088/api/runner` + `/api/preflight`); stop
+  demos from the page, never by killing their process. Two processes on
+  one port wedges the board (measured, repeatedly).
+- **The AE3 needs ~35 s of port silence after any stream stops** (the
+  workbench enforces this settle) — a quick reattach lands it in a
+  raw-repl refusal that only a physical replug clears. Use the
+  `ae3-board-access` skill before any mpremote against it.
 
 ## Reporting to Nick
 
@@ -61,7 +83,8 @@ what happens next, so they are a planning instrument, not a status dump.
    Microchip oa-tc6-lib, Sofar's bm_core exist. Inspect and adapt the smallest
    working piece; document what was reused. A rewrite needs a measurable reason.
 3. **Never invent hardware facts.** Register addresses, pinouts, strap
-   polarities, GPIO mappings: verify against vendor docs or measure, else flag
+   polarities, GPIO mappings — and board *identity* (USB descriptors lie;
+   ask the board): verify against vendor docs or measure, else flag
    in SPEC.md §Open questions. This project has already been burned by
    plausible guesses.
 4. **Trust artifacts, not exit codes.** A capture that "succeeded" but produced

@@ -26,6 +26,8 @@ firmware = "v5.0.0-52.g7d4dbf7ab2.dirty"
   name = "nereus_two_ball"
   path = "/flash/nereus_two_ball.tflite"
   sha256 = "aee3e4e99f7d6d2c418ba6fb9730999116233eb07b954ffde55b3f9aad64f476"
+  # released artifact in-repo -> S25 bite 3 can REPAIR drift, not just report
+  src = "ml/models/nereus_two_ball_ae3.tflite"
 
 [[boards]]
 label = "N6"

@@ -1,0 +1,29 @@
+# n6_detect_stream.toml — the S25 second recipe (bite 4): single-board
+# N6 live stream with the stock person detector running on Neural-ART.
+#
+# Exists to prove the recipe format generalises (one board, detect path
+# instead of blobs) and as a camera/NPU liveness check. NOTE: the ROM
+# yolov8n_192 is a ONE-CLASS ("person") model — zero detections on a
+# ball scene is the CORRECT artifact, not a broken run (S8 finding).
+
+name = "n6-detect-stream"
+title = "N6 detection stream"
+summary = "Single-board live view with the stock person detector (yolov8n_192 on Neural-ART). Zero detections on a non-person scene is correct — the ROM model is person-only. Useful as an N6 camera + NPU liveness check."
+opens = ":8090"
+thumbnail = "thumbs/n6_detect.jpg"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+firmware = "v5.0.0"
+
+[run]
+argv = [
+  "python3", "bench/n6_stream_host.py",
+  "--bind", "0.0.0.0", "--framesize", "VGA", "--no-blobs",
+  "--board", "N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8090/"

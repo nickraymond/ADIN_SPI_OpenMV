@@ -1,7 +1,13 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-20 night (**S25 bites 1+2 SHIPPED AND DEMO'D
+*Last updated: 2026-08-21 (**NEW PARALLEL SPRINT S26 — urchin dataset
+access & validation (Nick).** Desk-only track alongside S8's ball work:
+verify `docs/urchin_datasets.md` (Nick's 2026-08-17 research, now in-repo)
+source by source — access, real samples, label quality, license text —
+then a training-corpus plan with verified numbers. Gates S8 bite E; zero
+bench hardware. Kickoff = PROMPTS.md §12. Previous:*
+*2026-08-20 night (**S25 bites 1+2 SHIPPED AND DEMO'D
 (Nick): the workbench page on nereus000:8088 lists recipes, preflights the
 boards passively, and starts/stops the S8 ball demo with a single-owner
 board lock, health-gated LIVE, and a 35 s settle window after stop** —
@@ -1691,7 +1697,7 @@ any urchin labelling effort is spent.
       T2 accuracy question (urchin ≥24–32 px) rides here.
       **Demo bar set by Nick 2026-08-21: a truly custom urchin model
       running on BOTH boards with a screen showing the urchins — the
-      project's HIL. This demo is the GATE for sprint S26 below.**
+      project's HIL. This demo is the GATE for sprint S27 below.**
       What carries over from B2 unchanged: the whole toolchain (capture
       rig, labels.jsonl format, trainer, int8 export, both compile+
       deploy routes, recipe/page). What is genuinely different: labels
@@ -1702,13 +1708,12 @@ any urchin labelling effort is spent.
       and the tiny colour-separable net will likely need more capacity
       (bigger backbone; hue augmentation becomes legal again since
       colour is no longer the class).
-      **Dataset source EXISTS (Nick, 2026-08-21): thousands of urchin
-      images on hand; label status UNCONFIRMED — Nick to confirm.
-      Treated as solved-by-source come training time. If they arrive
-      labelled, the new work is a one-bite converter (their format →
-      labels.jsonl) and B3's GUI becomes review/spot-fix rather than
-      from-scratch labelling; if unlabelled, B3 is the labelling path.
-      Either way B3 gets built first and against these images.**
+      **← the labelled set is S26's deliverable (parallel track, Nick
+      2026-08-21): dataset access + validation runs alongside the ball
+      work and this bite consumes its verified corpus plan.** If the
+      corpus arrives labelled, the new work here is a one-bite format
+      converter (their labels → labels.jsonl) and B3's GUI becomes
+      review/spot-fix rather than from-scratch labelling.
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
@@ -1883,7 +1888,19 @@ needs a measured reason.
       *Verifiable:* click the S8 recipe on a cold bench → both boards stream
       with the tuned thresholds; click stop → ports free, boards enumerated;
       a second start attempt while one is running is refused, loudly.
-- [ ] **Bite 3 — state reconciliation ("put it back to known-good").** Before
+- [x] **Bite 3 — state reconciliation ("put it back to known-good").**
+      → **DONE 2026-08-20 (night), verified live on the bench** (both boards'
+      firmware probed via one serialized `mpremote exec` each, checks green,
+      demo went reconciling→starting→LIVE; the AE3 attached cleanly after its
+      probe behind a 3 s RECON_GAP). Drift handling: models repaired ONLY via
+      the file-copy route (`models[].src`, artifact hash-checked on disk
+      BEFORE the copy, board sha read back AFTER — trust the bytes, not the
+      rc); firmware drift and N6 ROMFS drift REFUSE the run with the manual
+      step (never a page side effect). Probe failures arm the settle window.
+      Page shows PREPARING + a per-check drift table. 70 host tests.
+      **Live "delete a model → watch it repaired" demo still owed** — waits
+      for the first recipe that ships a model artifact (S8 B2's detector);
+      the repair path is pinned by 9 host tests meanwhile. Before
       running, verify what is actually on the hardware — model present, sha256
       matching, firmware label, `/flash` contents — and repair only what has
       drifted. Report drift explicitly rather than silently fixing it. The
@@ -1892,7 +1909,11 @@ needs a measured reason.
       *Verifiable:* delete a model from a board, click the recipe, and the
       page reports the drift and restores it; re-running with nothing drifted
       does no writes at all.
-- [ ] **Bite 4 — a second recipe + the "how to add a test" doc.** Proves the
+- [x] **Bite 4 — a second recipe + the "how to add a test" doc.**
+      → **DONE 2026-08-20 (night):** `n6-detect-stream` (single-board, stock
+      person model on Neural-ART; zero detections on a ball scene documented
+      as the CORRECT artifact) + `pi/workbench/README.md` (release step,
+      recipe reference, what Start does, safety posture). Proves the
       format generalises beyond the one it was designed around, and writes
       down the release step so adding a menu entry is a documented act.
 
@@ -1913,7 +1934,56 @@ per-board thresholds, stop it, and see the ports released.
 **Needs:** bench time; sudo for the one-time unit install.
 
 
-### S26 — solo ML pipeline: take the training wheels off  `[ ]`  *(stub — added 2026-08-21 at Nick's direction. **GATED behind S8 bite E's demo**: a truly custom urchin model running on both boards with the urchin HIL screen. Runs only after that passes.)*
+### S26 — urchin dataset access & validation  `[ ]`  ← **PARALLEL TRACK (Nick 2026-08-21): runs alongside S8's ball work; its output gates S8 bite E (the urchin model)**
+**Goal:** turn the 2026-08-17 dataset research (`docs/urchin_datasets.md`)
+from claims into a VERIFIED inventory: access obtained, samples downloaded
+and eyeballed, label quality and license terms confirmed per source — so
+that when the ball detector proves the pipeline, the urchin data is
+already known-good and the training-corpus plan is a decision, not a hunt.
+
+**Why a parallel sprint:** pure Mac/desk work — zero bench hardware, zero
+board contact — so it cannot collide with the S8/S25 sessions. Headline
+from the research (verify, don't trust): NO existing dataset labels
+purple-vs-red at scale; Urchinbot (CC-BY, 9,872 imgs/44k boxes) is the
+pretraining anchor; iNaturalist/GBIF (13,387 purple + 3,666 red,
+image-level) is the species signal; DUO's 50k boxes are license-murky.
+
+- [ ] **Bite 1 — access + inventory verification.** For every Tier-1/1b/2
+      source in `docs/urchin_datasets.md`: obtain access (agent preps the
+      steps; **account signups and API keys are Nick's hands** — same rule
+      as sudo), download a real sample, and verify the claims: image and
+      box counts, label format, class lists, and the ACTUAL license text
+      captured verbatim. *Verifiable:* the dossier (`docs/urchin_datasets.md`
+      §Verification, new section) has a row per source with
+      verified-count / format / license / sample-viewed columns filled,
+      each stamped with date + how it was checked. Dead-end rows recorded
+      too (the file already carries a dead-ends list — extend it, never
+      silently drop a source).
+- [ ] **Bite 2 — label-quality + usable-volume review.** On the verified
+      samples: are boxes actually on urchins (spot-check N per source),
+      does purple/red class fidelity hold in the two sources that claim
+      it (74-img Roboflow set, iNat species labels), what volume SURVIVES
+      license filtering for commercial use (FathomNet NC/ND subsets out,
+      DUO fenced research-only). Grab NOAA's off-the-shelf yolo11 urchin
+      weights and confirm they load + run on the Mac — the free benchmark
+      the strategy names. *Verifiable:* a per-source verdict table
+      (usable boxes after filtering / quality notes / go-no-go) reviewed
+      with Nick.
+- [ ] **Bite 3 — the training-corpus plan.** Map verified sources onto
+      the research file's 4-step strategy (backbone / species head /
+      domain fine-tune / benchmark) with real numbers, storage laid out
+      under `~/nereus_ml/datasets/` (NEVER in the repo — worktrees), and
+      the auto-label-then-correct loop speced against what S8 B2's ball
+      pipeline actually shipped. *Verifiable:* written plan reviewed with
+      Nick; S8 bite E re-scoped against it.
+
+**Demo (Nick):** the verified dossier + verdict table reviewed together;
+one sample image from each go source opened and looked at; NOAA baseline
+weights running on one of them on the Mac.
+**Needs:** Mac + network; Nick's hands for signups/keys; NO bench time.
+**Kickoff prompt:** PROMPTS.md §12.
+
+### S27 — solo ML pipeline: take the training wheels off  `[ ]`  *(stub — added 2026-08-21 at Nick's direction; renumbered S26→S27 at the 2026-08-21 merge, where the parallel dataset sprint had independently claimed S26. **GATED behind S8 bite E's demo**: a truly custom urchin model running on both boards with the urchin HIL screen. Runs only after that passes.)*
 **Goal:** Nick drives dataset → train → evaluate → deploy **solo, no agent
 in the loop**. B2 built the plumbing; this sprint builds the judgment
 layer — every check the agent performed by hand becomes a printed verdict.
@@ -1934,6 +2004,7 @@ layer — every check the agent performed by hand becomes a printed verdict.
 retrained model to both boards and reads its scorecard — without Claude.
 **Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
 urchin HIL demo); S25 bite 3.
+
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22

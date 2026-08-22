@@ -34,6 +34,7 @@ Unit: pi/services/workbench.service         # enabled at boot -- the point
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -67,7 +68,7 @@ DISK_MIN_FREE_MB = 500
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
             "boards", "run", "health"}
 BOARD_KEYS = {"label", "by_id", "firmware", "models"}
-MODEL_KEYS = {"name", "path", "sha256"}
+MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd"}
 HEALTH_KEYS = {"http"}
 
@@ -122,7 +123,16 @@ def _validate_board(b, i, errs):
         sha = _str(m, "sha256", mw, errs, required=True)
         if sha and not SHA256_RE.match(sha):
             errs.append("%s: sha256 must be 64 lowercase hex chars" % mw)
-        out_models.append({"name": name, "path": path, "sha256": sha})
+        # src = repo-relative artifact for the copy-route repair (AE3
+        # /flash). Absent -> verify-only: drift is reported, not repaired
+        # (the N6's models live in a ROMFS partition; that flash stays a
+        # deliberate human/agent act, never a page side effect).
+        src = _str(m, "src", mw, errs)
+        if src and (os.path.isabs(src) or ".." in src.split("/")):
+            errs.append("%s: src must be a repo-relative path without '..'"
+                        % mw)
+        out_models.append({"name": name, "path": path, "sha256": sha,
+                           "src": src})
     return {"label": label, "by_id": by_id, "firmware": firmware,
             "models": out_models}
 
@@ -330,6 +340,87 @@ class StartRefused(Exception):
     """A refusal the operator must read (409 on the wire)."""
 
 
+class ReconcileFailed(Exception):
+    """Drift or a probe failure that stops the bring-up (state -> failed)."""
+
+
+# One mpremote operation per invocation (ae3-board-access rule: no
+# chaining). The probe is a single exec that prints one JSON line.
+_PROBE_SCRIPT = r"""
+import sys, json, binascii
+try:
+    import hashlib
+except ImportError:
+    import uhashlib as hashlib
+out = {"version": sys.version, "models": {}}
+for p in %s:
+    try:
+        s = hashlib.sha256()
+        f = open(p, "rb")
+        while True:
+            b = f.read(4096)
+            if not b:
+                break
+            s.update(b)
+        f.close()
+        out["models"][p] = [binascii.hexlify(s.digest()).decode(), None]
+    except Exception as e:
+        out["models"][p] = [None, repr(e)]
+print("RECON:" + json.dumps(out))
+"""
+
+
+def _mpremote_bin():
+    return (shutil.which("mpremote")
+            or os.path.expanduser("~/.local/bin/mpremote"))
+
+
+def mpremote_probe(by_id, model_paths, timeout=30):
+    """One serialized board read: sys.version + sha256 of each path.
+
+    Returns {"version": str, "models": {path: (sha_or_None, err_or_None)}}.
+    Raises ReconcileFailed with the board's own words on any failure.
+    """
+    dev = os.path.join(BY_ID_DIR, by_id)
+    script = _PROBE_SCRIPT % json.dumps(list(model_paths))
+    try:
+        out = subprocess.run(
+            [_mpremote_bin(), "connect", dev, "exec", script],
+            capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ReconcileFailed("probe of %s timed out after %ds" % (by_id,
+                                                                   timeout))
+    except OSError as e:
+        raise ReconcileFailed("cannot run mpremote: %s" % e)
+    for line in out.stdout.splitlines():
+        if line.startswith("RECON:"):
+            obj = json.loads(line[len("RECON:"):])
+            return {"version": obj["version"],
+                    "models": {p: tuple(v) for p, v in
+                               obj["models"].items()}}
+    raise ReconcileFailed(
+        "probe of %s failed (rc=%d): %s" % (
+            by_id, out.returncode,
+            (out.stderr or out.stdout or "no output").strip()[-300:]))
+
+
+def mpremote_cp(by_id, src_abs, board_path, timeout=120):
+    """One serialized copy to the board (the AE3 /flash repair route)."""
+    dev = os.path.join(BY_ID_DIR, by_id)
+    try:
+        out = subprocess.run(
+            [_mpremote_bin(), "connect", dev, "cp", src_abs,
+             ":" + board_path],
+            capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ReconcileFailed("repair copy to %s timed out" % by_id)
+    except OSError as e:
+        raise ReconcileFailed("cannot run mpremote: %s" % e)
+    if out.returncode != 0:
+        raise ReconcileFailed("repair copy to %s failed: %s" % (
+            by_id, (out.stderr or out.stdout or "?").strip()[-300:]))
+
+
 class Runner:
     """Single-owner demo runner.
 
@@ -354,11 +445,18 @@ class Runner:
     # until this many seconds have passed with the port untouched.
     SETTLE = 35.0
 
+    # Gap between the last reconcile board op and the app's own attach --
+    # sequential clean sessions are fine, but give the board air.
+    RECON_GAP = 3.0
+
     def __init__(self, repo=REPO, pidfile="/tmp/workbench-run.json",
-                 logpath="/tmp/workbench-run.log"):
+                 logpath="/tmp/workbench-run.log",
+                 probe=mpremote_probe, repair=mpremote_cp):
         self.repo = repo
         self.pidfile = pidfile
         self.logpath = logpath
+        self._probe = probe
+        self._repair = repair
         self._lk = threading.Lock()
         self.state = "idle"
         self.recipe = None      # the recipe dict while not idle
@@ -368,6 +466,7 @@ class Runner:
         self.pid = None         # always set while owning something
         self.settle_until = 0.0  # monotonic; boards quiet until then
         self.settle_boards = set()
+        self.reconcile_report = []
         self._adopt()
 
     # -- pidfile ----------------------------------------------------------
@@ -416,7 +515,7 @@ class Runner:
     # -- lifecycle --------------------------------------------------------
     def start(self, recipe, board_states):
         with self._lk:
-            if self.state in ("starting", "live", "stopping"):
+            if self.state in ("reconciling", "starting", "live", "stopping"):
                 raise StartRefused(
                     "'%s' is already %s -- one demo at a time; stop it first"
                     % (self.recipe["name"], self.state))
@@ -447,6 +546,112 @@ class Runner:
                         "workbench did not start and will not kill. Free it "
                         "yourself, then start again."
                         % (b.get("label", "?"), h["pid"], h["cmd"]))
+            self.recipe = recipe
+            self.error = None
+            self.started = time.time()
+            self.proc = None
+            self.pid = None
+            self.reconcile_report = []
+            self.state = "reconciling"
+        threading.Thread(target=self._bringup, args=(recipe,),
+                         daemon=True).start()
+        print("runner: bring-up of %s (reconcile -> spawn)"
+              % recipe["name"], flush=True)
+
+    # -- reconcile (bite 3): verify declared state, repair only drift ----
+    def _reconcile(self, recipe):
+        """Returns (report, touched_a_board). Raises ReconcileFailed on
+        drift it cannot repair, a failed repair, or a failed probe.
+        Repair route is the file copy (src declared) ONLY -- firmware and
+        partition-flash drift are reported with the manual step, never
+        performed by this page."""
+        report, touched = [], False
+        for b in recipe["boards"]:
+            expect_fw = b.get("firmware")
+            models = b.get("models") or []
+            if not expect_fw and not models:
+                continue
+            touched = True
+            probe = self._probe(b["by_id"], [m["path"] for m in models])
+            entry = {"label": b.get("label"), "checks": []}
+            report.append(entry)
+            self.reconcile_report = report  # partial visibility on failure
+            if expect_fw:
+                ok = expect_fw in probe["version"]
+                entry["checks"].append(
+                    {"kind": "firmware", "expected": expect_fw,
+                     "found": probe["version"], "ok": ok, "repaired": False})
+                if not ok:
+                    raise ReconcileFailed(
+                        "board %s firmware drift: recipe expects %r, board "
+                        "reports %r. Firmware flashing is never a page side "
+                        "effect -- reflash via the S7 ladder "
+                        "(pi/ae3_flash/README.md) or update the recipe."
+                        % (b.get("label"), expect_fw, probe["version"]))
+            for m in models:
+                sha, err = probe["models"].get(m["path"], (None, "not probed"))
+                if sha == m["sha256"]:
+                    entry["checks"].append(
+                        {"kind": "model", "path": m["path"], "ok": True,
+                         "repaired": False})
+                    continue
+                found = sha or ("missing: %s" % err)
+                if not m.get("src"):
+                    raise ReconcileFailed(
+                        "board %s model %s drifted (found %s, expected %s) "
+                        "and the recipe declares no src to repair from -- "
+                        "this route (e.g. N6 ROMFS) is a deliberate manual "
+                        "deploy, see ml/README.md."
+                        % (b.get("label"), m["path"], found, m["sha256"]))
+                src_abs = os.path.join(self.repo, m["src"])
+                try:
+                    with open(src_abs, "rb") as fh:
+                        src_sha = hashlib.sha256(fh.read()).hexdigest()
+                except OSError as e:
+                    raise ReconcileFailed("repair source %s unreadable: %s"
+                                          % (m["src"], e))
+                if src_sha != m["sha256"]:
+                    raise ReconcileFailed(
+                        "repo artifact %s hashes to %s, not the declared "
+                        "%s -- fix the recipe before it repairs boards "
+                        "with the wrong bytes." % (m["src"], src_sha,
+                                                   m["sha256"]))
+                print("runner: DRIFT on %s %s (found %s) -- repairing from "
+                      "%s" % (b.get("label"), m["path"], found, m["src"]),
+                      flush=True)
+                self._repair(b["by_id"], src_abs, m["path"])
+                # Trust the bytes, not the copy's rc: read the sha back.
+                re_probe = self._probe(b["by_id"], [m["path"]])
+                sha2, err2 = re_probe["models"].get(m["path"], (None, "?"))
+                if sha2 != m["sha256"]:
+                    raise ReconcileFailed(
+                        "repair of %s did NOT verify: read back %s"
+                        % (m["path"], sha2 or err2))
+                entry["checks"].append(
+                    {"kind": "model", "path": m["path"], "ok": True,
+                     "repaired": True})
+        return report, touched
+
+    def _bringup(self, recipe):
+        try:
+            report, touched = self._reconcile(recipe)
+        except ReconcileFailed as e:
+            with self._lk:
+                if self.state == "reconciling":
+                    self.state = "failed"
+                    self.error = str(e)
+                    self._arm_settle()
+            print("runner: RECONCILE FAILED -- %s" % e, flush=True)
+            return
+        with self._lk:
+            if self.state != "reconciling":
+                return
+            self.reconcile_report = report
+        if touched and self.RECON_GAP:
+            time.sleep(self.RECON_GAP)  # air between probe and app attach
+        with self._lk:
+            if self.state != "reconciling":
+                return
             logf = open(self.logpath, "wb")
             try:
                 self.proc = subprocess.Popen(
@@ -456,20 +661,18 @@ class Runner:
                     stdin=subprocess.DEVNULL, start_new_session=True)
             except OSError as e:
                 logf.close()
-                raise StartRefused("cannot exec %s: %s"
-                                   % (recipe["run"]["argv"][0], e))
-            finally:
-                if self.proc:
-                    logf.close()  # child holds its own copy
+                self.state = "failed"
+                self.error = ("cannot exec %s: %s"
+                              % (recipe["run"]["argv"][0], e))
+                self._arm_settle()
+                return
+            logf.close()  # child holds its own copy
             self.pid = self.proc.pid
-            self.recipe = recipe
-            self.error = None
-            self.started = time.time()
             self.state = "starting"
             self._write_pidfile()
-        threading.Thread(target=self._watch_start, daemon=True).start()
         print("runner: started %s (pid %d)" % (recipe["name"], self.pid),
               flush=True)
+        self._watch_start()
 
     def _arm_settle(self):
         """Called (under the lock) whenever the demo releases its boards."""
@@ -638,6 +841,8 @@ class Runner:
                     "error": self.error,
                     "pid": self.pid if self.state not in ("idle",) else None,
                     "started": self.started,
+                    "reconcile": self.reconcile_report
+                    if self.state not in ("idle",) else [],
                     "log_tail": self.log_tail()
                     if self.state in ("starting", "failed", "stuck") else ""}
 
