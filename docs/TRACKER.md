@@ -1647,8 +1647,16 @@ any urchin labelling effort is spent.
       measured per-inference time consistent with the tables above.
       **GATE: if either board has no viable path, STOP and re-plan with
       Nick before any dataset effort is spent.**
-- [~] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
-      passed).** → CODE + TESTS + REHEARSAL DONE 2026-08-21 (branch
+- [x] **Bite B3 — label-review GUI. CLOSED 2026-08-21 (Nick): tool + card
+      shipped and used live ("The GUI cookbook is great"); the ≥50-frame
+      correction sitting + retrain acceptance is WAIVED — Nick: "not going
+      to retrain, it's a ton of work and I want to get to the urchin work."
+      Consequence, recorded not buried: B2's label-noise debts
+      (USPS-lettering false purple, dim-pink recall, exact-count weakness)
+      stay OPEN in the shipped two-ball model; the GUI's real payoff is as
+      bite E's urchin labelling path. Pattern captured as the repo skill
+      `.claude/skills/workbench-guide-card`. PR open.**
+      → CODE + TESTS + REHEARSAL DONE 2026-08-21 (branch
       `claude/s8-b3-label-gui`; plan + guide-card variant approved by Nick).
       `ml/fomo/label_gui.py` (stdlib, Mac, LAN bind :8899): draw/move/
       resize/delete/reclass, arrows autosave + mark reviewed, classes

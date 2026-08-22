@@ -64,9 +64,16 @@ Mac). Save path rehearsed on a dataset COPY, boxes/reviewed/class-add
 verified ON DISK. 231 tests green across the three touched suites.
 Branch `claude/s8-b3-label-gui`.
 
-**Next:** Nick's B3 manual pass — correction sitting (≥50 frames) on the
-real set, retrain, the 📖 card on the Pi (checkout + workbench restart)
-→ B3 PR.
+**Same session, B3 closure (Nick):** GUI + card used live; guide's guessed
+hostname fixed (Bonjour `nicks-macbook-pro.local` via scutil, NOT shell
+`hostname` — verified by curl before commit) and all chapter commands made
+absolute. **Retrain acceptance WAIVED by Nick** ("ton of work, urchins
+next") — B2's label-noise debts stay open in the two-ball model; the GUI
+is bite E's labelling path. Pattern → repo skill
+`.claude/skills/workbench-guide-card` + memory. B3 PR opened.
+
+**Next:** bite C (1 m/2 m end-to-end metrics, needs Nick at the bench) →
+bite D (desk arithmetic) → E/urchins on S26's corpus.
 
 ## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
 
