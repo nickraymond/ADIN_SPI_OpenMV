@@ -19,13 +19,14 @@ recipe card's "chapter": follow it top to bottom.</p>
 
 <p>Labeler status:
  <span id="badge" class="badge down">checking…</span>
- <a id="openlink" href="http://nicks-mbp.local:8899/" target="_blank"
+ <a id="openlink" href="http://nicks-macbook-pro.local:8899/" target="_blank"
     style="display:none">Open the labeler →</a>
 </p>
 
 <h2>1. Start the GUI on the Mac</h2>
-<pre>~/nereus_ml/venvs/fomo/bin/python ml/fomo/label_gui.py</pre>
-<p class="muted">Run from the repo root. Defaults: dataset
+<pre>python3 ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/label_gui.py</pre>
+<p class="muted">Absolute path — runs from any directory, any python3 (the
+GUI is stdlib-only). Defaults: dataset
 <code>~/nereus_ml/datasets/two_ball</code>, LAN bind, port 8899. Stop with
 Ctrl-C — every frame is saved as you move off it, nothing is pending.</p>
 <p>If the venv does not exist yet (fresh Mac), rebuild it first:</p>
@@ -36,9 +37,13 @@ itself — the GUI is stdlib-only. Any python3 runs it.)</p>
 
 <h2>2. Open it</h2>
 <p>The badge above turns green when the labeler answers; the link appears
-next to it. If <code>nicks-mbp.local</code> does not resolve on your
-network, use the Mac's IP or tailnet name — the URL lives in this guide and
-in <code>pi/workbench/recipes/label_review.toml</code>, one-line edit.</p>
+next to it. The name is the Mac's Bonjour hostname
+(<code>scutil --get LocalHostName</code> → <code>Nicks-MacBook-Pro</code>,
+verified 2026-08-21 — NOT the shell's <code>hostname</code>). If
+<code>.local</code> does not resolve on your network, use the Mac's IP or
+tailnet name instead — the URL appears twice in this file
+(<code>pi/workbench/recipes/guides/label-review.html</code>), one edit
+each.</p>
 
 <h2>3. Review frames</h2>
 <ul>
@@ -57,7 +62,7 @@ in <code>pi/workbench/recipes/label_review.toml</code>, one-line edit.</p>
 trainer reads. There is no export step.</p>
 
 <h2>4. Retrain on the corrections</h2>
-<pre>~/nereus_ml/venvs/fomo/bin/python ml/fomo/train.py</pre>
+<pre>~/nereus_ml/venvs/fomo/bin/python ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/train.py</pre>
 <p class="muted">Known B2 debts your corrections attack: the USPS-box
 lettering learned as purple, dim-pink recall on the AE3, exact-count
 weakness. Compare the printed val precision/recall against B2's
