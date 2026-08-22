@@ -53,8 +53,20 @@ values look good") → D2 PR opened.** Old demo had been live ~19 h and
 stopped as `failed — exited rc=0 while live`; restarted clean; recurs →
 bite R's pile.
 
-**Next:** bite B3 (label-review GUI, plan approved shape: local web GUI
-over labels.jsonl).
+**Same session, B3 (after PR #57 merged; Nick's gate + the guide-card
+variant "a chapter in our growing cookbook"):** `ml/fomo/label_gui.py`
+shipped (stdlib browser GUI over labels.jsonl, atomic saves, additive-only
+classes, reviewed stamps) + relabel.py `--force` guard (a re-run must
+never silently flatten hand corrections) + workbench GUIDE CARDS
+(`guide=` recipes: unstartable documentation chapters, served confined;
+first chapter = label-review with a live labeler-up badge probing the
+Mac). Save path rehearsed on a dataset COPY, boxes/reviewed/class-add
+verified ON DISK. 231 tests green across the three touched suites.
+Branch `claude/s8-b3-label-gui`.
+
+**Next:** Nick's B3 manual pass — correction sitting (≥50 frames) on the
+real set, retrain, the 📖 card on the Pi (checkout + workbench restart)
+→ B3 PR.
 
 ## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
 

@@ -1647,8 +1647,22 @@ any urchin labelling effort is spent.
       measured per-inference time consistent with the tables above.
       **GATE: if either board has no viable path, STOP and re-plan with
       Nick before any dataset effort is spent.**
-- [ ] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
-      passed; NEXT working session).** Nick reviews ALL training frames
+- [~] **Bite B3 — label-review GUI (Nick, 2026-08-20, after the B2 demo
+      passed).** → CODE + TESTS + REHEARSAL DONE 2026-08-21 (branch
+      `claude/s8-b3-label-gui`; plan + guide-card variant approved by Nick).
+      `ml/fomo/label_gui.py` (stdlib, Mac, LAN bind :8899): draw/move/
+      resize/delete/reclass, arrows autosave + mark reviewed, classes
+      extendable never hard-wired, atomic whole-file saves to the SAME
+      labels.jsonl; `relabel.py` now refuses to flatten reviewed frames
+      without `--force`. Workbench grew GUIDE CARDS (Nick's "cookbook
+      chapter" call): `guide=` recipes render as a 📖 link to a Pi-served
+      chapter — no boards, unstartable by schema AND by /api/start; first
+      chapter = guides/label-review.html with a live labeler-up badge.
+      Save path rehearsed on a dataset COPY, verified on disk. Suites:
+      +15 GUI, workbench→83, 231 green together. REMAINING: Nick's
+      correction sitting (≥50 frames) + retrain moving val precision +
+      the card demo on the Pi → PR.
+      *(original scope)* Nick reviews ALL training frames
       himself in a GUI, corrects the auto-label boxes by hand, and can
       label beyond colour classes (the class list must not be hard-wired
       to pink/purple — bite E's urchins ride the same tool). Scope: browse
