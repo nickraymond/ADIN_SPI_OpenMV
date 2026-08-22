@@ -85,3 +85,40 @@ nothing published.
 
 License watch-list for commercial use: DUO/URPC/RUOD (unstated), FathomNet
 CC-BY-NC/NC-ND subsets (filter them out), per-project Roboflow terms.
+
+## Verification (S26 bite 1 — started 2026-08-21)
+
+Method + verbatim license captures live in `ml/urchin_data/`
+(`licenses/`, `manifests/`); data lives in `~/nereus_ml/datasets/`.
+"✔" = verified against the claim; every row stamped 2026-08-21.
+
+| Source | Verified count | Format | License (captured verbatim) | Sample viewed | Verdict |
+|---|---|---|---|---|---|
+| **Urchinbot** | ✔ 9,872 imgs / 44,268 boxes / 3 spp (CSV parse; splits 7912/976/982) | YOLO + per-box CSV | ✔ CC-BY-4.0 (Zenodo API). ⚠ GitHub weights/code UNLICENSED | ✔ 300-img seeded sample; boxes overlaid on one frame, land on urchins | **GO** for backbone. Full pull is **~32 GB** (not 2–6): images live on public S3 per-row, gated on Nick |
+| **FathomNet S. fragilis** | ✔ 23,061 boxes / 4,600 imgs (API, cross-checked) | via API | ✘ **ALL 4,600 imgs CC BY-NC-ND** (full-corpus audit, zero exceptions) | API-level only | **NO-GO commercial** — license filter leaves ZERO boxes. purpuratus=7, franciscanus=0 as claimed |
+| **iNat/GBIF** | ✔ 13,387 purple / 3,666 red (human-obs, exact match) | image-level, no boxes | ✔ per-record enum. **CC0+CC-BY only: 2,019 purple / 574 red** (~85% is NC) | ✔ 1/species pulled + confirmed | **GO, but 6–7× smaller than headline** after commercial filter. No account needed (API paging) |
+| **NOAA yolo11 weights** | ✔ both .pt downloaded, sha256'd | ultralytics .pt | yolo11x AGPL-3.0; yolo11n untagged (Ultralytics-derived) | load-and-run = bite 2 | **Benchmark-only** (AGPL lineage). ⚠ yolo11n's training set (Sakana) is GONE from Universe; yolo11x actually trained on Diad-3, not Sakana |
+| **DUO** | zip on disk (md5 pending unzip vs figshare `d2b1901e…`); 50,156-box count = bite 2 | VOC/COCO (per repo) | ⚠ figshare DECLARES CC BY 4.0 — research file said unstated. Lineage caveat stands; Nick's call | pending unzip | Downloaded (3.39 GB); stays research-only fenced until license call |
+| **Roboflow urchin-detector (74 img)** | ✔ 74 imgs | obj-det | ✔ page: CC BY 4.0 | preview only (export needs account) | **Caution:** 10 classes incl. 6 numeric junk classes — label hygiene worse than claimed. Export + spot-check behind Nick's Roboflow key |
+| **Roboflow sea-urchin-body** | ✔ 2,273 imgs | instance seg | ✔ page: CC BY 4.0 | preview only | GO candidate (Purple Sea Urchin class); export behind key |
+| **RF100 underwater-objects** | ✔ 7,600 imgs / 5 cls (echinus) | obj-det | ✔ page: CC BY 4.0 | preview only | GO (license-clean URPC-lineage volume, as researched); export behind key |
+| **Marine-Detect FishInv** | 12,742 imgs (README split table) | YOLO | ✘ data license unstated; mixed Roboflow/Tēnaka provenance, no per-image map | not pulled | **6.72 GB, over gate** + murky provenance — Nick's call whether to bother |
+| **RUOD** | access verified (GitHub release tar-parts, no account) | VOC | ✘ confirmed NO license anywhere in repo | not pulled | Research-only fence confirmed; 3.4 GB pull deferred |
+
+**Dead-ends list, additions 2026-08-21:**
+- `sakana/urchins-cjlib` (NOAA yolo11n's named training set): **"Project
+  Not Found"** on Roboflow Universe, logged-out — deleted or gone private
+  since 2026-08-17. Recheck once a Roboflow account exists; the yolo11n
+  README's "CC BY 4.0" claim about it is no longer independently
+  verifiable.
+
+**Standing corrections to rows above (verified deltas):**
+- FathomNet's "filter by license for commercial use" framing: structurally
+  right (licensing is per *upload set*), but for S. fragilis the filter
+  keeps **nothing** — MBARI's entire contribution is NC-ND.
+- Urchinbot images are not in the Zenodo record — they are per-row public
+  S3 URLs (no SQUIDLE+ account needed). Sample-mean size ⇒ full set ≈
+  32 GB.
+- iNat species signal after commercial-license filter is 2,019 purple /
+  574 red, not 13,387 / 3,666 — sizing for the species head must use the
+  filtered numbers (or accept NC terms for a research-phase model).

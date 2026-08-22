@@ -1,0 +1,15 @@
+{
+  "source": "iNaturalist via GBIF occurrence API",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/gbif_inat/",
+  "claims_vs_verified": {
+    "purpuratus_imgs": {"claim": 13387, "verified": "13430 total w/ StillImage; HUMAN_OBSERVATION facet = 13387 exactly"},
+    "franciscanus_imgs": {"claim": 3666, "verified": "3720 total; HUMAN_OBSERVATION = 3666 exactly"},
+    "license_split_purpuratus": {"CC_BY_NC_4_0": 11411, "CC_BY_4_0": 1309, "CC0_1_0": 710},
+    "license_split_franciscanus": {"CC_BY_NC_4_0": 3146, "CC_BY_4_0": 402, "CC0_1_0": 172},
+    "commercially_clean": {"purple": 2019, "red": 574},
+    "format": "image-level species labels, no boxes; per-record CC license enum + media URLs on inaturalist-open-data S3"
+  },
+  "access": "no account needed: search API paging covers ~17k records (well under the 100k offset cap); media served direct from S3 (2 samples pulled + viewed 2026-08-21, one per species, species visually confirmed)",
+  "notes": ["Tide-pool/out-of-water shots confirmed present in-sample — the underwater-filtering step in the strategy is real work, not a formality."]
+}

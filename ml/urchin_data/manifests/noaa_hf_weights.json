@@ -1,0 +1,17 @@
+{
+  "source": "NOAA HF urchin detectors (akridge/yolo11n-, NMFS-OSI/yolo11x-sea-urchin-detector)",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/noaa_hf_weights/",
+  "claims_vs_verified": {
+    "availability": {"claim": "models open", "verified": "both .pt weights downloaded, HTTP 200"},
+    "classes": {"claim": "1 cls urchin", "verified": "pending load-and-run (bite 2)"},
+    "license": "yolo11n untagged / yolo11x agpl-3.0 — benchmark-only; see licenses/noaa_hf_weights.md",
+    "training_data": "yolo11n: Sakana Roboflow set (NOW GONE from Universe, 2026-08-21); yolo11x: Roboflow Diad-3, 5000 imgs — NOT the set the research file grouped both under"
+  },
+  "archives_sha256": {
+    "yolo11n_urchin_trained.pt": {"bytes": 5540153, "sha256": "437d501dfda4e90ea5989dae8f9b2cc7c61f68aa042753edc905e27d71b72c84"},
+    "yolo11n_README.md": {"bytes": 5045, "sha256": "3414bfb9c495eed9ea9ecef7882d3720aff011e74e61abc569c239d35c5bdac4"},
+    "yolo11x_urchin_trained.pt": {"bytes": 114461312, "sha256": "6bf26a6c6e79d89e1ac81b38f06fa0582a1a0d5eff1af0228a0db41fc3b90199"},
+    "yolo11x_README.md": {"bytes": 4642, "sha256": "05b9c37cdf74174355a91c991b025036029bc5b01473b397e6860c85329eac91"}
+  }
+}

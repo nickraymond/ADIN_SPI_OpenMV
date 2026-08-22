@@ -1,0 +1,29 @@
+{
+  "source": "Urchinbot (Zenodo 10.5281/zenodo.16060266)",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/urchinbot/",
+  "claims_vs_verified": {
+    "images": {"claim": 9872, "verified": 9872, "how": "rows in Complete_urchin_dataset.csv"},
+    "boxes": {"claim": ">44k", "verified": 44268, "how": "parsed boxes column, all rows"},
+    "classes": {"claim": ["kina", "Centrostephanus", "Heliocidaris"],
+                "verified": {"Evechinus chloroticus": 20517, "Centrostephanus rodgersii": 21063, "Heliocidaris erythrogramma": 2688}},
+    "format": "YOLO labels (labels.zip, 6135 files) + CSV with per-box tuples + splits 7912/976/982 (train/val/test)",
+    "license": "CC-BY-4.0 (see licenses/urchinbot.md; GitHub weights UNLICENSED)"
+  },
+  "notes": [
+    "Images NOT in the Zenodo record: fetched per-row from public S3 (gbe-uauckland, some imos-data). Full pull ~32 GB (sampled HEAD mean ~3.2 MB x 9872) — GATED, not downloaded.",
+    "300-image seeded sample (seed=26, boxed rows) in sample_images/; boxes overlay-checked on one frame 2026-08-21, land plausibly on urchins.",
+    "6279 rows have >=1 box vs 6135 label files — 144-file gap to reconcile in bite 2 (suspect: High_conf_clipped variant is the labels' source).",
+    "3593 rows are negatives (zero boxes)."
+  ],
+  "archives_sha256": {
+    "Complete_urchin_dataset.csv": {"bytes": 8658140, "sha256": "4d254f43ed3fee8f85f273a3669211872e17431b336579aecf40059f73291e0a"},
+    "High_conf_clipped_dataset.csv": {"bytes": 8445884, "sha256": "117634134fb03bd773c318899af60d0a704b3c6e44a2f313e7c75ab6e5211cca"},
+    "download_images.py": {"bytes": 1196, "sha256": "c6ca7ce8e75fdc283adb6780afb13bcae6241e6f87bc67d08416f8f0eac93313"},
+    "labels.zip": {"bytes": 1897466, "sha256": "75986e76e07b6d70f071d1cbf0826788a222500df6ff2f6ae408fec501656ae7", "md5_matches_zenodo": true},
+    "test.txt": {"bytes": 26539, "sha256": "87cb2095ef587b0f762341d38f41bc0aac562b08924cd91794a3ab613a507e0c"},
+    "train.txt": {"bytes": 213649, "sha256": "f379a955a762b295a284c81efcc7a6f3816964cde51d3914c13ed03c229ab3be"},
+    "val.txt": {"bytes": 26377, "sha256": "fc199e282e99c34c709aa5bc6a01c7db9ca73cfa51b6f55eabff84e0e8c85ca6"},
+    "yolov5_dataset.yaml": {"bytes": 236, "sha256": "b671b54177ec306e09963fccbfeebde133a65bc585072c045274c98b386ca835"}
+  }
+}
