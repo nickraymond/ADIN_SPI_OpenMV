@@ -17,6 +17,45 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-22 — S8 bite E step 1: compile gate PASSED — Apache-2.0 holds, YOLOX-Nano recommended; STOPPED for Nick's pick
+
+**Branch:** `claude/s8-bite-e-urchin-training-ce8830` (Mac-side only — ZERO
+board contact, per the kickoff; boards belong to the bench sessions).
+
+**Done:**
+- The corpus plan's Decisions #2 gate run to completion: two untrained
+  Apache-2.0 candidates (YOLOX-Nano conv-stem, NanoDet-Plus-m; 256 px,
+  1-class, int8 NHWC) exported and pushed through BOTH board compilers
+  via the B1 scaffold (`ml/compile_model.sh`). **PASS — the AGPL fallback
+  clause is dead.** Report: `ml/compile_gate_report.md`.
+- Verdict short form: YOLOX-Nano = **single `ethos-u` op on the AE3
+  (zero CPU fallback, vela est 28.1 ms)** and 116-HW/2-hybrid/0-SW of
+  118 epochs on the N6. NanoDet = CPU TRANSPOSE fallback on the AE3 and
+  36 hybrid + 2 SW epochs on the N6 (ShuffleNet channel shuffle, both
+  targets). Recommendation: YOLOX-Nano; YOLOX-Tiny is the same-family
+  capacity fallback.
+- Toolchain: new `~/nereus_ml/venvs/gate` (torch-cpu + TF 2.19 +
+  onnx2tf); run metadata + artifact sha256s in
+  `~/nereus_ml/runs/compile_gate_2026-08-22.json`; models/logs under
+  `~/nereus_ml/exports/compile_gate/`.
+
+**Broke/surprised us:**
+- Stock YOLOX won't convert or place as-is: the Focus stem's stride-2
+  slices are both un-Vela-able (stride-1-only STRIDED_SLICE) and
+  onnx2tf-hostile — swapped for a plain stride-2 conv (YOLOX-ti-lite's
+  exact adaptation, recorded in the report). Head flatten+concat tail
+  also dropped for raw per-level maps (decode on-board, FOMO precedent).
+- onnx2tf's calibration-data download is silently broken (pickled npy
+  refused) — pre-seeding the npy in cwd fixes it; NanoDet needs an
+  onnxsim pass first or shapes collapse to zero-dim. Both potholes in
+  the report's §Repro.
+
+**Next:** STOPPED at the kickoff's gate — Nick picks the architecture.
+Then step 2 (corpus_v1 merged view, symlink/manifest, Urchinbot test
+split fenced) and stage-1 training against the 0.351 rung-A bar.
+
+---
+
 ## 2026-08-21 (night) — S26 bites 1+2 done in one desk session: corpus verified, downloaded (~45 GB), license-captured, QA'd, converted for S8; NOAA baseline measured weak; bite-3 plan drafted
 
 **Branch:** `claude/urchin-dataset-s26-a1517e` (parallel desk track — ZERO

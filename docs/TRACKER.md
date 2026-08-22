@@ -1,7 +1,15 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-21 night (**S26 bites 1+2 ESSENTIALLY DONE in one
+*Last updated: 2026-08-22 (**S8 bite E step 1 — the architecture compile
+gate — PASSED: Apache-2.0 holds, AGPL fallback dead.** YOLOX-Nano
+(conv-stem) is fully NPU-mapped on the AE3 (single `ethos-u` op, vela est
+28.1 ms) and 116/118 pure-HW epochs on the N6; NanoDet-Plus-m carries
+Transpose fallbacks on both. Report `ml/compile_gate_report.md`;
+**WAITING on Nick's pick (recommendation YOLOX-Nano)** before corpus_v1 +
+stage-1 training vs the 0.351 rung-A bar. Mac-side only, zero board
+contact. Previous:*
+*2026-08-21 night (**S26 bites 1+2 ESSENTIALLY DONE in one
 desk session — the corpus Nick picked (Urchinbot + DUO + GBIF-clean +
 RF100 + 74-img) is VERIFIED, DOWNLOADED (~45 GB incl. Urchinbot's full
 9,872/9,872, zero corrupt), license-captured verbatim, QA-spot-checked,
@@ -1754,7 +1762,22 @@ any urchin labelling effort is spent.
       rather than inventing a fake blob confidence. *Verifiable:* live
       page shows per-detection conf for the model panels; a ball
       half-out of threshold shows visibly lower conf than a centred one.
-- [ ] **Bite E — the urchin model.** Once the path is proven and a
+- [~] **Bite E — the urchin model.** → **STEP 1 (compile gate) DONE
+      2026-08-22: PASS — Apache-2.0 holds, no AGPL fallback.** Two
+      untrained candidates (256 px, 1-class, int8) through BOTH
+      compilers via B1's scaffold: **YOLOX-Nano (conv stem) = single
+      `ethos-u` op on the AE3 (zero CPU fallback, vela est 28.1 ms) and
+      116-HW/2-hybrid/0-SW of 118 epochs on the N6**; NanoDet-Plus-m =
+      CPU TRANSPOSE fallback (AE3) + 36 hybrid/2 SW epochs (N6), the
+      ShuffleNet channel shuffle both times. Report + deviations
+      (Focus→conv stem; raw per-level head outputs):
+      `ml/compile_gate_report.md`; run metadata
+      `~/nereus_ml/runs/compile_gate_2026-08-22.json`. **WAITING on
+      Nick's architecture pick (recommendation: YOLOX-Nano), then
+      corpus_v1 merged view → stage-1 training vs the 0.351 rung-A
+      bar.** Execution contract: docs/urchin_corpus_plan.md (approved
+      2026-08-22); kickoff PROMPTS.md §13.
+      *(original scope)* Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
       **Demo bar set by Nick 2026-08-21: a truly custom urchin model
