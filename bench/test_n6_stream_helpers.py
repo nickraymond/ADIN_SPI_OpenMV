@@ -1082,12 +1082,19 @@ class TestFomoDecode(unittest.TestCase):
         self.assertEqual(counts, [0, 0])
         self.assertEqual(boxes, [])
 
+    @staticmethod
+    def conf_pct(logits):
+        """Winner softmax as int percent -- the reference for the box field."""
+        import math
+        best = max(logits)
+        return int(100.0 / sum(math.exp(v - best) for v in logits) + 0.5)
+
     def test_single_cell_single_count(self):
         g = self.grid()
         g[2][3] = [0.0, 5.0, 0.0]              # pink wins by 5 > margin
         counts, boxes = B.fomo_decode(g, 3, 0.69)
         self.assertEqual(counts, [1, 0])
-        self.assertEqual(boxes, [(0, 3, 2, 1, 1)])
+        self.assertEqual(boxes, [(0, 3, 2, 1, 1, self.conf_pct([0.0, 5.0, 0.0]))])
 
     def test_adjacent_same_class_cells_group_to_one(self):
         g = self.grid()
@@ -1096,7 +1103,8 @@ class TestFomoDecode(unittest.TestCase):
         g[3][3] = [0.0, 5.0, 0.0]
         counts, boxes = B.fomo_decode(g, 3, 0.69)
         self.assertEqual(counts, [1, 0])
-        self.assertEqual(boxes, [(0, 3, 2, 2, 2)])   # extent 2x2 cells
+        # extent 2x2 cells
+        self.assertEqual(boxes, [(0, 3, 2, 2, 2, self.conf_pct([0.0, 5.0, 0.0]))])
 
     def test_diagonal_cells_stay_separate(self):
         g = self.grid()
@@ -1123,6 +1131,79 @@ class TestFomoDecode(unittest.TestCase):
         g[0][0] = [50.0, 0.0, 0.0]
         counts, _ = B.fomo_decode(g, 3, 0.69)
         self.assertEqual(counts, [0, 0])
+
+
+class TestFomoConfidence(unittest.TestCase):
+    """D2: per-detection confidence on the decoded boxes.
+
+    The bite's verifiable is physical (a half-out-of-threshold ball reads
+    lower than a centred one); its decode-level analogue is that weaker
+    winning logits produce a lower conf, which is what these pin.
+    """
+
+    grid = staticmethod(TestFomoDecode.grid)
+    conf_pct = staticmethod(TestFomoDecode.conf_pct)
+
+    def test_weak_margin_scores_below_strong(self):
+        g = self.grid()
+        g[1][1] = [0.0, 5.0, 0.0]              # decisive cell
+        g[4][4] = [0.0, 1.0, 0.0]              # barely past the 0.69 margin
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [2, 0])
+        by_pos = {(b[1], b[2]): b[5] for b in boxes}
+        self.assertGreater(by_pos[(1, 1)], by_pos[(4, 4)])
+
+    def test_group_conf_is_the_peak_cell(self):
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        g[2][4] = [0.0, 1.0, 0.0]              # same group, weaker cell
+        counts, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertEqual(counts, [1, 0])
+        self.assertEqual(boxes[0][5], self.conf_pct([0.0, 5.0, 0.0]))
+
+    def test_margin_pass_implies_conf_at_least_half(self):
+        # ln(2) margin at 3 classes guarantees p(winner) >= 0.5 -- the
+        # documented reason the margin constant is 0.69. Conf must agree.
+        g = self.grid()
+        g[3][3] = [0.0, 0.70, 0.0]             # just past ln(2)
+        _, boxes = B.fomo_decode(g, 3, 0.69)
+        self.assertGreaterEqual(boxes[0][5], 50)
+        self.assertLessEqual(boxes[0][5], 100)
+
+    def test_conf_survives_the_wire_encoding(self):
+        # mb boxes must stay int-only lists: the board's _json_boxes/_json_ints
+        # encoder rejects floats by design.
+        g = self.grid()
+        g[2][3] = [0.0, 5.0, 0.0]
+        _, boxes = B.fomo_decode(g, 3, 0.69)
+        for b in boxes:
+            for v in b:
+                self.assertIsInstance(v, int)
+        B._json_boxes(boxes)                   # must not raise
+
+
+class TestModelBoxesOnHost(unittest.TestCase):
+    """D2 host half: mb reaches the page snapshot verbatim, conf included."""
+
+    def _stats(self):
+        return H.Stats(clock=_clock_over([0.0, 1.0]))
+
+    def test_mb_reaches_snapshot(self):
+        s = self._stats()
+        s.note({"mb": [[0, 10, 20, 30, 30, 87], [1, 50, 60, 30, 30, 62]]}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"],
+                         [[0, 10, 20, 30, 30, 87], [1, 50, 60, 30, 30, 62]])
+
+    def test_pre_d2_five_field_boxes_pass_through_unpadded(self):
+        # An older board script sends no conf; the host must not invent one.
+        s = self._stats()
+        s.note({"mb": [[0, 10, 20, 30, 30]]}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"], [[0, 10, 20, 30, 30]])
+
+    def test_absent_mb_is_an_empty_list(self):
+        s = self._stats()
+        s.note({}, 10)
+        self.assertEqual(s.snapshot()["model_boxes"], [])
 
 
 class TestModelKind(unittest.TestCase):

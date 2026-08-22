@@ -176,11 +176,17 @@ def _out_grid(out):
 def fomo_decode(o, nclass, margin):
     """(gh,gw,nclass) logits -> per-class cell groups via margin decode +
     4-connected BFS. Returns (counts, boxes) with boxes in GRID cell units:
-    [class, gx, gy, gw, gh]. Mirrors ml/fomo/train.py decode_grid -- keep
-    them matched."""
+    [class, gx, gy, gw, gh, conf]. conf is the winner's softmax probability
+    as an integer percent (D2), taken as the PEAK cell of the group. The
+    exps run only on cells that already passed the margin -- a handful per
+    frame -- so the 576-exp/frame cost that made the margin decode skip
+    softmax entirely stays skipped. Mirrors ml/fomo/train.py decode_grid --
+    keep the cell-selection rule matched (conf is additive, not selective)."""
+    from math import exp
     gh, gw = len(o), len(o[0])
     hits = []                       # (gy, gx, class)
     grid = [[0] * gw for _ in range(gh)]     # 0 = bg, else class idx
+    conf = {}                       # (gy, gx) -> winner softmax prob
     for gy in range(gh):
         row = o[gy]
         for gx in range(gw):
@@ -194,6 +200,12 @@ def fomo_decode(o, nclass, margin):
                     second = v
             if bi != 0 and best - second > margin:
                 grid[gy][gx] = bi
+                # p(best) = 1/sum(exp(l_j - l_best)); every term <= 1, so
+                # no overflow, and the winner's own term is exp(0) = 1.
+                s = 0.0
+                for ci in range(nclass):
+                    s += exp(cell[ci] - best)
+                conf[(gy, gx)] = 1.0 / s
                 hits.append((gy, gx, bi))
     counts = [0] * (nclass - 1)
     boxes = []
@@ -204,6 +216,7 @@ def fomo_decode(o, nclass, margin):
         stack = [(gy, gx)]
         seen.add((gy, gx))
         x0, x1, y0, y1 = gx, gx, gy, gy
+        peak = conf[(gy, gx)]
         while stack:
             cy, cx = stack.pop()
             x0 = min(x0, cx); x1 = max(x1, cx)
@@ -213,23 +226,29 @@ def fomo_decode(o, nclass, margin):
                 if (0 <= ny < gh and 0 <= nx < gw and (ny, nx) not in seen
                         and grid[ny][nx] == ci):
                     seen.add((ny, nx))
+                    c = conf[(ny, nx)]
+                    if c > peak:
+                        peak = c
                     stack.append((ny, nx))
         counts[ci - 1] += 1
-        boxes.append((ci - 1, x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+        boxes.append((ci - 1, x0, y0, x1 - x0 + 1, y1 - y0 + 1,
+                      int(peak * 100 + 0.5)))
     return counts, boxes
 
 
 def draw_fomo(img, boxes, labels, counts, gw, gh):
-    """One rect per cell group, scaled from grid to pixels, class-coloured."""
+    """One rect per cell group, scaled from grid to pixels, class-coloured.
+    Label reads "pink 0.87" (D2): the group's peak-cell confidence."""
     w, h = img.width(), img.height()
-    for ci, gx, gy, gws, ghs in boxes:
+    for ci, gx, gy, gws, ghs, conf in boxes:
         colour = class_colour(ci)
         x = gx * w // gw
         y = gy * h // gh
         img.draw_rectangle((x, y, gws * w // gw, ghs * h // gh),
                            color=colour, thickness=2)
         name = labels[ci] if ci < len(labels) else str(ci)
-        draw_label(img, (x + 2, max(0, y - 18)), name, colour)
+        draw_label(img, (x + 2, max(0, y - 18)),
+                   "%s %d.%02d" % (name, conf // 100, conf % 100), colour)
 
 
 def draw_detections(img, out, labels, colour=(255, 0, 0), draw=True):
@@ -441,11 +460,11 @@ def main():
                 mdec_us = time.ticks_diff(time.ticks_us(), t_dec0)
                 ndet = sum(mcounts)
                 gh, gw = len(o), len(o[0])
-                for ci, gx, gy, gws, ghs in mboxes[:MAX_BOXES]:
+                for ci, gx, gy, gws, ghs, conf in mboxes[:MAX_BOXES]:
                     mboxes_px.append((ci, gx * img.width() // gw,
                                       gy * img.height() // gh,
                                       gws * img.width() // gw,
-                                      ghs * img.height() // gh))
+                                      ghs * img.height() // gh, conf))
                 if OVERLAY:
                     draw_fomo(img, mboxes, labels, mcounts, gw, gh)
 

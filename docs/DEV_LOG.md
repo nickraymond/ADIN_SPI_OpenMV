@@ -17,6 +17,37 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-21 — S8 D2 code+tests: per-detection confidence on the wire, overlay, and page; near-collision with the parallel B2 session caught before board contact
+
+**Branch:** `claude/s8-d2-model-confidence`. No board contact this session.
+
+**Done:**
+- **Phase-0 compile smoke (before B2's duplication surfaced):** untrained
+  Keras FOMO at the exact deployment shape passed BOTH compilers — vela
+  `Ethos_U55_256`, est 2.05 ms, zero fallback lines; stedgeai 22/24 epochs
+  pure HW (SW = Softmax+Dequantize, the vendor-pattern tail). Confirms the
+  Keras→int8→modelc route independently of B2's. TF venv:
+  `~/nereus_ml/venvs/fomo` (tensorflow 2.19.0), separate from the
+  ultralytics pins.
+- **D2 (Nick's gate: "per-detection confidence is fine"):** `fomo_decode`
+  boxes gain conf% = winner-softmax at the group's peak cell, exps run only
+  on margin-passing cells; overlay "pink 0.87"; host parses `mb`, HUD conf
+  line + the documented blob asymmetry (hard LAB threshold has no conf).
+  Suite 134→141.
+
+**Broke/surprised us:**
+- **The §11 kickoff ran in TWO sessions and the other one finished B2**
+  (PR #55, demo PASSED, model live on both boards) while this one was in
+  phase 0. Caught at the workbench preflight — the live `s8-two-colour-model`
+  recipe was the tell. **My smoke ROMFS image would have DELETED
+  `nereus_two_ball` from the N6** (built from vendor config + smoke model
+  only); deleted twice — the still-running background build re-wrote it
+  after the first rm. Artifact-check habit paid for itself.
+
+**Next:** Nick's live D2 check (Pi checkout → recipe restart → half-out
+ball reads lower conf) → D2 PR. Then bite B3 (label-review GUI, plan
+approved shape: local web GUI over labels.jsonl).
+
 ## 2026-08-20 (late night) — S8 B2: OUR OWN trained model runs on BOTH NPUs — collect→label→train→export→compile→deploy→measure, end to end in one session
 
 **Branch:** `claude/two-colour-detector-s8-b2-ea5ca7` (from main @ 42635ac).
