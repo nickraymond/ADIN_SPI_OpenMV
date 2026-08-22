@@ -1,0 +1,88 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>S8 accuracy campaign — cookbook</title><style>
+ body { background:#14171a; color:#dde3e8; font:15px/1.5 system-ui;
+        max-width:46rem; margin:0 auto; padding:1.2rem; }
+ h1 { font-size:1.3rem; } h2 { font-size:1.05rem; margin-top:1.4rem; }
+ code, pre { background:#1d2126; border:1px solid #2c333a; border-radius:5px; }
+ code { padding:.05rem .3rem; }
+ pre { padding:.6rem .8rem; overflow-x:auto; white-space:pre-wrap; }
+ .muted { color:#8fa3b3; } a { color:#6cf; }
+ .warn { border-left:3px solid #ca3; padding-left:.7rem; color:#e8d9a0; }
+ .hl { color:#ffd75f; font-weight:600; }
+</style></head><body>
+<h1>📊 S8 accuracy campaign — collect rows, render the report</h1>
+<p class="muted">S8 bite C. Run the whole thing from a terminal ON THE PI
+(<code>ssh pi@nereus000</code>, then <code>cd ~/ADIN_SPI_OpenMV</code>).
+Total bench time ~20–30 min. Rows accumulate in <code>~/s8_rows.jsonl</code>
+(outside the repo); the report renders into the workbench as its own
+chapter.</p>
+
+<h2>0. Free the boards</h2>
+<p>On the <a href="/">workbench page</a>: stop anything LIVE, wait out the
+settle countdown. The collector below owns both ports itself.</p>
+
+<h2>1. One recording run per ball arrangement (do 4)</h2>
+<p>Arrange the balls, count them — <span class="hl">the truth counts you
+type here are the ground truth for everything downstream</span> — then run
+(edit <code class="hl">--truth</code> and <code class="hl">--run-label</code>
+each time):</p>
+<pre>python3 bench/n6_stream_host.py \
+  --bind 0.0.0.0 --framesize VGA --max-seconds 60 \
+  --record ~/s8_rows.jsonl --run-label arr1 --truth "pink=11,purple=10" \
+  --board AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00 \
+  --board N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00 \
+  --board-model AE3:/flash/nereus_two_ball.tflite \
+  --board-model N6:/rom/nereus_two_ball.tflite \
+  --board-thresh AE3:pink:28,75,14,32,-12,6 \
+  --board-thresh AE3:purple:15,65,3,18,-40,-13 \
+  --board-thresh N6:pink:28,80,23,50,-19,-2 \
+  --board-thresh N6:purple:20,65,8,38,-70,-20 \
+  --board-pixels AE3:60 --board-pixels N6:150</pre>
+<p class="muted">It ends by itself after 60 s and prints
+<code>recorded N rows to ~/s8_rows.jsonl (run=arr1)</code> — that line is
+the artifact check, look for it. Watch live at
+<a href="http://nereus000:8090/">:8090</a> while it runs.
+<b>Truth order must be pink,purple</b> (the recipe's threshold order).
+Vary the counts between arrangements — e.g. 11/10, 5/5, 2/8, 0/6 — an
+accuracy number needs truth variation. Wait ~35 s between runs (the same
+AE3 settle rule the workbench enforces).</p>
+
+<h2>2. Power readings (one USB meter, swapped between runs)</h2>
+<p>During any run: read watts for the board on the meter, then swap the
+meter to the other board's cable for the next run and read again.
+Same model + same scene class → constant-load assumption holds at this
+granularity (your call, 2026-08-21). Note both numbers —
+they go on the report command line in step 4.</p>
+
+<h2>3. Inference-only ceilings (~2 min, one command per board)</h2>
+<p>With the workbench idle and ≥35 s since the last run ended
+(<b>one attempt, no retry loops</b> — if the AE3 refuses, leave it and
+ship the report without this column):</p>
+<pre>mpremote connect /dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00 run bench/s8_infer_probe.py</pre>
+<pre>mpremote connect /dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00 run bench/s8_infer_probe.py</pre>
+<p class="muted">Each prints one <code>#P {...}</code> line with
+<code>infer_per_s</code> (N6 first, then AE3 — the AE3 is the settle-fussy
+one, touch it last).</p>
+
+<h2>4. Render the report</h2>
+<pre>python3 bench/s8_report.py ~/s8_rows.jsonl \
+  --power "AE3=0.21,N6=1.02" \
+  --infer-only "AE3=27.5,N6=42.0"</pre>
+<p class="muted">Substitute your measured numbers; drop either flag if you
+skipped that measurement — the column prints "not measured" rather than a
+guess. The command prints the row count it consumed — check it matches
+what you recorded.</p>
+
+<h2>5. Read it</h2>
+<p>Refresh the <a href="/">workbench page</a> → open the
+<b>“S8 accuracy report”</b> card (it replaces the placeholder page the
+repo ships). The Pi's git tree will show the report file as modified —
+<b>commit it to bank the campaign</b>, or <code>git checkout --
+pi/workbench/recipes/guides/s8-metrics-report.html</code> to discard.</p>
+
+<p class="warn">If a run dies mid-way (board unplug, Ctrl-C), the partial
+rows are already in the file — re-run the SAME arrangement with a fresh
+<code>--run-label</code> (e.g. <code>arr2b</code>) and ignore the dead
+label when reading the report: partial runs show as low-frame cells, they
+do not poison other runs.</p>
+</body></html>

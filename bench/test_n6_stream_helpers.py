@@ -347,7 +347,7 @@ class TestSupervise(unittest.TestCase):
             def stop(self):
                 pass
 
-        def fake_reader(out, latest_, stats_, state_, saver=None):
+        def fake_reader(out, latest_, stats_, state_, saver=None, recorder=None):
             state_["done"] = True
 
         real_board, real_reader, real_find = (H.SerialBoard, H.reader_loop,
@@ -982,7 +982,7 @@ class TestOverlayToggle(unittest.TestCase):
         H.SerialBoard = FakeBoard
         H.find_port = lambda hint: "/dev/fake"
 
-        def fake_reader(out, l, st, s_, saver=None):
+        def fake_reader(out, l, st, s_, saver=None, recorder=None):
             if len(seen) >= 2:
                 s_["quit"] = True
 
@@ -1180,6 +1180,60 @@ class TestFomoConfidence(unittest.TestCase):
             for v in b:
                 self.assertIsInstance(v, int)
         B._json_boxes(boxes)                   # must not raise
+
+
+class TestParseTruth(unittest.TestCase):
+    def test_parses_ordered_pairs(self):
+        t = H.parse_truth("pink=11,purple=10")
+        self.assertEqual(t, {"pink": 11, "purple": 10})
+        self.assertEqual(list(t), ["pink", "purple"])   # order preserved
+
+    def test_malformed_is_refused(self):
+        for bad in ("pink", "pink=", "=3", "pink=three", ""):
+            with self.assertRaises(ValueError, msg=bad):
+                H.parse_truth(bad)
+
+
+class TestRowRecorder(unittest.TestCase):
+    def test_rows_carry_header_verbatim_plus_metadata(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rows.jsonl")
+            rec = H.RowRecorder(path, "arr1", {"pink": 2})
+            rec.bound("AE3").put({"seq": 0, "bc": [2]})
+            rec.bound("N6").put({"seq": 5, "bc": [1]})
+            rows = [json.loads(l) for l in open(path)]
+            self.assertEqual(rec.rows, 2)
+            self.assertEqual(rows[0]["board"], "AE3")
+            self.assertEqual(rows[0]["run"], "arr1")
+            self.assertEqual(rows[0]["truth"], {"pink": 2})
+            self.assertEqual(rows[1]["hdr"], {"seq": 5, "bc": [1]})
+
+    def test_append_accumulates_a_campaign(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rows.jsonl")
+            H.RowRecorder(path, "arr1", {}).put("AE3", {"seq": 0})
+            H.RowRecorder(path, "arr2", {}).put("AE3", {"seq": 0})
+            runs = [json.loads(l)["run"] for l in open(path)]
+            self.assertEqual(runs, ["arr1", "arr2"])
+
+    def test_reader_loop_feeds_the_recorder(self):
+        import base64 as b64
+        import io
+        import tempfile
+        jpg = b"\xff\xd8fake"
+        payload = b64.b64encode(jpg)
+        hdr = json.dumps({"seq": 1, "b64": len(payload)}).encode()
+        stream = io.BytesIO(b"#F " + hdr + b"\n" + payload + b"\n")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rows.jsonl")
+            rec = H.RowRecorder(path, "r", {})
+            H.reader_loop(stream, H.Latest(), H.Stats(clock=lambda: 0.0),
+                          {"alive": True}, None, rec.bound("AE3"))
+            rows = [json.loads(l) for l in open(path)]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["hdr"]["seq"], 1)
 
 
 class TestModelBoxesOnHost(unittest.TestCase):

@@ -503,7 +503,57 @@ def build_board_script(cfg, dest_dir):
     return path
 
 
-def reader_loop(out, latest, stats, state, saver=None):
+def parse_truth(spec):
+    """"pink=11,purple=10" -> {"pink": 11, "purple": 10}; ValueError if not
+    exactly name=int pairs. The truth is typed at COLLECTION time so it is
+    captured with the data, never reconstructed later (S8 bite C)."""
+    out = {}
+    for part in spec.split(","):
+        name, _, num = part.partition("=")
+        name = name.strip()
+        if not name or not num.strip().isdigit():
+            raise ValueError("truth must be name=count[,name=count...], "
+                             "got %r" % spec)
+        out[name] = int(num)
+    return out
+
+
+class RowRecorder:
+    """S8 bite C: append one JSONL row per received frame -- the board's own
+    wire header VERBATIM plus wall clock, board label, and the run's
+    metadata (label + ground truth). Rows are the campaign's artifact of
+    record; the report renderer reads only these, so every chart is
+    regenerable and auditable. One recorder, one file, all boards; append
+    mode so a campaign of several runs accumulates in one place."""
+
+    def __init__(self, path, run_label, truth):
+        self._lock = threading.Lock()
+        self._fh = open(path, "a")
+        self.path = path
+        self.run = run_label
+        self.truth = truth
+        self.rows = 0
+
+    def put(self, board, hdr):
+        row = {"ts": round(time.time(), 3), "run": self.run,
+               "board": board, "truth": self.truth, "hdr": hdr}
+        data = json.dumps(row) + "\n"
+        with self._lock:
+            self._fh.write(data)
+            self._fh.flush()
+            self.rows += 1
+
+    def bound(self, board):
+        rec = self
+
+        class _Bound:
+            @staticmethod
+            def put(hdr):
+                rec.put(board, hdr)
+        return _Bound()
+
+
+def reader_loop(out, latest, stats, state, saver=None, recorder=None):
     """Consume the board's output: ``#I`` banner, ``#F`` header + base64 payload.
 
     ``out`` is anything with a bytes ``readline()`` -- a ``SerialBoard`` or a
@@ -546,6 +596,8 @@ def reader_loop(out, latest, stats, state, saver=None):
                 continue
             latest.put(hdr.get("seq", 0), jpg)
             stats.note(hdr, len(jpg))
+            if recorder is not None:
+                recorder.put(hdr)
             if saver is not None:
                 try:
                     if saver.put(hdr, jpg) is not None:
@@ -946,6 +998,17 @@ def parse_args(argv=None):
     ap.add_argument("--quality", type=int, default=50)
     ap.add_argument("--max-seconds", type=float, default=3600)
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--record", default=None, metavar="ROWS_JSONL",
+                    help="S8 bite C: append one JSONL row per frame (wire "
+                         "header verbatim + run metadata). Pair with "
+                         "--max-seconds for a bounded measurement run; "
+                         "requires --truth.")
+    ap.add_argument("--truth", default=None,
+                    help='ground-truth counts for the recorded scene, e.g. '
+                         '"pink=11,purple=10" -- typed at collection time')
+    ap.add_argument("--run-label", default=None,
+                    help="name for this recorded run (e.g. arr1); rows from "
+                         "several runs accumulate in one file")
     ap.add_argument("--model", default="/rom/yolov8n_192.tflite")
     ap.add_argument("--board-model", action="append", default=None,
                     metavar="LABEL:PATH",
@@ -1151,7 +1214,7 @@ RETRY_BACKOFF_S = (2, 5, 10, 20, 30)
 
 def supervise(port_hint, script_text, latest, stats, state,
               retry_s=None, settle_s=1.0, backoff=RETRY_BACKOFF_S,
-              saver=None, on_done=None):
+              saver=None, on_done=None, recorder=None):
     """Keep a board stream running, reconnecting when the board comes back.
 
     Bumping the USB connector while aiming the camera ends the stream. That is
@@ -1211,7 +1274,7 @@ def supervise(port_hint, script_text, latest, stats, state,
         stats.status = "streaming from %s" % port
         print("board: streaming from %s" % port, flush=True)
 
-        reader_loop(board, latest, stats, state, saver)
+        reader_loop(board, latest, stats, state, saver, recorder)
 
         if state.get("done"):
             stats.status = "board finished its bounded run"
@@ -1318,6 +1381,16 @@ def main(argv=None):
                   "must be clean); boxes go to index.jsonl"
                   % (view.saver.every, view.saver.dir), flush=True)
 
+    recorder = None
+    if args.record:
+        if not args.truth:
+            ap.error("--record requires --truth (ground truth is captured "
+                     "with the data, never reconstructed later)")
+        run_label = args.run_label or time.strftime("run_%Y%m%d_%H%M%S")
+        recorder = RowRecorder(args.record, run_label, parse_truth(args.truth))
+        print("recording rows to %s  run=%s  truth=%s"
+              % (recorder.path, recorder.run, recorder.truth), flush=True)
+
     httpd = QuietServer((args.bind, args.http_port),
                         make_multi_handler(views))
     if args.bind not in ("127.0.0.1", "localhost"):
@@ -1353,6 +1426,7 @@ def main(argv=None):
             args=(view.port, (lambda v: lambda: v.script_text)(view),
                   view.latest, view.stats, view.state),
             kwargs={"saver": view.saver,
+                    "recorder": recorder and recorder.bound(view.label),
                     "on_done": (lambda lbl=view.label: _finished(lbl))},
             daemon=True).start()
         print("board %-6s -> %s" % (view.label, view.port or "(auto)"),
@@ -1397,6 +1471,10 @@ def main(argv=None):
             if view.saver is not None:
                 print("  saved %d frames to %s (index.jsonl)"
                       % (view.saver.saved, view.saver.dir), flush=True)
+        if recorder is not None:
+            # The artifact, not the exit code: name the file and the count.
+            print("recorded %d rows to %s (run=%s)"
+                  % (recorder.rows, recorder.path, recorder.run), flush=True)
             if view.stats.junk:
                 print("  junk (last 3): %r" % (view.stats.junk[-3:],),
                       flush=True)

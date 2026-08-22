@@ -1,0 +1,8 @@
+# s8_metrics_campaign.toml -- S8 bite C: a GUIDE CARD (cookbook chapter).
+# The campaign runs from a Pi terminal (the chapter is the runbook); the
+# workbench only documents and links it, per the guide-card posture.
+
+name = "s8-metrics-campaign"
+title = "S8 accuracy campaign (run the ladder)"
+summary = "Collect the accuracy/cost measurement rows for the two-colour detector -- 4 ball arrangements x 60 s, power readings, inference-only probes -- then render the report. Step-by-step chapter; ~20-30 min at the bench. From sprint S8 bite C."
+guide = "guides/s8-metrics-campaign.html"
