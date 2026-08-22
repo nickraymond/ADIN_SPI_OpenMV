@@ -1,0 +1,32 @@
+{
+  "source": "Roboflow exports (Nick's account, private API key in ~/.config/roboflow/key — never in repo)",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/roboflow/",
+  "urchin_detector_74": {
+    "project": "sea-urchin/urchin-detector v1",
+    "format": "YOLO (yolov8 export), 640x640",
+    "images": 74,
+    "boxes": 2109,
+    "classes": {"Black Sea urchin": 57, "Purple Sea Urchin": 2012, "Red Sea Urchin": 3, "White Sea Urchin": 37},
+    "license": "CC BY 4.0 (embedded in export data.yaml — the artifact)",
+    "box_px_640": {"median_min_side": 24, "p10": 12, "p90": 46, "pct_below_24px": 51},
+    "provenance": "CA purple-urchin removal footage — filenames name Caspar (Mendocino), dates",
+    "sample_viewed": "densest frame (142 boxes) overlaid 2026-08-21 — urchins-in-pits barrens scene, plausible placement",
+    "verdicts": [
+      "The web page's 6 numeric junk classes are NOT in the export — clean 4-class set.",
+      "PURPLE-ONLY in practice: 3 red boxes total — the 'purple+red seed' role from the research file does not survive verification; red seeding falls entirely to GBIF auto-boxing.",
+      "At/below the 24 px floor (51% smaller) — use as hard-case eval + fine-tune material."
+    ]
+  },
+  "rf100_underwater": {
+    "project": "roboflow-100/underwater-objects-5v7p8 v2",
+    "format": "YOLO (yolov8 export), 640x640",
+    "images": {"claim": 7600, "verified": 7600},
+    "boxes": {"echinus": 25299, "holothurian": 6584, "scallop": 10485, "starfish": 10270, "waterweeds": 46, "total": 52684},
+    "license": "CC BY 4.0 (embedded in export data.yaml)",
+    "sample_viewed": "2026-08-21: echinus+starfish frame overlaid — boxes on-target; blurry URPC-lineage 640px imagery as expected",
+    "note": "starfish boxes retained in all corpus builds per the Icebox item (sun-star detector, Nick 2026-08-21)"
+  },
+  "sea_urchin_body": "NOT exported — REJECTED by Nick 2026-08-21 (out-of-water body shots)",
+  "sakana_urchins_cjlib": "DEAD: 404 logged-out (agent) AND logged-in (Nick), 2026-08-21"
+}

@@ -1,0 +1,15 @@
+{
+  "source": "FathomNet (API, fathomnet python client)",
+  "verified": "2026-08-21",
+  "local_root": "~/nereus_ml/datasets/fathomnet/ (no bulk download — see verdict)",
+  "claims_vs_verified": {
+    "fragilis_boxes": {"claim": 23061, "verified": 23061, "how": "boundingboxes.count_by_concept AND cross-check summing per-image boxes over 4600 images"},
+    "purpuratus_boxes": {"claim": 7, "verified": 7},
+    "franciscanus_boxes": {"claim": 0, "verified": 0},
+    "images_fragilis": 4600,
+    "contributors": {"brian@mbari.org": 4600},
+    "license": "ALL 4600 upload sets: images CC BY-NC-ND / annotations CC BY-NC — zero CC0/CC-BY (full-corpus audit, licenses/fathomnet.md)"
+  },
+  "verdict": "ZERO commercially usable boxes after license filter. No bulk download performed; research-only NC use would be a separate Nick decision.",
+  "notes": ["Licensing is per UPLOAD SET (darwinCore.license via imagesetuploads.find_by_image_uuid), not on the image record — the research file's 'per-image licensing, filter CC0/CC-BY' framing is structurally right but this concept has no permissive subset at all."]
+}

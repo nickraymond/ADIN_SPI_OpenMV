@@ -85,3 +85,72 @@ nothing published.
 
 License watch-list for commercial use: DUO/URPC/RUOD (unstated), FathomNet
 CC-BY-NC/NC-ND subsets (filter them out), per-project Roboflow terms.
+
+## Verification (S26 bite 1 — started 2026-08-21)
+
+Method + verbatim license captures live in `ml/urchin_data/`
+(`licenses/`, `manifests/`); data lives in `~/nereus_ml/datasets/`.
+"✔" = verified against the claim; every row stamped 2026-08-21.
+
+| Source | Verified count | Format | License (captured verbatim) | Sample viewed | Verdict |
+|---|---|---|---|---|---|
+| **Urchinbot** | ✔ 9,872 imgs / 44,268 boxes / 3 spp (CSV parse; splits 7912/976/982) | YOLO + per-box CSV | ✔ CC-BY-4.0 (Zenodo API). ⚠ GitHub weights/code UNLICENSED | ✔ 300-img seeded sample; boxes overlaid on one frame, land on urchins | **GO** for backbone. **FULL SET ON DISK 2026-08-21**: 9,872/9,872 imgs, 34.8 GiB, zero corrupt (magic-checked) |
+| **FathomNet S. fragilis** | ✔ 23,061 boxes / 4,600 imgs (API, cross-checked) | via API | ✘ **ALL 4,600 imgs CC BY-NC-ND** (full-corpus audit, zero exceptions) | API-level only | **NO-GO commercial** — license filter leaves ZERO boxes. purpuratus=7, franciscanus=0 as claimed |
+| **iNat/GBIF** | ✔ 13,387 purple / 3,666 red (human-obs, exact match) | image-level, no boxes | ✔ per-record enum. **CC0+CC-BY only: 2,019 purple / 574 red** (~85% is NC) | ✔ 1/species pulled + confirmed | **GO, but 6–7× smaller than headline** after commercial filter. No account needed (API paging) |
+| **NOAA yolo11 weights** | ✔ both .pt downloaded, sha256'd | ultralytics .pt | yolo11x AGPL-3.0; yolo11n untagged (Ultralytics-derived) | load-and-run = bite 2 | **Benchmark-only** (AGPL lineage). ⚠ yolo11n's training set (Sakana) is GONE from Universe; yolo11x actually trained on Diad-3, not Sakana |
+| **DUO** | ✔ 7,782 imgs / **50,156 echinus boxes — exact** (COCO parse; val is a byte-copy of test, not extra data) | COCO + YOLO labels | ⚠ figshare DECLARES CC BY 4.0 — research file said unstated. Lineage caveat stands; Nick's call | ✔ zip md5 = figshare's; 2 frames overlaid — boxes land on urchins, incl. barely-visible ones in heavy turbidity | Counts verified; stays research-only fenced until Nick's license call |
+| **Roboflow urchin-detector (74 img)** | ✔ EXPORTED: 74 imgs / 2,109 boxes — Purple 2,012 / Black 57 / White 37 / **Red 3** | YOLO (640×640) | ✔ CC BY 4.0 embedded in export data.yaml | ✔ densest frame overlaid: CA barrens removal footage (Caspar, Mendocino — filenames carry provenance), boxes on urchins-in-pits | The page's junk classes were widget noise — the export is a clean 4-class set. **But it is purple-ONLY as a seed (3 red boxes)**, and box median = 24 px with 51% < 24 px → best used as hard-case eval/fine-tune material, not the red seed the strategy assumed |
+| **Roboflow sea-urchin-body** | — | instance seg | ✔ page: CC BY 4.0 | ✔ reviewed by NICK on the page | **REJECTED (Nick 2026-08-21): bodies, mostly out-of-water — not useful for this detector** |
+| **RF100 underwater-objects** | export in progress (2026-08-21) | YOLO | ✔ page: CC BY 4.0 (export yaml capture pending) | pending | GO (license-clean URPC-lineage volume). Nick flags the starfish class as a future win (sun-star detection) — captured in TRACKER Icebox |
+| **Marine-Detect FishInv** | 12,742 imgs (README split table) | YOLO | ✘ data license unstated; mixed Roboflow/Tēnaka provenance, no per-image map | not pulled | **6.72 GB, over gate** + murky provenance — Nick's call whether to bother |
+| **RUOD** | access verified (GitHub release tar-parts, no account) | VOC | ✘ confirmed NO license anywhere in repo | not pulled | Research-only fence confirmed; 3.4 GB pull deferred |
+
+**Dead-ends list, additions 2026-08-21:**
+- `sakana/urchins-cjlib` (NOAA yolo11n's named training set): **"Project
+  Not Found"** on Roboflow Universe — confirmed 404 BOTH logged-out
+  (agent, 2026-08-21) and logged-in (Nick, same day). DEAD END: the
+  yolo11n README's "CC BY 4.0" claim about its training data is no
+  longer independently verifiable.
+
+### Bite-2 QA (2026-08-21) — 30-crop spot-checks + NOAA baseline smoke test
+
+Method: 30 random box-crops per source (seeded, 1.6× context) rendered
+as contact sheets and reviewed; GBIF = 30 full-frame thumbs per species.
+
+| Source | Tally (of 30) | Verdict |
+|---|---|---|
+| Urchinbot | 24 clearly urchins · 4 ambiguous (turbidity) · 2 suspect-empty | **Strong** — primary backbone data |
+| DUO (echinus) | 7 crisp · 18 plausible dark blobs · 5 unverifiable · **1 real label error (box on a video-timestamp overlay)** | Noisy but usable; weight below Urchinbot. ⚠ labels/ YOLO ids are remapped vs COCO: **0=starfish 1=holothurian 2=echinus 3=scallop** |
+| RF100 (echinus) | 14 clear · 12 plausible · 4 unverifiable | DUO-like noise (shared URPC lineage) |
+| Roboflow 74 (purple) | 9 crisp · 14 plausible · 7 unverifiable | Consistent with 24 px median — hard-case eval role confirmed |
+| GBIF purple | 29/30 species-correct; only ~6–8/30 look underwater; hands, dead tests present | Species signal excellent; **~70–75% is out-of-water** — fine for the crop CLASSIFIER, wrong for detector fine-tune; auto-box filter must drop hands/dry/dead-test frames |
+| GBIF red | ~26/30 usable adults; 1 museum specimen, 1 held juvenile, 1 microscope larva | Same filter needs; adds specimen/larva exclusions |
+
+**NOAA yolo11n/x load-and-run (Mac, urchin venv): PASS** — both load,
+single class `urchin` confirmed, ~40–100 ms (n) / ~200–400 ms (x) per
+frame after warmup. Qualitative floor, 4 frames: clear Centro frame
+4–5 detections of 8 GT; **turbid kina frame 0 of 8; DUO moderate 0 of
+4; Caspar barrens 3–6 of 142.** The baselines collapse exactly in the
+turbid/small-target regimes our deployment lives in.
+
+**Rung-A FULL (2026-08-22, 983-img official Urchinbot test split,
+`ml/urchin_data/eval_rung_a.py`):**
+
+| Model | mAP50 | mAP50-95 | P | R |
+|---|---|---|---|---|
+| yolo11n | 0.243 | 0.090 | 0.466 | 0.245 |
+| yolo11x | 0.351 | 0.143 | 0.719 | 0.329 |
+
+Urchinbot's published model: mAP50 = 0.908 on this data — the ceiling
+proof. The custom model's acceptance bar sits between those numbers.
+
+**Standing corrections to rows above (verified deltas):**
+- FathomNet's "filter by license for commercial use" framing: structurally
+  right (licensing is per *upload set*), but for S. fragilis the filter
+  keeps **nothing** — MBARI's entire contribution is NC-ND.
+- Urchinbot images are not in the Zenodo record — they are per-row public
+  S3 URLs (no SQUIDLE+ account needed). Sample-mean size ⇒ full set ≈
+  32 GB.
+- iNat species signal after commercial-license filter is 2,019 purple /
+  574 red, not 13,387 / 3,666 — sizing for the species head must use the
+  filtered numbers (or accept NC terms for a research-phase model).
