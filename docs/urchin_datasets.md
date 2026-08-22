@@ -99,18 +99,18 @@ Method + verbatim license captures live in `ml/urchin_data/`
 | **iNat/GBIF** | ✔ 13,387 purple / 3,666 red (human-obs, exact match) | image-level, no boxes | ✔ per-record enum. **CC0+CC-BY only: 2,019 purple / 574 red** (~85% is NC) | ✔ 1/species pulled + confirmed | **GO, but 6–7× smaller than headline** after commercial filter. No account needed (API paging) |
 | **NOAA yolo11 weights** | ✔ both .pt downloaded, sha256'd | ultralytics .pt | yolo11x AGPL-3.0; yolo11n untagged (Ultralytics-derived) | load-and-run = bite 2 | **Benchmark-only** (AGPL lineage). ⚠ yolo11n's training set (Sakana) is GONE from Universe; yolo11x actually trained on Diad-3, not Sakana |
 | **DUO** | ✔ 7,782 imgs / **50,156 echinus boxes — exact** (COCO parse; val is a byte-copy of test, not extra data) | COCO + YOLO labels | ⚠ figshare DECLARES CC BY 4.0 — research file said unstated. Lineage caveat stands; Nick's call | ✔ zip md5 = figshare's; 2 frames overlaid — boxes land on urchins, incl. barely-visible ones in heavy turbidity | Counts verified; stays research-only fenced until Nick's license call |
-| **Roboflow urchin-detector (74 img)** | ✔ 74 imgs | obj-det | ✔ page: CC BY 4.0 | preview only (export needs account) | **Caution:** 10 classes incl. 6 numeric junk classes — label hygiene worse than claimed. Export + spot-check behind Nick's Roboflow key |
-| **Roboflow sea-urchin-body** | ✔ 2,273 imgs | instance seg | ✔ page: CC BY 4.0 | preview only | GO candidate (Purple Sea Urchin class); export behind key |
-| **RF100 underwater-objects** | ✔ 7,600 imgs / 5 cls (echinus) | obj-det | ✔ page: CC BY 4.0 | preview only | GO (license-clean URPC-lineage volume, as researched); export behind key |
+| **Roboflow urchin-detector (74 img)** | ✔ EXPORTED: 74 imgs / 2,109 boxes — Purple 2,012 / Black 57 / White 37 / **Red 3** | YOLO (640×640) | ✔ CC BY 4.0 embedded in export data.yaml | ✔ densest frame overlaid: CA barrens removal footage (Caspar, Mendocino — filenames carry provenance), boxes on urchins-in-pits | The page's junk classes were widget noise — the export is a clean 4-class set. **But it is purple-ONLY as a seed (3 red boxes)**, and box median = 24 px with 51% < 24 px → best used as hard-case eval/fine-tune material, not the red seed the strategy assumed |
+| **Roboflow sea-urchin-body** | — | instance seg | ✔ page: CC BY 4.0 | ✔ reviewed by NICK on the page | **REJECTED (Nick 2026-08-21): bodies, mostly out-of-water — not useful for this detector** |
+| **RF100 underwater-objects** | export in progress (2026-08-21) | YOLO | ✔ page: CC BY 4.0 (export yaml capture pending) | pending | GO (license-clean URPC-lineage volume). Nick flags the starfish class as a future win (sun-star detection) — captured in TRACKER Icebox |
 | **Marine-Detect FishInv** | 12,742 imgs (README split table) | YOLO | ✘ data license unstated; mixed Roboflow/Tēnaka provenance, no per-image map | not pulled | **6.72 GB, over gate** + murky provenance — Nick's call whether to bother |
 | **RUOD** | access verified (GitHub release tar-parts, no account) | VOC | ✘ confirmed NO license anywhere in repo | not pulled | Research-only fence confirmed; 3.4 GB pull deferred |
 
 **Dead-ends list, additions 2026-08-21:**
 - `sakana/urchins-cjlib` (NOAA yolo11n's named training set): **"Project
-  Not Found"** on Roboflow Universe, logged-out — deleted or gone private
-  since 2026-08-17. Recheck once a Roboflow account exists; the yolo11n
-  README's "CC BY 4.0" claim about it is no longer independently
-  verifiable.
+  Not Found"** on Roboflow Universe — confirmed 404 BOTH logged-out
+  (agent, 2026-08-21) and logged-in (Nick, same day). DEAD END: the
+  yolo11n README's "CC BY 4.0" claim about its training data is no
+  longer independently verifiable.
 
 **Standing corrections to rows above (verified deltas):**
 - FathomNet's "filter by license for commercial use" framing: structurally

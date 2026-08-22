@@ -1958,6 +1958,16 @@ live bite, and nothing here should be assumed benign because it is old.)*
 
 ## Icebox (captured, not scheduled)
 
+- **Starfish / sun-star detector (Nick 2026-08-21, captured during S26).**
+  "A massive win would be eventually adding a starfish detector and being
+  able to accurately detect sun stars. But baby steps." The data is
+  already banked by S26: RF100 underwater ships a `starfish` class
+  (CC-BY), DUO carries 16,568 starfish boxes (fenced per its license
+  call), and Urchinbot/GBIF pipelines generalize. Keep the starfish
+  labels intact in every corpus build (cost: zero now) so this becomes a
+  head-swap/fine-tune later, not a new data hunt. Sunflower stars
+  (Pycnopodia) specifically: check iNat/GBIF the same way S26 did the
+  urchins — the auto-box loop transfers unchanged.
 - lwIP netif integration in OpenMV firmware (C) — MicroPython sockets over T1L
 - N6 evaluation for H.264 path (needs OpenMV answer on VENC MicroPython API)
   — now formally owns the public-stream cell (720p ≥24 fps) of the SPEC
