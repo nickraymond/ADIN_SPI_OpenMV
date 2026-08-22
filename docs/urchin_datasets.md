@@ -112,6 +112,29 @@ Method + verbatim license captures live in `ml/urchin_data/`
   yolo11n README's "CC BY 4.0" claim about its training data is no
   longer independently verifiable.
 
+### Bite-2 QA (2026-08-21) — 30-crop spot-checks + NOAA baseline smoke test
+
+Method: 30 random box-crops per source (seeded, 1.6× context) rendered
+as contact sheets and reviewed; GBIF = 30 full-frame thumbs per species.
+
+| Source | Tally (of 30) | Verdict |
+|---|---|---|
+| Urchinbot | 24 clearly urchins · 4 ambiguous (turbidity) · 2 suspect-empty | **Strong** — primary backbone data |
+| DUO (echinus) | 7 crisp · 18 plausible dark blobs · 5 unverifiable · **1 real label error (box on a video-timestamp overlay)** | Noisy but usable; weight below Urchinbot. ⚠ labels/ YOLO ids are remapped vs COCO: **0=starfish 1=holothurian 2=echinus 3=scallop** |
+| RF100 (echinus) | 14 clear · 12 plausible · 4 unverifiable | DUO-like noise (shared URPC lineage) |
+| Roboflow 74 (purple) | 9 crisp · 14 plausible · 7 unverifiable | Consistent with 24 px median — hard-case eval role confirmed |
+| GBIF purple | 29/30 species-correct; only ~6–8/30 look underwater; hands, dead tests present | Species signal excellent; **~70–75% is out-of-water** — fine for the crop CLASSIFIER, wrong for detector fine-tune; auto-box filter must drop hands/dry/dead-test frames |
+| GBIF red | ~26/30 usable adults; 1 museum specimen, 1 held juvenile, 1 microscope larva | Same filter needs; adds specimen/larva exclusions |
+
+**NOAA yolo11n/x load-and-run (Mac, urchin venv): PASS** — both load,
+single class `urchin` confirmed, ~40–100 ms (n) / ~200–400 ms (x) per
+frame after warmup. Qualitative floor, 4 frames: clear Centro frame
+4–5 detections of 8 GT; **turbid kina frame 0 of 8; DUO moderate 0 of
+4; Caspar barrens 3–6 of 142.** The baselines collapse exactly in the
+turbid/small-target regimes our deployment lives in — early evidence
+that custom training is justified. Full rung-A scoring runs when the
+Urchinbot pull completes.
+
 **Standing corrections to rows above (verified deltas):**
 - FathomNet's "filter by license for commercial use" framing: structurally
   right (licensing is per *upload set*), but for S. fragilis the filter

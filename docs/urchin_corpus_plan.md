@@ -124,12 +124,28 @@ captures, model cards, and eval-result tables.
    first act is stage 0/rung A+B scoring on the boards' own compiled
    baselines rather than fresh dataset work.
 
-## [bite 2] slots still to fill
+## [bite 2] results (filled 2026-08-21; details in dossier §Bite-2 QA)
 
-- NOAA yolo11n/x scores on rungs A/B (load-and-run owed).
-- Per-source label-QA tallies (~30 frames/source pass-fail).
-- Roboflow exports (blocked on Nick's key) → rows 4–5 firm up.
-- Urchinbot full-pull completion manifest (in progress).
+- **NOAA load-and-run: PASS** (both models, 1-class `urchin`, Mac).
+  Qualitative floor: fine on big clear urchins, **0 detections in
+  turbid/small-target frames, 3–6 of 142 on CA barrens** — the custom
+  model is justified by measurement. Full rung-A mAP pending the
+  Urchinbot pull finishing.
+- **QA tallies**: Urchinbot 24/30 strong · DUO 7 crisp + 18 plausible
+  (noisy; 1 real label error found; YOLO ids remapped —
+  0=starfish 1=holothurian 2=echinus 3=scallop) · RF100 DUO-like ·
+  74-img consistent with its 24 px median.
+- **GBIF QA changes stage 2's shape**: species fidelity is excellent
+  (29/30, 26/30) but **~70–75% of purple images are out-of-water** —
+  fine for the crop classifier, wrong for detector fine-tuning; the
+  auto-box pass must filter hands / dry scenes / dead tests / museum
+  specimens / larvae.
+- **Roboflow exports done**: RF100 7,600/52,684 exact (10,270 starfish
+  banked for the iceboxed sun-star detector); 74-img is purple-ONLY
+  (3 red boxes) → moved from "species seed" to hard-case eval; red
+  seeding now rides GBIF + Nick's Channel Islands dive footage.
+- Still open: Urchinbot full-pull manifest; rung-A/B baseline mAP
+  scores; underwater/out-of-water auto-filter implementation.
 
 ## Flow (same diagram lives in the chat as a rendered file)
 
