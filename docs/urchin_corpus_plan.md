@@ -36,8 +36,8 @@ sense:
 | 1 | Urchinbot | backbone: urchin-ness | 9,872 imgs / 44,268 boxes / 3 spp; box min-side median 173 px, 0% <24 px | CC-BY-4.0 | full pull in progress (~32 GB) |
 | 2 | DUO | backbone: turbidity + small targets | 7,782 imgs / 50,156 echinus boxes; median 70 px, p10 34 px | CC BY 4.0 (figshare; lineage caveat) | ✔ complete |
 | 3 | iNat/GBIF clean | species head: purple vs red | 2,009 purple / 569 red imgs, image-level | CC0 + CC-BY per record (provenance JSONL kept) | ✔ complete |
-| 4 | RF100 underwater | backbone top-up (license-clean URPC volume) | 7,600 imgs claimed | CC BY 4.0 (page) | blocked on Roboflow key |
-| 5 | Roboflow 74-img | species-head seed / sanity check | 74 imgs; ⚠ 6 junk classes | CC BY 4.0 (page) | blocked on key + QA |
+| 4 | RF100 underwater | backbone top-up (license-clean URPC volume) | 7,600 imgs / 25,299 urchin boxes verified (+10,270 starfish banked) | CC BY 4.0 (export yaml) | ✔ complete |
+| 5 | Roboflow 74-img | hard-case eval (purple-ONLY: 3 red boxes) | 74 imgs / 2,015 purple+red boxes, median 24 px | CC BY 4.0 (export yaml) | ✔ complete |
 | 6 | Nick's footage (bench + **Channel Islands dive, ~3 wks out**) | domain fine-tune + GOLD eval | TBD — see shot list | ours | future |
 | — | NOAA yolo11n/x weights | step-0 baseline only | n=5.5 MB / x=114 MB | AGPL lineage — never shipped | ✔ complete |
 
@@ -55,7 +55,7 @@ respected — its test split is eval rung A and NEVER trains; DUO's
 train/test likewise (val is a byte-copy of test — use test once).
 Augmentation policy is driven by the measured target-size gap: heavy
 downscale augmentation of Urchinbot (median 173 px) into the 24–64 px
-band to match the 2 m deployment case; DUO already lives there (median
+band to cover the deployment px regime; DUO already lives there (median
 70 px). Label-QA tallies **[bite 2]** decide per-source sampling weights.
 
 **Stage 2 — Species head: purple vs red.**
