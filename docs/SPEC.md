@@ -180,6 +180,18 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **AE3 model-memory ceilings unverified (raised 2026-08-22, S8 bite E,
+  from Nick's "how many animals fit" question).** Evidence so far: the
+  2.0 MB yolov8n variant loads and runs from `/flash`; the 1.0 MB
+  stage-1 urchin model compiles with a 512 KB vela SRAM plan
+  (Shared_Sram). Unknown: actual `/flash` free capacity, and the usable
+  SRAM ceiling for bigger activation plans (a YOLOX-Tiny step-up is
+  ~5 MB weights and a larger working set). **Verifiable, next bench
+  window:** `os.statvfs('/flash')` on the board, plus a vela dry-compile
+  of a Tiny-sized model to read its SRAM plan. Until then, class-count
+  scaling claims rest on measured artifact sizes only (classes cost ~KB;
+  the backbone step is the memory event — DEV_LOG 2026-08-22).
+
 - **ANSWERED 2026-08-19 (Nick): it is ONE physical AE3, reflashed.**
   Another agent flashed custom firmware onto it to push VGA fps, which
   is why the same board reported stock `v5.0.0` on the laptop and
