@@ -47,6 +47,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  .badge { padding:.2rem .7rem; border-radius:5px; font-weight:700; }
  .RUNNING { background:#1d4; color:#000; } .PAUSED { background:#ca3; color:#000; }
  .STOPPED { background:#555; color:#ddd; } .STOPPING { background:#ca3; color:#000; }
+ .SCORING { background:#6cf; color:#000; }
  button { background:#262c33; color:#dde3e8; border:1px solid #3a434c;
           border-radius:5px; padding:.45rem 0; font:inherit; flex:1;
           cursor:pointer; } button:disabled { opacity:.4; cursor:default; }
@@ -114,14 +115,16 @@ async function refresh(){
   $('fill').style.width = s.pct + '%';
   $('log').innerHTML = s.log.join('<br>');
   $('b-start').disabled = (s.state !== 'STOPPED');
-  $('b-pause').disabled = (s.state === 'STOPPED' || s.state === 'STOPPING');
+  $('b-pause').disabled = (s.state === 'STOPPED' || s.state === 'STOPPING' || s.state === 'SCORING');
   $('b-pause').innerHTML = (s.state === 'PAUSED') ? '&#9654; Resume' : '&#10074;&#10074; Pause';
-  $('b-stop').disabled = (s.state === 'STOPPED' || s.state === 'STOPPING');
+  $('b-stop').disabled = (s.state === 'STOPPED' || s.state === 'STOPPING' || s.state === 'SCORING');
   $('b-sched').textContent = s.sched;
   if(s.state==='PAUSED') $('hint').textContent =
     'Frozen — laptop fully yours. Resume continues mid-instruction.';
   else if(s.state==='STOPPING') $('hint').textContent =
     'Stop requested — checkpointing, exits within one iteration.';
+  else if(s.state==='SCORING') $('hint').textContent =
+    'Periodic rung-A scoring — training frozen for ~10 min, resumes by itself. The mAP panel updates when it finishes.';
   else if(s.state==='RUNNING') $('hint').textContent =
     'Pause freezes instantly (GPU freed, nothing lost). Stop checkpoints within one iteration, then exits.';
   else $('hint').textContent =
@@ -158,6 +161,8 @@ class Ctl:
         self.rundir = RUNS / self.run
         self.proc = None
         self.stopping = False
+        self.scoring = False
+        self.score_every = 0
         self.lock = threading.Lock()
         # (ts, cpu%, gpu%, thermal_ok) ring: 2 h at 10 s -- Nick's "is my
         # laptop cooking" panel. Real degC needs root on macOS; the pmset
@@ -207,6 +212,8 @@ class Ctl:
         if pid is None:
             self.stopping = False
             return "STOPPED", None
+        if self.scoring:
+            return "SCORING", pid
         if self.stopping:
             return "STOPPING", pid
         try:
@@ -259,51 +266,91 @@ class Ctl:
                 "init": Path(pre).name if pre else "scratch (random)",
                 "corpus": c.get("corpus", "corpus_v1")}
 
+    def _cur_epoch(self):
+        loss = self.rundir / "loss.log"
+        if not loss.exists():
+            return None
+        lines = loss.read_text().splitlines()
+        if not lines:
+            return None
+        m = re.match(r"e(\d+)", lines[-1])
+        return int(m.group(1)) if m else None
+
+    def _score_ckpt(self, ep):
+        """Score last.pt on rung A, append [ep, mAP50] to the shared
+        scores file. Returns True on success."""
+        last = self.rundir / "last.pt"
+        cfg = self._cfg()
+        arch = cfg["model"].split(" ")[0]
+        stem = cfg["model"].split("stem=")[1]
+        print(f"[scorer] scoring {last} ({arch}/{stem}) as epoch {ep}")
+        out = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parent / "eval_rung_a.py"),
+             str(last), "--arch", arch, "--stem", stem],
+            capture_output=True, text=True, timeout=3600)
+        m = re.search(r"mAP50=([0-9.]+)", out.stdout)
+        if not m:
+            print("[scorer] no mAP in eval output")
+            return False
+        map50 = float(m.group(1))
+        sj = RUNS / "rung_a_scores.json"
+        d = json.loads(sj.read_text()) if sj.exists() else {}
+        pts = [p for p in d.get(self.run, []) if p[0] != ep]
+        d[self.run] = sorted(pts + [[ep, map50]])
+        sj.write_text(json.dumps(d, indent=2))
+        (self.rundir / "ctl_plot.png").unlink(missing_ok=True)
+        print(f"[scorer] {self.run} e{ep}: mAP50={map50}")
+        return True
+
+    def _last_scored(self):
+        sj = RUNS / "rung_a_scores.json"
+        if not sj.exists():
+            return None
+        pts = json.loads(sj.read_text()).get(self.run, [])
+        return max(p[0] for p in pts) if pts else None
+
     def _scorer_loop(self):
-        """When a session ends (STOPPED + a checkpoint newer than the last
-        scored one), score rung A on the freed GPU and append to the shared
-        rung_a_scores.json. Runs forever in a daemon thread; survives
-        nights the LaunchAgent drives, as long as this page is up."""
-        import re
+        """Two triggers, one thread. (1) Session end: STOPPED + a
+        checkpoint newer than last scored -> score on the freed GPU.
+        (2) Periodic (--score-every N): every N completed epochs, freeze
+        the run (SIGSTOP), score on the freed GPU (~10 min), resume --
+        the epoch-cadence view Nick asked for, at a known training-time
+        cost. Never hijacks a user-initiated PAUSED."""
         marker = self.rundir / ".scored_mtime"
         while True:
             time.sleep(30)
             try:
-                state, _ = self.pstate()
+                state, pid = self.pstate()
                 last = self.rundir / "last.pt"
-                if state != "STOPPED" or not last.exists():
+                if not last.exists():
                     continue
-                mt = str(int(last.stat().st_mtime))
-                if marker.exists() and marker.read_text() == mt:
-                    continue
-                cfg = self._cfg()
-                arch = cfg["model"].split(" ")[0]
-                stem = cfg["model"].split("stem=")[1]
-                print(f"[scorer] scoring {last} ({arch}/{stem}) on rung A")
-                out = subprocess.run(
-                    [sys.executable,
-                     str(Path(__file__).resolve().parent / "eval_rung_a.py"),
-                     str(last), "--arch", arch, "--stem", stem],
-                    capture_output=True, text=True, timeout=3600)
-                m = re.search(r"mAP50=([0-9.]+)", out.stdout)
-                if not m:
-                    print("[scorer] no mAP in eval output; leaving unmarked")
-                    continue
-                map50 = float(m.group(1))
-                ep = 0
-                lines = (self.rundir / "loss.log").read_text().splitlines()
-                if lines:
-                    em = re.match(r"e(\d+)", lines[-1])
-                    ep = int(em.group(1)) if em else 0
-                sj = RUNS / "rung_a_scores.json"
-                d = json.loads(sj.read_text()) if sj.exists() else {}
-                pts = [p for p in d.get(self.run, []) if p[0] != ep]
-                d[self.run] = sorted(pts + [[ep, map50]])
-                sj.write_text(json.dumps(d, indent=2))
-                marker.write_text(mt)
-                (self.rundir / "ctl_plot.png").unlink(missing_ok=True)
-                print(f"[scorer] {self.run} e{ep}: mAP50={map50}")
+                if state == "STOPPED":
+                    mt = str(int(last.stat().st_mtime))
+                    if marker.exists() and marker.read_text() == mt:
+                        continue
+                    ep = self._cur_epoch() or 0
+                    if self._score_ckpt(ep):
+                        marker.write_text(mt)
+                elif state == "RUNNING" and self.score_every:
+                    cur = self._cur_epoch()
+                    if cur is None or cur < 1:
+                        continue
+                    done = cur - 1  # last completed epoch = the checkpoint
+                    prev = self._last_scored()
+                    nxt = (self.score_every if prev is None else
+                           self.score_every * (prev // self.score_every + 1))
+                    if done < nxt:
+                        continue
+                    self.scoring = True
+                    os.kill(pid, signal.SIGSTOP)
+                    try:
+                        self._score_ckpt(done)
+                    finally:
+                        os.kill(pid, signal.SIGCONT)
+                        self.scoring = False
             except Exception as e:
+                self.scoring = False
                 print(f"[scorer] error (will retry): {e}")
 
     def plot_png(self):
@@ -510,6 +557,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8898)
+    ap.add_argument("--score-every", type=int, default=0,
+                    help="score rung A every N completed epochs (freezes "
+                         "training ~10 min per score); 0 = session "
+                         "boundaries only")
     ap.add_argument("train_args", nargs=argparse.REMAINDER,
                     help="-- then train.py args (must include --run-name)")
     args = ap.parse_args(argv)
@@ -517,6 +568,7 @@ def main(argv=None):
     if targs and targs[0] == "--":
         targs = targs[1:]
     ctl = Ctl(targs)
+    ctl.score_every = args.score_every
     threading.Thread(target=ctl._scorer_loop, daemon=True).start()
     threading.Thread(target=ctl._sampler_loop, daemon=True).start()
     srv = ThreadingHTTPServer((args.bind, args.port), make_handler(ctl))
