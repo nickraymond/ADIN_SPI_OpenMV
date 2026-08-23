@@ -180,17 +180,20 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
-- **AE3 model-memory ceilings unverified (raised 2026-08-22, S8 bite E,
-  from Nick's "how many animals fit" question).** Evidence so far: the
-  2.0 MB yolov8n variant loads and runs from `/flash`; the 1.0 MB
-  stage-1 urchin model compiles with a 512 KB vela SRAM plan
-  (Shared_Sram). Unknown: actual `/flash` free capacity, and the usable
-  SRAM ceiling for bigger activation plans (a YOLOX-Tiny step-up is
-  ~5 MB weights and a larger working set). **Verifiable, next bench
-  window:** `os.statvfs('/flash')` on the board, plus a vela dry-compile
-  of a Tiny-sized model to read its SRAM plan. Until then, class-count
-  scaling claims rest on measured artifact sizes only (classes cost ~KB;
-  the backbone step is the memory event — DEV_LOG 2026-08-22).
+- **AE3 model-memory ceiling: storage RESOLVED from vendor source,
+  runtime arena still open (raised + narrowed 2026-08-22, S8 bite E).**
+  Storage (openmv.git `boards/OPENMV_AE3/boot_config.h` partition
+  table): `/flash` (RWFS) = **8 MB** and `/rom` (ROMFS0) = **24 MB**,
+  both on the external OSPI flash; MRAM 5.5 MB holds firmware only —
+  storage is not the model constraint. Compiler side measured: untrained
+  YOLOX-Tiny-256 int8 (5.2 MB) vela-compiles to a **single `ethos-u` op,
+  SRAM plan 1,036 KB, est 41.8 ms** (nano: 512 KB / 28.1 ms). STILL
+  OPEN: whether the firmware's runtime tensor arena actually grants a
+  ~1 MB SRAM plan on-board (the 2.0 MB yolov8n precedent ran, plan size
+  unrecorded). **Verifiable, next bench window:** load the Tiny probe
+  artifact (`~/nereus_ml/exports/tiny_probe/`) on the AE3, measure
+  per-inference latency (a CPU fallback or arena failure is obvious in
+  the number), plus `os.statvfs('/flash')` for free-space bookkeeping.
 
 - **ANSWERED 2026-08-19 (Nick): it is ONE physical AE3, reflashed.**
   Another agent flashed custom firmware onto it to push VGA fps, which
