@@ -66,6 +66,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  </div>
  <div style="border-top:1px solid #2c333a; margin-top:.7rem; padding-top:.6rem;">
   <div class="row"><span class="k">Run</span><span id="run">—</span></div>
+  <div class="row"><span class="k">Model</span><span id="model">—</span></div>
+  <div class="row"><span class="k">Init</span><span id="init">—</span></div>
+  <div class="row"><span class="k">Corpus</span><span id="corpus">—</span></div>
   <div class="row"><span class="k">Epoch</span><span id="epoch">—</span></div>
   <div class="row"><span class="k">Pace</span><span id="pace">—</span></div>
   <div class="row"><span class="k">Last checkpoint</span><span id="ckpt">—</span></div>
@@ -83,6 +86,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
    auto-start 23:00, stops after the configured hours</span></div>
   <button id="b-sched" style="flex:0 0 5.5rem" onclick="act('sched')">…</button>
  </div>
+ <div style="margin-top:.8rem"><span class="k" style="font-size:12px">Training loss</span>
+  <img id="plot" src="plot.png" style="width:100%; border:1px solid #2c333a;
+   border-radius:5px; margin-top:.3rem; display:none;"></div>
  <div style="margin-top:.8rem"><span class="k" style="font-size:12px">Log tail</span>
   <pre id="log">—</pre></div>
 </div>
@@ -91,7 +97,10 @@ const $=id=>document.getElementById(id);
 async function refresh(){
   const s = await (await fetch('api/status')).json();
   $('state').textContent = s.state; $('state').className = 'badge '+s.state;
-  $('run').textContent = s.run + (s.arch ? ' · '+s.arch : '');
+  $('run').textContent = s.run;
+  $('model').textContent = s.model;
+  $('init').textContent = s.init;
+  $('corpus').textContent = s.corpus;
   $('epoch').textContent = s.epoch;
   $('pace').textContent = s.pace;
   $('ckpt').textContent = s.ckpt;
@@ -119,6 +128,10 @@ async function act(a){
   await refresh();
 }
 refresh(); setInterval(refresh, 2000);
+function replot(){ const p=$('plot');
+  p.onload = ()=>{ p.style.display='block'; };
+  p.src = 'plot.png?t=' + Date.now(); }
+replot(); setInterval(replot, 60000);
 </script></body></html>"""
 
 
@@ -188,6 +201,70 @@ class Ctl:
         if sig == signal.SIGTERM:
             self.stopping = True
 
+    def _cfg(self):
+        """What this run actually is: prefer the trainer's own recorded
+        config.json (written at launch, cannot drift from reality);
+        fall back to the server's configured args before first start."""
+        cj = self.rundir / "config.json"
+        if cj.exists():
+            c = json.loads(cj.read_text())
+        else:
+            a = self.train_args
+
+            def get(flag, default):
+                return a[a.index(flag) + 1] if flag in a else default
+            c = {"arch": get("--arch", "yolox-nano"),
+                 "stem": get("--stem", "conv"),
+                 "pretrained": get("--pretrained", None),
+                 "corpus": get("--corpus", "corpus_v1")}
+        pre = c.get("pretrained")
+        return {"model": f"{c.get('arch')} · stem={c.get('stem', 'conv')}",
+                "init": Path(pre).name if pre else "scratch (random)",
+                "corpus": c.get("corpus", "corpus_v1")}
+
+    def plot_png(self):
+        """Loss-vs-iteration PNG for THIS run; regenerated at most every
+        60 s and only when loss.log has grown."""
+        loss = self.rundir / "loss.log"
+        if not loss.exists():
+            return None
+        out = self.rundir / "ctl_plot.png"
+        if (out.exists() and out.stat().st_mtime > time.time() - 60
+                and out.stat().st_mtime > loss.stat().st_mtime - 1):
+            return out.read_bytes()
+        import re
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        # x = log order, not the iteration counter: the counter restarts
+        # on resume, so a multi-session log would double back on itself
+        ys = []
+        for line in open(loss):
+            m = re.search(r"loss=([0-9.]+)", line)
+            if m:
+                ys.append(float(m.group(1)))
+        if len(ys) < 2:
+            return None
+        step = max(1, len(ys) // 500)
+        ys = ys[::step]
+        xs = [i * step * 20 for i in range(len(ys))]  # ~20 iters per line
+        fig, ax = plt.subplots(figsize=(6.4, 2.2), dpi=110)
+        fig.patch.set_facecolor("#1d2126")
+        ax.set_facecolor("#1d2126")
+        ax.plot(xs, ys, color="#6cf", lw=1.2)
+        ax.grid(True, color="#2c333a", lw=0.6)
+        for s in ax.spines.values():
+            s.set_color("#3a434c")
+        ax.tick_params(colors="#8fa3b3", labelsize=7)
+        ax.set_xlabel("iterations trained (all sessions)", fontsize=8,
+                      color="#8fa3b3")
+        ax.set_ylabel("loss", fontsize=8, color="#8fa3b3")
+        ax.set_ylim(bottom=0)
+        fig.tight_layout(pad=0.4)
+        fig.savefig(out, facecolor=fig.get_facecolor())
+        plt.close(fig)
+        return out.read_bytes()
+
     def status(self):
         state, _ = self.pstate()
         loss = self.rundir / "loss.log"
@@ -215,7 +292,7 @@ class Ctl:
             sched = "n/a"
         return {"state": state, "run": self.run, "arch": self.arch,
                 "epoch": epoch, "pace": pace, "pct": pct, "ckpt": ckpt,
-                "log": lines, "sched": sched}
+                "log": lines, "sched": sched, **self._cfg()}
 
     def sched_toggle(self):
         if not PLIST.exists():
@@ -245,6 +322,12 @@ def make_handler(ctl):
                 self._send(200, PAGE, "text/html")
             elif self.path == "/api/status":
                 self._send(200, json.dumps(ctl.status()))
+            elif self.path.startswith("/plot.png"):
+                png = ctl.plot_png()
+                if png:
+                    self._send(200, png, "image/png")
+                else:
+                    self._send(404, "no data yet", "text/plain")
             else:
                 self._send(404, "not found", "text/plain")
 

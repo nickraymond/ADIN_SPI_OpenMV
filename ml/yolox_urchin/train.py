@@ -107,8 +107,9 @@ def main():
         **vars(args), "lr_effective": lr, "device": device,
         "repo_git_sha": git_sha,
         "corpus_manifest_sha256": hashlib.sha256(manifest).hexdigest(),
-        "arch": "yolox-nano conv-stem 1-class (compile-gate 2026-08-22)",
-    }, indent=2))
+    }, indent=2))  # vars(args) carries arch/stem/pretrained -- never
+    # shadow them with prose (a stale hardcoded arch string here once
+    # mislabeled the labeler run in the control page)
 
     ds = CorpusDataset(CORPUS / "train.jsonl", canvas=args.canvas, train=True,
                        mosaic_prob=args.mosaic)
