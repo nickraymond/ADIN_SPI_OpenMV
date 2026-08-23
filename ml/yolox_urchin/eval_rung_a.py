@@ -49,6 +49,7 @@ def load_gt(imgsz_meta):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ckpt")
+    ap.add_argument("--arch", default="yolox-nano")
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--conf", type=float, default=0.001)
     ap.add_argument("--nms", type=float, default=0.65)
@@ -56,7 +57,7 @@ def main():
     args = ap.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = build_model(num_classes=1)
+    model = build_model(num_classes=1, arch=args.arch)
     ck = torch.load(args.ckpt, map_location="cpu")
     state = ck.get("model", ck)
     model.load_state_dict(state)

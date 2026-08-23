@@ -116,13 +116,13 @@ def _patch_head_for_mps():
     IOUloss.forward = iou_forward
 
 
-def build_model(num_classes: int = 1):
+def build_model(num_classes: int = 1, arch: str = "yolox-nano"):
     add_yolox_path()
     from yolox.exp.build import get_exp_by_name
     from yolox.models.network_blocks import BaseConv
 
     _patch_head_for_mps()
-    exp = get_exp_by_name("yolox-nano")
+    exp = get_exp_by_name(arch)
     exp.num_classes = num_classes
     model = exp.get_model()
     stem_out = model.backbone.backbone.stem.conv.conv.out_channels

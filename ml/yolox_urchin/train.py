@@ -66,6 +66,8 @@ def main():
                     help="run N iterations then exit (loop proof + it/s)")
     ap.add_argument("--resume", default=None)
     ap.add_argument("--run-name", default=None)
+    ap.add_argument("--arch", default="yolox-nano",
+                    help="yolox exp name (yolox-nano | yolox-tiny)")
     ap.add_argument("--mosaic", type=float, default=0.0,
                     help="mosaic probability (0 disables)")
     ap.add_argument("--no-aug-epochs", type=int, default=10,
@@ -101,7 +103,7 @@ def main():
                     num_workers=args.workers, drop_last=True,
                     persistent_workers=False, pin_memory=False)
 
-    model = build_model(num_classes=1).to(device).train()
+    model = build_model(num_classes=1, arch=args.arch).to(device).train()
     # BN defaults per YOLOX exp
     for m in model.modules():
         if isinstance(m, torch.nn.BatchNorm2d):
