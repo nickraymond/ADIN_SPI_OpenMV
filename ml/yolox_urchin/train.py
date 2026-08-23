@@ -79,6 +79,12 @@ def main():
                          "--resume <run>/last.pt --run-name <same>")
     ap.add_argument("--corpus", default="corpus_v1",
                     help="dataset view under ~/nereus_ml/datasets/")
+    ap.add_argument("--stem", default="conv", choices=("conv", "focus"),
+                    help="conv = NPU deployment variant; focus = stock "
+                         "YOLOX (labeler/teacher, enables full pretrained)")
+    ap.add_argument("--pretrained", default=None,
+                    help="init from a checkpoint (e.g. official COCO "
+                         "yolox_s.pth); 1-class heads always fresh")
     args = ap.parse_args()
     global CORPUS
     CORPUS = Path.home() / "nereus_ml" / "datasets" / args.corpus
@@ -112,7 +118,8 @@ def main():
                     num_workers=args.workers, drop_last=True,
                     persistent_workers=False, pin_memory=False)
 
-    model = build_model(num_classes=1, arch=args.arch).to(device).train()
+    model = build_model(num_classes=1, arch=args.arch, stem=args.stem,
+                        pretrained=args.pretrained).to(device).train()
     # BN defaults per YOLOX exp
     for m in model.modules():
         if isinstance(m, torch.nn.BatchNorm2d):

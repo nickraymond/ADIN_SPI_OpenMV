@@ -116,7 +116,14 @@ def _patch_head_for_mps():
     IOUloss.forward = iou_forward
 
 
-def build_model(num_classes: int = 1, arch: str = "yolox-nano"):
+def build_model(num_classes: int = 1, arch: str = "yolox-nano",
+                stem: str = "conv", pretrained: str = None):
+    """stem='conv' is the NPU-gated deployment variant (Focus swapped for a
+    stride-2 conv -- ml/compile_gate_report.md). stem='focus' keeps stock
+    YOLOX for models that never meet a compiler (the labeler/teacher),
+    which lets an official COCO checkpoint load in full via `pretrained`
+    (Apache-2.0; mismatched-shape keys -- the 1-class cls heads -- and,
+    under stem='conv', the stem are skipped and reported)."""
     add_yolox_path()
     from yolox.exp.build import get_exp_by_name
     from yolox.models.network_blocks import BaseConv
@@ -125,9 +132,20 @@ def build_model(num_classes: int = 1, arch: str = "yolox-nano"):
     exp = get_exp_by_name(arch)
     exp.num_classes = num_classes
     model = exp.get_model()
-    stem_out = model.backbone.backbone.stem.conv.conv.out_channels
-    model.backbone.backbone.stem = BaseConv(3, stem_out, ksize=3, stride=2,
-                                            act="silu")
+    if stem == "conv":
+        stem_out = model.backbone.backbone.stem.conv.conv.out_channels
+        model.backbone.backbone.stem = BaseConv(3, stem_out, ksize=3,
+                                                stride=2, act="silu")
+    if pretrained:
+        ck = torch.load(pretrained, map_location="cpu", weights_only=False)
+        src = ck.get("model", ck)
+        dst = model.state_dict()
+        ok = {k: v for k, v in src.items()
+              if k in dst and dst[k].shape == v.shape}
+        model.load_state_dict(ok, strict=False)
+        print(f"pretrained init: loaded {len(ok)}/{len(dst)} tensors "
+              f"from {pretrained} (skipped: shape-mismatch heads"
+              f"{'/stem' if stem == 'conv' else ''})")
     return model
 
 
