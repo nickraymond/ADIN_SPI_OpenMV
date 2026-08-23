@@ -45,10 +45,52 @@ def load_gt(imgsz_meta):
             "categories": [{"id": 0, "name": "urchin"}]}
 
 
+class TFLiteRaw:
+    """Runs the deployed int8 tflite; presents the RawExport interface
+    (per-level NCHW float maps). Fully-conv model -> the fixed 256 input
+    is resized to the eval size; outputs matched to strides by shape."""
+
+    def __init__(self, path, imgsz):
+        import tensorflow as tf
+        self.ip = tf.lite.Interpreter(model_path=path)
+        inp = self.ip.get_input_details()[0]
+        self.ip.resize_tensor_input(inp["index"], [1, imgsz, imgsz, 3])
+        self.ip.allocate_tensors()
+        self.inp = self.ip.get_input_details()[0]
+        self.outs = self.ip.get_output_details()
+
+    def __call__(self, x):
+        # x: (B,3,S,S) float 0..255 RGB, torch
+        scale, zp = self.inp["quantization"]
+        outs_all = []
+        for bi in range(x.shape[0]):
+            # model trains AND calibrates on raw 0..255 floats (data.py /
+            # export.py) -- quantize that domain directly, no /255
+            img = x[bi].permute(1, 2, 0).numpy()  # HWC float 0..255
+            q = np.clip(np.round(img / scale + zp) if scale else img,
+                        -128, 127).astype(np.int8)
+            self.ip.set_tensor(self.inp["index"], q[None])
+            self.ip.invoke()
+            maps = []
+            for od in self.outs:
+                o = self.ip.get_tensor(od["index"]).astype(np.float32)
+                os_, ozp = od["quantization"]
+                maps.append((o - ozp) * os_)
+            # NHWC -> NCHW, sort by descending spatial size = stride 8,16,32
+            maps = [np.transpose(m, (0, 3, 1, 2)) for m in maps]
+            maps.sort(key=lambda m: -m.shape[2])
+            outs_all.append(maps)
+        return [torch.from_numpy(np.concatenate([o[k] for o in outs_all]))
+                for k in range(3)]
+
+
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("ckpt")
+    ap.add_argument("ckpt", help=".pt checkpoint, or int8 .tflite with --tflite")
+    ap.add_argument("--tflite", action="store_true",
+                    help="score a quantized tflite via the TFLite interpreter "
+                         "(the int8-vs-float delta, measured Mac-side)")
     ap.add_argument("--arch", default="yolox-nano")
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--conf", type=float, default=0.001)
@@ -56,12 +98,16 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     args = ap.parse_args()
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = build_model(num_classes=1, arch=args.arch)
-    ck = torch.load(args.ckpt, map_location="cpu")
-    state = ck.get("model", ck)
-    model.load_state_dict(state)
-    raw = RawExport(model).to(device).eval()
+    if args.tflite:
+        raw = TFLiteRaw(args.ckpt, args.imgsz)
+        device = "cpu"
+    else:
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        model = build_model(num_classes=1, arch=args.arch)
+        ck = torch.load(args.ckpt, map_location="cpu")
+        state = ck.get("model", ck)
+        model.load_state_dict(state)
+        raw = RawExport(model).to(device).eval()
 
     meta = {Path(r["file"]).name: (r["w"], r["h"])
             for r in map(json.loads, open(DS / "labels.jsonl"))}
