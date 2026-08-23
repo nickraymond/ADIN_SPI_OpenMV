@@ -20,8 +20,10 @@ Trusted-LAN posture (S25): binds 0.0.0.0 by default so the workbench
 guide card's badge can probe it. Stdlib only.
 """
 import argparse
+import collections
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -72,6 +74,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="row"><span class="k">Epoch</span><span id="epoch">—</span></div>
   <div class="row"><span class="k">Pace</span><span id="pace">—</span></div>
   <div class="row"><span class="k">Last checkpoint</span><span id="ckpt">—</span></div>
+  <div class="row"><span class="k">System</span><span id="sys">—</span></div>
  </div>
  <div id="bar"><div id="fill"></div></div>
  <div id="btns">
@@ -86,6 +89,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
    auto-start 23:00, stops after the configured hours</span></div>
   <button id="b-sched" style="flex:0 0 5.5rem" onclick="act('sched')">…</button>
  </div>
+ <div style="margin-top:.8rem"><span class="k" style="font-size:12px">System load (CPU · GPU · thermal)</span>
+  <img id="sysplot" src="sys.png" style="width:100%; border:1px solid #2c333a;
+   border-radius:5px; margin-top:.3rem; display:none;"></div>
  <div style="margin-top:.8rem"><span class="k" style="font-size:12px">Training loss</span>
   <img id="plot" src="plot.png" style="width:100%; border:1px solid #2c333a;
    border-radius:5px; margin-top:.3rem; display:none;"></div>
@@ -104,6 +110,7 @@ async function refresh(){
   $('epoch').textContent = s.epoch;
   $('pace').textContent = s.pace;
   $('ckpt').textContent = s.ckpt;
+  $('sys').textContent = s.sys;
   $('fill').style.width = s.pct + '%';
   $('log').innerHTML = s.log.join('<br>');
   $('b-start').disabled = (s.state !== 'STOPPED');
@@ -130,8 +137,11 @@ async function act(a){
 refresh(); setInterval(refresh, 2000);
 function replot(){ const p=$('plot');
   p.onload = ()=>{ p.style.display='block'; };
-  p.src = 'plot.png?t=' + Date.now(); }
-replot(); setInterval(replot, 60000);
+  p.src = 'plot.png?t=' + Date.now();
+  const q=$('sysplot');
+  q.onload = ()=>{ q.style.display='block'; };
+  q.src = 'sys.png?t=' + Date.now(); }
+replot(); setInterval(replot, 30000);
 </script></body></html>"""
 
 
@@ -149,6 +159,33 @@ class Ctl:
         self.proc = None
         self.stopping = False
         self.lock = threading.Lock()
+        # (ts, cpu%, gpu%, thermal_ok) ring: 2 h at 10 s -- Nick's "is my
+        # laptop cooking" panel. Real degC needs root on macOS; the pmset
+        # thermal-warning flag is the signal that matters (macOS throttles
+        # long before hardware risk).
+        self.sysmetrics = collections.deque(maxlen=720)
+
+    def _sampler_loop(self):
+        import psutil
+        psutil.cpu_percent(None)  # prime the counter
+        while True:
+            time.sleep(10)
+            try:
+                cpu = psutil.cpu_percent(None)
+                gpu = None
+                out = subprocess.run(
+                    ["ioreg", "-r", "-d", "1", "-w", "0", "-c",
+                     "IOAccelerator"], capture_output=True, text=True)
+                m = re.search(r'"Device Utilization %"=(\d+)', out.stdout)
+                if m:
+                    gpu = int(m.group(1))
+                therm = subprocess.run(["pmset", "-g", "therm"],
+                                       capture_output=True, text=True).stdout
+                therm_ok = "No thermal warning" in therm
+                self.sysmetrics.append(
+                    (time.time(), cpu, gpu, therm_ok))
+            except Exception:
+                pass
 
     def _adopt(self):
         """Find an externally started process for this run."""
@@ -331,6 +368,44 @@ class Ctl:
         plt.close(fig)
         return out.read_bytes()
 
+    def sys_png(self):
+        """CPU/GPU load + thermal state over the last ~2 h."""
+        if len(self.sysmetrics) < 2:
+            return None
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        now = time.time()
+        pts = list(self.sysmetrics)
+        mins = [(t - now) / 60 for t, *_ in pts]
+        cpu = [p[1] for p in pts]
+        gpu = [p[2] if p[2] is not None else float("nan") for p in pts]
+        warn = [(m, 1) for m, p in zip(mins, pts) if not p[3]]
+        fig, ax = plt.subplots(figsize=(6.4, 2.0), dpi=110)
+        fig.patch.set_facecolor("#1d2126")
+        ax.set_facecolor("#1d2126")
+        ax.grid(True, color="#2c333a", lw=0.6)
+        for s in ax.spines.values():
+            s.set_color("#3a434c")
+        ax.tick_params(colors="#8fa3b3", labelsize=7)
+        ax.plot(mins, cpu, color="#6cf", lw=1.1, label="CPU %")
+        ax.plot(mins, gpu, color="#1d4", lw=1.1, label="GPU %")
+        if warn:
+            for m, _ in warn:
+                ax.axvline(m, color="#e44", lw=1.5, alpha=0.6)
+            ax.plot([], [], color="#e44", lw=1.5,
+                    label="thermal throttle")
+        ax.set_ylim(0, 105)
+        ax.set_xlabel("minutes ago", fontsize=8, color="#8fa3b3")
+        ax.legend(fontsize=7, loc="lower left", facecolor="#1d2126",
+                  edgecolor="#3a434c", labelcolor="#8fa3b3")
+        fig.tight_layout(pad=0.4)
+        import io as _io
+        buf = _io.BytesIO()
+        fig.savefig(buf, facecolor=fig.get_facecolor())
+        plt.close(fig)
+        return buf.getvalue()
+
     def status(self):
         state, _ = self.pstate()
         loss = self.rundir / "loss.log"
@@ -356,9 +431,17 @@ class Ctl:
                 capture_output=True).returncode == 0 else "Off"
         except FileNotFoundError:
             sched = "n/a"
+        if self.sysmetrics:
+            _, cpu, gpu, tok = self.sysmetrics[-1]
+            sysline = (f"CPU {cpu:.0f}% · GPU "
+                       f"{gpu if gpu is not None else '?'}% · thermal "
+                       f"{'nominal' if tok else 'WARNING (throttling)'}")
+        else:
+            sysline = "sampling…"
         return {"state": state, "run": self.run, "arch": self.arch,
                 "epoch": epoch, "pace": pace, "pct": pct, "ckpt": ckpt,
-                "log": lines, "sched": sched, **self._cfg()}
+                "log": lines, "sched": sched, "sys": sysline,
+                **self._cfg()}
 
     def sched_toggle(self):
         if not PLIST.exists():
@@ -394,6 +477,12 @@ def make_handler(ctl):
                     self._send(200, png, "image/png")
                 else:
                     self._send(404, "no data yet", "text/plain")
+            elif self.path.startswith("/sys.png"):
+                png = ctl.sys_png()
+                if png:
+                    self._send(200, png, "image/png")
+                else:
+                    self._send(404, "sampling", "text/plain")
             else:
                 self._send(404, "not found", "text/plain")
 
@@ -429,6 +518,7 @@ def main(argv=None):
         targs = targs[1:]
     ctl = Ctl(targs)
     threading.Thread(target=ctl._scorer_loop, daemon=True).start()
+    threading.Thread(target=ctl._sampler_loop, daemon=True).start()
     srv = ThreadingHTTPServer((args.bind, args.port), make_handler(ctl))
     # The browser polls every 2 s; without daemon threads a live request
     # thread outlives Ctrl-C and the dead-looking process squats on the
