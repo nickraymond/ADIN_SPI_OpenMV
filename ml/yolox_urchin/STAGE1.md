@@ -48,7 +48,7 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 | | nano (stage1_v2) | tiny (stage1_tiny_v1) |
 |---|---|---|
 | rung-A mAP50 (float, 640) | 0.654 | **0.729** (+0.075) |
-| int8 @ native 256 | 0.202 | see run log |
+| int8 @ native 256 | 0.202 | **0.248** |
 | AE3 est. latency (vela) | 28.1 ms (35.6/s) | 41.7 ms (24.0/s) |
 | size on /flash (8 MB) | 1.0 MB | 4.97 MB |
 | vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
