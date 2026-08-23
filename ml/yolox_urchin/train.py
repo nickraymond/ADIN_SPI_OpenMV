@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -146,6 +147,23 @@ def main():
     log = open(rundir / "loss.log", "a")
     it_global = start_epoch * iters_per_epoch
     t_start = time.time()
+
+    # Graceful on-demand stop (train_ctl.py's Stop button): SIGTERM sets a
+    # flag; the loop checkpoints at the next ITERATION boundary and exits.
+    # The saved epoch is the previous one, so resume redoes the partial
+    # epoch -- cheap and always consistent.
+    stop_req = {"v": False}
+    signal.signal(signal.SIGTERM,
+                  lambda *_: (stop_req.update(v=True),
+                              print("SIGTERM: checkpointing at next "
+                                    "iteration, then exiting")))
+
+    def save_ckpt(epoch_done):
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                    "ema": ema.shadow, "epoch": epoch_done},
+                   rundir / "last.pt")
+        torch.save({"model": ema.shadow, "epoch": epoch_done},
+                   rundir / "ema.pt")
     for epoch in range(start_epoch, args.epochs):
         if args.mosaic and epoch >= args.epochs - args.no_aug_epochs:
             if ds.mosaic_prob:
@@ -180,11 +198,12 @@ def main():
                       f"{args.smoke / (time.time() - t_start):.2f} it/s, "
                       f"device={device}")
                 return
-        ck = {"model": model.state_dict(), "opt": opt.state_dict(),
-              "ema": ema.shadow, "epoch": epoch}
-        torch.save(ck, rundir / "last.pt")
-        torch.save({"model": ema.shadow, "epoch": epoch},
-                   rundir / "ema.pt")
+            if stop_req["v"]:
+                save_ckpt(epoch - 1)
+                print(f"STOPPED on request at e{epoch} i{i}; checkpoint "
+                      f"= end of epoch {epoch - 1}; resume redoes e{epoch}")
+                return
+        save_ckpt(epoch)
         print(f"epoch {epoch} done, checkpointed -> {rundir}")
         if (args.stop_after_hours
                 and time.time() - t_start > args.stop_after_hours * 3600):

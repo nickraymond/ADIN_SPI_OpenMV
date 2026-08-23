@@ -7,6 +7,24 @@ YOLOX-Nano/Tiny builder + MPS patches + export wrapper), `data.py`
 `export.py` (int8 + both board compiles), `stage2_autobox.py`,
 `harvest_crops.py`, `train_species.py`, `plot_curves.py`.
 
+## Training control page (`train_ctl.py`)
+
+One-switch browser control — config stays in the terminal; the page is
+a light switch, not a cockpit. Start / Pause / Resume / Stop + the
+night-schedule toggle, live status from the run's loss.log:
+
+    ~/nereus_ml/venvs/gate/bin/python ml/yolox_urchin/train_ctl.py \
+        -- --arch yolox-s --epochs 120 --batch 24 --mosaic 0.75 \
+           --run-name stage1_s_labeler --stop-after-hours 8
+
+Open http://localhost:8898/. Start auto-resumes from the run's last.pt
+when one exists; Pause/Resume = SIGSTOP/SIGCONT (instant, lossless);
+Stop = SIGTERM → the trainer checkpoints within one iteration and exits
+(the page shows STOPPING for the ~15 s of checkpoint + teardown). The
+schedule button drives the LaunchAgent below and refuses politely if it
+is not installed. Integration-tested live 2026-08-23 (all five controls
++ auto-resume + frozen-log artifact check).
+
 ## Running training around laptop use (Nick's controls)
 
 **Pause instantly / resume instantly** (nothing lost, no checkpoint):
