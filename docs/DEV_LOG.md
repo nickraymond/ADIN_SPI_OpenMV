@@ -17,6 +17,28 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-23 (later) — session close: labeler running overnight (COCO-init yolox-s, 0.658 @ e1); train_ctl page shipped + live-tested; corpus_v2; PR #60 merged
+
+- **Labeler** (`stage1_s_labeler`): stock-stem YOLOX-S, COCO-pretrained
+  init (456/462 tensors), corpus_v2 — **rung-A 0.658 after ONE epoch**
+  (already over nano-v2's final). Running via train_ctl in 8 h night
+  sessions; the page auto-scores each session end and grows the mAP
+  panel. corpus_v2 = v1 + Nick's 93 reviewed CA GBIF frames (rung-B
+  sources fenced from the REAL species split; the stale candidates file
+  over-fenced 111 and was caught).
+- **train_ctl.py**: start/pause/resume/stop + night toggle + config
+  panel (from the run's own config.json — caught a stale hardcoded arch
+  string mislabeling runs) + loss/mAP plots + CPU/GPU/thermal panel.
+  Every control integration-tested live, including server-restart
+  adoption over a running run. Three port-squatter incidents in two
+  days (two stale label GUIs + the page's own polling keeping a dead
+  server alive) → immediate-exit-on-signal fix + cookbook recovery.
+- PR #60 merged (Nick's close-out call); stale PRs #52/#41 closed with
+  comments. NEXT SESSION: PROMPTS §14 — bench window: power rig on
+  nereus000, deploy both candidates, measured ms + mJ, decision table.
+
+---
+
 ## 2026-08-23 — bite E Mac-side arc COMPLETE: tiny 0.729 (capacity confirmed as the binding constraint); decision table minted; bite PR opened
 
 **Branch:** same session. Tiny (identical v2 recipe, arch only) finished:
