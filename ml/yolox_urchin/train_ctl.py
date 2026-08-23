@@ -280,6 +280,15 @@ def main(argv=None):
         targs = targs[1:]
     ctl = Ctl(targs)
     srv = ThreadingHTTPServer((args.bind, args.port), make_handler(ctl))
+    # The browser polls every 2 s; without daemon threads a live request
+    # thread outlives Ctrl-C and the dead-looking process squats on the
+    # port (Errno 48 on relaunch -- bitten live 2026-08-23).
+    srv.daemon_threads = True
+    # The page holds NO state worth flushing and the training child runs
+    # in its own session -- so on SIGINT/SIGTERM, exit immediately and
+    # unconditionally. Guarantees the port is released.
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(_sig, lambda *_: os._exit(0))
     print(f"training control for run '{ctl.run}' on "
           f"http://localhost:{args.port}/  (Ctrl-C to stop the PAGE; "
           f"the training run itself is only stopped by its Stop button)")
