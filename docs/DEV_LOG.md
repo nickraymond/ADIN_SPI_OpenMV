@@ -17,6 +17,21 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-23 — bite E Mac-side arc COMPLETE: tiny 0.729 (capacity confirmed as the binding constraint); decision table minted; bite PR opened
+
+**Branch:** same session. Tiny (identical v2 recipe, arch only) finished:
+**rung-A 0.729** vs nano-v2's 0.654 — ~+0.08 over nano at every matched
+epoch. Compiles clean both boards (AE3 4.97 MB single `ethos-u`, est
+41.7 ms; N6 0 pure-SW). Nano-vs-tiny decision table in STAGE1.md —
+Nick's call, gated on the bench window's measured ms + mJ (power rig
+captured under bite D). Trainer grew --stop-after-hours + pause/resume
+runbook (night-chunked training, Nick's ask). PR opened for the whole
+Mac-side arc; bite E stays open behind the HIL demo + on-board numbers.
+Queued next (Nick's gate given): YOLOX-S @512 labeler/teacher for the
+dive-video pipeline — night sessions via the new scheduling controls.
+
+---
+
 ## 2026-08-22 (night) — bite E continues: v2 0.654 (mosaic+EMA, +0.081 over v1); species head trained, red data-starved (0.435, measured); Tiny capacity probe auto-launched; Nick reviewed 149 GBIF frames
 
 **Branch:** same session continuing. Highlights, details in STAGE1.md +

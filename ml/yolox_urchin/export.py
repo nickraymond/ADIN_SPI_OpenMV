@@ -30,13 +30,14 @@ def main():
     ap.add_argument("ckpt")
     ap.add_argument("--name", required=True)
     ap.add_argument("--size", type=int, default=256)
+    ap.add_argument("--arch", default="yolox-nano")
     ap.add_argument("--skip-compile", action="store_true")
     args = ap.parse_args()
 
     out = EXPORTS / args.name
     out.mkdir(parents=True, exist_ok=True)
 
-    model = build_model(num_classes=1)
+    model = build_model(num_classes=1, arch=args.arch)
     ck = torch.load(args.ckpt, map_location="cpu")
     model.load_state_dict(ck.get("model", ck))
     raw = RawExport(model).eval()

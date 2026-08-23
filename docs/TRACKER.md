@@ -1800,11 +1800,18 @@ any urchin labelling effort is spent.
       0.225/0.455/0.514/0.573 at e0/10/20/39). Trained int8 recompiles
       clean for BOTH boards, placement identical to the gate. Model card
       + eval table: `ml/yolox_urchin/STAGE1.md`.**
-      REMAINING in this bite: stage-2 GBIF auto-box + species crops +
-      rung B (Nick's label-GUI sitting); int8-vs-float delta; on-board
-      deploy + measured NPU latency + the HIL demo (bench sessions,
-      through the S25 workbench). Execution contract:
-      docs/urchin_corpus_plan.md (approved 2026-08-22); kickoff
+      **MAC-SIDE ARC COMPLETE 2026-08-23; PR OPEN.** Final ladder:
+      nano-v1 0.573 → nano-v2 0.654 (mosaic+ramped-EMA) → **tiny 0.729**
+      (identical recipe — capacity was the binding constraint). All
+      artifacts compile clean on both boards; int8 tax measured
+      (~0.014 @256 nano); nano-vs-tiny decision table in
+      `ml/yolox_urchin/STAGE1.md` gated on measured ms + mJ. Stage 2
+      delivered: auto-box + Nick's 149-frame review → species head
+      rung B purple 0.963 / red 0.435 (red data-starved — dive footage
+      is the unlock). REMAINING in this bite: bench window (deploy both
+      candidates, measured latency + power, tiny arena check, Nick's
+      nano-vs-tiny pick) + the HIL demo through the S25 workbench.
+      Execution contract: docs/urchin_corpus_plan.md; kickoff
       PROMPTS.md §13.
       *(original scope)* Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
