@@ -49,6 +49,10 @@ def load_jsonl(path: Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DS / "corpus_v1"))
+    ap.add_argument("--include-gbif-reviewed", action="store_true",
+                    help="corpus_v2: add Nick's hand-reviewed GBIF frames "
+                         "(classes collapsed to urchin; rung-B source "
+                         "frames fenced)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -116,6 +120,37 @@ def main():
     sources["rf100_underwater"] = {"labels_sha256": sha256(rf_labels),
                                    "counts": rf_counts}
     fence_report["rf100_valid_test"] = rf_counts["valid_test_fenced"]
+
+    # ---- GBIF reviewed (corpus_v2): Nick's hand-verified boxes ----------
+    if args.include_gbif_reviewed:
+        gbif = DS / "gbif_inat"
+        gbif_labels = gbif / "labels.jsonl"
+        # Fence = source images of the species head's ACTUAL rung-B split
+        # (train_species.py's deterministic group split -- NOT the stale
+        # pre-review autobox rung_b_candidates.json, which over-fences).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                               / "yolox_urchin"))
+        from train_species import split_sets, group_key
+        rb_fence = {group_key(p) + ".jpg"
+                    for p, _ in split_sets()["rung_b"]}
+        gb_counts = {"train": 0, "rung_b_fenced": 0, "unreviewed_or_empty": 0,
+                     "boxes": 0}
+        for rec in load_jsonl(gbif_labels):
+            if not rec.get("reviewed") or not rec["boxes"]:
+                gb_counts["unreviewed_or_empty"] += 1
+                continue
+            if Path(rec["file"]).name in rb_fence:
+                gb_counts["rung_b_fenced"] += 1
+                continue
+            boxes = [[0, *b[1:]] for b in rec["boxes"]]  # collapse to urchin
+            train.append({"file": str(gbif / rec["file"]), "w": rec["w"],
+                          "h": rec["h"], "classes": ["urchin"],
+                          "boxes": boxes, "src": "gbif_reviewed"})
+            gb_counts["train"] += 1
+            gb_counts["boxes"] += len(boxes)
+        sources["gbif_reviewed"] = {"labels_sha256": sha256(gbif_labels),
+                                    "counts": gb_counts}
+        fence_report["gbif_rung_b_sources"] = gb_counts["rung_b_fenced"]
 
     # ---- Fence enforcement + artifact checks ----------------------------
     test_names = splits["test"]

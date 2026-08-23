@@ -77,7 +77,11 @@ def main():
                     help="checkpoint and exit cleanly at the first epoch "
                          "boundary past this wall time; resume with "
                          "--resume <run>/last.pt --run-name <same>")
+    ap.add_argument("--corpus", default="corpus_v1",
+                    help="dataset view under ~/nereus_ml/datasets/")
     args = ap.parse_args()
+    global CORPUS
+    CORPUS = Path.home() / "nereus_ml" / "datasets" / args.corpus
 
     device = ("mps" if torch.backends.mps.is_available() else "cpu")
     lr = args.lr if args.lr else 0.01 / 64 * args.batch

@@ -129,6 +129,9 @@ def main():
     torch.manual_seed(SEED)
     RUNDIR.mkdir(parents=True, exist_ok=True)
     split = split_sets()
+    (RUNDIR / "split.json").write_text(json.dumps(
+        {k: [[str(p), c] for p, c in v] for k, v in split.items()},
+        indent=2))  # the auditable record of what rung B actually is
     rng = random.Random(SEED + 1)
     train_groups = sorted({group_key(p) for p, _ in split["train"]})
     rng.shuffle(train_groups)
