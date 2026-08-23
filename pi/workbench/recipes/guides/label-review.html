@@ -24,16 +24,36 @@ recipe card's "chapter": follow it top to bottom.</p>
 </p>
 
 <h2>1. Start the GUI on the Mac</h2>
+<p>For the <b>urchin</b> sets (bite E — GBIF auto-box review etc.), point
+it at the datasets root and pick the set (e.g. <code>gbif_inat</code>)
+from the dropdown:</p>
+<pre>python3 ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/label_gui.py ~/nereus_ml/datasets</pre>
+<p>For the original two-ball captures, the no-argument form still works
+(its default root is <code>~/nereus_ml/datasets/two_ball</code>):</p>
 <pre>python3 ~/Documents/GitHub/ADIN_SPI_OpenMV/ml/fomo/label_gui.py</pre>
 <p class="muted">Absolute path — runs from any directory, any python3 (the
-GUI is stdlib-only). Defaults: dataset
-<code>~/nereus_ml/datasets/two_ball</code>, LAN bind, port 8899. Stop with
-Ctrl-C — every frame is saved as you move off it, nothing is pending.</p>
+GUI is stdlib-only). LAN bind, port 8899.</p>
 <p>If the venv does not exist yet (fresh Mac), rebuild it first:</p>
 <pre>/opt/homebrew/bin/python3.11 -m venv ~/nereus_ml/venvs/fomo
 ~/nereus_ml/venvs/fomo/bin/pip install tensorflow</pre>
 <p class="muted">(TensorFlow is only needed for retraining, not for the GUI
 itself — the GUI is stdlib-only. Any python3 runs it.)</p>
+
+<h2>1b. Stop / reload it</h2>
+<p><b>Ctrl-C in the terminal that runs it</b> is the whole stop story —
+every frame is saved the moment you move off it, so nothing is pending.
+The GUI reads its <code>labels.jsonl</code> files <b>once at startup</b>,
+so after anything regenerates labels (an auto-box pass, a relabel run, a
+new set added), reload = stop it and start it again.</p>
+<p>If the start fails with <code>OSError: [Errno 48] Address already in
+use</code>, an older instance is still holding port 8899 — typically a
+GUI whose terminal window was closed or disconnected (closing the
+terminal does NOT reliably kill it). Find and stop it, then start
+fresh:</p>
+<pre>lsof -ti :8899 | xargs kill</pre>
+<p class="muted">(Safe: kill's default signal lets it exit cleanly, and
+the GUI never has unsaved state. Seen live 2026-08-22: a labeler from a
+19-hour-old session held the port after its terminal vanished.)</p>
 
 <h2>2. Open it</h2>
 <p>The badge above turns green when the labeler answers; the link appears
