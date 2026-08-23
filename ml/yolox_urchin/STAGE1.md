@@ -23,8 +23,17 @@ official train + DUO train + RF100 train; single class `urchin`; Urchinbot
 | stage1_v1 @ epoch 0 | 0.225 | 0.080 |
 | stage1_v1 @ epoch 10 | 0.455 | 0.165 |
 | stage1_v1 @ epoch 20 | 0.514 | 0.203 |
-| **stage1_v1 final (last.pt)** | **0.573** | **0.239** |
+| stage1_v1 final (last.pt) | 0.573 | 0.239 |
+| **stage1_v2 final (ema.pt) — CURRENT BEST** | **0.654** | **0.295** |
 | Urchinbot published ceiling (their full-size model) | 0.908 | — |
+
+**stage1_v2** (2026-08-22, same corpus): + mosaic 0.75 with 10-epoch
+no-aug tail, ramped-decay EMA (the fix — EMA beat raw 0.654 vs 0.650),
+120 epochs. Curve 0.441/0.551/0.601/0.617/0.654 at e20/40/60/80/119.
+Mosaic + schedule + EMA over v1: **+0.081**. int8 @ native 256: 0.202
+(v1: 0.128). Deployment artifacts `~/nereus_ml/exports/stage1_v2/`,
+placement identical (AE3 single `ethos-u`; N6 117-HW/2-hybrid/0-SW).
+YOLOX-Tiny on the identical recipe queued as the capacity probe.
 
 **+0.222 over the 0.351 bar** — the stage-1 "decisively above" criterion.
 Scorer difference noted: ours is pycocotools COCOeval, baselines were

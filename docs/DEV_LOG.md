@@ -17,6 +17,36 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-22 (night) — bite E continues: v2 0.654 (mosaic+EMA, +0.081 over v1); species head trained, red data-starved (0.435, measured); Tiny capacity probe auto-launched; Nick reviewed 149 GBIF frames
+
+**Branch:** same session continuing. Highlights, details in STAGE1.md +
+run dirs:
+- **stage1_v2 FINAL rung-A mAP50 0.654 (EMA ckpt)** — mosaic (box-aware
+  quilt, band-preserving) + ramped EMA + 120 ep; no-aug tail alone
+  +0.037. int8@256 0.202 vs v1's 0.128; both board compiles clean,
+  placement unchanged. Tiny (5.03 M params, same recipe) auto-launched
+  by the queue waiter — the capacity lever, ~1 day ETA.
+- **Species head v1: rung B purple 0.963 / red 0.435** — 42 unique red
+  training crops is the measured bottleneck; dive-footage red pass now
+  evidence-backed. Nick's GUI sitting: 149/149 frames, 23 junk excluded,
+  boxes 347→1,198 (his adds measured stage-1's ~30% recall at conf 0.5
+  on dense frames; kept frames are detector-grade in-water labels,
+  banked for stage 3).
+- **int8 scoring path landed** (+ its own bug caught: /255 fed to a
+  raw-0..255 model; onnx2tf graph NOT resize-safe — int8 scores at
+  native size). Quantization tax measured healthy (~0.014 @256 on v1).
+- Label GUI grew 'c' (clear-frame) + progress bar (18 tests green);
+  cookbook chapter gained stop/reload + urchin-set launch; stale 19-h
+  labeler on :8899 diagnosed/killed. AE3 memory ceilings narrowed from
+  vendor source: /flash 8 MB, /rom 24 MB; Tiny probe artifact staged
+  (SPEC §Open questions). Power/energy re-measure captured under bite D
+  (Nick's go, parts in hand).
+
+**Next:** Tiny final vs v2 decision table (acc/ms/mJ once bench
+measures); stage-2 crop regen with v2; bite PR after the comparison.
+
+---
+
 ## 2026-08-22 (later) — S8 bite E steps 2+3: stage-1 TRAINED AND SCORED — rung-A mAP50 0.573 vs the 0.351 bar; int8 recompiled clean for both boards
 
 **Branch:** `claude/s8-bite-e-urchin-training-ce8830` (continuation of the
