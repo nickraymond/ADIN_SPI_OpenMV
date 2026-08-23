@@ -1741,6 +1741,17 @@ any urchin labelling effort is spent.
       test. Nick's demo already saw six balls at ~2 m with the blob
       path, so that is the number bite C must beat or explain.
 - [ ] **Bite D — the number that decides the board** *(was S24 bite 2.)*
+      **SUB-ITEM added 2026-08-22 (Nick's go, parts in hand, ~few hours
+      bench): power/energy joins the scorecard, re-measured WITHOUT the
+      model confound.** Stand up the USB power-meter rig; measure W
+      during an NPU timing loop of the SAME custom stage-1 model on both
+      boards → mJ/inference next to ms/inference. Supersedes the S24-era
+      5.5 vs 23.7 mJ readings (different model binaries — the confound
+      bite D removes). Motivated by the DUO benchmark's Xavier-measured
+      efficiency method; the buoy power budget makes energy first-class.
+      *Verifiable:* bite D's table carries measured W and mJ/inference
+      per board for one identical model, rig procedure written down so
+      re-measurement is a routine, not an event.
       Re-run the HD tiled-coverage arithmetic on the N6 latencies and
       put it next to the AE3's, so "N6 vs AE3 for edge CV" is a measured
       comparison rather than two tables from different sessions. **Must
