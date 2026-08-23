@@ -222,6 +222,53 @@ class Ctl:
                 "init": Path(pre).name if pre else "scratch (random)",
                 "corpus": c.get("corpus", "corpus_v1")}
 
+    def _scorer_loop(self):
+        """When a session ends (STOPPED + a checkpoint newer than the last
+        scored one), score rung A on the freed GPU and append to the shared
+        rung_a_scores.json. Runs forever in a daemon thread; survives
+        nights the LaunchAgent drives, as long as this page is up."""
+        import re
+        marker = self.rundir / ".scored_mtime"
+        while True:
+            time.sleep(30)
+            try:
+                state, _ = self.pstate()
+                last = self.rundir / "last.pt"
+                if state != "STOPPED" or not last.exists():
+                    continue
+                mt = str(int(last.stat().st_mtime))
+                if marker.exists() and marker.read_text() == mt:
+                    continue
+                cfg = self._cfg()
+                arch = cfg["model"].split(" ")[0]
+                stem = cfg["model"].split("stem=")[1]
+                print(f"[scorer] scoring {last} ({arch}/{stem}) on rung A")
+                out = subprocess.run(
+                    [sys.executable,
+                     str(Path(__file__).resolve().parent / "eval_rung_a.py"),
+                     str(last), "--arch", arch, "--stem", stem],
+                    capture_output=True, text=True, timeout=3600)
+                m = re.search(r"mAP50=([0-9.]+)", out.stdout)
+                if not m:
+                    print("[scorer] no mAP in eval output; leaving unmarked")
+                    continue
+                map50 = float(m.group(1))
+                ep = 0
+                lines = (self.rundir / "loss.log").read_text().splitlines()
+                if lines:
+                    em = re.match(r"e(\d+)", lines[-1])
+                    ep = int(em.group(1)) if em else 0
+                sj = RUNS / "rung_a_scores.json"
+                d = json.loads(sj.read_text()) if sj.exists() else {}
+                pts = [p for p in d.get(self.run, []) if p[0] != ep]
+                d[self.run] = sorted(pts + [[ep, map50]])
+                sj.write_text(json.dumps(d, indent=2))
+                marker.write_text(mt)
+                (self.rundir / "ctl_plot.png").unlink(missing_ok=True)
+                print(f"[scorer] {self.run} e{ep}: mAP50={map50}")
+            except Exception as e:
+                print(f"[scorer] error (will retry): {e}")
+
     def plot_png(self):
         """Loss-vs-iteration PNG for THIS run; regenerated at most every
         60 s and only when loss.log has grown."""
@@ -248,19 +295,38 @@ class Ctl:
         step = max(1, len(ys) // 500)
         ys = ys[::step]
         xs = [i * step * 20 for i in range(len(ys))]  # ~20 iters per line
-        fig, ax = plt.subplots(figsize=(6.4, 2.2), dpi=110)
+
+        sj = RUNS / "rung_a_scores.json"
+        scores = (json.loads(sj.read_text()).get(self.run, [])
+                  if sj.exists() else [])
+
+        n_panels = 2 if scores else 1
+        fig, axes = plt.subplots(n_panels, 1,
+                                 figsize=(6.4, 2.0 * n_panels), dpi=110)
+        axes = [axes] if n_panels == 1 else list(axes)
         fig.patch.set_facecolor("#1d2126")
-        ax.set_facecolor("#1d2126")
-        ax.plot(xs, ys, color="#6cf", lw=1.2)
-        ax.grid(True, color="#2c333a", lw=0.6)
-        for s in ax.spines.values():
-            s.set_color("#3a434c")
-        ax.tick_params(colors="#8fa3b3", labelsize=7)
-        ax.set_xlabel("iterations trained (all sessions)", fontsize=8,
-                      color="#8fa3b3")
-        ax.set_ylabel("loss", fontsize=8, color="#8fa3b3")
-        ax.set_ylim(bottom=0)
-        fig.tight_layout(pad=0.4)
+        for ax in axes:
+            ax.set_facecolor("#1d2126")
+            ax.grid(True, color="#2c333a", lw=0.6)
+            for s in ax.spines.values():
+                s.set_color("#3a434c")
+            ax.tick_params(colors="#8fa3b3", labelsize=7)
+        if scores:
+            sx, sy = zip(*scores)
+            axes[0].plot(sx, sy, color="#1d4", lw=1.4, marker="o", ms=4)
+            for e, v in scores:
+                axes[0].annotate(f"{v:.3f}", (e, v), xytext=(3, 4),
+                                 textcoords="offset points", fontsize=7,
+                                 color="#8fa3b3")
+            axes[0].set_ylabel("rung-A mAP50", fontsize=8, color="#8fa3b3")
+            axes[0].set_xlabel("epoch", fontsize=8, color="#8fa3b3")
+            axes[0].set_ylim(0, 1)
+        axes[-1].plot(xs, ys, color="#6cf", lw=1.2)
+        axes[-1].set_xlabel("iterations trained (all sessions)", fontsize=8,
+                            color="#8fa3b3")
+        axes[-1].set_ylabel("loss", fontsize=8, color="#8fa3b3")
+        axes[-1].set_ylim(bottom=0)
+        fig.tight_layout(pad=0.5)
         fig.savefig(out, facecolor=fig.get_facecolor())
         plt.close(fig)
         return out.read_bytes()
@@ -362,6 +428,7 @@ def main(argv=None):
     if targs and targs[0] == "--":
         targs = targs[1:]
     ctl = Ctl(targs)
+    threading.Thread(target=ctl._scorer_loop, daemon=True).start()
     srv = ThreadingHTTPServer((args.bind, args.port), make_handler(ctl))
     # The browser polls every 2 s; without daemon threads a live request
     # thread outlives Ctrl-C and the dead-looking process squats on the
