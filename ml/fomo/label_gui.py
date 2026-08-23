@@ -158,11 +158,15 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #legend span { padding:.1rem .5rem; border-radius:4px; margin-right:.4rem; }
  .k { color:#8fa3b3; } kbd { background:#262c33; border-radius:3px;
       padding:0 .3rem; border:1px solid #3a434c; }
+ #bar { width:9rem; height:.55rem; background:#262c33; border:1px solid #3a434c;
+        border-radius:4px; overflow:hidden; }
+ #barfill { height:100%; width:0; background:#1d4; transition:width .2s; }
  #help { padding:0 .8rem .8rem; color:#8fa3b3; }
 </style></head><body>
 <div id="top">
  <select id="set"></select>
  <span id="pos" class="k"></span>
+ <div id="bar"><div id="barfill"></div></div>
  <span id="prog" class="k"></span>
  <span id="legend"></span>
  <button id="addclass">+ class</button>
@@ -173,8 +177,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <kbd>&larr;</kbd><kbd>&rarr;</kbd> frame (saves + marks reviewed) &nbsp;
  drag = draw box &nbsp; drag inside = move &nbsp; drag corner = resize &nbsp;
  click = select &nbsp; <kbd>1</kbd>-<kbd>9</kbd> class &nbsp;
- <kbd>x</kbd> delete &nbsp; <kbd>u</kbd> undo &nbsp;
- <kbd>space</kbd> next unreviewed
+ <kbd>x</kbd> delete &nbsp; <kbd>c</kbd> clear all (exclude frame) &nbsp;
+ <kbd>u</kbd> undo &nbsp; <kbd>space</kbd> next unreviewed
 </div>
 <script>
 const PAL = ['#00e5ff','#ff00e5','#ffe500','#00e500','#ff8000','#ffffff'];
@@ -211,6 +215,7 @@ async function show(){
   $('pos').textContent=(idx+1)+'/'+recs.length+'  '+r.file+(r.reviewed?' ✓':'');
   const done=recs.filter(x=>x.reviewed).length;
   $('prog').textContent='reviewed '+done+'/'+recs.length;
+  $('barfill').style.width=(recs.length?100*done/recs.length:0)+'%';
   $('legend').innerHTML=classes().map((c,i)=>
     `<span style="background:${PAL[i%PAL.length]};color:#000">${i+1} ${c}</span>`).join('');
 }
@@ -261,6 +266,9 @@ document.onkeydown=async e=>{
       if(sel>=0){ pushHist(); boxes()[sel][0]=c; dirty=true; draw(); } } }
   else if(e.key==='x'||e.key==='Delete'){ if(sel>=0){ pushHist();
       boxes().splice(sel,1); sel=-1; dirty=true; draw(); } }
+  else if(e.key==='c'){ if(boxes().length){ pushHist();
+      recs[idx].boxes=[]; sel=-1; dirty=true; draw();
+      msg('cleared — frame excluded (u to undo)'); } }
   else if(e.key==='u'){ if(hist.length){ recs[idx].boxes=JSON.parse(hist.pop());
       sel=-1; dirty=true; draw(); } }
 };

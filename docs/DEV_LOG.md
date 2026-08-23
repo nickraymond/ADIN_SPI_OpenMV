@@ -17,6 +17,146 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-23 (later) — session close: labeler running overnight (COCO-init yolox-s, 0.658 @ e1); train_ctl page shipped + live-tested; corpus_v2; PR #60 merged
+
+- **Labeler** (`stage1_s_labeler`): stock-stem YOLOX-S, COCO-pretrained
+  init (456/462 tensors), corpus_v2 — **rung-A 0.658 after ONE epoch**
+  (already over nano-v2's final). Running via train_ctl in 8 h night
+  sessions; the page auto-scores each session end and grows the mAP
+  panel. corpus_v2 = v1 + Nick's 93 reviewed CA GBIF frames (rung-B
+  sources fenced from the REAL species split; the stale candidates file
+  over-fenced 111 and was caught).
+- **train_ctl.py**: start/pause/resume/stop + night toggle + config
+  panel (from the run's own config.json — caught a stale hardcoded arch
+  string mislabeling runs) + loss/mAP plots + CPU/GPU/thermal panel.
+  Every control integration-tested live, including server-restart
+  adoption over a running run. Three port-squatter incidents in two
+  days (two stale label GUIs + the page's own polling keeping a dead
+  server alive) → immediate-exit-on-signal fix + cookbook recovery.
+- PR #60 merged (Nick's close-out call); stale PRs #52/#41 closed with
+  comments. NEXT SESSION: PROMPTS §14 — bench window: power rig on
+  nereus000, deploy both candidates, measured ms + mJ, decision table.
+
+---
+
+## 2026-08-23 — bite E Mac-side arc COMPLETE: tiny 0.729 (capacity confirmed as the binding constraint); decision table minted; bite PR opened
+
+**Branch:** same session. Tiny (identical v2 recipe, arch only) finished:
+**rung-A 0.729** vs nano-v2's 0.654 — ~+0.08 over nano at every matched
+epoch. Compiles clean both boards (AE3 4.97 MB single `ethos-u`, est
+41.7 ms; N6 0 pure-SW). Nano-vs-tiny decision table in STAGE1.md —
+Nick's call, gated on the bench window's measured ms + mJ (power rig
+captured under bite D). Trainer grew --stop-after-hours + pause/resume
+runbook (night-chunked training, Nick's ask). PR opened for the whole
+Mac-side arc; bite E stays open behind the HIL demo + on-board numbers.
+Queued next (Nick's gate given): YOLOX-S @512 labeler/teacher for the
+dive-video pipeline — night sessions via the new scheduling controls.
+
+---
+
+## 2026-08-22 (night) — bite E continues: v2 0.654 (mosaic+EMA, +0.081 over v1); species head trained, red data-starved (0.435, measured); Tiny capacity probe auto-launched; Nick reviewed 149 GBIF frames
+
+**Branch:** same session continuing. Highlights, details in STAGE1.md +
+run dirs:
+- **stage1_v2 FINAL rung-A mAP50 0.654 (EMA ckpt)** — mosaic (box-aware
+  quilt, band-preserving) + ramped EMA + 120 ep; no-aug tail alone
+  +0.037. int8@256 0.202 vs v1's 0.128; both board compiles clean,
+  placement unchanged. Tiny (5.03 M params, same recipe) auto-launched
+  by the queue waiter — the capacity lever, ~1 day ETA.
+- **Species head v1: rung B purple 0.963 / red 0.435** — 42 unique red
+  training crops is the measured bottleneck; dive-footage red pass now
+  evidence-backed. Nick's GUI sitting: 149/149 frames, 23 junk excluded,
+  boxes 347→1,198 (his adds measured stage-1's ~30% recall at conf 0.5
+  on dense frames; kept frames are detector-grade in-water labels,
+  banked for stage 3).
+- **int8 scoring path landed** (+ its own bug caught: /255 fed to a
+  raw-0..255 model; onnx2tf graph NOT resize-safe — int8 scores at
+  native size). Quantization tax measured healthy (~0.014 @256 on v1).
+- Label GUI grew 'c' (clear-frame) + progress bar (18 tests green);
+  cookbook chapter gained stop/reload + urchin-set launch; stale 19-h
+  labeler on :8899 diagnosed/killed. AE3 memory ceilings narrowed from
+  vendor source: /flash 8 MB, /rom 24 MB; Tiny probe artifact staged
+  (SPEC §Open questions). Power/energy re-measure captured under bite D
+  (Nick's go, parts in hand).
+
+**Next:** Tiny final vs v2 decision table (acc/ms/mJ once bench
+measures); stage-2 crop regen with v2; bite PR after the comparison.
+
+---
+
+## 2026-08-22 (later) — S8 bite E steps 2+3: stage-1 TRAINED AND SCORED — rung-A mAP50 0.573 vs the 0.351 bar; int8 recompiled clean for both boards
+
+**Branch:** `claude/s8-bite-e-urchin-training-ce8830` (continuation of the
+compile-gate session after Nick approved YOLOX-Nano). Zero board contact.
+
+**Done:**
+- corpus_v1 built + fence-verified (19,904/96,326 train, val 976; builder
+  `ml/urchin_data/build_corpus_v1.py`, manifest with per-source shas).
+- YOLOX-Nano stage-1 trained on MPS (40 epochs, ~3 h, 4.3 it/s @ b32) and
+  scored on rung A: **0.573 mAP50 final** (0.225 → 0.455 → 0.514 → 0.573
+  at e0/10/20/39) vs yolo11n 0.243 / yolo11x 0.351 / ceiling 0.908.
+  Model card + eval table: `ml/yolox_urchin/STAGE1.md`.
+- Trained weights exported int8 + recompiled for BOTH boards
+  (`ml/yolox_urchin/export.py`): placement identical to the untrained
+  gate — AE3 single `ethos-u` op / N6 117-HW+2-hybrid+0-SW of 119.
+
+**Broke/surprised us:**
+- Urchinbot's official val.txt and test.txt share an image (im5348179.JPG;
+  true counts 7913/977/983 vs published 7912/976/982) — resolved to test,
+  recorded in the corpus manifest.
+- Naive random crops gave 70% target-free samples (box-aware crop fixed:
+  74% of boxes in the 24–64 px band, p50 34). Fixed-decay EMA scores ZERO
+  mid-run from init pollution (0.478 even at e39 vs last.pt 0.573) —
+  ramped decay is the queued fix; last.pt is the stage-1 model. Three
+  legacy `.type(str)` casts make stock YOLOX MPS-hostile — patched at
+  import in ml/yolox_urchin/model.py, third_party untouched.
+
+**Next:** stage 2 (auto-box GBIF via stage-1 model + underwater/junk
+filter, species crops, rung B ~150+150 for Nick's label-GUI sitting) —
+gated on Nick. Owed: int8-vs-float delta, on-board latency (bench
+sessions), PR for the bite.
+
+---
+
+## 2026-08-22 — S8 bite E step 1: compile gate PASSED — Apache-2.0 holds, YOLOX-Nano recommended; STOPPED for Nick's pick
+
+**Branch:** `claude/s8-bite-e-urchin-training-ce8830` (Mac-side only — ZERO
+board contact, per the kickoff; boards belong to the bench sessions).
+
+**Done:**
+- The corpus plan's Decisions #2 gate run to completion: two untrained
+  Apache-2.0 candidates (YOLOX-Nano conv-stem, NanoDet-Plus-m; 256 px,
+  1-class, int8 NHWC) exported and pushed through BOTH board compilers
+  via the B1 scaffold (`ml/compile_model.sh`). **PASS — the AGPL fallback
+  clause is dead.** Report: `ml/compile_gate_report.md`.
+- Verdict short form: YOLOX-Nano = **single `ethos-u` op on the AE3
+  (zero CPU fallback, vela est 28.1 ms)** and 116-HW/2-hybrid/0-SW of
+  118 epochs on the N6. NanoDet = CPU TRANSPOSE fallback on the AE3 and
+  36 hybrid + 2 SW epochs on the N6 (ShuffleNet channel shuffle, both
+  targets). Recommendation: YOLOX-Nano; YOLOX-Tiny is the same-family
+  capacity fallback.
+- Toolchain: new `~/nereus_ml/venvs/gate` (torch-cpu + TF 2.19 +
+  onnx2tf); run metadata + artifact sha256s in
+  `~/nereus_ml/runs/compile_gate_2026-08-22.json`; models/logs under
+  `~/nereus_ml/exports/compile_gate/`.
+
+**Broke/surprised us:**
+- Stock YOLOX won't convert or place as-is: the Focus stem's stride-2
+  slices are both un-Vela-able (stride-1-only STRIDED_SLICE) and
+  onnx2tf-hostile — swapped for a plain stride-2 conv (YOLOX-ti-lite's
+  exact adaptation, recorded in the report). Head flatten+concat tail
+  also dropped for raw per-level maps (decode on-board, FOMO precedent).
+- onnx2tf's calibration-data download is silently broken (pickled npy
+  refused) — pre-seeding the npy in cwd fixes it; NanoDet needs an
+  onnxsim pass first or shapes collapse to zero-dim. Both potholes in
+  the report's §Repro.
+
+**Next:** STOPPED at the kickoff's gate — Nick picks the architecture.
+Then step 2 (corpus_v1 merged view, symlink/manifest, Urchinbot test
+split fenced) and stage-1 training against the 0.351 rung-A bar.
+
+---
+
 ## 2026-08-21 (night) — S26 bites 1+2 done in one desk session: corpus verified, downloaded (~45 GB), license-captured, QA'd, converted for S8; NOAA baseline measured weak; bite-3 plan drafted
 
 **Branch:** `claude/urchin-dataset-s26-a1517e` (parallel desk track — ZERO

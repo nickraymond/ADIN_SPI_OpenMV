@@ -473,3 +473,52 @@ checkpoints. Trust artifacts, not exit codes: a "trained" model is a
 scored model. Long/expensive runs (>~30 min GPU/CPU) get my gate first.
 Milestone report format per CLAUDE.md.
 ```
+
+## 14 — Ready to paste: S8 bench window — power rig + deploy both stage-1 candidates + measured numbers (written 2026-08-23, after bite E's Mac-side arc merged)
+
+```
+Run /agent-entry. This is an S8 BENCH session on nereus000 — board
+contact allowed, THROUGH the S25 workbench discipline (check
+http://nereus000:8088/api/runner + /api/preflight before any board
+touch; one owner per port; 35 s settle after any stop; by-id paths
+ONLY; use the ae3-board-access skill before any mpremote against the
+AE3). The Mac may be busy training the labeler — do NOT start Mac GPU
+work; artifacts below are already built.
+
+CONTEXT (do not re-derive): S8 bite E's Mac-side arc is MERGED (PR #60).
+Two deployment candidates are staged, placement-verified, int8:
+  ~/nereus_ml/exports/stage1_v2/       nano  (1.0 MB, vela est 28.1 ms)
+  ~/nereus_ml/exports/stage1_tiny_v1/  tiny  (4.97 MB, vela est 41.7 ms)
+Each holds ae3/ (vela .tflite for /flash) and n6/ (ROMFS-able binary).
+Decision table awaiting the bench numbers: ml/yolox_urchin/STAGE1.md.
+Deploy routes are PROVEN (S8 B1 / ml/README.md): AE3 = copy to /flash +
+sha read-back; N6 = ROMFS image via USB DFU alt 3 (NEVER alt 0).
+Vela estimates have measured 2.7x optimistic before (FOMO 2.05->5.51 ms)
+— only measured numbers count (S8 standing rule).
+
+TASKS, in order, each nibble-gated by Nick:
+1. POWER RIG FIRST (bite D sub-item, Nick's parts in hand, ~few hours):
+   stand up the USB power meter inline on a board's supply, get the Pi
+   LOGGING it (identify the meter's interface; a timestamped CSV/JSONL
+   logger the workbench can start/stop; write the procedure down as a
+   routine). Verifiable: a logged idle-vs-load power trace of one board.
+2. Deploy BOTH candidates to BOTH boards by the proven routes; verify
+   by bytes (sha read-back / partition read-back), never by rc.
+3. Measured per-inference latency: timing loop per model per board,
+   NPU-consistency check vs the tables (a CPU fallback or a failed
+   tiny SRAM arena is obvious in the number). Also os.statvfs('/flash')
+   — closes SPEC's AE3 memory open question.
+4. mJ/inference from the power rig during the timing loops — the
+   DUO-style energy column, both boards, SAME model (kills the S24-era
+   model-binary confound).
+5. Fill the decision table in ml/yolox_urchin/STAGE1.md + bite D's
+   table; STOP for Nick's nano-vs-tiny pick.
+Bank but do not start: the HIL demo (urchin footage on a screen via the
+workbench) rides the picked model as bite E's demo bar.
+
+RULES: no firmware flashing beyond the proven model-deploy routes; the
+workbench page stops demos, never kill -9 on port holders; boards left
+enumerated + ports free at session end; artifacts (traces, tables,
+logs) recorded under ~/nereus_ml/ + repo eval tables. Milestone report
+format per CLAUDE.md.
+```

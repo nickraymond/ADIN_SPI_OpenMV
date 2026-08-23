@@ -1,7 +1,24 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-21 night (**S26 bites 1+2 ESSENTIALLY DONE in one
+*Last updated: 2026-08-22 later (**S8 bite E stage 1 TRAINED AND SCORED:
+rung-A mAP50 0.573 vs yolo11x's 0.351 bar (yolo11n 0.243, ceiling
+0.908)** — YOLOX-Nano (Nick's pick after the gate) on corpus_v1
+(19,904/96,326, all test splits fenced; official val/test even share one
+image — resolved to test). Trained int8 recompiles clean for BOTH boards,
+placement identical to the gate (AE3 single `ethos-u` op; N6
+117-HW/2-hybrid/0-SW). Model card `ml/yolox_urchin/STAGE1.md`. NEXT =
+stage-2 GBIF auto-box + rung B (Nick's gate); owed: int8-vs-float delta,
+on-board latency (bench sessions), bite PR. Previous:*
+*2026-08-22 (**S8 bite E step 1 — the architecture compile
+gate — PASSED: Apache-2.0 holds, AGPL fallback dead.** YOLOX-Nano
+(conv-stem) is fully NPU-mapped on the AE3 (single `ethos-u` op, vela est
+28.1 ms) and 116/118 pure-HW epochs on the N6; NanoDet-Plus-m carries
+Transpose fallbacks on both. Report `ml/compile_gate_report.md`;
+**WAITING on Nick's pick (recommendation YOLOX-Nano)** before corpus_v1 +
+stage-1 training vs the 0.351 rung-A bar. Mac-side only, zero board
+contact. Previous:*
+*2026-08-21 night (**S26 bites 1+2 ESSENTIALLY DONE in one
 desk session — the corpus Nick picked (Urchinbot + DUO + GBIF-clean +
 RF100 + 74-img) is VERIFIED, DOWNLOADED (~45 GB incl. Urchinbot's full
 9,872/9,872, zero corrupt), license-captured verbatim, QA-spot-checked,
@@ -1724,6 +1741,17 @@ any urchin labelling effort is spent.
       test. Nick's demo already saw six balls at ~2 m with the blob
       path, so that is the number bite C must beat or explain.
 - [ ] **Bite D — the number that decides the board** *(was S24 bite 2.)*
+      **SUB-ITEM added 2026-08-22 (Nick's go, parts in hand, ~few hours
+      bench): power/energy joins the scorecard, re-measured WITHOUT the
+      model confound.** Stand up the USB power-meter rig; measure W
+      during an NPU timing loop of the SAME custom stage-1 model on both
+      boards → mJ/inference next to ms/inference. Supersedes the S24-era
+      5.5 vs 23.7 mJ readings (different model binaries — the confound
+      bite D removes). Motivated by the DUO benchmark's Xavier-measured
+      efficiency method; the buoy power budget makes energy first-class.
+      *Verifiable:* bite D's table carries measured W and mJ/inference
+      per board for one identical model, rig procedure written down so
+      re-measurement is a routine, not an event.
       Re-run the HD tiled-coverage arithmetic on the N6 latencies and
       put it next to the AE3's, so "N6 vs AE3 for edge CV" is a measured
       comparison rather than two tables from different sessions. **Must
@@ -1754,7 +1782,38 @@ any urchin labelling effort is spent.
       rather than inventing a fake blob confidence. *Verifiable:* live
       page shows per-detection conf for the model panels; a ball
       half-out of threshold shows visibly lower conf than a centred one.
-- [ ] **Bite E — the urchin model.** Once the path is proven and a
+- [~] **Bite E — the urchin model.** → **STEP 1 (compile gate) DONE
+      2026-08-22: PASS — Apache-2.0 holds, no AGPL fallback.** Two
+      untrained candidates (256 px, 1-class, int8) through BOTH
+      compilers via B1's scaffold: **YOLOX-Nano (conv stem) = single
+      `ethos-u` op on the AE3 (zero CPU fallback, vela est 28.1 ms) and
+      116-HW/2-hybrid/0-SW of 118 epochs on the N6**; NanoDet-Plus-m =
+      CPU TRANSPOSE fallback (AE3) + 36 hybrid/2 SW epochs (N6), the
+      ShuffleNet channel shuffle both times. Report + deviations
+      (Focus→conv stem; raw per-level head outputs):
+      `ml/compile_gate_report.md`; run metadata
+      `~/nereus_ml/runs/compile_gate_2026-08-22.json`.
+      **STEPS 2+3 DONE 2026-08-22 (Nick picked YOLOX-Nano): corpus_v1
+      built + fence-verified (19,904 imgs / 96,326 boxes; official
+      val/test even collide on one image — resolved to test) and stage-1
+      TRAINED + SCORED — rung-A mAP50 0.573 vs the 0.351 bar (curve
+      0.225/0.455/0.514/0.573 at e0/10/20/39). Trained int8 recompiles
+      clean for BOTH boards, placement identical to the gate. Model card
+      + eval table: `ml/yolox_urchin/STAGE1.md`.**
+      **MAC-SIDE ARC COMPLETE 2026-08-23; PR OPEN.** Final ladder:
+      nano-v1 0.573 → nano-v2 0.654 (mosaic+ramped-EMA) → **tiny 0.729**
+      (identical recipe — capacity was the binding constraint). All
+      artifacts compile clean on both boards; int8 tax measured
+      (~0.014 @256 nano); nano-vs-tiny decision table in
+      `ml/yolox_urchin/STAGE1.md` gated on measured ms + mJ. Stage 2
+      delivered: auto-box + Nick's 149-frame review → species head
+      rung B purple 0.963 / red 0.435 (red data-starved — dive footage
+      is the unlock). REMAINING in this bite: bench window (deploy both
+      candidates, measured latency + power, tiny arena check, Nick's
+      nano-vs-tiny pick) + the HIL demo through the S25 workbench.
+      Execution contract: docs/urchin_corpus_plan.md; kickoff
+      PROMPTS.md §13.
+      *(original scope)* Once the path is proven and a
       labelled set exists, same pipeline against the real target; the
       T2 accuracy question (urchin ≥24–32 px) rides here.
       **Demo bar set by Nick 2026-08-21: a truly custom urchin model
