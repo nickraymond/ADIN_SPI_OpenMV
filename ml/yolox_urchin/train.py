@@ -72,6 +72,10 @@ def main():
                     help="mosaic probability (0 disables)")
     ap.add_argument("--no-aug-epochs", type=int, default=10,
                     help="final epochs with mosaic off (YOLOX recipe)")
+    ap.add_argument("--stop-after-hours", type=float, default=0,
+                    help="checkpoint and exit cleanly at the first epoch "
+                         "boundary past this wall time; resume with "
+                         "--resume <run>/last.pt --run-name <same>")
     args = ap.parse_args()
 
     device = ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -182,6 +186,13 @@ def main():
         torch.save({"model": ema.shadow, "epoch": epoch},
                    rundir / "ema.pt")
         print(f"epoch {epoch} done, checkpointed -> {rundir}")
+        if (args.stop_after_hours
+                and time.time() - t_start > args.stop_after_hours * 3600):
+            print(f"SESSION BOUNDARY: --stop-after-hours "
+                  f"{args.stop_after_hours} reached at epoch {epoch}; "
+                  f"resume with --resume {rundir}/last.pt "
+                  f"--run-name {run}")
+            return
 
 
 if __name__ == "__main__":
