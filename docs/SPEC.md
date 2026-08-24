@@ -194,6 +194,27 @@ pair, USB carrying no video.
   artifact (`~/nereus_ml/exports/tiny_probe/`) on the AE3, measure
   per-inference latency (a CPU fallback or arena failure is obvious in
   the number), plus `os.statvfs('/flash')` for free-space bookkeeping.
+  **PARTIALLY MEASURED 2026-08-23 (S8 bench window):** statvfs confirms
+  /flash = 8,364,032 B (2042 × 4096 blocks) — and the bench fixture
+  leaves it at **0 B free** (ref_scene 5.38 MB + bridge stack + models),
+  so the 4.97 MB tiny does not even *store* without clearing fixture
+  files. The nano (1.0 MB, 512 KB SRAM plan) ran at a measured
+  **24.13 ms** — NPU-confirmed, faster than vela's 28.1 ms estimate.
+  **ANSWERED 2026-08-23 (later the same window): tiny does NOT run from
+  /flash — `ml.Model()` raises `MemoryError('Out of memory')` on the
+  sha-verified 4.97 MB file.** The binding constraint is not the vela
+  SRAM arena (never reached): a /flash model is COPIED INTO HEAP (only
+  /rom models are memory-mapped — the "~2.2 ms load" fact), and free
+  heap on the S18 build is ~4.09 MB. Rule of thumb this mints: **on the
+  AE3, a /flash-deployed model must fit in free heap (~4 MB); larger
+  models need the ROMFS (/rom, 24 MB, memory-mapped) route** — untested
+  for our artifacts, needs an AE3 ROMFS image + DFU flash. Nano
+  (1.0 MB) is unaffected: measured 24.13/25.22 ms across two runs. Also learned, the
+  hard way: **`ml.Model()` on a TRUNCATED tflite hard-hangs the AE3's
+  firmware** (no exception, no watchdog; warm mpremote reset refused —
+  physical replug required). A partial copy left by a full-disk `cp` is
+  exactly how such a file appears; probe scripts must size-check a model
+  file against its manifest before loading it.
 
 - **ANSWERED 2026-08-19 (Nick): it is ONE physical AE3, reflashed.**
   Another agent flashed custom firmware onto it to push VGA fps, which

@@ -17,6 +17,65 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-23 (bench) — S8 bench window: 3 of 4 stage-1 latencies MEASURED (all NPU-class); N6 deploy byte-verified; AE3 tiny blocked by flash-full + a new firmware-hang trap
+
+**Branch:** `claude/s8-bench-deployment-latency-ac02d1`
+
+**Done:**
+- Bench recovered twice: AE3 was OFF the bus on arrival (error -71 since
+  Aug 22 ~03:30; Nick power-cycled after the FTDI USB-stick meter was
+  removed — the stick is retired, INA3221 is the rig now).
+- Combined N6 ROMFS image built (BOTH candidates + all vendor models,
+  75.7% of 24 MiB; mkromfs's stedgeai pass verified deterministic vs the
+  staged exports). Flashed via DFU alt 3; partition read-back sha ==
+  source image sha; /rom lists 19 entries, vendor content intact.
+- **Measured (30-run means, sha-verified artifacts): N6 nano 10.64 ms
+  (94.0/s) · N6 tiny 31.25 ms (32.0/s) · AE3 nano 24.13 ms (41.4/s,
+  beats vela's 28.1 est). All NPU-consistent.** Tables updated in
+  ml/yolox_urchin/STAGE1.md.
+- Power rig software shipped ready-to-wire: pi/workbench/power_log.py
+  (INA3221, register map verified vs Adafruit's driver; JSONL, probe
+  mode, config read-back) + POWER_RIG.md procedure.
+
+**Broke/surprised us:**
+- **AE3 /flash is 8 MB with 0 B free** under the S18/S23 fixture
+  (ref_scene 5.38 MB + bridge stack): tiny's cp died at 700 KB, and the
+  probe then **hard-hung the firmware by ml.Model()-loading that
+  truncated file** (no exception; warm reset refused; physical replug
+  needed — SPEC §Open questions updated with the trap).
+- ref_scene deletion is classifier-gated for the agent; script staged at
+  pi:~/bm_bench/ae3_free_space.py (all six files verified restorable
+  from bench/assets/ref_scene/ via demo_up staging).
+
+**Continued (same window, after Nick's two replugs):** space-clear ran
+(6.08 MB freed; the first "run" had failed because the blocked compound
+command never scp'd the script — caught by artifact, not rc), tiny
+cp'd + **sha-verified on /flash**, and the probe ANSWERED the SPEC
+question: **tiny does NOT run on the AE3 — MemoryError on load. /flash
+models are copied into heap (~4.09 MB free); only /rom is
+memory-mapped. ROMFS route = the untested door.** Nano re-measured
+25.22 ms (consistent). Bite-R incident #8 logged en route: fresh boot,
+file-ops only, ~6 attaches → persistent raw-repl refusal, replug-only.
+mJ columns still owed (Nick wiring the INA3221 in parallel).
+
+**Continued (2026-08-24, INA3221 live): THE TABLE IS COMPLETE — and
+tiny RUNS on the AE3 via ROMFS.** Nick's gate taken mid-window: built a
+combined AE3 ROMFS0 image (vela RTSS_HP_SRAM_OSPI — the board's own
+ROMFS profile; vendor yolov8n reproduced byte-size-exact 1,994,976 B),
+flashed via the AE3 bootloader's named DFU alt "ROMFS0" (S7 tooling's
+alt list, confirmed live), read-back sha == source, vendor /rom content
+intact (22 entries). Measured, all load-signature-verified on the
+INA3221 (CH1=AE3, CH3=N6): **AE3 nano 26.35 ms /rom / 6.69 mJ gross ·
+AE3 tiny 58.40 ms / 17.61 mJ · N6 nano 10.55 ms / 11.50 mJ · N6 tiny
+31.17 ms / 38.25 mJ; idle 181 vs ~790 mW.** The S24 4.3× energy gap
+shrinks to 1.7× same-model (the confound was real) but the IDLE floor
+stays 4.3× — the urchin-duty-cycle story. I2C enable made persistent.
+Power rig routine proven end-to-end (power_log → stamp_lines →
+power_calc). Raw logs: ~/nereus_ml/runs/bench_2026-08-24/. STOPPED for
+Nick's nano-vs-tiny pick; HIL demo banked behind it.
+
+---
+
 ## 2026-08-23 (later) — session close: labeler running overnight (COCO-init yolox-s, 0.658 @ e1); train_ctl page shipped + live-tested; corpus_v2; PR #60 merged
 
 - **Labeler** (`stage1_s_labeler`): stock-stem YOLOX-S, COCO-pretrained

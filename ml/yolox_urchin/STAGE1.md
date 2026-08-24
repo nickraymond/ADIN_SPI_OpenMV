@@ -45,14 +45,62 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 
 ## Nano-vs-Tiny decision (Nick's call; bench measurements pending)
 
-| | nano (stage1_v2) | tiny (stage1_tiny_v1) |
+**MEASURED 2026-08-24 (S8 bench window, COMPLETE — INA3221 rig,
+load-signature-verified channels, 300-run windows, artifacts
+sha/partition-verified before timing):**
+
+| measured | AE3 nano | AE3 tiny | N6 nano | N6 tiny |
+|---|---|---|---|---|
+| ms/inference | 26.35 /rom (24.13–25.22 /flash) | **58.40** (/rom only) | **10.55** | 31.17 |
+| inferences/s | 38–41 | 17.1 | 94.8 | 32.1 |
+| mJ/inf gross | **6.69** | 17.61 | 11.50 | 38.25 |
+| mJ/inf net-over-idle | 1.90 | 7.01 | 3.22 | 13.15 |
+| idle mW (sensor on) | 181 | 181 | 781–804 | 781–804 |
+| load mW | 253 | 301 | 1085 | 1225 |
+
+| static | nano (stage1_v2) | tiny (stage1_tiny_v1) |
 |---|---|---|
 | rung-A mAP50 (float, 640) | 0.654 | **0.729** (+0.075) |
 | int8 @ native 256 | 0.202 | **0.248** |
-| AE3 est. latency (vela) | 28.1 ms (35.6/s) | 41.7 ms (24.0/s) |
-| size on /flash (8 MB) | 1.0 MB | 4.97 MB |
-| vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
-| measured ms + mJ | bench window owed | bench window owed |
+| AE3 deploy route | /flash (1.0 MB) or /rom | **/rom ONLY** (4.97 MB > ~4.09 MB heap; /flash load = MemoryError) |
+| vela est. (DTCM/MRAM cfg) | 28.1 ms | 41.7 ms |
+
+Reading the table:
+- **The N6 wins throughput ~2.5× (nano) / 1.9× (tiny); the AE3 wins
+  energy 1.7× (nano) / 2.2× (tiny) gross.** The S24-era "AE3 4.3×
+  better mJ" shrinks to 1.7× once the model confound is removed — but
+  the **idle floor stays 4.3× apart (181 vs ~790 mW)**, and at urchin
+  duty cycles (1 frame per minutes-to-hours) idle, not inference,
+  dominates the battery.
+- **Tiny-on-AE3 works via ROMFS** (2026-08-24: combined ROMFS0 image,
+  vela RTSS_HP_SRAM_OSPI profile, DFU alt "ROMFS0", read-back
+  sha-verified; /rom is memory-mapped so the heap limit vanishes).
+  OSPI XIP costs latency: tiny 58.4 ms vs the 41.7 ms DTCM-config
+  estimate; nano 26.35 /rom vs 24.13 /flash.
+- Method: INA3221 CH1=AE3 / CH3=N6 @10 Hz, both channels identified by
+  load signature (idle→window step). Gross = board_mW × window ÷ N (the
+  duty-cycle number); net subtracts sensor-on idle. Raw logs:
+  `~/nereus_ml/runs/bench_2026-08-24/`.
+
+Measurement notes (2026-08-23 bench window, 30-run means, QVGA frame,
+sha/partition read-back verified before timing):
+- AE3 nano beat its vela estimate (24.13 vs 28.1 ms) — the 2.7×-optimism
+  precedent did NOT repeat on this architecture; both boards' numbers are
+  NPU-consistent (CPU fallback would be 10×+).
+- N6 deploy = ONE combined ROMFS image carrying both candidates + all
+  vendor models (75.7% of 24 MiB), so A/B needs no reflash.
+- **tiny CANNOT RUN on the AE3 as deployed (measured 2026-08-23):**
+  sha-verified on /flash, but `ml.Model()` raises
+  `MemoryError('Out of memory')` — a /flash model is copied into heap
+  (only /rom models are memory-mapped; DESIGN/S8 "model load ~2.2 ms"
+  fact), and 4.97 MB exceeds the ~4.09 MB free heap on the S18 build.
+  The vela SRAM-arena question was never even reached. **The documented
+  door for tiny-on-AE3 is the ROMFS route** (24 MB /rom, memory-mapped;
+  needs an AE3 ROMFS image build + DFU flash — a bench decision, not
+  attempted this window). Also: tiny only *stored* after clearing the
+  5.38 MB ref_scene fixture from the 8 MB /flash (0 B free as found;
+  1.1 MB free with both models aboard).
+- AE3 free-heap before load: 4.09 MB (gc.mem_free, S18 patched build).
 
 Both models' artifacts are staged for the bench. The urchin duty cycle
 is an energy problem (TRACKER: frames per minutes-to-hours), so tiny's

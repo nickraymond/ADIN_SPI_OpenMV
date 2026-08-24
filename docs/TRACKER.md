@@ -1,7 +1,23 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-22 later (**S8 bite E stage 1 TRAINED AND SCORED:
+*Last updated: 2026-08-24 (**S8 BENCH WINDOW COMPLETE: the nano-vs-tiny
+decision table is fully MEASURED — ms AND mJ, both boards, one model
+pair, INA3221 rig proven end-to-end — and tiny RUNS on the AE3 via a
+ROMFS0 DFU flash (read-back sha-verified; /rom is memory-mapped, so the
+/flash heap limit vanishes).** Numbers (300-run windows,
+load-signature-verified channels): AE3 nano 26.35 ms / 6.69 mJ gross ·
+AE3 tiny 58.40 ms / 17.61 mJ · N6 nano 10.55 ms / 11.50 mJ · N6 tiny
+31.17 ms / 38.25 mJ; idle floors 181 mW (AE3) vs ~790 mW (N6). Same-
+model energy gap = 1.7× AE3 (S24's 4.3× was model-confounded; the IDLE
+gap stays 4.3× and dominates urchin duty cycles). En route: AE3 /flash
+found 0 B free (ref_scene cleared, restorable via demo_up), truncated-
+tflite ml.Model() hard-hang trap recorded (SPEC), bite-R incident #8
+(file-ops-only session). **STOPPED at task 5's gate: Nick's nano-vs-
+tiny pick; the HIL demo rides the picked model.** Tables:
+ml/yolox_urchin/STAGE1.md; raw logs ~/nereus_ml/runs/bench_2026-08-24/.
+Previous:*
+*2026-08-22 later (**S8 bite E stage 1 TRAINED AND SCORED:
 rung-A mAP50 0.573 vs yolo11x's 0.351 bar (yolo11n 0.243, ceiling
 0.908)** — YOLOX-Nano (Nick's pick after the gate) on corpus_v1
 (19,904/96,326, all test splits fenced; official val/test even share one
@@ -1819,6 +1835,19 @@ any urchin labelling effort is spent.
       **Demo bar set by Nick 2026-08-21: a truly custom urchin model
       running on BOTH boards with a screen showing the urchins — the
       project's HIL. This demo is the GATE for sprint S27 below.**
+      **HIL SCOPE ADDITION (Nick 2026-08-24, banked from the bench
+      window): the HIL harness runs each frame BOTH ways — whole-frame
+      256 vs TILED at native pixels — per board, per model (nano AND
+      tiny; tiny now runs on the AE3 via /rom), counts vs ground truth
+      with pixels-on-target recorded per detection. Rationale: the
+      deployed-size benchmark score (int8@256: nano 0.202 / tiny 0.248
+      vs float-640 0.654/0.729) is a whole-scene-downscale artifact —
+      small urchins fall below the ~24–32 px floor; tiling keeps native
+      px and its cost is already priced (a tile = one measured
+      inference: VGA≈4 tiles → tiny ~4.3 frames/s, ~70 mJ/frame —
+      affordable at urchin duty cycles). This matrix is the accuracy
+      row of the nano-vs-tiny decision; the ms/mJ rows are DONE
+      (STAGE1.md, 2026-08-24).**
       What carries over from B2 unchanged: the whole toolchain (capture
       rig, labels.jsonl format, trainer, int8 export, both compile+
       deploy routes, recipe/page). What is genuinely different: labels
