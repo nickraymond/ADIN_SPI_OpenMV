@@ -47,9 +47,19 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   pi:~/bm_bench/ae3_free_space.py (all six files verified restorable
   from bench/assets/ref_scene/ via demo_up staging).
 
-**Next:** Nick replugs the AE3 + runs ae3_free_space.py → tiny cp +
-probe (closes the SPEC arena question) → INA3221 wiring + I2C enable →
-mJ/inference for both boards → nano-vs-tiny pick.
+**Continued (same window, after Nick's two replugs):** space-clear ran
+(6.08 MB freed; the first "run" had failed because the blocked compound
+command never scp'd the script — caught by artifact, not rc), tiny
+cp'd + **sha-verified on /flash**, and the probe ANSWERED the SPEC
+question: **tiny does NOT run on the AE3 — MemoryError on load. /flash
+models are copied into heap (~4.09 MB free); only /rom is
+memory-mapped. ROMFS route = the untested door.** Nano re-measured
+25.22 ms (consistent). Bite-R incident #8 logged en route: fresh boot,
+file-ops only, ~6 attaches → persistent raw-repl refusal, replug-only.
+mJ columns still owed (Nick wiring the INA3221 in parallel).
+
+**Next:** INA3221 probe + power windows (probes staged: ae3_power_probe
+.py; POWER_RIG.md routine) → mJ columns → nano-vs-tiny pick.
 
 ---
 

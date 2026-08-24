@@ -50,7 +50,7 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 | rung-A mAP50 (float, 640) | 0.654 | **0.729** (+0.075) |
 | int8 @ native 256 | 0.202 | **0.248** |
 | AE3 est. latency (vela) | 28.1 ms (35.6/s) | 41.7 ms (24.0/s) |
-| **AE3 MEASURED (2026-08-23)** | **24.13 ms (41.4/s)** | owed: /flash full (see below) |
+| **AE3 MEASURED (2026-08-23)** | **24.13 / 25.22 ms (~40/s, two runs)** | **DOES NOT LOAD: MemoryError** |
 | **N6 MEASURED (2026-08-23)** | **10.64 ms (94.0/s)** | **31.25 ms (32.0/s)** |
 | size on /flash (8 MB) | 1.0 MB | 4.97 MB |
 | vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
@@ -63,11 +63,18 @@ sha/partition read-back verified before timing):
   NPU-consistent (CPU fallback would be 10×+).
 - N6 deploy = ONE combined ROMFS image carrying both candidates + all
   vendor models (75.7% of 24 MiB), so A/B needs no reflash.
-- **tiny does not fit the AE3's /flash as the bench left it**: 8 MB total,
-  0 B free with the S18/S23 fixture aboard (ref_scene images 5.38 MB +
-  bridge stack). Deployment reality for the table: tiny + the streaming
-  fixture cannot coexist on /flash; nano coexists with everything.
-- AE3 free-heap during model run: 4.09 MB (gc.mem_free before load).
+- **tiny CANNOT RUN on the AE3 as deployed (measured 2026-08-23):**
+  sha-verified on /flash, but `ml.Model()` raises
+  `MemoryError('Out of memory')` — a /flash model is copied into heap
+  (only /rom models are memory-mapped; DESIGN/S8 "model load ~2.2 ms"
+  fact), and 4.97 MB exceeds the ~4.09 MB free heap on the S18 build.
+  The vela SRAM-arena question was never even reached. **The documented
+  door for tiny-on-AE3 is the ROMFS route** (24 MB /rom, memory-mapped;
+  needs an AE3 ROMFS image build + DFU flash — a bench decision, not
+  attempted this window). Also: tiny only *stored* after clearing the
+  5.38 MB ref_scene fixture from the 8 MB /flash (0 B free as found;
+  1.1 MB free with both models aboard).
+- AE3 free-heap before load: 4.09 MB (gc.mem_free, S18 patched build).
 
 Both models' artifacts are staged for the bench. The urchin duty cycle
 is an energy problem (TRACKER: frames per minutes-to-hours), so tiny's

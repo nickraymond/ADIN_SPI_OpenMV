@@ -200,8 +200,16 @@ pair, USB carrying no video.
   so the 4.97 MB tiny does not even *store* without clearing fixture
   files. The nano (1.0 MB, 512 KB SRAM plan) ran at a measured
   **24.13 ms** — NPU-confirmed, faster than vela's 28.1 ms estimate.
-  The tiny RUNTIME ARENA question is still open — blocked in-session by
-  the flash-full condition plus an AE3 hang (below). Also learned, the
+  **ANSWERED 2026-08-23 (later the same window): tiny does NOT run from
+  /flash — `ml.Model()` raises `MemoryError('Out of memory')` on the
+  sha-verified 4.97 MB file.** The binding constraint is not the vela
+  SRAM arena (never reached): a /flash model is COPIED INTO HEAP (only
+  /rom models are memory-mapped — the "~2.2 ms load" fact), and free
+  heap on the S18 build is ~4.09 MB. Rule of thumb this mints: **on the
+  AE3, a /flash-deployed model must fit in free heap (~4 MB); larger
+  models need the ROMFS (/rom, 24 MB, memory-mapped) route** — untested
+  for our artifacts, needs an AE3 ROMFS image + DFU flash. Nano
+  (1.0 MB) is unaffected: measured 24.13/25.22 ms across two runs. Also learned, the
   hard way: **`ml.Model()` on a TRUNCATED tflite hard-hangs the AE3's
   firmware** (no exception, no watchdog; warm mpremote reset refused —
   physical replug required). A partial copy left by a full-disk `cp` is
