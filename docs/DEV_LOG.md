@@ -17,6 +17,42 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-23 (bench) — S8 bench window: 3 of 4 stage-1 latencies MEASURED (all NPU-class); N6 deploy byte-verified; AE3 tiny blocked by flash-full + a new firmware-hang trap
+
+**Branch:** `claude/s8-bench-deployment-latency-ac02d1`
+
+**Done:**
+- Bench recovered twice: AE3 was OFF the bus on arrival (error -71 since
+  Aug 22 ~03:30; Nick power-cycled after the FTDI USB-stick meter was
+  removed — the stick is retired, INA3221 is the rig now).
+- Combined N6 ROMFS image built (BOTH candidates + all vendor models,
+  75.7% of 24 MiB; mkromfs's stedgeai pass verified deterministic vs the
+  staged exports). Flashed via DFU alt 3; partition read-back sha ==
+  source image sha; /rom lists 19 entries, vendor content intact.
+- **Measured (30-run means, sha-verified artifacts): N6 nano 10.64 ms
+  (94.0/s) · N6 tiny 31.25 ms (32.0/s) · AE3 nano 24.13 ms (41.4/s,
+  beats vela's 28.1 est). All NPU-consistent.** Tables updated in
+  ml/yolox_urchin/STAGE1.md.
+- Power rig software shipped ready-to-wire: pi/workbench/power_log.py
+  (INA3221, register map verified vs Adafruit's driver; JSONL, probe
+  mode, config read-back) + POWER_RIG.md procedure.
+
+**Broke/surprised us:**
+- **AE3 /flash is 8 MB with 0 B free** under the S18/S23 fixture
+  (ref_scene 5.38 MB + bridge stack): tiny's cp died at 700 KB, and the
+  probe then **hard-hung the firmware by ml.Model()-loading that
+  truncated file** (no exception; warm reset refused; physical replug
+  needed — SPEC §Open questions updated with the trap).
+- ref_scene deletion is classifier-gated for the agent; script staged at
+  pi:~/bm_bench/ae3_free_space.py (all six files verified restorable
+  from bench/assets/ref_scene/ via demo_up staging).
+
+**Next:** Nick replugs the AE3 + runs ae3_free_space.py → tiny cp +
+probe (closes the SPEC arena question) → INA3221 wiring + I2C enable →
+mJ/inference for both boards → nano-vs-tiny pick.
+
+---
+
 ## 2026-08-23 (later) — session close: labeler running overnight (COCO-init yolox-s, 0.658 @ e1); train_ctl page shipped + live-tested; corpus_v2; PR #60 merged
 
 - **Labeler** (`stage1_s_labeler`): stock-stem YOLOX-S, COCO-pretrained

@@ -50,9 +50,24 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 | rung-A mAP50 (float, 640) | 0.654 | **0.729** (+0.075) |
 | int8 @ native 256 | 0.202 | **0.248** |
 | AE3 est. latency (vela) | 28.1 ms (35.6/s) | 41.7 ms (24.0/s) |
+| **AE3 MEASURED (2026-08-23)** | **24.13 ms (41.4/s)** | owed: /flash full (see below) |
+| **N6 MEASURED (2026-08-23)** | **10.64 ms (94.0/s)** | **31.25 ms (32.0/s)** |
 | size on /flash (8 MB) | 1.0 MB | 4.97 MB |
 | vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
-| measured ms + mJ | bench window owed | bench window owed |
+| mJ/inference | owed: INA3221 rig unwired | owed: INA3221 rig unwired |
+
+Measurement notes (2026-08-23 bench window, 30-run means, QVGA frame,
+sha/partition read-back verified before timing):
+- AE3 nano beat its vela estimate (24.13 vs 28.1 ms) — the 2.7×-optimism
+  precedent did NOT repeat on this architecture; both boards' numbers are
+  NPU-consistent (CPU fallback would be 10×+).
+- N6 deploy = ONE combined ROMFS image carrying both candidates + all
+  vendor models (75.7% of 24 MiB), so A/B needs no reflash.
+- **tiny does not fit the AE3's /flash as the bench left it**: 8 MB total,
+  0 B free with the S18/S23 fixture aboard (ref_scene images 5.38 MB +
+  bridge stack). Deployment reality for the table: tiny + the streaming
+  fixture cannot coexist on /flash; nano coexists with everything.
+- AE3 free-heap during model run: 4.09 MB (gc.mem_free before load).
 
 Both models' artifacts are staged for the bench. The urchin duty cycle
 is an energy problem (TRACKER: frames per minutes-to-hours), so tiny's
