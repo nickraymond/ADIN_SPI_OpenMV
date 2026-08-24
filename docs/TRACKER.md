@@ -1835,6 +1835,19 @@ any urchin labelling effort is spent.
       **Demo bar set by Nick 2026-08-21: a truly custom urchin model
       running on BOTH boards with a screen showing the urchins — the
       project's HIL. This demo is the GATE for sprint S27 below.**
+      **HIL SCOPE ADDITION (Nick 2026-08-24, banked from the bench
+      window): the HIL harness runs each frame BOTH ways — whole-frame
+      256 vs TILED at native pixels — per board, per model (nano AND
+      tiny; tiny now runs on the AE3 via /rom), counts vs ground truth
+      with pixels-on-target recorded per detection. Rationale: the
+      deployed-size benchmark score (int8@256: nano 0.202 / tiny 0.248
+      vs float-640 0.654/0.729) is a whole-scene-downscale artifact —
+      small urchins fall below the ~24–32 px floor; tiling keeps native
+      px and its cost is already priced (a tile = one measured
+      inference: VGA≈4 tiles → tiny ~4.3 frames/s, ~70 mJ/frame —
+      affordable at urchin duty cycles). This matrix is the accuracy
+      row of the nano-vs-tiny decision; the ms/mJ rows are DONE
+      (STAGE1.md, 2026-08-24).**
       What carries over from B2 unchanged: the whole toolchain (capture
       rig, labels.jsonl format, trainer, int8 export, both compile+
       deploy routes, recipe/page). What is genuinely different: labels
