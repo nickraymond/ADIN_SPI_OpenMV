@@ -522,3 +522,64 @@ enumerated + ports free at session end; artifacts (traces, tables,
 logs) recorded under ~/nereus_ml/ + repo eval tables. Milestone report
 format per CLAUDE.md.
 ```
+
+## 15 — Ready to paste: S8 HIL — urchin footage on a screen, the accuracy row of nano-vs-tiny (written 2026-08-24, after the bench window measured ms + mJ)
+
+```
+Run /agent-entry. This is an S8 HIL BENCH session on nereus000 — board
+contact THROUGH the S25 workbench discipline (check
+http://nereus000:8088/api/runner + /api/preflight first; one owner per
+port; 35 s settle; by-id ONLY; ae3-board-access skill before any
+mpremote against the AE3; minimize AE3 attach count — bite-R incident
+#8 was file-ops only).
+
+CONTEXT (do not re-derive): the ms + mJ rows of the nano-vs-tiny
+decision are DONE (ml/yolox_urchin/STAGE1.md, 2026-08-24; PR #62).
+BOTH boards already carry BOTH stage-1 models — do not redeploy:
+  AE3 /rom  (ROMFS0 img 22c1b963..., also nano on /flash)
+  N6  /rom  (ROMFS0 img 6b7cbe88...)
+Models emit RAW YOLOX per-level heads ((1,16,16,6),(1,32,32,6),
+(1,8,8,6) at 256 px) — decode+NMS does NOT exist on-board yet; where it
+runs (MicroPython on-board vs tensors-to-host) is this session's first
+sizing decision. Power rig: INA3221 CH1=AE3, CH3=N6 (POWER_RIG.md;
+I2C enable persists). AE3 ml.Model traps: /flash load must fit ~4 MB
+heap; SIZE-CHECK any model file before loading (truncated tflite
+hard-hangs the board).
+
+STIMULUS: Nick's two 17 s Monterey urchin videos. Nick: drop them in
+~/nereus_ml/datasets/hil_monterey/ on the Mac before the session.
+Ground truth = Nick labels a sampled frame subset (~30-50 frames/clip)
+in the B3 label GUI (label_review workbench card); the same labels
+score every board/model/mode cell.
+
+GOAL (bite E's demo bar + bite C's harness, HIL scope per TRACKER
+2026-08-24): urchin footage looping on a screen, both boards' cameras
+on it via a workbench recipe, and ONE result matrix:
+  {AE3, N6} x {nano, tiny} x {whole-frame-256, TILED-native-px}
+  -> counts vs ground truth, pixels-on-target per detection,
+     per-stage cost (capture/preprocess/infer/decode), fps.
+
+TASKS, in order, nibble-gated by Nick:
+1. Playback: Pi-served loop page for the two clips (fullscreen, fixed
+   scale) + workbench recipe/card; camera framing check (a captured
+   frame shows the screen filling the FOV, urchins visible).
+2. Decode: size and ship YOLOX decode+NMS for the raw heads (host-side
+   is acceptable for HIL; on-board is the product path — decide with
+   Nick). Verify against a known frame before trusting counts.
+3. Harness: extend the B2/n6_stream harness — per-frame detect in both
+   modes (whole-256, tiled ~4x at VGA), px-on-target per detection on
+   the wire, per-stage timers. Both boards, both models.
+4. Ground truth: Nick's GUI sitting on the sampled frames; scorer maps
+   detections to labels (count accuracy, miss/false rates vs px band).
+5. The matrix + bite-C analytics (accuracy-vs-px money plot, count
+   accuracy, cost bars) as a static HTML report on a workbench card.
+   Optional: power log running during matrix runs = measured W during
+   detection duty (free column).
+STOP: review matrix with Nick -> HIS nano-vs-tiny pick (accuracy row
+now measured at deployment geometry) + board recommendation update.
+
+RULES: no model redeploys (already on-board, sha-verified); no
+firmware flashing; workbench page stops demos; boards left enumerated
++ ports free; artifacts under ~/nereus_ml/runs/ + repo eval tables;
+milestone report format per CLAUDE.md.
+```
