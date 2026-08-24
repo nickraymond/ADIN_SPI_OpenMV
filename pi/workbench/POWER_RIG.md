@@ -34,16 +34,20 @@ python3 ~/workbench/power_log.py --probe
 python3 ~/workbench/power_log.py --ch 1=AE3 --ch 2=N6 &
 # rows land in ~/bench_logs/power/power_<ts>.jsonl
 
-# 3. Run the timing probe on the board(s) — the probes print
-#    "PWR_MARK <label>_start/<label>_end <ticks_ms>" markers.
+# 3. Run the timing probe piped through the host-clock stamper, so the
+#    probe's PWR_MARK lines land on the same clock as the power rows:
+mpremote connect <by-id> run <probe>.py | python3 ~/workbench/stamp_lines.py | tee probe_run.log
+#    For POWER runs bump the probe's N to >=300 iterations — a 30-run
+#    window is <1 s, too short against 10 Hz sampling.
 
-# 4. Stop with SIGTERM/Ctrl-C (clean line-buffered JSONL either way).
+# 4. Stop the logger with SIGTERM/Ctrl-C (clean JSONL either way), then:
+python3 ~/workbench/power_calc.py --log ~/bench_logs/power/power_<ts>.jsonl \
+    --ch 1 --run probe_run.log --n 300
+# prints per-window: duration, load mW, idle baseline mW, net + gross mJ/inf
 ```
 
-**mJ/inference** = mean mW inside the probe's marked window × window
-seconds ÷ inferences, minus the idle baseline measured in the 30 s
-before the loop. Idle-vs-load must be visible in the trace before any
-number is trusted — a flat trace means the shunt is not in the path.
+Idle-vs-load must be visible in the trace before any number is trusted —
+a flat trace means the shunt is not in the path.
 
 ## Verification ladder (trust artifacts)
 
