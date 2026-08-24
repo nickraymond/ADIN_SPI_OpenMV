@@ -1,0 +1,96 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Urchin HIL screen — cookbook</title><style>
+ body { background:#14171a; color:#dde3e8; font:15px/1.5 system-ui;
+        max-width:46rem; margin:0 auto; padding:1.2rem; }
+ h1 { font-size:1.3rem; } h2 { font-size:1.05rem; margin-top:1.4rem; }
+ code, pre { background:#1d2126; border:1px solid #2c333a; border-radius:5px; }
+ code { padding:.05rem .3rem; }
+ pre { padding:.6rem .8rem; overflow-x:auto; }
+ .muted { color:#8fa3b3; }
+ .badge { padding:.2rem .6rem; border-radius:5px; font-weight:700; }
+ .up { background:#1d4; color:#000; } .down { background:#555; color:#ddd; }
+ a { color:#6cf; }
+ .warn { border-left:3px solid #ca3; padding-left:.7rem; color:#e8d9a0; }
+ table { border-collapse:collapse; } td { padding:.15rem .7rem .15rem 0; }
+</style></head><body>
+<h1>📖 Urchin HIL screen — set up the playback display</h1>
+<p class="muted">S8 bite E. The Monterey footage plays fullscreen on a
+screen; both bench cameras watch it; the matrix harness steps the same
+80 stills Nick labeled. This chapter is the physical + display setup.
+The playback itself is the <b>Urchin HIL — Monterey playback</b> recipe
+card (start/stop it from the workbench page, like any demo).</p>
+
+<p>Playback server:
+ <span id="badge" class="badge down">checking…</span>
+ <a id="openlink" href="http://nereus000:8091/" target="_blank"
+    style="display:none">Open the playback page →</a>
+</p>
+
+<h2>1. Start the playback demo</h2>
+<p>On the <a href="http://nereus000:8088/">workbench page</a>, start
+<b>Urchin HIL — Monterey playback</b>. The badge above turns green when
+it is live. Media lives in <code>/home/pi/hil_monterey/</code> (two
+clips + the frozen 80-still set); the recipe holds both board locks so
+no other demo can grab a camera mid-run.</p>
+
+<h2>2. Put the page on the screen the cameras will watch</h2>
+<p><b>Option A — any laptop/tablet (works today):</b> open
+<a href="http://nereus000:8091/">http://nereus000:8091/</a> in a browser
+on the device facing the cameras, click the page once, press
+<code>f</code> for fullscreen. Full brightness, auto-sleep OFF, fixed
+position — the calibration (step 4) is only valid while nothing moves.</p>
+<p><b>Option B — the Pi's own HDMI screen (one-time setup, Nick's
+sudo):</b> nereus000 is currently headless — no X/Wayland, no browser
+installed. When the display is hooked up:</p>
+<pre>sudo apt install --no-install-recommends xserver-xorg xinit chromium-browser
+startx /usr/bin/chromium-browser --kiosk --noerrdialogs http://localhost:8091/ -- -nocursor</pre>
+<p class="warn">UNTESTED until a display is attached — package names are
+Pi-OS-bookworm's; if <code>chromium-browser</code> is not found, the
+package is plain <code>chromium</code>. Flag what apt actually installed
+back into this chapter.</p>
+
+<h2>3. Keys and modes</h2>
+<table>
+<tr><td><code>f</code></td><td>fullscreen</td></tr>
+<tr><td><code>l</code></td><td>loop mode — clip looping (the demo eyeball + fps runs)</td></tr>
+<tr><td><code>[</code> / <code>]</code></td><td>previous / next clip</td></tr>
+<tr><td><code>s</code>, <code>←</code>/<code>→</code></td><td>step mode — the 80 canonical stills, one at a time</td></tr>
+<tr><td><code>c</code></td><td>calibration pattern (4 corner markers + center cross)</td></tr>
+<tr><td><code>b</code></td><td>black screen (idle / power-floor readings)</td></tr>
+</table>
+<p class="muted">The harness drives the same things over HTTP
+(<code>POST /api/set</code>) — the keys exist so a human can hand-drive
+without it.</p>
+
+<h2>4. Aim the cameras (framing check)</h2>
+<p>Goal: each camera sees the WHOLE content area, roughly square-on.
+Press <code>c</code> — the white border + corner markers ARE the content
+area. To see what a camera sees: stop the HIL demo on the workbench
+page, start <b>N6 detection stream</b> (or the two-colour demo), aim,
+stop it, restart the HIL demo. One demo at a time is the workbench rule;
+expect the 35 s settle countdown between stop and start.</p>
+<p class="warn">After ANY camera or screen nudge, the screen→camera
+calibration must be re-shot (the harness does this at run start —
+a nudge mid-matrix invalidates the run, not just the calibration).</p>
+
+<h2>5. What the harness does with this (context)</h2>
+<p>Scored runs use <b>step</b> mode: the harness holds each still,
+stamps board captures with the still index, decodes + scores against
+Nick's labels. <b>loop</b> mode feeds the end-to-end fps rows and the
+live demo. Calibration maps Nick's label boxes into each camera's
+pixels so a tilted screen never scores as missed urchins.</p>
+
+<script>
+// Reachability badge: no-cors fetch resolves iff SOMETHING answers there.
+const URL_ = document.getElementById('openlink').href;
+async function probe(){
+  const b=document.getElementById('badge'), a=document.getElementById('openlink');
+  try { await fetch(URL_, {mode:'no-cors', signal:AbortSignal.timeout(2500)});
+        b.textContent='RUNNING'; b.className='badge up';
+        a.style.display='inline'; }
+  catch(e){ b.textContent='NOT RUNNING';
+            b.className='badge down'; a.style.display='none'; }
+  setTimeout(probe, 5000);
+}
+probe();
+</script></body></html>

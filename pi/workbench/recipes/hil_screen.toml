@@ -1,0 +1,9 @@
+# hil_screen.toml -- cookbook chapter: set up the urchin HIL playback screen
+# (S8 bite E). The runnable demo is s8_hil_urchin.toml; this card is the
+# physical/display setup procedure (screen placement, kiosk option, framing,
+# calibration rules).
+
+name = "hil-screen"
+title = "HIL screen setup (cookbook)"
+summary = "How to put the Monterey playback on the screen the cameras watch: any-browser fullscreen today, Pi-HDMI kiosk once a display is attached, framing + calibration rules. Companion chapter to the Urchin HIL demo card."
+guide = "guides/hil-screen.html"
