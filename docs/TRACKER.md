@@ -1,17 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-23 bench (**S8 bench window: 3 of 4 stage-1
-latencies MEASURED, all NPU-class — N6 nano 10.64 ms / N6 tiny 31.25 /
-AE3 nano 24.13 (beats vela est)** — N6 ROMFS deploy byte-verified
-(combined image, both candidates, vendor models intact); AE3 tiny
-BLOCKED: /flash is 0 B free under the S18/S23 fixture AND ml.Model() on
-the truncated cp HARD-HANGS the firmware (replug-only; SPEC updated).
-Power rig: FTDI stick retired (Nick), INA3221 is the part; logger +
-procedure shipped (pi/workbench/power_log.py + POWER_RIG.md), wiring +
-I2C enable owed. NEXT = Nick: replug AE3 + run
-~/bm_bench/ae3_free_space.py → agent: tiny cp/probe + mJ columns →
-nano-vs-tiny pick. Previous:*
+*Last updated: 2026-08-24 (**S8 BENCH WINDOW COMPLETE: the nano-vs-tiny
+decision table is fully MEASURED — ms AND mJ, both boards, one model
+pair, INA3221 rig proven end-to-end — and tiny RUNS on the AE3 via a
+ROMFS0 DFU flash (read-back sha-verified; /rom is memory-mapped, so the
+/flash heap limit vanishes).** Numbers (300-run windows,
+load-signature-verified channels): AE3 nano 26.35 ms / 6.69 mJ gross ·
+AE3 tiny 58.40 ms / 17.61 mJ · N6 nano 10.55 ms / 11.50 mJ · N6 tiny
+31.17 ms / 38.25 mJ; idle floors 181 mW (AE3) vs ~790 mW (N6). Same-
+model energy gap = 1.7× AE3 (S24's 4.3× was model-confounded; the IDLE
+gap stays 4.3× and dominates urchin duty cycles). En route: AE3 /flash
+found 0 B free (ref_scene cleared, restorable via demo_up), truncated-
+tflite ml.Model() hard-hang trap recorded (SPEC), bite-R incident #8
+(file-ops-only session). **STOPPED at task 5's gate: Nick's nano-vs-
+tiny pick; the HIL demo rides the picked model.** Tables:
+ml/yolox_urchin/STAGE1.md; raw logs ~/nereus_ml/runs/bench_2026-08-24/.
+Previous:*
 *2026-08-22 later (**S8 bite E stage 1 TRAINED AND SCORED:
 rung-A mAP50 0.573 vs yolo11x's 0.351 bar (yolo11n 0.243, ceiling
 0.908)** — YOLOX-Nano (Nick's pick after the gate) on corpus_v1

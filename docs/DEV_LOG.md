@@ -58,8 +58,21 @@ memory-mapped. ROMFS route = the untested door.** Nano re-measured
 file-ops only, ~6 attaches → persistent raw-repl refusal, replug-only.
 mJ columns still owed (Nick wiring the INA3221 in parallel).
 
-**Next:** INA3221 probe + power windows (probes staged: ae3_power_probe
-.py; POWER_RIG.md routine) → mJ columns → nano-vs-tiny pick.
+**Continued (2026-08-24, INA3221 live): THE TABLE IS COMPLETE — and
+tiny RUNS on the AE3 via ROMFS.** Nick's gate taken mid-window: built a
+combined AE3 ROMFS0 image (vela RTSS_HP_SRAM_OSPI — the board's own
+ROMFS profile; vendor yolov8n reproduced byte-size-exact 1,994,976 B),
+flashed via the AE3 bootloader's named DFU alt "ROMFS0" (S7 tooling's
+alt list, confirmed live), read-back sha == source, vendor /rom content
+intact (22 entries). Measured, all load-signature-verified on the
+INA3221 (CH1=AE3, CH3=N6): **AE3 nano 26.35 ms /rom / 6.69 mJ gross ·
+AE3 tiny 58.40 ms / 17.61 mJ · N6 nano 10.55 ms / 11.50 mJ · N6 tiny
+31.17 ms / 38.25 mJ; idle 181 vs ~790 mW.** The S24 4.3× energy gap
+shrinks to 1.7× same-model (the confound was real) but the IDLE floor
+stays 4.3× — the urchin-duty-cycle story. I2C enable made persistent.
+Power rig routine proven end-to-end (power_log → stamp_lines →
+power_calc). Raw logs: ~/nereus_ml/runs/bench_2026-08-24/. STOPPED for
+Nick's nano-vs-tiny pick; HIL demo banked behind it.
 
 ---
 

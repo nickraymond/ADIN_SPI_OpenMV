@@ -45,23 +45,42 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 
 ## Nano-vs-Tiny decision (Nick's call; bench measurements pending)
 
-| | nano (stage1_v2) | tiny (stage1_tiny_v1) |
+**MEASURED 2026-08-24 (S8 bench window, COMPLETE — INA3221 rig,
+load-signature-verified channels, 300-run windows, artifacts
+sha/partition-verified before timing):**
+
+| measured | AE3 nano | AE3 tiny | N6 nano | N6 tiny |
+|---|---|---|---|---|
+| ms/inference | 26.35 /rom (24.13–25.22 /flash) | **58.40** (/rom only) | **10.55** | 31.17 |
+| inferences/s | 38–41 | 17.1 | 94.8 | 32.1 |
+| mJ/inf gross | **6.69** | 17.61 | 11.50 | 38.25 |
+| mJ/inf net-over-idle | 1.90 | 7.01 | 3.22 | 13.15 |
+| idle mW (sensor on) | 181 | 181 | 781–804 | 781–804 |
+| load mW | 253 | 301 | 1085 | 1225 |
+
+| static | nano (stage1_v2) | tiny (stage1_tiny_v1) |
 |---|---|---|
 | rung-A mAP50 (float, 640) | 0.654 | **0.729** (+0.075) |
 | int8 @ native 256 | 0.202 | **0.248** |
-| AE3 est. latency (vela) | 28.1 ms (35.6/s) | 41.7 ms (24.0/s) |
-| **AE3 MEASURED (2026-08-23)** | **24.13 / 25.22 ms (~40/s, two runs)** | **DOES NOT LOAD: MemoryError** |
-| **N6 MEASURED (2026-08-23)** | **10.64 ms (94.0/s)** | **31.25 ms (32.0/s)** |
-| size on /flash (8 MB) | 1.0 MB | 4.97 MB |
-| vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
-| AE3 mJ/inf MEASURED (gross / net-over-idle) | **5.37 / 0.91** | n/a (won't load) |
-| N6 mJ/inf | owed: N6 rail not yet through the INA3221 | owed |
+| AE3 deploy route | /flash (1.0 MB) or /rom | **/rom ONLY** (4.97 MB > ~4.09 MB heap; /flash load = MemoryError) |
+| vela est. (DTCM/MRAM cfg) | 28.1 ms | 41.7 ms |
 
-AE3 power method (2026-08-24, INA3221 CH1 @10 Hz, load-signature-
-verified): idle-with-sensor 182.5 mW, nano loop 220.0 mW over a 7.32 s
-300-inference window at 24.38 ms/inf. Gross = board_mW × window ÷ N
-(the duty-cycle number); net subtracts the sensor-on idle baseline.
-Consistent with S24's ~5.5 mJ order-of-magnitude anchor.
+Reading the table:
+- **The N6 wins throughput ~2.5× (nano) / 1.9× (tiny); the AE3 wins
+  energy 1.7× (nano) / 2.2× (tiny) gross.** The S24-era "AE3 4.3×
+  better mJ" shrinks to 1.7× once the model confound is removed — but
+  the **idle floor stays 4.3× apart (181 vs ~790 mW)**, and at urchin
+  duty cycles (1 frame per minutes-to-hours) idle, not inference,
+  dominates the battery.
+- **Tiny-on-AE3 works via ROMFS** (2026-08-24: combined ROMFS0 image,
+  vela RTSS_HP_SRAM_OSPI profile, DFU alt "ROMFS0", read-back
+  sha-verified; /rom is memory-mapped so the heap limit vanishes).
+  OSPI XIP costs latency: tiny 58.4 ms vs the 41.7 ms DTCM-config
+  estimate; nano 26.35 /rom vs 24.13 /flash.
+- Method: INA3221 CH1=AE3 / CH3=N6 @10 Hz, both channels identified by
+  load signature (idle→window step). Gross = board_mW × window ÷ N (the
+  duty-cycle number); net subtracts sensor-on idle. Raw logs:
+  `~/nereus_ml/runs/bench_2026-08-24/`.
 
 Measurement notes (2026-08-23 bench window, 30-run means, QVGA frame,
 sha/partition read-back verified before timing):
