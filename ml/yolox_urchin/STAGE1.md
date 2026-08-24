@@ -54,7 +54,14 @@ Training pace 2.03 it/s (~2% under nano — dataloader-bound).
 | **N6 MEASURED (2026-08-23)** | **10.64 ms (94.0/s)** | **31.25 ms (32.0/s)** |
 | size on /flash (8 MB) | 1.0 MB | 4.97 MB |
 | vela SRAM plan | 512 KB | 1,036 KB (runtime arena = open SPEC q) |
-| mJ/inference | owed: INA3221 rig unwired | owed: INA3221 rig unwired |
+| AE3 mJ/inf MEASURED (gross / net-over-idle) | **5.37 / 0.91** | n/a (won't load) |
+| N6 mJ/inf | owed: N6 rail not yet through the INA3221 | owed |
+
+AE3 power method (2026-08-24, INA3221 CH1 @10 Hz, load-signature-
+verified): idle-with-sensor 182.5 mW, nano loop 220.0 mW over a 7.32 s
+300-inference window at 24.38 ms/inf. Gross = board_mW × window ÷ N
+(the duty-cycle number); net subtracts the sensor-on idle baseline.
+Consistent with S24's ~5.5 mJ order-of-magnitude anchor.
 
 Measurement notes (2026-08-23 bench window, 30-run means, QVGA frame,
 sha/partition read-back verified before timing):
