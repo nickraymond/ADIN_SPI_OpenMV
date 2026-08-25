@@ -234,6 +234,272 @@ def frame_detections(fr):
                        nms_iou=NMS_IOU)
 
 
+# ------------------------------------------------- closed loop (bite E4)
+class LiveBoard:
+    """hil_protocol Board interface over a real BoardStream. The send
+    side is the raw pyserial handle — one control byte, no terminator
+    (the CDC CRLF trap is why _ctl() board-side ignores CR/LF)."""
+
+    def __init__(self, label, stream):
+        self.label = label
+        self.stream = stream
+
+    def read_event(self, timeout_s):
+        return self.stream.next_event(timeout_s=timeout_s)
+
+    def send(self, byte):
+        self.stream.sb.ser.write(byte)
+
+
+def run_closed_loop(board_specs, args, playback, out_dir):
+    """All boards in ONE run, every frame host-paced (bite E4). The
+    legacy free-run path in run_board stays available until this path's
+    bench acceptance passes; the scoring post-pass here is the same
+    math (shared helpers), applied per board."""
+    from hil_protocol import ClosedLoopScheduler
+
+    reviewed = load_reviewed(args.stills_dir, not args.all_stills)
+    if not reviewed:
+        raise SystemExit("FAIL: no reviewed stills to score")
+    k = args.frames_per_still
+    phases = []
+    for spec in args.phases.split(","):
+        model, mode = spec.strip().split("-")
+        phases.append({"kind": "model", "model": model, "mode": mode,
+                       "jpeg": False})
+    phases += [{"kind": "jpeg", "page": "loop"},
+               {"kind": "jpeg", "page": "black"},
+               {"kind": "jpeg", "page": "calib"}]
+    board_phases = [{k2: v for k2, v in p.items() if k2 != "page"}
+                    for p in phases]
+    script = ("_CFG = " + repr({"framesize": args.framesize,
+                                "jpeg_quality": 50, "closed_loop": True,
+                                "phases": board_phases}) + "\n"
+              + open(os.path.join(_HERE, "hil_board.py")).read())
+
+    print(f"\n=== CLOSED-LOOP: {', '.join(l for l, _ in board_specs)}"
+          f"\n    phases: "
+          + ", ".join(p.get("page") or f"{p['model']}-{p['mode']}"
+                      for p in phases))
+    power_proc = None
+    plog = os.path.join(_ROOT, "pi", "workbench", "power_log.py")
+    if os.path.exists(plog):
+        power_proc = subprocess.Popen(
+            [sys.executable, plog, "--ch", "1=AE3", "--ch", "3=N6",
+             "--hz", "10", "--out", out_dir],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"    power logger up (pid {power_proc.pid})")
+
+    boards = []
+    caps = {}                           # label -> (cam_w, cam_h)
+    for label, port in board_specs:
+        bs = BoardStream(port, script)
+        ev, obj = bs.next_event(timeout_s=60)
+        if ev == "end":                 # sterile first attach — one retry
+            print(f"    {label}: first attach died sterile "
+                  f"({obj.get('reason')}) — one retry in 5 s")
+            bs.stop()
+            time.sleep(5)
+            bs = BoardStream(port, script)
+            ev, obj = bs.next_event(timeout_s=60)
+        if ev != "info":
+            raise SystemExit(f"FAIL: {label} produced {ev} instead of "
+                             f"#I at startup: {obj}")
+        print(f"    {label}: {obj['board_models']} "
+              f"({obj.get('w')}x{obj.get('h')}, "
+              f"{len(obj.get('tiles', []))} tiles)")
+        caps[label] = (int(obj.get("w", 640)), int(obj.get("h", 400)))
+        boards.append(LiveBoard(label, bs))
+
+    rows_fh = open(os.path.join(out_dir, "rows.jsonl"), "a")
+    os.makedirs(os.path.join(out_dir, "overlays"), exist_ok=True)
+    pending = {b.label: [] for b in boards}
+    jpegs = {b.label: {"loop": [], "black": [], "calib": []}
+             for b in boards}
+    stats = {}                          # (label, phase_name) accumulators
+
+    def advance(still=None, page=None):
+        if still is not None:
+            playback.set(mode="step", still=still)
+        else:
+            playback.set(mode=page)
+
+    sched = ClosedLoopScheduler(
+        boards, advance, render_wait_s=args.render_wait,
+        frame_timeout_s=args.frame_timeout)
+
+    def on_model_frame(name):
+        def cb(board, pos, fr, frame_idx):
+            pb_i, still, boxes = reviewed[pos]
+            dets = frame_detections(fr)
+            fr["t_host"] = time.time()
+            pending[board.label].append(
+                {"phase": name, "still": still, "boxes": boxes,
+                 "dets": dets, "obj": fr, "frame_in_still": frame_idx})
+            st = stats.setdefault((board.label, name),
+                                  {"frames": 0, "inf": 0.0, "e2e": 0.0})
+            st["frames"] += 1
+            st["inf"] += sum(fr["inf_us"])
+            st["e2e"] += (fr["cap_us"] + sum(fr["prep_us"])
+                          + sum(fr["inf_us"]) + sum(fr["dec_us"]))
+            if any(fr["dropped"]):
+                print(f"    NOTE {board.label} seq {fr['seq']}: cell cap "
+                      f"dropped {fr['dropped']} (dense frame)")
+        return cb
+
+    try:
+        for ph_i, ph in enumerate(phases):
+            joined = sched.phase_barrier(ph_i)
+            name = ph.get("page") or f"{ph['model']}-{ph['mode']}"
+            print(f"    phase {name}: {sorted(joined)}")
+            if ph["kind"] == "model":
+                sched.run_model_phase(
+                    ph_i, joined, list(range(len(reviewed))), k,
+                    on_model_frame(name),
+                    on_still=lambda pos: None)
+            else:
+                sched.run_jpeg_phase(
+                    ph_i, joined, ph["page"], args.jpeg_frames,
+                    lambda b, fr, _pg=ph["page"]:
+                        jpegs[b.label][_pg].append(fr["_jpg"]))
+    finally:
+        for b in boards:
+            b.stream.stop()
+        playback.set(mode="loop")
+        if power_proc is not None:
+            power_proc.terminate()
+            try:
+                power_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                power_proc.kill()
+
+    # ---- per-board calibration + scoring (same math as the legacy path)
+    for b in boards:
+        label = b.label
+        jf = jpegs[label]
+        if not (jf["black"] and jf["calib"]):
+            print(f"    WARNING {label}: no calibration frames — "
+                  f"timers only, accuracy NOT scored")
+            continue
+        open(os.path.join(out_dir, f"calib_{label}.jpg"), "wb").write(
+            jf["calib"][-1])
+        open(os.path.join(out_dir, f"black_{label}.jpg"), "wb").write(
+            jf["black"][-1])
+        if jf["loop"]:
+            open(os.path.join(out_dir, f"loopview_{label}.jpg"),
+                 "wb").write(jf["loop"][-1])
+        cents = find_markers(jpeg_gray(jf["calib"][-1]),
+                             jpeg_gray(jf["black"][-1]))
+        H = solve_homography(playback.markers, cents)
+        np.save(os.path.join(out_dir, f"H_{label}.npy"), H)
+        img = Image.open(io.BytesIO(jf["calib"][-1])).convert("RGB")
+        d = ImageDraw.Draw(img)
+        for cx, cy in cents:
+            d.ellipse([cx - 6, cy - 6, cx + 6, cy + 6],
+                      outline=(255, 0, 0), width=3)
+        img.save(os.path.join(out_dir, f"calib_{label}_markers.jpg"))
+        print(f"    {label}: homography solved; markers at "
+              + ", ".join(f"({cx:.0f},{cy:.0f})" for cx, cy in cents))
+        cam_w, cam_h = caps[label]
+        Hinv = np.linalg.inv(H)
+        overlaid = set()
+        agg = {}
+        for p in pending[label]:
+            boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
+            m = 2.0
+            vis = [(bx, g) for bx, g in
+                   ((bx, map_still_box(H, bx[1], bx[2], bx[3], bx[4]))
+                    for bx in boxes)
+                   if g[0] >= -m and g[1] >= -m
+                   and g[2] <= cam_w + m and g[3] <= cam_h + m]
+            boxes = [bx for bx, _g in vis]
+            gt_cam = [g for _b, g in vis]
+            if len(dets):
+                keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
+                        & (dets[:, 2] < cam_w - m)
+                        & (dets[:, 3] < cam_h - m))
+                dets = dets[keep]
+            used = set()
+            pairs = {}
+            order = np.argsort(-dets[:, 4]) if len(dets) else []
+            for di in order:
+                best, best_j = 0.0, -1
+                for j, g in enumerate(gt_cam):
+                    if j not in used:
+                        v = iou(dets[di][:4], g)
+                        if v > best:
+                            best, best_j = v, j
+                if best >= MATCH_IOU:
+                    used.add(best_j)
+                    pairs[int(di)] = best_j
+            match = len(pairs)
+            gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1)
+                     for g in gt_cam]
+            row = {"board": label, "phase": p["phase"],
+                   "still": p["still"],
+                   "frame_in_still": p["frame_in_still"],
+                   "seq": obj["seq"], "t_host": obj.get("t_host"),
+                   "cap_us": obj["cap_us"], "prep_us": obj["prep_us"],
+                   "inf_us": obj["inf_us"], "dec_us": obj["dec_us"],
+                   "dropped": obj["dropped"], "n_gt": len(boxes),
+                   "n_det": int(len(dets)), "n_match": match,
+                   "n_miss": len(boxes) - match,
+                   "n_false": int(len(dets)) - match,
+                   "gt_px_cam": gt_px,
+                   "det_conf": [round(float(dd[4]), 3) for dd in dets],
+                   "dets_cam": [[round(float(v), 1) for v in dd[:5]]
+                                for dd in dets]}
+            if args.min_gt_px > 0:
+                fl = args.min_gt_px
+                kept = {j for j in range(len(gt_cam)) if gt_px[j] >= fl}
+                m_f = sum(1 for j in pairs.values() if j in kept)
+                row.update({"floor_px": fl, "n_gt_floor": len(kept),
+                            "n_match_floor": m_f,
+                            "n_false_floor": int(len(dets)) - len(pairs)})
+            rows_fh.write(json.dumps(row) + "\n")
+            a = agg.setdefault(p["phase"],
+                               {"gt": 0, "det": 0, "match": 0,
+                                "gt_f": 0, "match_f": 0, "false_f": 0})
+            a["gt"] += len(boxes)
+            a["det"] += int(len(dets))
+            a["match"] += match
+            if args.min_gt_px > 0:
+                a["gt_f"] += row["n_gt_floor"]
+                a["match_f"] += row["n_match_floor"]
+                a["false_f"] += row["n_false_floor"]
+            key = (p["phase"], p["still"])
+            if key not in overlaid:
+                overlaid.add(key)
+                save_still_overlay(
+                    os.path.join(out_dir, "overlays",
+                                 f"{label}_{p['phase']}_{p['still']}"),
+                    os.path.join(args.stills_dir, "frames", p["still"]),
+                    dets, boxes, Hinv, cam_w=cam_w, cam_h=cam_h)
+        print(f"\n    {label:<5} {'phase':<12} {'frames':>6} {'GT':>5} "
+              f"{'det':>5} {'match':>5} {'recall':>7} {'prec':>6}")
+        for ph_name, a in agg.items():
+            st = stats.get((label, ph_name), {"frames": 0, "inf": 0,
+                                              "e2e": 0})
+            n = max(st["frames"], 1)
+            rec = a["match"] / a["gt"] if a["gt"] else 0.0
+            prec = a["match"] / a["det"] if a["det"] else 0.0
+            line = (f"    {label:<5} {ph_name:<12} {st['frames']:>6} "
+                    f"{a['gt']:>5} {a['det']:>5} {a['match']:>5} "
+                    f"{rec:>7.2f} {prec:>6.2f}  "
+                    f"inf {st['inf']/n/1000:.1f}ms e2e "
+                    f"{st['e2e']/n/1000:.1f}ms")
+            if args.min_gt_px > 0 and a["gt_f"]:
+                pf = a["match_f"] / (a["match_f"] + a["false_f"]) \
+                    if a["match_f"] + a["false_f"] else 0.0
+                line += (f" | >={args.min_gt_px:g}px: recall "
+                         f"{a['match_f']/a['gt_f']:.2f} prec {pf:.2f}")
+            print(line)
+    rows_fh.close()
+    if sched.dead:
+        print("\n    DROPPED BOARDS: "
+              + ", ".join(f"{b.label} ({why})" for b, why in sched.dead))
+
+
 # ------------------------------------------------------------------- main
 def load_reviewed(stills_dir, reviewed_only=True):
     """-> [(playback_index, file, [boxes]), ...] in playback order."""
@@ -623,7 +889,24 @@ def main():
     ap.add_argument("--budget-slack", type=int, default=10,
                     help="surplus frames budgeted per still beyond "
                          "frames-per-still; use ~4 at HD where a frame "
-                         "is seconds and surplus drains as dead time")
+                         "is seconds and surplus drains as dead time "
+                         "(legacy open-loop path only)")
+    ap.add_argument("--closed-loop", action="store_true",
+                    help="bite E4: host paces every frame (g/p control "
+                         "bytes), ALL boards run simultaneously, no "
+                         "settle windows or frame budgets — sync errors "
+                         "impossible by construction")
+    ap.add_argument("--render-wait", type=float, default=0.8,
+                    help="closed-loop: seconds after a page/still change "
+                         "before the first 'g' (covers the LCD client's "
+                         "~300 ms poll + render; capture always STARTS "
+                         "after this, so it can never straddle a change)")
+    ap.add_argument("--frame-timeout", type=float, default=30.0,
+                    help="closed-loop: seconds to wait for a board's "
+                         "frame after 'g' before dropping the board")
+    ap.add_argument("--jpeg-frames", type=int, default=8,
+                    help="closed-loop: jpeg frames per page (calib needs "
+                         ">=2 calib + >=1 black)")
     ap.add_argument("--all-stills", action="store_true",
                     help="score every still, not just reviewed ones")
     ap.add_argument("--min-gt-px", type=float, default=0,
@@ -642,9 +925,13 @@ def main():
     print(f"scoring {n_rev} stills, {args.frames_per_still} frames each; "
           f"phases {args.phases}; out {out_dir}")
 
-    for spec in args.board:
-        label, port = spec.split("=", 1)
-        run_board(label, port, args, playback, out_dir)
+    if args.closed_loop:
+        run_closed_loop([spec.split("=", 1) for spec in args.board],
+                        args, playback, out_dir)
+    else:
+        for spec in args.board:
+            label, port = spec.split("=", 1)
+            run_board(label, port, args, playback, out_dir)
     print(f"\nrows: {os.path.join(out_dir, 'rows.jsonl')}")
 
 

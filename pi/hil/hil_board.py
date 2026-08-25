@@ -56,6 +56,19 @@ QUALITY = _CFG.get("jpeg_quality", 50)
 PHASES = _CFG.get("phases", [{"kind": "jpeg", "frames": 3}])
 OBJ_THR = _CFG.get("obj_thr", 0.10)
 CELL_CAP = _CFG.get("cell_cap", 128)
+# closed-loop (bite E4): the host paces every frame with one control
+# byte — b"g" = run one frame cycle, b"p" = phase over. The board only
+# ever captures AFTER a "g", so a frame can never straddle a still
+# change (the measured open-loop hazard). Legacy free-run when absent.
+CLOSED_LOOP = _CFG.get("closed_loop", False)
+
+
+def _ctl():
+    """Block for one control byte; ignore CR/LF the CDC may inject."""
+    while True:
+        b = sys.stdin.buffer.read(1)
+        if b in (b"g", b"p"):
+            return b
 
 # 256-px tiles at native px, computed from the ACTUAL sensor geometry
 # (framesize is a _CFG knob now; HD = 1280x800 -> 7x5 = 35 tiles). Max
@@ -180,8 +193,16 @@ for ph_i, ph in enumerate(PHASES):
         model = ml.Model(mpath)
     print("#PH " + json.dumps(
         {"phase": ph_i, "kind": kind, "model": ph.get("model", ""),
-         "path": mpath, "mode": mode, "frames": ph.get("frames", 0)}))
-    for _ in range(ph.get("frames", 0)):
+         "path": mpath, "mode": mode, "frames": ph.get("frames", 0),
+         "closed_loop": CLOSED_LOOP}))
+    _fcount = 0
+    while True:
+        if CLOSED_LOOP:
+            if _ctl() == b"p":
+                break                    # host says the phase is over
+        elif _fcount >= ph.get("frames", 0):
+            break                        # legacy free-run budget spent
+        _fcount += 1
         t0 = time.ticks_us()
         img = csi0.snapshot()
         cap_us = time.ticks_diff(time.ticks_us(), t0)
@@ -235,10 +256,11 @@ for ph_i, ph in enumerate(PHASES):
             print(line)
         seq += 1
         gc.collect()
-        if kind == "jpeg":
+        if kind == "jpeg" and not CLOSED_LOOP:
             # pace jpeg phases: a fast board (N6 black-screen jpegs are
             # ~3 KB) burns the whole phase before the host's page-settle
-            # window opens, starving the calibration of usable frames
+            # window opens, starving the calibration of usable frames.
+            # Closed-loop needs no pacing: the host times every frame.
             time.sleep_ms(150)
     if model is not None:
         del model
