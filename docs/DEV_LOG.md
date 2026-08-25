@@ -17,6 +17,59 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-25 — S8 bite E4 — closed-loop HIL handshake BUILT + PROVEN solo (N6): 21 fake-board tests, stdin echo-probe 6/6, live monitor page with review controls; settle-discards deleted by construction
+
+**Branch:** `claude/s8-hil-open-loop-protocol-c8aaea` (worktree; 3 commits pushed)
+
+**Done:**
+- Nick's design as spec'd (TRACKER E4) + his mid-session addition: a live
+  review web page. Wire: host→board bytes `g/j/p/q` on the VCP; board
+  parks between frames (`#W` heartbeat 5 s), drains stdin (duplicate
+  absorption), 1 discard snapshot per go (the fb pipeline holds one
+  pre-still-change frame). `hil_protocol.py` = wire parser + pure
+  Conductor (barrier, timeouts, drop-and-continue); frames outside a
+  confirmed still are named STRAY and never scored — the conductor, not
+  arrival timing, attributes every frame to its still.
+- TEST-FIRST held: 23 protocol tests (fake board: dies mid-phase,
+  garble→re-run, stall→3-strikes drop, lost byte→heartbeat resend,
+  CRLF, phase-refusal rejoin, abort drain-race) BEFORE the bench;
+  playback suite 13 (render-ack `/api/shown` — LCD client acks AFTER
+  the flip; installed copy at /usr/local/bin updated, survives reboot).
+- N6 stdin echo-probe PASS 6/6 first attempt (~7 ms delivery; bytes
+  buffer across a 4 s no-poll window; host→board `\r`→LF measured).
+  Log: pi `~/hil_runs/e4_probe_stdin_n6.log`.
+- Closed-loop solo N6 runs CLEAN (auto + review modes): calib-first
+  phases, homography solved, `settle_discards=0 stray_frames=0`,
+  24-still model phase **14.1 s wall** (open-loop: minutes of
+  budget+settle+drain). Monitor page :8092 verified in a real browser:
+  still + GT + dets via H⁻¹, camera view + dets (H-free), Pause/Next/
+  Auto/grab-frame/Abort all exercised live. Review mode = Nick's
+  human-paced gate; abort scores what was collected.
+
+**Broke/surprised us:**
+- numpy float32 leaked into the monitor state and killed /api/monitor
+  with EMPTY replies — found only when a real browser hit the page
+  mid-run; fixed at source + `default=float` + loud 500s + regression
+  test. Cross-port `<img>` (:8092→:8091) hit ERR_BLOCKED_BY_CLIENT in
+  a policy-managed browser → stills now served same-origin (/still/).
+- nereus000 dropped OFF the network mid-verification (ping/ssh/HTTP
+  dead ~15 min; the known bench drop class) — Nick power-cycled;
+  fresh boot came back clean, run state was already safe (ports
+  released before the drop).
+- `hil-lcd.service` runs an INSTALLED COPY (`/usr/local/bin/…`), not
+  the checkout — a repo pull does NOT update the renderer; `sudo cp` +
+  restart does. Same trap class as the workbench guide-card paths.
+
+**Next:** Nick's REVIEW SESSION (his call: he reviews before any
+automated testing) — recipe `s8-hil-urchin` + the `--closed-loop
+--review` command in TRACKER E4, page at nereus000:8092. After his
+pass: acceptance = two-board VGA vs back-to-back solos (scores within
+noise, wall ≈ slower board) + AE3 HD leg (frame_in_still deltas
+≤0.01); AE3 stdin poll gets its check there under ae3-board-access.
+Bench left clean: runner idle, both boards enumerated, ports free.
+
+---
+
 ## 2026-08-25 — S8 bite E2 — AE3-tiny anomaly ROOT-CAUSED: soft AE3 capture × tiny's blur-sensitivity; runtime/artifact/deployment all exonerated by measurement
 
 **Branch:** `claude/ae3-tiny-recall-anomaly-619197` (worktree)

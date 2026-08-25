@@ -1966,8 +1966,29 @@ any urchin labelling effort is spent.
       documented reason it cannot. Needs: PR #63 merged (or branch from
       it) — the rig code lives there.
 
-- [ ] **Bite E4 — closed-loop HIL handshake + simultaneous two-board
-      runs  ← NEXT SESSION (Nick 2026-08-25; kickoff = PROMPTS.md §16).
+- [~] **Bite E4 — closed-loop HIL handshake + simultaneous two-board
+      runs — BUILT + PROVEN SOLO 2026-08-25 (branch
+      `claude/s8-hil-open-loop-protocol-c8aaea`): 23 fake-board
+      protocol tests green, N6 stdin echo-probe 6/6 (the one hard
+      assumption, measured), solo N6 closed-loop runs clean with
+      `settle_discards=0 stray_frames=0` and the 24-still model phase
+      at 14.1 s wall (open-loop spent minutes). Scope grew per Nick
+      mid-session: a LIVE MONITOR PAGE (nereus000:8092 — camera view +
+      dets, still view + GT + dets via H⁻¹, Pause/Next/Auto/grab-frame/
+      Abort) and REVIEW MODE — Nick reviews at the page before ANY
+      automated testing. Render-ack added (LCD posts /api/shown after
+      the flip) + a 1-frame discard snapshot per go: the handshake is
+      end-to-end, screen included. NEXT: Nick's review session, then
+      acceptance (two-board VGA vs solos within noise + wall ≈ slower
+      board; AE3 HD leg frame_in_still deltas ≤0.01; AE3 stdin check
+      rides it under ae3-board-access), then PR. Review command:**
+      `ssh pi@nereus000` then, with recipe s8-hil-urchin live:
+      `cd ~/ADIN_SPI_OpenMV && python3 -u pi/hil/hil_harness.py
+      --closed-loop --review --board 'N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00'
+      --board 'AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00'
+      --phases nano-tiled --min-gt-px 30 --out ~/hil_runs/<name>`
+      → page at http://nereus000:8092.
+      *(original capture, kickoff = PROMPTS.md §16, follows)*
       TEST-FIRST is the contract: the new communication method ships
       with host-side tests proving the protocol BEFORE any demo is
       handed over — protocol state machine unit-tested against a fake
