@@ -265,7 +265,9 @@ def run_closed_loop(args, playback, out_dir):
           + ", ".join(p.get("page") or f"{p['model']}-{p['mode']}"
                       for p in phases))
 
-    mon = Monitor(playback_port=int(playback.base.rsplit(":", 1)[1]))
+    mon = Monitor(playback_port=int(playback.base.rsplit(":", 1)[1]),
+                  still_dir=os.path.join(
+                      os.path.expanduser(args.stills_dir), "frames"))
     mon_port = mon.start(port=args.monitor_port)
     print(f"    monitor page: http://0.0.0.0:{mon_port}/  "
           f"(trusted LAN, no auth — view from the Mac)")
@@ -315,7 +317,6 @@ def run_closed_loop(args, playback, out_dir):
             pb_i, name, boxes = reviewed[con.still_i]
             mon.set_still({
                 "name": name, "index": con.still_i,
-                "url_path": "/media/stills/frames/" + name,
                 "gt": [[b[1] / STILL_W, b[2] / STILL_H,
                         (b[1] + b[3]) / STILL_W, (b[2] + b[4]) / STILL_H]
                        for b in boxes]})

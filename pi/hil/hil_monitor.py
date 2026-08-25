@@ -20,6 +20,7 @@ The harness owns all state; this module only holds a thread-safe copy
 and serves it. No numpy, no PIL — box drawing is done by the browser.
 """
 import json
+import os
 import queue
 import threading
 import time
@@ -31,7 +32,12 @@ REVIEW_ACTIONS = ("next", "auto", "pause", "resume", "jpeg", "jpeg_all",
 
 
 class Monitor:
-    def __init__(self, playback_port=8091):
+    def __init__(self, playback_port=8091, still_dir=None):
+        # still_dir: the stills' frames/ directory. The page fetches the
+        # source still SAME-ORIGIN (/still/<name>) — a cross-port fetch
+        # to the playback server gets blocked by some browser policies
+        # (measured: ERR_BLOCKED_BY_CLIENT on the first page shakeout).
+        self.still_dir = still_dir
         self.lock = threading.Lock()
         self.state = {"playback_port": playback_port, "boards": {},
                       "still": None, "run": {}}
@@ -118,6 +124,22 @@ def _make_handler(mon):
                 self.wfile.write(body)
             elif self.path == "/api/monitor":
                 self._json(mon.snapshot())
+            elif self.path.startswith("/still/"):
+                name = self.path[len("/still/"):].split("?")[0]
+                base = mon.still_dir
+                if base is None:
+                    return self._json({"error": "no still_dir"}, 404)
+                path = os.path.realpath(os.path.join(base, name))
+                if not (path.startswith(os.path.realpath(base) + os.sep)
+                        and os.path.isfile(path)):
+                    return self._json({"error": "no such still"}, 404)
+                with open(path, "rb") as fh:
+                    jpg = fh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(jpg)))
+                self.end_headers()
+                self.wfile.write(jpg)
             elif self.path.startswith("/cam/"):
                 label = self.path[len("/cam/"):].split(".")[0].split("?")[0]
                 with mon.lock:
@@ -248,9 +270,12 @@ async function poll(){
   document.getElementById('stname').textContent=
     st.name+'  ('+(st.index+1)+')';
   const img=document.getElementById('still');
-  const want=location.protocol+'//'+location.hostname+':'+
-    js.playback_port+st.url_path;
-  if(img.src!==want) img.src=want;
+  const want=location.origin+'/still/'+st.name;
+  // retry a failed load on the next poll instead of sticking broken
+  if(!img.src.startsWith(want) ||
+     (img.complete && img.naturalWidth===0)){
+   img.src=want+'?r='+Math.random().toString(36).slice(2,8);
+  }
   const box=document.getElementById('stillbox');
   box.querySelectorAll('.bx').forEach(b=>b.remove());
   addBoxes(box,st.gt,'#3c5');
