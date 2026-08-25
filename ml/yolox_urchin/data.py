@@ -9,7 +9,13 @@ is a fixed square (default 256). Two placement modes:
   - mosaic (stage1_v2+): four band-scaled images quilted on a 2Cx2C
     board around a jittered center, then one C-crop biased toward a box.
     Box SIZES are preserved (no post-downscale), so the 24-64 band holds.
-Then hflip + mild HSV. Boxes leaving the canvas or under 8 px -> dropped.
+Then hflip + mild HSV, and optionally Gaussian blur (bite E2: the AE3
+capture-softness fix — tiny collapses ~4x under blur while nano is
+blur-immune, runs/e2_anomaly_2026-08-25). Blur is label-preserving and
+drawn LAST so enabling it cannot change box placement for a given seed.
+Haze is deliberately NOT augmented: measured harmless to tiny (the E2
+haze sweep hurt only nano). Boxes leaving the canvas or under 8 px ->
+dropped.
 
 labels.jsonl convention: boxes [ci, x0, y0, w, h, pixels] absolute px.
 Targets for YOLOX get_losses: (max_boxes, 5) [cls, cx, cy, w, h] absolute
@@ -49,13 +55,20 @@ def _read_scaled(path, scale):
 
 class CorpusDataset(Dataset):
     def __init__(self, jsonl_path, canvas=256, train=True, seed=0,
-                 mosaic_prob=0.0):
+                 mosaic_prob=0.0, blur_prob=0.0, blur_sigma=(0.3, 2.5)):
         self.recs = load_jsonl(jsonl_path)
         self.canvas = canvas
         self.train = train
         self.rng = random.Random(seed)
         self.mosaic_prob = mosaic_prob  # trainer zeroes this for the
         # final no-aug epochs (YOLOX recipe)
+        self.blur_prob = blur_prob      # stays ON through the no-aug
+        # tail (label-preserving, mild — hflip/HSV-class, not mosaic-class)
+        self.blur_sigma = blur_sigma    # E2 sweep: tiny collapses by
+        # sigma 1.2-1.6 at this canvas scale; the range brackets it
+        self.blur_rng = random.Random(seed ^ 0xB1A5)  # own stream: blur
+        # must never consume main-rng draws, or enabling it would shift
+        # box placement on every LATER sample (pinned by test)
 
     def __len__(self):
         return len(self.recs)
@@ -180,6 +193,14 @@ class CorpusDataset(Dataset):
                 b[1] = C - b[1]
         if self.train:
             canvas = self._hsv(np.ascontiguousarray(canvas))
+        # blur rides its OWN rng stream (see __init__) — so blur on/off
+        # cannot change the boxes a given seed produces (pinned by test)
+        if self.train and self.blur_prob and \
+                self.blur_rng.random() < self.blur_prob:
+            sigma = self.blur_rng.uniform(*self.blur_sigma)
+            if sigma > 0.05:
+                canvas = cv2.GaussianBlur(
+                    np.ascontiguousarray(canvas), (0, 0), sigma)
         img_t = torch.from_numpy(
             np.ascontiguousarray(canvas[:, :, ::-1])).permute(2, 0, 1).float()
         targets = torch.zeros((MAX_BOXES, 5), dtype=torch.float32)
