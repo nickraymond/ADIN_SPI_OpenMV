@@ -281,8 +281,10 @@ def run_board(label, port, args, playback, out_dir):
         raise SystemExit("FAIL: no reviewed stills to score")
     k = args.frames_per_still
     # settle discards ~8-10 frames/still on a fast whole-mode phase —
-    # budget generously; the host drains any surplus
-    frames_model = len(reviewed) * (k + 10) + 15
+    # budget generously; the host drains any surplus. At HD a frame is
+    # seconds, so the surplus must shrink (--budget-slack) or the drain
+    # burns minutes of dead wall time per phase.
+    frames_model = len(reviewed) * (k + args.budget_slack) + 15
     # MODEL PHASES FIRST, on a clean heap: the N6 hard-faulted twice at or
     # after the jpeg→model transition (2026-08-25) — ordering models before
     # any to_jpeg churn isolates whether model+tensor-emit alone is stable
@@ -307,7 +309,8 @@ def run_board(label, port, args, playback, out_dir):
 
     board_phases = [{k2: v for k2, v in p.items() if k2 != "page"}
                     for p in phases]
-    script = ("_CFG = " + repr({"framesize": "VGA", "jpeg_quality": 50,
+    script = ("_CFG = " + repr({"framesize": args.framesize,
+                                "jpeg_quality": 50,
                                 "phases": board_phases}) + "\n"
               + open(os.path.join(_HERE, "hil_board.py")).read())
 
@@ -343,6 +346,7 @@ def run_board(label, port, args, playback, out_dir):
     os.makedirs(os.path.join(out_dir, "overlays"), exist_ok=True)
 
     H = None
+    cam_w, cam_h = 640, 400        # overwritten by the board's #I line
     jpeg_frames = {"loop": [], "black": [], "calib": []}  # post-settle only
     t_page = 0.0
     cur = None                      # current phase dict
@@ -371,7 +375,11 @@ def run_board(label, port, args, playback, out_dir):
             if ev == "skip":
                 continue                    # corrupted frame, realigned
             if ev == "info":
-                print(f"    board: {obj['board_models']}")
+                print(f"    board: {obj['board_models']} "
+                      f"({obj.get('w')}x{obj.get('h')}, "
+                      f"{len(obj.get('tiles', []))} tiles)")
+                cam_w = int(obj.get("w", cam_w))
+                cam_h = int(obj.get("h", cam_h))
                 continue
             if ev in ("done", "end"):
                 print(f"    stream {ev}: {obj}")
@@ -500,12 +508,13 @@ def run_board(label, port, args, playback, out_dir):
                    ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
                     for b in boxes)
                    if g[0] >= -m and g[1] >= -m
-                   and g[2] <= 640 + m and g[3] <= 400 + m]
+                   and g[2] <= cam_w + m and g[3] <= cam_h + m]
             boxes = [b for b, _g in vis]
             gt_cam = [g for _b, g in vis]
             if len(dets):
                 keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
-                        & (dets[:, 2] < 640 - m) & (dets[:, 3] < 400 - m))
+                        & (dets[:, 2] < cam_w - m)
+                        & (dets[:, 3] < cam_h - m))
                 dets = dets[keep]
             used = set()
             match = 0
@@ -608,6 +617,13 @@ def main():
     ap.add_argument("--frames-per-still", type=int, default=2)
     ap.add_argument("--settle", type=float, default=1.2,
                     help="seconds after a still change before captures count")
+    ap.add_argument("--framesize", default="VGA", choices=("VGA", "HD"),
+                    help="board capture size; HD = 1280x800, tiles "
+                         "computed from geometry (whole mode VGA-only)")
+    ap.add_argument("--budget-slack", type=int, default=10,
+                    help="surplus frames budgeted per still beyond "
+                         "frames-per-still; use ~4 at HD where a frame "
+                         "is seconds and surplus drains as dead time")
     ap.add_argument("--all-stills", action="store_true",
                     help="score every still, not just reviewed ones")
     ap.add_argument("--min-gt-px", type=float, default=0,
