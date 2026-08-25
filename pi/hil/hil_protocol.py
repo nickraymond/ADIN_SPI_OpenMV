@@ -185,6 +185,7 @@ class Conductor:
         self.jpeg_gap = jpeg_gap
         self.jpeg_all = False         # review toggle: every 'g' becomes 'j'
         self.paused = False
+        self.aborting = False         # human abort: 'q' sent, wind down
         self.stage = "boot"   # boot|page|await_page_cmd|shown_wait|step|
         #                       hold|phase_end|done
         self.phase_i = -1
@@ -251,6 +252,12 @@ class Conductor:
             b.phase_i = obj["phase"]
         elif ev == "wait":
             b.parked_ph = obj.get("ph", b.phase_i)
+            if self.aborting:
+                # a 'q' that raced a running frame was eaten by the
+                # board's own drain — the heartbeat says it is parked
+                # again, so resend until #DONE arrives
+                b.status = "parked"
+                return acts + [("send", b.label, CMD_QUIT)]
             if (b.status == "running" and not b.frame_since_cmd
                     and now - b.cmd_t > self.HB_GRACE):
                 # parked heartbeat while we believe it is running past
@@ -296,8 +303,9 @@ class Conductor:
             # got < target. Closed loop turns corruption into a re-run.
             b.frame_since_cmd = True
         elif ev == "done":
-            expected = (self.stage == "phase_end"
-                        and self.phase_i == len(self.phases) - 1)
+            expected = self.aborting or (
+                self.stage == "phase_end"
+                and self.phase_i == len(self.phases) - 1)
             if expected:
                 b.status = "done"
             else:
@@ -342,6 +350,13 @@ class Conductor:
                 acts.append(self._send(b, CMD_GO_JPEG, now))
         elif action == "jpeg_all":
             self.jpeg_all = not self.jpeg_all
+        elif action == "abort":
+            # human abort from the monitor page: end every board's run
+            # ('q' → #DONE), then finish and score what was collected
+            self.aborting = True
+            for b in self.boards.values():
+                if b.alive:
+                    acts.append(("send", b.label, CMD_QUIT))
         return acts + self._pump(now)
 
     def on_tick(self, now):
@@ -371,6 +386,8 @@ class Conductor:
         if not alive:
             self.stage = "done"
             return [("finish",)]
+        if self.aborting:
+            return acts               # only 'q' resends until all end
 
         if self.stage == "boot":
             ready = [b for b in alive if b.phase_i == 0 and b.parked_ph == 0]

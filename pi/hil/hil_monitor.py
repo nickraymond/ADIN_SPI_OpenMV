@@ -26,7 +26,8 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-REVIEW_ACTIONS = ("next", "auto", "pause", "resume", "jpeg", "jpeg_all")
+REVIEW_ACTIONS = ("next", "auto", "pause", "resume", "jpeg", "jpeg_all",
+                  "abort")
 
 
 class Monitor:
@@ -63,7 +64,10 @@ class Monitor:
 
     def snapshot(self):
         with self.lock:
-            out = json.loads(json.dumps(self.state))   # deep copy
+            # default=float: a stray numpy scalar in fed state must
+            # degrade to a number, not kill the page (it did, on the
+            # first live run — every /api/monitor died empty)
+            out = json.loads(json.dumps(self.state, default=float))
             out["events"] = list(self.events)
             out["cam_ts"] = {lb: ts for lb, (_j, ts) in self.cams.items()}
             return out
@@ -95,6 +99,15 @@ def _make_handler(mon):
             self.wfile.write(body)
 
         def do_GET(self):
+            try:
+                self._get()
+            except Exception as e:      # degrade LOUDLY, never an empty
+                try:                    # reply (the first live run's bug)
+                    self._json({"error": f"monitor: {e!r}"}, 500)
+                except Exception:
+                    pass
+
+        def _get(self):
             if self.path == "/" or self.path.startswith("/?"):
                 body = PAGE.encode()
                 self.send_response(200)
@@ -172,6 +185,9 @@ PAGE = """<!DOCTYPE html>
  <button onclick="rv('next')">Next still &rarr;</button>
  <button onclick="rv('auto')">Switch to AUTO</button>
  <button onclick="rv('jpeg_all')">Toggle camera-view every frame</button>
+ <button style="border-color:#a44"
+  onclick="if(confirm('End the run and score what was collected?'))rv('abort')">
+  Abort run</button>
  <span id="hold"></span>
 </div>
 <div class="wrap">

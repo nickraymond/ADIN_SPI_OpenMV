@@ -424,3 +424,37 @@ def test_jpeg_all_toggle_switches_go_bytes():
     c.on_review("jpeg_all", now=0.0)
     acts = _to_model_phase(c, ("A",))
     assert _sends(acts, CMD_GO_JPEG) and not _sends(acts, CMD_GO)
+
+
+def test_abort_ends_run_and_survives_drain_race():
+    """Abort sends 'q'; a 'q' eaten by the board's drain (board was
+    mid-frame) is resent on its next heartbeat; #DONE then finishes."""
+    from hil_protocol import CMD_QUIT
+    c = _mk(labels=("A", "B"), n_stills=2, k=1)
+    _to_model_phase(c, ("A", "B"))
+    acts = c.on_review("abort", now=1.0)
+    assert sorted(a[1] for a in _sends(acts, CMD_QUIT)) == ["A", "B"]
+    # A's 'q' landed: #DONE is expected, not a premature drop
+    acts = c.on_event("A", "done", {"frames": 5}, 1.5)
+    assert not any(a[0] == "drop" for a in acts)
+    # B was mid-frame and drained the 'q'; its park heartbeat → resend
+    acts = _frame(c, "B", 2, 2.0)
+    acts = c.on_event("B", "wait", {"ph": 2, "seq": 0}, 2.0)
+    assert _sends(acts, CMD_QUIT) and _sends(acts, CMD_QUIT)[0][1] == "B"
+    acts = c.on_event("B", "done", {"frames": 6}, 2.5)
+    assert c.done and any(a[0] == "finish" for a in acts)
+
+
+def test_monitor_snapshot_survives_numpy_like_scalars():
+    """A stray non-JSON numeric (numpy float32 stand-in) must degrade to
+    a number, not kill the page — the first live run's bug."""
+    from hil_monitor import Monitor
+
+    class F32:                      # quacks like np.float32
+        def __float__(self):
+            return 0.25
+
+    m = Monitor()
+    m.set_board("N6", dets_cam=[[F32(), F32(), F32(), F32(), F32()]])
+    snap = m.snapshot()
+    assert snap["boards"]["N6"]["dets_cam"][0][0] == 0.25

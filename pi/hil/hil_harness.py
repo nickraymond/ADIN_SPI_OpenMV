@@ -419,8 +419,13 @@ def run_closed_loop(args, playback, out_dir):
                 mon.set_board(
                     lb, n_det=int(len(dets)), inf_ms=inf_ms,
                     e2e_ms=e2e_ms,
-                    dets_cam=[[d[0] / r.cam_w, d[1] / r.cam_h,
-                               d[2] / r.cam_w, d[3] / r.cam_h,
+                    # float() every value: numpy float32 leaking into the
+                    # monitor state killed /api/monitor with an empty
+                    # reply on the first live run (json can't dump it)
+                    dets_cam=[[float(d[0]) / r.cam_w,
+                               float(d[1]) / r.cam_h,
+                               float(d[2]) / r.cam_w,
+                               float(d[3]) / r.cam_h,
                                float(d[4])] for d in dets],
                     dets_still=(dets_to_still_frac(dets, r.Hinv)
                                 if r.Hinv is not None else None))
