@@ -41,6 +41,19 @@ def get_media(rel):
         return r.read()
 
 
+def post_shown(seq):
+    """Render ack (S8 bite E4): tell the server this state seq is on the
+    glass. Best-effort — a failed ack only delays the harness, which
+    keeps polling; it must never take the renderer down."""
+    try:
+        req = urllib.request.Request(
+            BASE + "/api/shown", data=json.dumps({"seq": seq}).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass
+
+
 def content_box(sw, sh):
     a = 16 / 9
     w, h = sw, sw / a
@@ -121,6 +134,9 @@ def main():
             else:
                 screen.fill((0, 0, 0))
             pygame.display.flip()
+            # ack AFTER the flip: the closed-loop harness gates its
+            # go-bytes on this — the ack must mean "on the glass"
+            post_shown(st["seq"])
         time.sleep(0.25)
 
 

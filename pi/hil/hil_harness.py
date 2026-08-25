@@ -18,12 +18,13 @@ scored frame), calib_<label>.jpg + marker overlay, overlays/*.jpg (GT
 green vs detections yellow), summary table on stdout.
 """
 import argparse
-import base64
 import io
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -32,10 +33,14 @@ from PIL import Image, ImageDraw
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_ROOT, "bench"))
 sys.path.insert(0, os.path.join(_ROOT, "ml", "yolox_urchin"))
 from decode_np import cells_to_dets, merge_tiles    # noqa: E402
 from n6_stream_host import SerialBoard              # noqa: E402
+from hil_monitor import Monitor                     # noqa: E402
+from hil_protocol import (BoardStream, Conductor,   # noqa: E402
+                          CMD_QUIT)
 
 STILL_W, STILL_H = 1920, 1080
 IN_W = 256
@@ -138,80 +143,9 @@ def iou(a, b):
 
 
 # ------------------------------------------------------------ board stream
-class BoardStream:
-    """Parse the hil_board.py wire: #I/#PH/#F headers + b64 payload lines."""
-
-    def __init__(self, port, script_text):
-        self.sb = SerialBoard(port)
-        self.sb.start(script_text)
-        self.info = None
-
-    def next_event(self, timeout_s=30):
-        """-> ('info'|'phase'|'frame'|'done'|'end', payload)."""
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            line = self.sb.readline()
-            if line == b"":
-                return "end", {"reason": self.sb.end_reason,
-                               "error": self.sb.last_error}
-            if not line.startswith(b"#"):
-                continue                      # stray output — ignore
-            try:
-                tag, payload = line.split(b" ", 1)
-                obj = json.loads(payload)
-            except ValueError:
-                continue
-            if tag == b"#I":
-                self.info = obj
-                return "info", obj
-            if tag == b"#PH":
-                return "phase", obj
-            if tag == b"#DONE":
-                return "done", obj
-            if tag == b"#F":
-                jpg = b""
-                if obj["jpg"]:
-                    # header lengths are BARE b64; the CDC turns the
-                    # terminator \n into \r\n, so strip before comparing
-                    raw_line = self.sb.readline()
-                    if raw_line == b"":       # board died mid-frame
-                        return "end", {"reason": self.sb.end_reason,
-                                       "error": self.sb.last_error,
-                                       "mid_frame": obj["seq"]}
-                    jpg_line = raw_line.rstrip(b"\r\n")
-                    if len(jpg_line) != obj["jpg"]:
-                        # one corrupted line 1,270 frames into an
-                        # otherwise-clean run killed a whole leg — the
-                        # stream is line-oriented, so skip and realign
-                        print(f"    WARN seq {obj['seq']}: jpg payload "
-                              f"{len(jpg_line)} != {obj['jpg']}, "
-                              f"frame skipped")
-                        return "skip", obj
-                    jpg = base64.b64decode(jpg_line)
-                tile_cells = []
-                for ncell in obj["cells"]:
-                    raw_line = self.sb.readline()
-                    if raw_line == b"":
-                        return "end", {"reason": self.sb.end_reason,
-                                       "error": self.sb.last_error,
-                                       "mid_frame": obj["seq"]}
-                    try:
-                        cells = json.loads(raw_line)
-                    except ValueError:
-                        cells = None
-                    if cells is None or len(cells) != ncell:
-                        print(f"    WARN seq {obj['seq']}: cells payload "
-                              f"corrupt/short (want {ncell}), frame skipped")
-                        return "skip", obj
-                    tile_cells.append(cells)
-                obj["_jpg"] = jpg
-                obj["_cells"] = tile_cells
-                obj["_arrival"] = time.monotonic()
-                return "frame", obj
-        raise IOError(f"board silent for {timeout_s}s")
-
-    def stop(self):
-        self.sb.stop()
+# BoardStream (the #I/#PH/#W/#F wire parser) moved to hil_protocol.py in
+# bite E4 so the fake-board test suite covers it; it now wraps an
+# already-started SerialBoard.
 
 
 def frame_detections(fr):
@@ -232,6 +166,371 @@ def frame_detections(fr):
                 for c in fr["_cells"]]
     return merge_tiles(per_tile, [tuple(t) for t in fr["tiles"]],
                        nms_iou=NMS_IOU)
+
+
+# ------------------------------------------------------- closed loop (E4)
+def dets_to_still_frac(dets_cam, Hinv):
+    """Camera-px detections -> still-fraction boxes [x1,y1,x2,y2,conf]
+    (H maps still fractions -> camera px, so Hinv lands in fractions)."""
+    out = []
+    for det in dets_cam:
+        pts = np.array([[det[0], det[1]], [det[2], det[1]],
+                        [det[2], det[3]], [det[0], det[3]]], np.float64)
+        p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
+        p = p[:, :2] / p[:, 2:3]
+        out.append([float(p[:, 0].min()), float(p[:, 1].min()),
+                    float(p[:, 0].max()), float(p[:, 1].max()),
+                    float(det[4])])
+    return out
+
+
+class _Reader(threading.Thread):
+    """One per board: pump BoardStream events into the shared queue."""
+
+    def __init__(self, label, stream, evq):
+        super().__init__(daemon=True)
+        self.label = label
+        self.stream = stream
+        self.evq = evq
+
+    def run(self):
+        while True:
+            try:
+                # parked boards heartbeat #W every ~5 s and an HD tiled
+                # frame is ~4 s of legitimate silence — 45 s of nothing
+                # means the board is gone
+                ev, obj = self.stream.next_event(timeout_s=45)
+            except IOError as e:
+                self.evq.put((self.label, "end", {"reason": f"silent: {e}"}))
+                return
+            self.evq.put((self.label, ev, obj))
+            if ev in ("done", "end"):
+                return
+
+
+class _BoardRun:
+    """Per-board mutable run state for the closed-loop path."""
+
+    def __init__(self, label):
+        self.label = label
+        self.stats = None
+        self.summary = []
+        self.jpeg_frames = {"loop": [], "black": [], "calib": []}
+        self.pending = []
+        self.H = None
+        self.Hinv = None
+        self.cam_w, self.cam_h = 640, 400
+        self.last_frame = None        # (obj, dets) awaiting attribution
+
+
+def run_closed_loop(args, playback, out_dir):
+    """E4: all boards at once, per-still handshake, live monitor.
+
+    Phase order is calib-FIRST here (black → calib → models), unlike the
+    open-loop path's models-first: the live monitor needs the homography
+    while the run is happening. Models-first was insurance against a
+    jpeg→model transition fault on the N6 since attributed to the
+    unshielded USB cable (SPEC, 2026-08-25) — the two-board acceptance
+    A/B is the check that this reordering is safe.
+    """
+    reviewed = load_reviewed(args.stills_dir, not args.all_stills)
+    if not reviewed:
+        raise SystemExit("FAIL: no reviewed stills to score")
+    k = args.frames_per_still
+    phases = [{"kind": "jpeg", "page": "black"},
+              {"kind": "jpeg", "page": "calib"}]
+    for spec in args.phases.split(","):
+        model, mode = spec.strip().split("-")
+        phases.append({"kind": "model", "model": model, "mode": mode})
+    board_phases = []
+    for p in phases:
+        bp = {"kind": p["kind"], "frames": 0}     # 0 = until told (E4)
+        if p["kind"] == "model":
+            bp.update({"model": p["model"], "mode": p["mode"],
+                       "jpeg": False})
+        board_phases.append(bp)
+    mode = "review" if args.review else "auto"
+    script = ("_CFG = " + repr({"framesize": args.framesize,
+                                "jpeg_quality": 50,
+                                "phases": board_phases,
+                                "handshake": True,
+                                # a review hold can be a long human
+                                # pause; never let the board give up
+                                # under Nick
+                                "idle_s": 3600 if args.review else 300})
+              + "\n" + open(os.path.join(_HERE, "hil_board.py")).read())
+    board_list = [spec.split("=", 1) for spec in args.board]
+    labels = [lb for lb, _p in board_list]
+    print(f"\n=== CLOSED LOOP ({mode}): {', '.join(labels)}\n    phases: "
+          + ", ".join(p.get("page") or f"{p['model']}-{p['mode']}"
+                      for p in phases))
+
+    mon = Monitor(playback_port=int(playback.base.rsplit(":", 1)[1]))
+    mon_port = mon.start(port=args.monitor_port)
+    print(f"    monitor page: http://0.0.0.0:{mon_port}/  "
+          f"(trusted LAN, no auth — view from the Mac)")
+
+    power_proc = None
+    plog = os.path.join(_ROOT, "pi", "workbench", "power_log.py")
+    if os.path.exists(plog):
+        power_proc = subprocess.Popen(
+            [sys.executable, plog, "--ch", "1=AE3", "--ch", "3=N6",
+             "--hz", "10", "--out", out_dir],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"    power logger up (pid {power_proc.pid})")
+
+    evq = queue.Queue()
+    streams = {}
+    runs = {lb: _BoardRun(lb) for lb in labels}
+    for lb, port in board_list:
+        bs = BoardStream(SerialBoard(port).start(script))
+        ev0, obj0 = bs.next_event(timeout_s=60)
+        if ev0 == "end":
+            print(f"    {lb}: first attach died sterile "
+                  f"({obj0.get('reason')}) — one retry in 5 s")
+            bs.stop()
+            time.sleep(5)
+            bs = BoardStream(SerialBoard(port).start(script))
+            ev0, obj0 = bs.next_event(timeout_s=60)
+        streams[lb] = bs
+        evq.put((lb, ev0, obj0))
+        _Reader(lb, bs, evq).start()
+
+    con = Conductor(labels, phases, stills=[r[0] for r in reviewed], k=k,
+                    mode=mode, frame_timeout=args.frame_timeout)
+    rows_path = os.path.join(out_dir, "rows.jsonl")
+    rows_fh = open(rows_path, "a")
+    os.makedirs(os.path.join(out_dir, "overlays"), exist_ok=True)
+
+    t_page_cmd = None
+    last_shown_poll = 0.0
+    last_tick = 0.0
+
+    def update_monitor():
+        snap = con.snapshot()
+        mon.set_run(snap)
+        if con.phase_i >= 2 and con.stage in ("step", "hold",
+                                              "shown_wait",
+                                              "await_page_cmd"):
+            pb_i, name, boxes = reviewed[con.still_i]
+            mon.set_still({
+                "name": name, "index": con.still_i,
+                "url_path": "/media/stills/frames/" + name,
+                "gt": [[b[1] / STILL_W, b[2] / STILL_H,
+                        (b[1] + b[3]) / STILL_W, (b[2] + b[4]) / STILL_H]
+                       for b in boxes]})
+        for lb in labels:
+            b = snap["boards"][lb]
+            mon.set_board(lb, status=b["status"], got=b["got"],
+                          drop_reason=b["drop_reason"])
+
+    def handle(lb, ev, obj):
+        """Bookkeeping BEFORE the conductor sees the event."""
+        r = runs[lb]
+        if ev == "info":
+            r.cam_w = int(obj.get("w", r.cam_w))
+            r.cam_h = int(obj.get("h", r.cam_h))
+            print(f"    {lb}: {obj['board_models']} "
+                  f"({obj.get('w')}x{obj.get('h')}, "
+                  f"{len(obj.get('tiles', []))} tiles)")
+            mon.set_board(lb, model=str(obj.get("board_models")))
+            mon.log(f"{lb} up: {obj.get('w')}x{obj.get('h')}")
+        elif ev == "phase":
+            if r.stats:
+                r.summary.append(r.stats)
+                r.stats = None
+            if "error" in obj:
+                print(f"    {lb} PHASE SKIPPED: {obj['error']}")
+                mon.log(f"{lb} phase skipped: {obj['error']}")
+                return
+            ph = phases[obj["phase"]]
+            name = ph.get("page") or f"{obj['model']}-{obj['mode']}"
+            print(f"    {lb} phase {name}: {obj.get('path') or ''}")
+            mon.log(f"{lb} phase {name}")
+            r.stats = {"board": lb, "phase": name,
+                       "path": obj.get("path"), "frames": 0, "gt": 0,
+                       "det": 0, "match": 0, "inf_us": [], "cap_us": [],
+                       "prep_us": [], "t0": None, "t1": None}
+        elif ev == "frame":
+            obj["t_host"] = time.time()          # power-log alignment
+            dets = np.zeros((0, 5))
+            if obj.get("inf_us"):                # model-phase frame
+                dets = frame_detections(obj)
+            r.last_frame = (obj, dets)
+        elif ev == "skip":
+            print(f"    WARN {lb} seq {obj.get('seq')}: corrupt payload "
+                  f"— closed loop will re-run the frame")
+            mon.log(f"{lb} corrupt frame re-run (seq {obj.get('seq')})")
+
+    def execute(acts):
+        nonlocal t_page_cmd
+        while acts:
+            a = acts.pop(0)
+            kind = a[0]
+            if kind == "send":
+                _k, lb, cmd = a
+                try:
+                    streams[lb].sb.ser.write(cmd)
+                except Exception as e:
+                    print(f"    {lb}: control write failed ({e})")
+            elif kind == "set_page":
+                resp = playback.set(**a[1])
+                t_page_cmd = time.monotonic()
+                acts += con.on_page_commanded(resp["seq"],
+                                              time.monotonic())
+            elif kind == "frame_ok":
+                _k, lb, slot, n = a
+                r = runs[lb]
+                obj, dets = r.last_frame
+                if isinstance(slot, str):        # jpeg page
+                    r.jpeg_frames[slot].append(obj["_jpg"])
+                    mon.set_cam(lb, obj["_jpg"])
+                    if r.stats:
+                        r.stats["frames"] += 1
+                    if (slot == "calib" and r.H is None
+                            and r.jpeg_frames["black"]
+                            and len(r.jpeg_frames["calib"]) >= 2):
+                        r.H = solve_board_H(lb, r.jpeg_frames, playback,
+                                            out_dir)
+                        r.Hinv = np.linalg.inv(r.H)
+                        mon.log(f"{lb} homography solved")
+                    continue
+                pb_i, name, boxes = reviewed[slot]
+                r.pending.append({"stats": r.stats, "still": name,
+                                  "boxes": boxes, "dets": dets,
+                                  "obj": obj, "frame_in_still": n})
+                st = r.stats
+                if st is not None:
+                    st["frames"] += 1
+                    st["inf_us"].append(sum(obj["inf_us"]))
+                    st["cap_us"].append(obj["cap_us"])
+                    st["prep_us"].append(sum(obj["prep_us"])
+                                         + sum(obj["dec_us"]))
+                    t = obj["_arrival"]
+                    st["t0"] = t if st["t0"] is None else st["t0"]
+                    st["t1"] = t
+                if any(obj["dropped"]):
+                    print(f"    NOTE {lb} seq {obj['seq']}: cell cap "
+                          f"dropped {obj['dropped']} (dense frame)")
+                inf_ms = round(sum(obj["inf_us"]) / 1000, 1)
+                e2e_ms = round((obj["cap_us"] + sum(obj["prep_us"])
+                                + sum(obj["inf_us"])
+                                + sum(obj["dec_us"])) / 1000, 1)
+                mon.set_board(
+                    lb, n_det=int(len(dets)), inf_ms=inf_ms,
+                    e2e_ms=e2e_ms,
+                    dets_cam=[[d[0] / r.cam_w, d[1] / r.cam_h,
+                               d[2] / r.cam_w, d[3] / r.cam_h,
+                               float(d[4])] for d in dets],
+                    dets_still=(dets_to_still_frac(dets, r.Hinv)
+                                if r.Hinv is not None else None))
+                if obj["_jpg"]:
+                    mon.set_cam(lb, obj["_jpg"])
+            elif kind == "frame_stray":
+                mon.log(f"{a[1]} stray frame (no confirmed still) "
+                        f"— dropped, not scored")
+            elif kind == "hold":
+                mon.log("REVIEW HOLD — press Next on the monitor page")
+            elif kind == "drop":
+                _k, lb, reason = a
+                print(f"    !! {lb} LEFT THE BARRIER: {reason} — "
+                      f"remaining boards continue solo")
+                mon.log(f"{lb} DROPPED: {reason}")
+                try:
+                    streams[lb].stop()
+                except Exception:
+                    pass
+            elif kind == "finish":
+                pass                              # con.done ends the loop
+
+    try:
+        while not con.done:
+            now = time.monotonic()
+            try:
+                lb, ev, obj = evq.get(timeout=0.1)
+                handle(lb, ev, obj)
+                execute(con.on_event(lb, ev, obj, now))
+            except queue.Empty:
+                pass
+            while True:                           # drain without blocking
+                try:
+                    lb, ev, obj = evq.get_nowait()
+                except queue.Empty:
+                    break
+                handle(lb, ev, obj)
+                execute(con.on_event(lb, ev, obj, now))
+            try:
+                while True:
+                    action, board = mon.review_q.get_nowait()
+                    mon.log(f"review: {action}"
+                            + (f" ({board})" if board else ""))
+                    execute(con.on_review(action, board=board, now=now))
+            except queue.Empty:
+                pass
+            if con.stage == "shown_wait":
+                if args.no_shown_ack:
+                    # no LCD render-ack available (e.g. dev without the
+                    # hil-lcd service): fall back to a fixed render wait
+                    if t_page_cmd and now - t_page_cmd > 0.7:
+                        execute(con.on_shown(con.page_seq, now))
+                elif now - last_shown_poll > 0.25:
+                    last_shown_poll = now
+                    try:
+                        st = playback.state()
+                        execute(con.on_shown(st.get("shown_seq", 0), now))
+                    except Exception:
+                        pass
+            if now - last_tick > 0.5:
+                last_tick = now
+                execute(con.on_tick(now))
+                update_monitor()
+    except KeyboardInterrupt:
+        print("\n    interrupted — ending boards cleanly, scoring what "
+              "was collected")
+        for lb in labels:
+            try:
+                streams[lb].sb.ser.write(CMD_QUIT)
+            except Exception:
+                pass
+        time.sleep(1)
+    finally:
+        for lb in labels:
+            try:
+                streams[lb].stop()
+            except Exception:
+                pass
+        playback.set(mode="loop")
+        if power_proc is not None:
+            power_proc.terminate()
+            try:
+                power_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                power_proc.kill()
+
+    snap = con.snapshot()
+    print(f"\n    audit: settle_discards={snap['settle_discards']} "
+          f"(closed loop — the concept is gone), "
+          f"stray_frames={snap['stray_frames']} (named + dropped)")
+    for lb in labels:
+        r = runs[lb]
+        if r.stats:
+            r.summary.append(r.stats)
+        print(f"\n=== {lb} results")
+        score_pending(r.pending, r.H, lb, args, out_dir, rows_fh,
+                      r.cam_w, r.cam_h)
+        print_summary(r.summary, args)
+    rows_fh.close()
+    mon.set_run({**snap, "stage": "finished"})
+    print(f"\nrows: {rows_path}")
+    print("    monitor page stays up until Ctrl-C"
+          if args.review else "")
+    if args.review:
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+    mon.stop()
 
 
 # ------------------------------------------------------------------- main
@@ -273,6 +572,159 @@ def save_still_overlay(path, still_path, dets_cam, boxes, Hinv):
         d.rectangle([x1, y1, x2, y2], outline=(255, 220, 0), width=3)
         d.text((x1 + 3, y1 + 3), f"{det[4]:.2f}", fill=(255, 220, 0))
     img.save(path, quality=88)
+
+
+def solve_board_H(label, jpeg_frames, playback, out_dir):
+    """Save the camera's raw views, find the markers, solve + persist H.
+
+    Evidence is saved FIRST: a failed solve must leave what the camera
+    actually saw. Shared by the open-loop and closed-loop paths."""
+    open(os.path.join(out_dir, f"calib_{label}.jpg"),
+         "wb").write(jpeg_frames["calib"][-1])
+    open(os.path.join(out_dir, f"black_{label}.jpg"),
+         "wb").write(jpeg_frames["black"][-1])
+    if jpeg_frames.get("loop"):
+        open(os.path.join(out_dir, f"loopview_{label}.jpg"),
+             "wb").write(jpeg_frames["loop"][-1])
+    black = jpeg_gray(jpeg_frames["black"][-1])
+    calib = jpeg_gray(jpeg_frames["calib"][-1])
+    cents = find_markers(calib, black)
+    H = solve_homography(playback.markers, cents)
+    img = Image.open(io.BytesIO(jpeg_frames["calib"][-1])).convert("RGB")
+    d = ImageDraw.Draw(img)
+    for cx, cy in cents:
+        d.ellipse([cx - 6, cy - 6, cx + 6, cy + 6],
+                  outline=(255, 0, 0), width=3)
+    img.save(os.path.join(out_dir, f"calib_{label}_markers.jpg"))
+    np.save(os.path.join(out_dir, f"H_{label}.npy"), H)
+    print("    homography solved; markers at "
+          + ", ".join(f"({cx:.0f},{cy:.0f})" for cx, cy in cents))
+    return H
+
+
+def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
+    """Post-pass: score every buffered model frame against H, write rows
+    + per-still overlays, and roll totals into each frame's stats dict.
+    Shared by the open-loop and closed-loop paths."""
+    if pending and H is None:
+        print(f"    WARNING: {len(pending)} frames collected but NO "
+              f"homography (calib phase never completed) — timers reported, "
+              f"accuracy NOT scored")
+    if H is None:
+        return
+    Hinv = np.linalg.inv(H)
+    overlaid = set()
+    for p in pending:
+        boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
+        st = p["stats"]
+        # VISIBILITY FILTER (markers-at-box-D setup): the camera sees
+        # only part of the still, so GT outside the frame must not
+        # score as misses — keep only GT boxes fully inside the
+        # camera frame (2 px margin), and symmetrically drop
+        # detections touching the frame edge.
+        m = 2.0
+        vis = [(b, g) for b, g in
+               ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
+                for b in boxes)
+               if g[0] >= -m and g[1] >= -m
+               and g[2] <= cam_w + m and g[3] <= cam_h + m]
+        boxes = [b for b, _g in vis]
+        gt_cam = [g for _b, g in vis]
+        if len(dets):
+            keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
+                    & (dets[:, 2] < cam_w - m)
+                    & (dets[:, 3] < cam_h - m))
+            dets = dets[keep]
+        used = set()
+        match = 0
+        pairs = {}                  # det idx -> matched gt idx
+        order = np.argsort(-dets[:, 4]) if len(dets) else []
+        for di in order:
+            best, best_j = 0.0, -1
+            for j, g in enumerate(gt_cam):
+                if j not in used:
+                    v = iou(dets[di][:4], g)
+                    if v > best:
+                        best, best_j = v, j
+            if best >= MATCH_IOU:
+                used.add(best_j)
+                pairs[int(di)] = best_j
+                match += 1
+        gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1)
+                 for g in gt_cam]
+        row = {"board": label, "phase": st["phase"],
+               "still": p["still"],
+               "frame_in_still": p["frame_in_still"],
+               "seq": obj["seq"], "t_host": obj.get("t_host"),
+               "cap_us": obj["cap_us"],
+               "prep_us": obj["prep_us"], "inf_us": obj["inf_us"],
+               "dec_us": obj["dec_us"], "dropped": obj["dropped"],
+               "n_gt": len(boxes), "n_det": int(len(dets)),
+               "n_match": match, "n_miss": len(boxes) - match,
+               "n_false": int(len(dets)) - match,
+               "gt_px_cam": gt_px,
+               "det_conf": [round(float(d[4]), 3) for d in dets],
+               "dets_cam": [[round(float(v), 1) for v in d[:5]]
+                            for d in dets]}
+        if args.min_gt_px > 0:
+            # pixel floor, COCO-style IGNORE semantics: sub-floor GT
+            # never count as misses, and detections matched to them
+            # leave the false count (deleting them from GT instead
+            # would flip correct small detections into falses)
+            fl = args.min_gt_px
+            kept = {j for j in range(len(gt_cam))
+                    if gt_px[j] >= fl}
+            m_f = sum(1 for j in pairs.values() if j in kept)
+            false_f = int(len(dets)) - len(pairs)
+            row.update({"floor_px": fl, "n_gt_floor": len(kept),
+                        "n_match_floor": m_f, "n_false_floor": false_f})
+        rows_fh.write(json.dumps(row) + "\n")
+        st["gt"] += len(boxes)
+        st["det"] += int(len(dets))
+        st["match"] += match
+        if args.min_gt_px > 0:
+            st["gt_floor"] = st.get("gt_floor", 0) + row["n_gt_floor"]
+            st["match_floor"] = (st.get("match_floor", 0)
+                                 + row["n_match_floor"])
+            st["false_floor"] = (st.get("false_floor", 0)
+                                 + row["n_false_floor"])
+        key = (st["phase"], p["still"])
+        if key not in overlaid:
+            overlaid.add(key)
+            save_still_overlay(
+                os.path.join(out_dir, "overlays",
+                             f"{label}_{st['phase']}_{p['still']}"),
+                os.path.join(args.stills_dir, "frames", p["still"]),
+                dets, boxes, Hinv)
+
+
+def print_summary(summary, args):
+    print(f"\n    {'phase':<12} {'frames':>6} {'GT':>5} {'det':>5} "
+          f"{'match':>5} {'miss':>5} {'false':>5} {'inf ms':>7} "
+          f"{'e2e ms/frame':>12}")
+    for s in summary:
+        if s["phase"] in ("black", "calib"):
+            print(f"    ({s['phase']}: {s['frames']} post-settle frames)")
+            continue
+        if not s["frames"]:
+            continue
+        n = s["frames"]
+        inf = sum(s["inf_us"]) / n / 1000
+        e2e = (sum(s["cap_us"]) + sum(s["prep_us"])
+               + sum(s["inf_us"])) / n / 1000
+        line = (f"    {s['phase']:<12} {n:>6} {s['gt']:>5} {s['det']:>5} "
+                f"{s['match']:>5} {s['gt'] - s['match']:>5} "
+                f"{s['det'] - s['match']:>5} {inf:>7.1f} {e2e:>12.1f}")
+        if args.min_gt_px > 0 and s.get("gt_floor"):
+            gf, mf = s["gt_floor"], s["match_floor"]
+            ff = s["false_floor"]
+            prec = mf / (mf + ff) if mf + ff else 0.0
+            line += (f"   | >={args.min_gt_px:g}px: recall "
+                     f"{mf / gf if gf else 0:.2f} prec {prec:.2f} "
+                     f"(GT {gf})")
+        if s.get("t0") is not None and s.get("t1") is not None:
+            line += f"   wall {s['t1'] - s['t0']:.1f}s"
+        print(line)
 
 
 def run_board(label, port, args, playback, out_dir):
@@ -328,7 +780,7 @@ def run_board(label, port, args, playback, out_dir):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"    power logger up (pid {power_proc.pid})")
 
-    bs = BoardStream(port, script)
+    bs = BoardStream(SerialBoard(port).start(script))
     # the FIRST attach after a board crash-reset tends to die instantly
     # (the soft reset re-enumerates the port under the fresh connection);
     # one retry, only when the stream produced NOTHING
@@ -338,7 +790,7 @@ def run_board(label, port, args, playback, out_dir):
               f"one retry in 5 s")
         bs.stop()
         time.sleep(5)
-        bs = BoardStream(port, script)
+        bs = BoardStream(SerialBoard(port).start(script))
         ev0, obj0 = bs.next_event(timeout_s=60)
     first_event = (ev0, obj0)
     rows_path = os.path.join(out_dir, "rows.jsonl")
@@ -373,7 +825,11 @@ def run_board(label, port, args, playback, out_dir):
             else:
                 ev, obj = bs.next_event(timeout_s=60)
             if ev == "skip":
-                continue                    # corrupted frame, realigned
+                # corrupted payload line; the parser realigned (the WARN
+                # print moved here when BoardStream went to hil_protocol)
+                print(f"    WARN seq {obj.get('seq')}: corrupt payload, "
+                      f"frame skipped")
+                continue
             if ev == "info":
                 print(f"    board: {obj['board_models']} "
                       f"({obj.get('w')}x{obj.get('h')}, "
@@ -419,31 +875,8 @@ def run_board(label, port, args, playback, out_dir):
                 if (cur["page"] == "calib" and H is None
                         and jpeg_frames["black"]
                         and len(jpeg_frames["calib"]) >= 2):
-                    # save the raw views FIRST: a failed solve must leave
-                    # the evidence (what did the camera actually see?)
-                    open(os.path.join(out_dir, f"calib_{label}.jpg"),
-                         "wb").write(jpeg_frames["calib"][-1])
-                    open(os.path.join(out_dir, f"black_{label}.jpg"),
-                         "wb").write(jpeg_frames["black"][-1])
-                    if jpeg_frames["loop"]:
-                        open(os.path.join(out_dir, f"loopview_{label}.jpg"),
-                             "wb").write(jpeg_frames["loop"][-1])
-                    black = jpeg_gray(jpeg_frames["black"][-1])
-                    calib = jpeg_gray(jpeg_frames["calib"][-1])
-                    cents = find_markers(calib, black)
-                    H = solve_homography(playback.markers, cents)
-                    img = Image.open(io.BytesIO(
-                        jpeg_frames["calib"][-1])).convert("RGB")
-                    d = ImageDraw.Draw(img)
-                    for cx, cy in cents:
-                        d.ellipse([cx - 6, cy - 6, cx + 6, cy + 6],
-                                  outline=(255, 0, 0), width=3)
-                    img.save(os.path.join(out_dir,
-                                          f"calib_{label}_markers.jpg"))
-                    np.save(os.path.join(out_dir, f"H_{label}.npy"), H)
-                    print(f"    homography solved; markers at "
-                          + ", ".join(f"({cx:.0f},{cy:.0f})"
-                                      for cx, cy in cents))
+                    H = solve_board_H(label, jpeg_frames, playback,
+                                      out_dir)
                 continue
             # model-phase frame: only frames captured comfortably after the
             # still went up count; decode now, score in the post-pass once
@@ -488,121 +921,10 @@ def run_board(label, port, args, playback, out_dir):
                 power_proc.kill()
 
     # ---- post-pass: score every buffered frame against the homography ----
-    if pending and H is None:
-        print(f"    WARNING: {len(pending)} frames collected but NO "
-              f"homography (calib phase never completed) — timers reported, "
-              f"accuracy NOT scored")
-    if H is not None:
-        Hinv = np.linalg.inv(H)
-        overlaid = set()
-        for p in pending:
-            boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
-            st = p["stats"]
-            # VISIBILITY FILTER (markers-at-box-D setup): the camera sees
-            # only part of the still, so GT outside the frame must not
-            # score as misses — keep only GT boxes fully inside the
-            # camera frame (2 px margin), and symmetrically drop
-            # detections touching the frame edge.
-            m = 2.0
-            vis = [(b, g) for b, g in
-                   ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
-                    for b in boxes)
-                   if g[0] >= -m and g[1] >= -m
-                   and g[2] <= cam_w + m and g[3] <= cam_h + m]
-            boxes = [b for b, _g in vis]
-            gt_cam = [g for _b, g in vis]
-            if len(dets):
-                keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
-                        & (dets[:, 2] < cam_w - m)
-                        & (dets[:, 3] < cam_h - m))
-                dets = dets[keep]
-            used = set()
-            match = 0
-            pairs = {}                  # det idx -> matched gt idx
-            order = np.argsort(-dets[:, 4]) if len(dets) else []
-            for di in order:
-                best, best_j = 0.0, -1
-                for j, g in enumerate(gt_cam):
-                    if j not in used:
-                        v = iou(dets[di][:4], g)
-                        if v > best:
-                            best, best_j = v, j
-                if best >= MATCH_IOU:
-                    used.add(best_j)
-                    pairs[int(di)] = best_j
-                    match += 1
-            gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1)
-                     for g in gt_cam]
-            row = {"board": label, "phase": st["phase"],
-                   "still": p["still"],
-                   "frame_in_still": p["frame_in_still"],
-                   "seq": obj["seq"], "t_host": obj.get("t_host"),
-                   "cap_us": obj["cap_us"],
-                   "prep_us": obj["prep_us"], "inf_us": obj["inf_us"],
-                   "dec_us": obj["dec_us"], "dropped": obj["dropped"],
-                   "n_gt": len(boxes), "n_det": int(len(dets)),
-                   "n_match": match, "n_miss": len(boxes) - match,
-                   "n_false": int(len(dets)) - match,
-                   "gt_px_cam": gt_px,
-                   "det_conf": [round(float(d[4]), 3) for d in dets],
-                   "dets_cam": [[round(float(v), 1) for v in d[:5]]
-                                for d in dets]}
-            if args.min_gt_px > 0:
-                # pixel floor, COCO-style IGNORE semantics: sub-floor GT
-                # never count as misses, and detections matched to them
-                # leave the false count (deleting them from GT instead
-                # would flip correct small detections into falses)
-                fl = args.min_gt_px
-                kept = {j for j in range(len(gt_cam))
-                        if gt_px[j] >= fl}
-                m_f = sum(1 for j in pairs.values() if j in kept)
-                false_f = int(len(dets)) - len(pairs)
-                row.update({"floor_px": fl, "n_gt_floor": len(kept),
-                            "n_match_floor": m_f, "n_false_floor": false_f})
-            rows_fh.write(json.dumps(row) + "\n")
-            st["gt"] += len(boxes)
-            st["det"] += int(len(dets))
-            st["match"] += match
-            if args.min_gt_px > 0:
-                st["gt_floor"] = st.get("gt_floor", 0) + row["n_gt_floor"]
-                st["match_floor"] = (st.get("match_floor", 0)
-                                     + row["n_match_floor"])
-                st["false_floor"] = (st.get("false_floor", 0)
-                                     + row["n_false_floor"])
-            key = (st["phase"], p["still"])
-            if key not in overlaid:
-                overlaid.add(key)
-                save_still_overlay(
-                    os.path.join(out_dir, "overlays",
-                                 f"{label}_{st['phase']}_{p['still']}"),
-                    os.path.join(args.stills_dir, "frames", p["still"]),
-                    dets, boxes, Hinv)
+    score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h)
     rows_fh.close()
 
-    print(f"\n    {'phase':<12} {'frames':>6} {'GT':>5} {'det':>5} "
-          f"{'match':>5} {'miss':>5} {'false':>5} {'inf ms':>7} "
-          f"{'e2e ms/frame':>12}")
-    for s in summary:
-        if s["phase"] in ("black", "calib"):
-            print(f"    ({s['phase']}: {s['frames']} post-settle frames)")
-            continue
-        if not s["frames"]:
-            continue
-        n = s["frames"]
-        inf = sum(s["inf_us"]) / n / 1000
-        e2e = (sum(s["cap_us"]) + sum(s["prep_us"])
-               + sum(s["inf_us"])) / n / 1000
-        line = (f"    {s['phase']:<12} {n:>6} {s['gt']:>5} {s['det']:>5} "
-                f"{s['match']:>5} {s['gt'] - s['match']:>5} "
-                f"{s['det'] - s['match']:>5} {inf:>7.1f} {e2e:>12.1f}")
-        if args.min_gt_px > 0 and s.get("gt_floor"):
-            gf, mf = s["gt_floor"], s["match_floor"]
-            ff = s["false_floor"]
-            prec = mf / (mf + ff) if mf + ff else 0.0
-            line += (f"   | >={args.min_gt_px:g}px: recall "
-                     f"{mf / gf if gf else 0:.2f} prec {prec:.2f} "
-                     f"(GT {gf})")
-        print(line)
+    print_summary(summary, args)
     return summary
 
 
@@ -632,6 +954,21 @@ def main():
                          "them are not falses) — the T2 24-32 px band; "
                          "Nick's 2026-08-25 call is 30. Raw counts stay "
                          "in every row; floored counts ride alongside")
+    ap.add_argument("--closed-loop", action="store_true",
+                    help="E4 handshake mode: ALL boards at once, "
+                         "per-still go/done barrier, zero settle "
+                         "discards by construction, live monitor page")
+    ap.add_argument("--review", action="store_true",
+                    help="closed-loop only: hold at each still until "
+                         "Next is pressed on the monitor page — Nick in "
+                         "the loop before any automated run")
+    ap.add_argument("--monitor-port", type=int, default=8092)
+    ap.add_argument("--frame-timeout", type=float, default=30.0,
+                    help="closed-loop: seconds a board may sit on one "
+                         "go-byte before a resend (3 strikes = dropped)")
+    ap.add_argument("--no-shown-ack", action="store_true",
+                    help="closed-loop: no hil-lcd render ack available; "
+                         "fall back to a fixed 0.7 s render wait")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -642,6 +979,12 @@ def main():
     print(f"scoring {n_rev} stills, {args.frames_per_still} frames each; "
           f"phases {args.phases}; out {out_dir}")
 
+    if args.closed_loop:
+        run_closed_loop(args, playback, out_dir)
+        return
+    if args.review:
+        raise SystemExit("FAIL: --review needs --closed-loop (the "
+                         "open-loop path has no hold point)")
     for spec in args.board:
         label, port = spec.split("=", 1)
         run_board(label, port, args, playback, out_dir)

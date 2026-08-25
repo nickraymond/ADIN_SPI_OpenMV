@@ -23,10 +23,28 @@
 #   phases         [{"kind":"jpeg","frames":N}                (loop/black/calib)
 #                   {"kind":"model","model":"nano"|"tiny",
 #                    "mode":"whole"|"tiled","frames":N}, ...]
+#   handshake      False -- True = CLOSED LOOP (S8 bite E4): between
+#                  frames the board PARKS, prints #W, and polls stdin
+#                  for one control byte from the host. frames:0 then
+#                  means "until told" -- no budget, no drain tail.
+#   idle_s         handshake only: no byte at all for this long ->
+#                  treat as 'q' (a dead host must not wedge the board)
+#
+# Control bytes (host->board, handshake only). Printable ASCII because
+# the raw REPL intercepts 0x01-0x04 while a script runs:
+#   g  run one frame    j  run one frame + ship the camera JPEG
+#   p  end this phase   q  end the run
+# The board DRAINS stdin before parking, so a duplicate byte (host
+# resend racing a slow frame) is absorbed, never double-run. On 'g'/'j'
+# one DISCARD snapshot precedes the scored one: the capture pipeline
+# holds one completed frame that may predate the still change.
 #
 # Wire format (headers are json.dumps -- NEVER %r, repr is not JSON):
 #   #I  {...}                    one info line at start
 #   #PH {"phase":i,...}          at each phase start (resolved model path)
+#   #W  {"ph":i,"seq":n}         handshake only: parked, awaiting a
+#                                control byte; repeats every ~5 s as a
+#                                heartbeat (parked-alive vs dead)
 #   #F  {"seq","ph","ms","cap_us","prep_us":[..],"inf_us":[..],
 #        "dec_us":[..],"tiles":[[x,y],..],"jpg":n,"cells":[n,..],
 #        "dropped":[n,..]}
@@ -56,6 +74,40 @@ QUALITY = _CFG.get("jpeg_quality", 50)
 PHASES = _CFG.get("phases", [{"kind": "jpeg", "frames": 3}])
 OBJ_THR = _CFG.get("obj_thr", 0.10)
 CELL_CAP = _CFG.get("cell_cap", 128)
+HANDSHAKE = _CFG.get("handshake", False)
+IDLE_S = _CFG.get("idle_s", 300)
+
+if HANDSHAKE:
+    import select
+    _poll = select.poll()
+    _poll.register(sys.stdin, select.POLLIN)
+
+
+def _drain_stdin():
+    while _poll.poll(0):
+        sys.stdin.read(1)
+
+
+def _wait_cmd(ph_i, seq):
+    """Park until the host commands. -> 'g'|'j'|'p'|'q'.
+
+    Drains stdin FIRST (duplicate-absorption -- see module note), then
+    heartbeats #W every ~5 s so the host can tell parked-alive from
+    dead. IDLE_S with no byte at all degrades to 'q': end cleanly at a
+    usable REPL rather than wedging the board on a dead host."""
+    _drain_stdin()
+    t0 = time.ticks_ms()
+    while True:
+        print("#W " + json.dumps({"ph": ph_i, "seq": seq}))
+        hb = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), hb) < 5000:
+            if _poll.poll(100):
+                c = sys.stdin.read(1)
+                if c in ("g", "j", "p", "q"):
+                    return c
+                # anything else is line noise -- ignore, keep parking
+            if time.ticks_diff(time.ticks_ms(), t0) > IDLE_S * 1000:
+                return "q"
 
 # 256-px tiles at native px, computed from the ACTUAL sensor geometry
 # (framesize is a _CFG knob now; HD = 1280x800 -> 7x5 = 35 tiles). Max
@@ -156,7 +208,10 @@ print("#I " + json.dumps({"fw": sys.version, "board_models": MODELS,
                           "obj_thr": OBJ_THR, "cell_cap": CELL_CAP}))
 
 seq = 0
+quit_all = False
 for ph_i, ph in enumerate(PHASES):
+    if quit_all:
+        break
     kind = ph.get("kind", "jpeg")
     mode = ph.get("mode", "")
     model = None
@@ -181,14 +236,33 @@ for ph_i, ph in enumerate(PHASES):
     print("#PH " + json.dumps(
         {"phase": ph_i, "kind": kind, "model": ph.get("model", ""),
          "path": mpath, "mode": mode, "frames": ph.get("frames", 0)}))
-    for _ in range(ph.get("frames", 0)):
+    frames_left = ph.get("frames", 0)
+    while True:
+        if HANDSHAKE:
+            cmd = _wait_cmd(ph_i, seq)
+            if cmd == "p":
+                break
+            if cmd == "q":
+                quit_all = True
+                break
+            want_jpeg = (kind == "jpeg" or cmd == "j"
+                         or (kind == "model" and ph.get("jpeg", False)))
+            # discard snapshot: the pipeline's buffered frame may have
+            # been exposed BEFORE the still the host just confirmed
+            csi0.snapshot()
+        else:
+            if frames_left <= 0:
+                break
+            frames_left -= 1
+            want_jpeg = (kind == "jpeg"
+                         or (kind == "model" and ph.get("jpeg", False)))
         t0 = time.ticks_us()
         img = csi0.snapshot()
         cap_us = time.ticks_diff(time.ticks_us(), t0)
         now_ms = time.ticks_ms()
 
         jb = b""
-        if kind == "jpeg" or (kind == "model" and ph.get("jpeg", False)):
+        if want_jpeg:
             jb = b64line(img.to_jpeg(quality=QUALITY, copy=True).bytearray())
 
         prep_us, inf_us, dec_us = [], [], []
@@ -235,10 +309,11 @@ for ph_i, ph in enumerate(PHASES):
             print(line)
         seq += 1
         gc.collect()
-        if kind == "jpeg":
+        if kind == "jpeg" and not HANDSHAKE:
             # pace jpeg phases: a fast board (N6 black-screen jpegs are
             # ~3 KB) burns the whole phase before the host's page-settle
-            # window opens, starving the calibration of usable frames
+            # window opens, starving the calibration of usable frames.
+            # Closed loop needs no pacing -- the host paces by go-byte.
             time.sleep_ms(150)
     if model is not None:
         del model

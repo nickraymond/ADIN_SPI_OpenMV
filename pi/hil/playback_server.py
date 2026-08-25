@@ -109,6 +109,12 @@ class State:
         self.clip = 0
         self.still = 0
         self.seq = 1
+        # RENDER ACK (S8 bite E4): the LCD client POSTs /api/shown after
+        # it has actually blitted a state. /api/set acking only means the
+        # STATE changed — the LCD polls at 250 ms and draws later, and
+        # the closed-loop harness must not command a board until the
+        # still is really on the glass.
+        self.shown_seq = 0
         self.updated = time.time()
 
     def snapshot(self):
@@ -117,7 +123,12 @@ class State:
                     "still": self.still, "clips": self.clips,
                     "stills": self.stills, "markers": MARKERS,
                     "marker_w": MARKER_W, "aim_boxes": aim_boxes(),
+                    "shown_seq": self.shown_seq,
                     "updated": self.updated}
+
+    def mark_shown(self, seq):
+        with self.lock:
+            self.shown_seq = max(self.shown_seq, int(seq))
 
     def set(self, req):
         """Apply a validated /api/set body. -> (ok, error-or-None)."""
@@ -255,13 +266,19 @@ def make_handler(state, media_dir):
                 self._json({"error": "not found"}, 404)
 
         def do_POST(self):
-            if self.path != "/api/set":
+            if self.path not in ("/api/set", "/api/shown"):
                 return self._json({"error": "not found"}, 404)
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 req = json.loads(self.rfile.read(n) or b"{}")
             except (ValueError, json.JSONDecodeError):
                 return self._json({"error": "bad JSON body"}, 400)
+            if self.path == "/api/shown":
+                try:
+                    state.mark_shown(req["seq"])
+                except (KeyError, TypeError, ValueError):
+                    return self._json({"error": "need {\"seq\": n}"}, 400)
+                return self._json(state.snapshot())
             ok, err = state.set(req)
             if not ok:
                 return self._json({"error": err}, 400)
