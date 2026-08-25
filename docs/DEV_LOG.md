@@ -122,9 +122,34 @@ BOARDS + ladder rerun + heat maps (his ask).**
   hot+scattered incl. bare rock (its false positives made visible);
   blurft tiny dimmer but tighter on urchins. 96 maps/leg,
   ~/hil_runs/e4_blurft_{vga,hd}/heatmaps/index.html.
-Bench left clean: runner idle, boards enumerated, ports free. NEXT: PR
-#66 review/merge (Nick); STAGE1.md decision-table refresh with the
-blurft row can ride the review.
+Bench left clean: runner idle, boards enumerated, ports free.
+
+**Continued (same day, Nick's ordering: E3 first, report card while it
+runs):**
+- **E3 RF-DETR gate LAUNCHED** (Mac, detached): own venv (rfdetr 1.9.4,
+  Apache-2.0 verbatim-captured), corpus_v2→COCO adapter (densest frame
+  110 < 300 queries ✓), one-epoch driver on the exact rung-A protocol.
+  Three launch repairs, each measured: macOS has no `setsid`; fresh
+  venv lacked cv2 (eval_rung_a module import); rfdetr needs the
+  [train] extras. ~1,250 optimizer steps/epoch; early pace ≈8 s/step →
+  ETA ~2.5-3 h/epoch — the wall-clock half of Nick's go/no-go.
+- **Bite C report card SHIPPED** (workbench card `s8-hil-report`,
+  generator pi/hil/hil_report.py, sparse per Nick): scorecard with
+  energy (AE3 160→1,387 mJ/frame VGA-nano→HD-tiny; N6 "owed" behind
+  the CH3 shunt), the T2 money plot (blur-ft tiny 62% vs nano 46% in
+  the 24-32 px floor band on the AE3), 2 heat maps. Per-GT px
+  attribution recomputed + self-audited against recorded counts.
+- **UI correction (Nick, recorded as a rule): the training UI is
+  train_ctl, nothing else.** My first pass was a bespoke read-only
+  page — wrong; replaced by gate_ctl.py subclassing train_ctl (same
+  page: Start/Pause/Stop, progress bar, thermal warning, CPU/GPU
+  series; rfdetr-true hint: stop mid-epoch discards the epoch; adopts
+  the detached run). Gate cockpit :8894 (the labeler's old train_ctl
+  still holds :8898). Skill `training-control` added so future
+  sessions reach for the cockpit, not a new page.
+
+NEXT: PR #66 review/merge (Nick); the E3 mAP50 lands in ~3 h → Nick's
+full-run go/no-go; STAGE1.md decision-table refresh rides the review.
 
 ---
 

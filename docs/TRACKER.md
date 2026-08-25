@@ -1753,8 +1753,21 @@ any urchin labelling effort is spent.
       *Verifiable:* Nick corrects ≥50 frames in one sitting; retraining on
       the corrected set moves val precision measurably; the corrected
       labels.jsonl round-trips through the trainer unchanged in format.
-- [ ] **Bite C — end-to-end metrics: capture → detect → count.**
-      **RESCOPED 2026-08-21 (Nick): DISTANCE IS DROPPED as an analysis
+- [~] **Bite C — end-to-end metrics — REPORT CARD SHIPPED 2026-08-25
+      (first edition, from the closed-loop blur-ft runs).**
+      pi/hil/hil_report.py generates the card from any closed-loop run
+      pair; live as workbench guide card `s8-hil-report`. Views (sparse
+      per Nick): scorecard (recall/prec/ms/mJ/wall per cell — N6 mJ
+      honestly "owed" behind the CH3 shunt re-wire), the
+      recall-vs-pixels-on-target money plot (T2 band shaded; AE3
+      blur-ft tiny 62% vs nano 46% IN the 24-32 px floor band; N6
+      12-22% there), and two heat maps. Per-GT px attribution
+      recomputed from rows with a self-audit against recorded counts
+      (aborts on real disagreement; |Δ|=1 conf-rounding ties
+      tolerated). REMAINING: blob-baseline comparison rows (needs a
+      blob phase in a closed-loop run) + Nick's read.
+      *(original scope)* **RESCOPED 2026-08-21 (Nick): DISTANCE IS
+      DROPPED as an analysis
       axis — "I only ever setup the balls at an average 1.5 m distance",
       so the run1_1m/run2_2m names are not a true 1 m-vs-2 m variable.
       Pixels-on-target (measured per detection) replaces distance as the
@@ -2035,8 +2048,21 @@ any urchin labelling effort is spent.
       per-board scores match back-to-back solo runs within noise, and
       zero settle-discarded frames in the log (the handshake makes the
       concept obsolete).
-- [ ] **Bite E3 — RF-DETR labeler bake-off (captured 2026-08-25, Nick's
-      ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
+- [~] **Bite E3 — RF-DETR labeler bake-off — GATE RUN LAUNCHED
+      2026-08-25 (Nick's go, in the E4 session).** Done: own venv
+      (rfdetr 1.9.4, Apache-2.0 captured verbatim →
+      ~/nereus_ml/third_party/rfdetr_LICENSE), corpus_v2→COCO adapter
+      (ml/rfdetr_gate/prep_coco.py — 19,997/976 imgs symlinked, densest
+      frame 110 < 300 queries ✓), one-epoch driver reusing the exact
+      rung-A protocol (run_gate.py), and the cockpit: gate_ctl.py
+      subclasses train_ctl (Nick's correction — buttons/progress/
+      thermal/CPU-GPU plots, NEVER a bespoke monitor; skill
+      `training-control` captures the rule). Run detached on the Mac,
+      watch at :8894; ~1,250 optimizer steps/epoch, early pace ≈8 s/step
+      → epoch ETA ~2.5-3 h + rung-A eval. AWAITING: the printed mAP50 @
+      e1 next to YOLOX-S's 0.658 → Nick's full-run go/no-go (wall-clock
+      per epoch is half the answer). *(original capture follows)*
+      **(captured 2026-08-25, Nick's ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
       DINOv2 backbone weights — capture the license text verbatim per
       the S26 rule before it becomes load-bearing) as the MAC-SIDE
       teacher/labeler, replacing or beating the current COCO-init
