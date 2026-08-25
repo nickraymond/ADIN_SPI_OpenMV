@@ -1949,6 +1949,29 @@ any urchin labelling effort is spent.
       documented reason it cannot. Needs: PR #63 merged (or branch from
       it) — the rig code lives there.
 
+- [ ] **Bite E3 — RF-DETR labeler bake-off (captured 2026-08-25, Nick's
+      ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
+      DINOv2 backbone weights — capture the license text verbatim per
+      the S26 rule before it becomes load-bearing) as the MAC-SIDE
+      teacher/labeler, replacing or beating the current COCO-init
+      YOLOX-S labeler (rung-A 0.658 @ e1 → 0.800 final). **Cheap gate
+      first, Nick's explicit shape: fine-tune ONE epoch on corpus_v2,
+      score rung A, put the number next to YOLOX-S's e1 0.658 — then
+      Nick decides whether a full 60–120-epoch run is worthwhile.**
+      Scope: env install (own venv — DETR deps must not disturb the
+      pinned gate/train envs), corpus_v2→RF-DETR format adapter, rung-A
+      scoring adapter (COCOeval, same 983-img protocol), one-epoch run
+      via train_ctl night discipline if it needs hours on MPS. Check en
+      route: query count ≥ densest frame (~130 GT boxes; default 300
+      OK). **Deployment fence, measured basis: RF-DETR is Mac-side
+      ONLY** — attention/softmax/LayerNorm/transpose all CPU-fallback
+      under vela (the compile gate showed a single Transpose falling
+      back on the AE3), so it is a teacher, never a board model; the
+      board students stay conv-only YOLOX. *Verifiable:* a printed
+      rung-A mAP50 @ e1 for RF-DETR next to YOLOX-S's 0.658 @ e1, with
+      wall-clock/epoch recorded, reviewed with Nick for the
+      full-run go/no-go.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
