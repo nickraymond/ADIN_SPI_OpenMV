@@ -1887,8 +1887,28 @@ any urchin labelling effort is spent.
       converter (their labels → labels.jsonl) and B3's GUI becomes
       review/spot-fix rather than from-scratch labelling.
 
-- [ ] **Bite E2 — AE3-tiny anomaly root-cause  ← NEXT SESSION (Nick
-      2026-08-25; kickoff = PROMPTS.md §15).** The 2026-08-25 HIL matrix
+- [~] **Bite E2 — AE3-tiny anomaly root-cause — ROOT-CAUSED 2026-08-25,
+      WAITING on Nick's review + the optical rerun.** Verdict: the AE3's
+      HIL capture is optically SOFT (lap_var 233 vs the N6's 880, same
+      screen) and tiny is blur-sensitive where nano is blur-immune —
+      measured content-constant (blur sweep: tiny:nano 1.31→0.26 by
+      σ1.6; tiny collapses ~4×, nano flat-to-better). Runtime/artifact/
+      deployment ALL exonerated: golden-input diff has Mac, N6 and AE3
+      agreeing to int8 noise (tiny obj≥0.10 cells 157/152/158), and the
+      sha chain source→vela→romfs→flashed partition is byte-exact.
+      Anomaly reproduces on the MAC interpreter from the matrix run's
+      own camera views (tiny:nano 0.53 on the AE3 view vs 1.31 on the
+      N6 view) — no board involved. No software post-fix (sharpening
+      worsens both). Fix candidates for Nick: (1) refocus/reposition
+      the AE3 + rerun the two AE3 tiled legs (success = tiny re-orders
+      above nano); (2) blur augmentation for tiny (real turbid water is
+      soft — nano's blur-immunity may be a product feature, and the
+      decision table must not read 0.13 as a board deficiency).
+      Evidence + reusable golden-diff tooling:
+      ~/nereus_ml/runs/e2_anomaly_2026-08-25/ (FINDINGS.md); DEV_LOG
+      2026-08-25. One verdict per theory recorded (T1 no / T2 intact /
+      T3 all-agree / T4 falsified / T5 convicted).
+      *(original scope below)* The 2026-08-25 HIL matrix
       measured AE3 tiny-tiled at 0.13 recall with 3-4× fewer detections
       than AE3 nano-tiled (0.39) — while the N6 orders them the way
       bench mAP predicts (tiny 0.40 > nano 0.32) and AE3-tiny's

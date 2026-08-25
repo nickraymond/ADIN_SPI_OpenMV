@@ -17,6 +17,60 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-25 — S8 bite E2 — AE3-tiny anomaly ROOT-CAUSED: soft AE3 capture × tiny's blur-sensitivity; runtime/artifact/deployment all exonerated by measurement
+
+**Branch:** `claude/ae3-tiny-recall-anomaly-619197` (worktree)
+
+**Done:** the whole theory ladder, one verdict per theory (full evidence:
+`~/nereus_ml/runs/e2_anomaly_2026-08-25/FINDINGS.md`):
+- **T1 (conf sweep) NO** — no mass at the 0.30 edge; AND AE3-tiny never
+  engaged the 128-cell cap (dropped=0 ×48 rows) while AE3-nano dropped
+  4,867 cells and N6-tiny 5,586 — the deficit is in the board's
+  obj≥0.10 candidate field itself, not in any threshold.
+- **T2 (artifact audit) chain INTACT** — source int8 07e69189… byte-
+  identical into both builds; vela-OSPI tiny 21ceca4f…/nano 6ce24478…
+  embedded byte-exact in romfs0.img 22c1b963… == Pi copy == the 08-24
+  DFU read-back; same vela profile both models, zero warnings.
+- **T3 (golden-input diff) ALL THREE RUNTIMES AGREE** — one 256×256
+  RGB565-quantized BMP (sha + #PX pixel self-check on both boards):
+  obj≥0.10/conf≥0.30 cells Mac-tiny 157/104 · N6-tiny 152/106 ·
+  AE3-tiny 158/108 (nano 188/98 · 182/96 · 191/101); deltas at int8
+  noise. **AE3 vela artifact + ethos-u runtime + /rom XIP + preproc
+  exonerated.** Probe: one attach per board, `mpremote run`, AE3 under
+  the ae3-board-access rules (single ops, 65 s silences) — no incidents.
+- **T4 (cell_cap/obj_thr) FALSIFIED desk-side** — cap never engaged;
+  deficit reproduces off-board; no leg run, none needed.
+- **T5 (camera domain) CONVICTED, mechanism measured** — matrix-run
+  camera views through the MAC interpreter reproduce the anomaly with
+  no board involved: tiny:nano conf≥0.30 ratio **0.53 on the AE3's
+  view vs 1.31 on the N6's**. Content-constant blur sweep (N6 view):
+  ratio 1.31→0.26 by σ1.6 — **tiny collapses ~4× under blur, nano is
+  flat-to-BETTER**; haze alone hurts nano more (tone exonerated).
+  AE3 capture lap_var 233 vs N6 880 on the same screen; blur+haze
+  matched to the AE3 look reproduces 0.48≈0.53. Sharpening (unsharp)
+  worsens BOTH models (87→10→0 cells) — **no software post-fix**.
+
+**Broke/surprised us:**
+- The anomaly's odd signature (fewer dets at HIGHER conf, precision
+  0.86) is exactly blur survivorship: only big/sharp targets clear the
+  bar. And nano's blur-immunity means the HIL screen test was
+  accidentally split across two image domains — one per camera.
+- The v5 tuple-arg trap extends to `get_pixel((x,y))` (probe hit it).
+
+**Next (Nick's call — bite stops here per the kickoff):**
+1. Bench fix candidate: refocus/reposition the AE3 (its view is
+   heavily zoomed + soft; possibly inside focus minimum) → rerun the
+   two AE3 tiled legs; success = tiny re-orders above nano.
+2. Product read: real turbid water is soft too — nano's blur-immunity
+   may be a feature, and blur augmentation is the training-side fix
+   for tiny. Decision table should NOT read AE3-tiny 0.13 as a board
+   deficiency.
+Bench left clean: runner idle, both boards enumerated, ports free.
+Probe + golden BMP staged at pi:~/bm_bench/ (and on both /flash as
+golden_256.bmp, 197 KB) for the rerun.
+
+---
+
 ## 2026-08-24/25 — S8 bite E HIL: rig built end-to-end (stills+pre-labels, decode, playback, harness); N6 blocked by an unattributed predict-loop USB death; AE3 dry run = the discriminator
 
 **Branch:** `claude/yolox-decode-nms-sizing-3ca136` (worktree)
