@@ -17,7 +17,49 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
-## 2026-08-23 (bench) — S8 bench window: 3 of 4 stage-1 latencies MEASURED (all NPU-class); N6 deploy byte-verified; AE3 tiny blocked by flash-full + a new firmware-hang trap
+## 2026-08-24/25 — S8 bite E HIL: rig built end-to-end (stills+pre-labels, decode, playback, harness); N6 blocked by an unattributed predict-loop USB death; AE3 dry run = the discriminator
+
+**Branch:** `claude/yolox-decode-nms-sizing-3ca136` (worktree)
+
+**Done:**
+- HIL still set: 80 frames (40/clip, frozen, manifest provenance),
+  pre-labeled by the YOLOX-S labeler (last.pt, rung-A 0.800) — 2,667
+  boxes, spot-checked good; Nick reviewed 24 frames same evening.
+- `ml/yolox_urchin/decode_np.py`: numpy decode+NMS, torch-parity +
+  int8-artifact tested (9 tests); sparse-cell variant equivalence-tested.
+- Pi playback stack LIVE through the workbench: `pi/hil/playback_server.py`
+  (loop/step/calib/black + /api/set; 11 tests), recipe `s8-hil-urchin`
+  (locks both boards, zero contact at this stage), cookbook chapter,
+  kiosk stack on the new bench LCD (chromium first, then a pygame/KMS
+  client — see below).
+- `pi/hil/hil_harness.py` + `hil_board.py`: one attach per board runs a
+  phase list (models first, jpeg/calib after), host steps stills with
+  arrival stamping, post-pass scoring through a 4-marker screen→camera
+  homography (DLT, black-frame-subtracted marker detection), overlays
+  rendered onto SOURCE stills via H⁻¹.
+
+**Broke/surprised us:**
+- **The N6 leg is BLOCKED: repeated predict() with a stage-1 model kills
+  its USB session within ~1–30 predicts** (device off the bus,
+  re-enumerates as MSC; ~12 reproductions). Everything plausible was
+  isolated and most of it RULED OUT by measurement — full evidence trail
+  in SPEC §Open questions. Key confound: every crash was with the new
+  LCD attached; the 08-24 window (no LCD) ran thousands of predicts.
+  One un-reproduced clean run mid-sequence (tiny 31.25 ms — matches
+  08-24's 31.17). Needs hands: LCD-unplug A/B, N6 cold replug.
+- The CRLF trap struck a THIRD form: CDC translates a b64 payload's
+  terminator, +1 byte vs header. Wire lengths now mean bare payload.
+- `%r`-built "JSON" headers (single quotes) made the host silently deaf
+  to #I/#PH for a full run — headers are json.dumps now, and stream-end
+  events always print their reason.
+- usb-storage MSC gap: the S23 no-MSC rule covered only the AE3;
+  `99-n6-no-msc.rules` (PID 1206) written + installed (did not fix the
+  crash class, still correct hygiene).
+
+**Next:** AE3 dry run (running at entry-write time) → if clean, the rig
+is proven minus the N6 leg; N6 = fresh bite with Nick's hands (LCD
+unplug A/B first). Then: full matrix + report card (bite C's s8_report
+machinery from `claude/s8-c-metrics` — reuse, not rewrite).
 
 **Branch:** `claude/s8-bench-deployment-latency-ac02d1`
 

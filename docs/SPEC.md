@@ -180,7 +180,30 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
-- **AE3 model-memory ceiling: storage RESOLVED from vendor source,
+- **N6 predict-loop USB death, UNATTRIBUTED (2026-08-25, S8 HIL dry-run
+  night; ~12 reproductions).** With a stage-1 model resident, repeated
+  `predict()` on the stock-v5.0.0 N6 kills its USB session within
+  ~1–30 predicts — the device drops off the bus and re-enumerates
+  (MSC exposed), presenting as `Errno 5` on the host. Reproduced with:
+  snapshot-interleaved AND static input; VGA and QVGA; tensor
+  serialization AND sparse indexing AND no emission at all; chromium
+  kiosk up (as pi and as a group-less user), pygame/KMS client up,
+  plain getty console, and everything stopped. ONE clean full run
+  (n6_stage1_probe, tiny 31.25 ms ≈ the 08-24 bench value) occurred
+  mid-sequence with the kiosk stopped — not reproduced afterward, so
+  the display-stack A/B is CONFOUNDED, not proven. Ruled out by
+  measurement: supply sag (INA3221 CH3 Vmin 4.968 V through a crash),
+  Pi undervoltage (`throttled=0x0`), ModemManager/brltty, usb-storage
+  MSC resets (S23-style rule installed for PID 1206 —
+  `pi/ae3_flash/99-n6-no-msc.rules` — crashes continued). Timeline
+  caveat: EVERY crash happened with the new bench LCD attached via
+  HDMI (plugged in ~00:05, first crash ~00:13), and the 08-24 window —
+  same board, same models, same probe file, no LCD — ran thousands of
+  predicts clean. Next discriminators (need hands): unplug the LCD and
+  re-run `~/bm_bench/n6_stage1_probe.py`; physical replug/cold boot of
+  the N6 (all tonight's boots after the first crash were fault-boots);
+  cable/ground inspection. The AE3 (patched D38 build) is the software
+  control — see the dry-run results.
   runtime arena still open (raised + narrowed 2026-08-22, S8 bite E).**
   Storage (openmv.git `boards/OPENMV_AE3/boot_config.h` partition
   table): `/flash` (RWFS) = **8 MB** and `/rom` (ROMFS0) = **24 MB**,
