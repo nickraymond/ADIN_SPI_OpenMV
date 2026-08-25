@@ -256,11 +256,21 @@ def load_reviewed(stills_dir, reviewed_only=True):
     return out
 
 
-def save_still_overlay(path, still_path, dets_cam, boxes, Hinv):
+def save_still_overlay(path, still_path, dets_cam, boxes, Hinv,
+                       cam_w=640, cam_h=400):
     """GT (green, native) + detections mapped camera→still via H⁻¹ (yellow),
-    drawn on the SOURCE still — no camera JPEG needed."""
+    drawn on the SOURCE still — no camera JPEG needed. The camera's field
+    of view is outlined (cyan): content outside it was never shown to the
+    model and is excluded from scoring — without the outline, edge
+    regions read as mysterious blind spots (Nick, 2026-08-25)."""
     img = Image.open(still_path).convert("RGB")
     d = ImageDraw.Draw(img)
+    fov = np.array([[0, 0], [cam_w, 0], [cam_w, cam_h], [0, cam_h]],
+                   np.float64)
+    p = (Hinv @ np.hstack([fov, np.ones((4, 1))]).T).T
+    p = p[:, :2] / p[:, 2:3]
+    d.polygon([(x * STILL_W, y * STILL_H) for x, y in p],
+              outline=(0, 220, 255), width=4)
     for (_ci, x, y, w, h, _px) in boxes:
         d.rectangle([x, y, x + w, y + h], outline=(0, 255, 60), width=3)
     for det in dets_cam:
@@ -576,7 +586,7 @@ def run_board(label, port, args, playback, out_dir):
                     os.path.join(out_dir, "overlays",
                                  f"{label}_{st['phase']}_{p['still']}"),
                     os.path.join(args.stills_dir, "frames", p["still"]),
-                    dets, boxes, Hinv)
+                    dets, boxes, Hinv, cam_w=cam_w, cam_h=cam_h)
     rows_fh.close()
 
     print(f"\n    {'phase':<12} {'frames':>6} {'GT':>5} {'det':>5} "
