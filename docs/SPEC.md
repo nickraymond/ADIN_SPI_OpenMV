@@ -180,6 +180,17 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **AE3 HIL capture is optically soft — WHY is unverified (flagged
+  2026-08-25, bite E2).** Measured: lap_var 233 vs the N6's 880 on the
+  same screen content, and the AE3's view is heavily zoomed (screen
+  overfills the frame where the N6 sees the whole panel). This is the
+  measured mechanism behind the AE3-tiny recall anomaly (runs dir
+  e2_anomaly_2026-08-25), but the CAUSE is not established: focus
+  distance vs lens minimum vs FOV/positioning vs sensor/ISP MTF.
+  Needs a bench check (Nick): AE3 lens/focus at rig distance, and
+  whether earlier sharp AE3 captures (two-ball work, ~1 m) differ in
+  distance. Do NOT treat AE3-tiny HIL numbers as board capability
+  until a sharp-capture rerun exists.
 - **N6 predict-loop USB death — RESOLVED 2026-08-25: the N6's
   UNSHIELDED USB cable.** Nick spotted it (the AE3's cable is shielded);
   a shielded replacement took `n6_stage1_probe` from crash-in-≤30-predicts

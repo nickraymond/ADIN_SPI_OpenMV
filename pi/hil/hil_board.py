@@ -57,10 +57,21 @@ PHASES = _CFG.get("phases", [{"kind": "jpeg", "frames": 3}])
 OBJ_THR = _CFG.get("obj_thr", 0.10)
 CELL_CAP = _CFG.get("cell_cap", 128)
 
-# 256-px tiles covering VGA 640x400 at native px: 3 cols (stride 192) x
-# 2 rows (stride 144). Overlap 64/112 px -- an urchin on a seam appears
-# whole in at least one tile; the host's global NMS dedups.
-TILES = [(0, 0), (192, 0), (384, 0), (0, 144), (192, 144), (384, 144)]
+# 256-px tiles at native px, computed from the ACTUAL sensor geometry
+# (framesize is a _CFG knob now; HD = 1280x800 -> 7x5 = 35 tiles). Max
+# stride 192/144 keeps the VGA overlap contract: an urchin on a seam
+# appears whole in at least one tile; the host's global NMS dedups.
+# VGA reproduces the original grid exactly: (0,192,384) x (0,144).
+def make_tiles(w, h, tile=256, sx=192, sy=144):
+    import math
+    def axis(span, s):
+        if span <= tile:
+            return [0]
+        n = math.ceil((span - tile) / s) + 1
+        return [round(i * (span - tile) / (n - 1)) for i in range(n)]
+    return [(x, y) for y in axis(h, sy) for x in axis(w, sx)]
+
+
 LETTER_SCALE = 0.4          # VGA * 0.4 = 256x160, top-left, gray pad
 IN_W = 256
 
@@ -138,6 +149,7 @@ for _ in range(3):
 canvas = image.Image(IN_W, IN_W, image.RGB565)   # ONE alloc, reused always
 
 _first = csi0.snapshot()
+TILES = make_tiles(_first.width(), _first.height())
 print("#I " + json.dumps({"fw": sys.version, "board_models": MODELS,
                           "w": _first.width(), "h": _first.height(),
                           "tiles": TILES, "quality": QUALITY,
@@ -150,6 +162,14 @@ for ph_i, ph in enumerate(PHASES):
     model = None
     mpath = ""
     if kind == "model":
+        if mode == "whole" and _first.width() != 640:
+            # the whole-mode letterbox (LETTER_SCALE 0.4 -> 256x160) is
+            # VGA arithmetic; refuse loudly rather than mis-scale
+            print("#PH " + json.dumps(
+                {"phase": ph_i,
+                 "error": "whole mode is VGA-only (got %dpx wide)"
+                 % _first.width()}))
+            continue
         mpath = MODELS.get(ph.get("model", ""))
         if not mpath:
             print("#PH " + json.dumps(
@@ -178,6 +198,7 @@ for ph_i, ph in enumerate(PHASES):
                 rois = [None]
             else:
                 rois = TILES
+
             for roi in rois:
                 t0 = time.ticks_us()
                 if roi is None:

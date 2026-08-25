@@ -211,6 +211,39 @@ gated on Nick:
 Neither is proven on hardware yet. **"It exported" is not "it runs on the
 NPU"** — that is the acceptance trap S8 names, and it is still open.
 
+## Blur-tolerance fine-tune (bite E2 fix path)
+
+Root cause context: the AE3's soft HIL capture collapses tiny ~4× while
+nano is blur-immune (`~/nereus_ml/runs/e2_anomaly_2026-08-25/FINDINGS.md`).
+The training-side fix is a blur-augmented fine-tune of the EXISTING tiny
+checkpoint — it keeps everything the model knows and only forces
+blur-tolerant features; from-scratch would relearn all of it first.
+
+```bash
+# fine-tune tiny with blur aug (hours, not the ~1-day full retrain).
+# --resume restores the epoch counter (tiny ended at e119), so the
+# continuation is expressed as --epochs 160 = 40 MORE epochs, riding the
+# cosine tail's low LR (a natural fine-tune rate). Corpus stays v1 (the
+# original run's) so blur is the ONLY changed variable.
+~/nereus_ml/venvs/gate/bin/python ml/yolox_urchin/train.py \
+    --arch yolox-tiny --epochs 160 --batch 32 --mosaic 0.75 --blur 0.5 \
+    --resume ~/nereus_ml/runs/stage1_yolox/stage1_tiny_v1/last.pt \
+    --run-name stage1_tiny_v1_blurft
+
+# acceptance: the blur curve, tiny-vs-nano (gate venv has TF+torch)
+~/nereus_ml/venvs/gate/bin/python ml/yolox_urchin/eval_rung_a.py \
+    <run>/ema.pt --arch yolox-tiny --blur-curve 0,0.8,1.2,1.6,2.2
+```
+
+**Pass bar:** tiny's mAP50 stays above nano's at every sigma AND the
+sharp (σ=0) score lands within ~0.02 of the pre-fine-tune 0.729.
+Sharp-image regression bigger than that → fall back to the full v2
+recipe with `--blur 0.5` from scratch. Blur is label-preserving, rides
+its own rng stream (enabling it cannot move a seed's boxes — pinned by
+`test_data_aug.py`), and deliberately excludes haze (the E2 haze sweep
+hurt only nano). Final proof is the bench: rerun the AE3 tiled HIL legs
+with the re-exported int8 artifact and check tiny re-orders above nano.
+
 ## Reproducibility trap, measured
 
 Ultralytics **auto-installs export dependencies mid-run**, and that install

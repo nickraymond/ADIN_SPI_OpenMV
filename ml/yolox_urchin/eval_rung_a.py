@@ -85,36 +85,10 @@ class TFLiteRaw:
 
 
 @torch.no_grad()
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("ckpt", help=".pt checkpoint, or int8 .tflite with --tflite")
-    ap.add_argument("--tflite", action="store_true",
-                    help="score a quantized tflite via the TFLite interpreter "
-                         "(the int8-vs-float delta, measured Mac-side)")
-    ap.add_argument("--arch", default="yolox-nano")
-    ap.add_argument("--stem", default="conv", choices=("conv", "focus"))
-    ap.add_argument("--imgsz", type=int, default=640)
-    ap.add_argument("--conf", type=float, default=0.001)
-    ap.add_argument("--nms", type=float, default=0.65)
-    ap.add_argument("--batch", type=int, default=8)
-    args = ap.parse_args()
-
-    if args.tflite:
-        raw = TFLiteRaw(args.ckpt, args.imgsz)
-        device = "cpu"
-    else:
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        model = build_model(num_classes=1, arch=args.arch, stem=args.stem)
-        ck = torch.load(args.ckpt, map_location="cpu")
-        state = ck.get("model", ck)
-        model.load_state_dict(state)
-        raw = RawExport(model).to(device).eval()
-
-    meta = {Path(r["file"]).name: (r["w"], r["h"])
-            for r in map(json.loads, open(DS / "labels.jsonl"))}
-    gt = load_gt(meta)
-    id_by_name = {im["file_name"]: im["id"] for im in gt["images"]}
-
+def score_pass(raw, device, gt, id_by_name, args, sigma=0.0):
+    """One full detection+COCOeval pass; sigma>0 Gaussian-blurs each eval
+    image (at eval scale, before letterboxing) — the bite-E2 blur-
+    tolerance instrument. -> (mAP50, mAP50_95, n_dets)."""
     from torchvision.ops import nms as tv_nms
     S = args.imgsz
     dets = []
@@ -128,6 +102,8 @@ def main():
             s = S / max(h0, w0)
             img = cv2.resize(img, (round(w0 * s), round(h0 * s)),
                              interpolation=cv2.INTER_AREA)
+            if sigma > 0:
+                img = cv2.GaussianBlur(img, (0, 0), sigma)
             canvas = np.full((S, S, 3), 114, np.uint8)
             canvas[:img.shape[0], :img.shape[1]] = img
             imgs.append(canvas[:, :, ::-1])
@@ -153,7 +129,8 @@ def main():
                              "score": sc})
         done = min(start + args.batch, len(names))
         if done % 200 < args.batch:
-            print(f"  {done}/{len(names)} imgs, {len(dets)} raw dets")
+            print(f"  [sigma {sigma:g}] {done}/{len(names)} imgs, "
+                  f"{len(dets)} raw dets")
 
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
@@ -165,15 +142,73 @@ def main():
         coco = COCO(gt_path)
         cdt = coco.loadRes(dets) if dets else None
     if cdt is None:
-        print("ZERO detections — nothing to score"); return
+        return 0.0, 0.0, 0
     ev = COCOeval(coco, cdt, "bbox")
     with contextlib.redirect_stdout(io.StringIO()):
-        ev.evaluate(); ev.accumulate()
-    ev.summarize()
-    print(f"\nRUNG A [{len(names)} imgs, imgsz={args.imgsz}]: "
-          f"mAP50={ev.stats[1]:.3f} mAP50-95={ev.stats[0]:.3f} "
-          f"(baselines ultralytics-protocol: yolo11n 0.243 / yolo11x 0.351; "
-          f"ceiling 0.908)")
+        ev.evaluate(); ev.accumulate(); ev.summarize()
+    return float(ev.stats[1]), float(ev.stats[0]), len(dets)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ckpt", help=".pt checkpoint, or int8 .tflite with --tflite")
+    ap.add_argument("--tflite", action="store_true",
+                    help="score a quantized tflite via the TFLite interpreter "
+                         "(the int8-vs-float delta, measured Mac-side)")
+    ap.add_argument("--arch", default="yolox-nano")
+    ap.add_argument("--stem", default="conv", choices=("conv", "focus"))
+    ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--conf", type=float, default=0.001)
+    ap.add_argument("--nms", type=float, default=0.65)
+    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--blur", type=float, default=0.0,
+                    help="Gaussian-blur the eval images with this sigma "
+                         "(one pass; bite E2 blur-tolerance)")
+    ap.add_argument("--blur-curve", default=None, metavar="S1,S2,...",
+                    help="score one pass per sigma and print the curve "
+                         "(overrides --blur), e.g. 0,0.8,1.2,1.6,2.2")
+    args = ap.parse_args()
+
+    if args.tflite:
+        raw = TFLiteRaw(args.ckpt, args.imgsz)
+        device = "cpu"
+    else:
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        model = build_model(num_classes=1, arch=args.arch, stem=args.stem)
+        ck = torch.load(args.ckpt, map_location="cpu")
+        state = ck.get("model", ck)
+        model.load_state_dict(state)
+        raw = RawExport(model).to(device).eval()
+
+    meta = {Path(r["file"]).name: (r["w"], r["h"])
+            for r in map(json.loads, open(DS / "labels.jsonl"))}
+    gt = load_gt(meta)
+    id_by_name = {im["file_name"]: im["id"] for im in gt["images"]}
+    n = len(id_by_name)
+
+    if args.blur_curve is not None:
+        sigmas = [float(s) for s in args.blur_curve.split(",")]
+        rows = []
+        for sigma in sigmas:
+            m50, m5095, nd = score_pass(raw, device, gt, id_by_name,
+                                        args, sigma)
+            rows.append((sigma, m50, m5095, nd))
+            print(f"  sigma {sigma:g}: mAP50={m50:.3f}")
+        print(f"\nBLUR CURVE [{n} imgs, imgsz={args.imgsz}, "
+              f"{Path(args.ckpt).name}]:")
+        print(f"{'sigma':>6} {'mAP50':>7} {'mAP50-95':>9} {'raw dets':>9}")
+        for sigma, m50, m5095, nd in rows:
+            print(f"{sigma:>6g} {m50:>7.3f} {m5095:>9.3f} {nd:>9}")
+    else:
+        m50, m5095, nd = score_pass(raw, device, gt, id_by_name,
+                                    args, args.blur)
+        if not nd:
+            print("ZERO detections — nothing to score"); return
+        blurnote = f", blur sigma {args.blur:g}" if args.blur else ""
+        print(f"\nRUNG A [{n} imgs, imgsz={args.imgsz}{blurnote}]: "
+              f"mAP50={m50:.3f} mAP50-95={m5095:.3f} "
+              f"(baselines ultralytics-protocol: yolo11n 0.243 / "
+              f"yolo11x 0.351; ceiling 0.908)")
 
 
 if __name__ == "__main__":

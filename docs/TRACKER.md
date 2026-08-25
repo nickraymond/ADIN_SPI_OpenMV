@@ -1887,8 +1887,45 @@ any urchin labelling effort is spent.
       converter (their labels → labels.jsonl) and B3's GUI becomes
       review/spot-fix rather than from-scratch labelling.
 
-- [ ] **Bite E2 — AE3-tiny anomaly root-cause  ← NEXT SESSION (Nick
-      2026-08-25; kickoff = PROMPTS.md §15).** The 2026-08-25 HIL matrix
+- [~] **Bite E2 — AE3-tiny anomaly root-cause — ROOT-CAUSED **AND
+      FIXED** 2026-08-25 (same session, Nick at the bench): success
+      criterion MET — AE3 tiny-tiled orders ABOVE nano (0.70 vs 0.48
+      recall, frame-2 subset) after Nick's lens refocus + HD native
+      tiling; PR open for Nick's review.** The fix stack, each step
+      measured: refocus (AE3 patch sharpness 100→331) took tiny from
+      0.13 to 0.28 at VGA (tie with nano); HD tiling (GT median px
+      25→52, 96% above the 30-px floor) took it to 0.70/0.60 —
+      pixels-on-target overwhelmed the residual ~2× optical softness
+      vs the N6. The blur fine-tune (tiny + blur aug, epochs 120→160)
+      remains in flight as margin + the turbid-water lever, no longer
+      the critical path. En route the same session: --min-gt-px floor
+      (Nick's 30-px call, ignore semantics), the ambient-light
+      confound measured (midday vs the 5 AM matrix: N6 recall −0.06,
+      precision −0.19 — matrix cells are per-lighting-condition), and
+      the open-loop scoring hazard found+bounded (bite E4). Artifacts:
+      ~/hil_runs/{ae3_refocus_1,n6_control_1,ae3_hd_1,n6_hd_1} +
+      ~/nereus_ml/runs/e2_anomaly_2026-08-25/; summary report on the
+      Pi. *(root-cause record follows)* Verdict: the AE3's
+      HIL capture is optically SOFT (lap_var 233 vs the N6's 880, same
+      screen) and tiny is blur-sensitive where nano is blur-immune —
+      measured content-constant (blur sweep: tiny:nano 1.31→0.26 by
+      σ1.6; tiny collapses ~4×, nano flat-to-better). Runtime/artifact/
+      deployment ALL exonerated: golden-input diff has Mac, N6 and AE3
+      agreeing to int8 noise (tiny obj≥0.10 cells 157/152/158), and the
+      sha chain source→vela→romfs→flashed partition is byte-exact.
+      Anomaly reproduces on the MAC interpreter from the matrix run's
+      own camera views (tiny:nano 0.53 on the AE3 view vs 1.31 on the
+      N6 view) — no board involved. No software post-fix (sharpening
+      worsens both). Fix candidates for Nick: (1) refocus/reposition
+      the AE3 + rerun the two AE3 tiled legs (success = tiny re-orders
+      above nano); (2) blur augmentation for tiny (real turbid water is
+      soft — nano's blur-immunity may be a product feature, and the
+      decision table must not read 0.13 as a board deficiency).
+      Evidence + reusable golden-diff tooling:
+      ~/nereus_ml/runs/e2_anomaly_2026-08-25/ (FINDINGS.md); DEV_LOG
+      2026-08-25. One verdict per theory recorded (T1 no / T2 intact /
+      T3 all-agree / T4 falsified / T5 convicted).
+      *(original scope below)* The 2026-08-25 HIL matrix
       measured AE3 tiny-tiled at 0.13 recall with 3-4× fewer detections
       than AE3 nano-tiled (0.39) — while the N6 orders them the way
       bench mAP predicts (tiny 0.40 > nano 0.32) and AE3-tiny's
@@ -1928,6 +1965,70 @@ any urchin labelling effort is spent.
       HIL leg whose recall ordering vs nano matches the N6's, or a
       documented reason it cannot. Needs: PR #63 merged (or branch from
       it) — the rig code lives there.
+
+- [ ] **Bite E4 — closed-loop HIL handshake + simultaneous two-board
+      runs  ← NEXT SESSION (Nick 2026-08-25; kickoff = PROMPTS.md §16).
+      TEST-FIRST is the contract: the new communication method ships
+      with host-side tests proving the protocol BEFORE any demo is
+      handed over — protocol state machine unit-tested against a fake
+      board (drop/garble/die cases), then one bench A/B (two-board run
+      vs back-to-back solo runs, scores within noise, zero
+      settle-discards) as the acceptance.** The open-loop hazard is now
+      MEASURED, not theoretical: the 2026-08-25 AE3 HD leg scored
+      frame-1s at 0.33 recall vs frame-2s at 0.59 — at HD the AE3's
+      ~3.5 s frame cycle exceeds the 2.5 s settle, so first frames
+      straddle the still change (VGA legs audit clean, deltas ≤0.002;
+      the audit instrument is recall-by-frame_in_still). Until E4
+      lands, HD legs are scored FRAME-2-ONLY (the honest subset) or run
+      with settle > the slowest frame cycle (~5 s for AE3 HD).
+      *(original capture, the design spec, follows)*
+      Today's harness is open-loop: the board free-runs a pre-budgeted
+      frame count and the host discards frames that arrive inside a
+      settle window after each still change. Correct-by-margin, not
+      correct-by-construction — a render lag longer than the settle
+      would score frames against the wrong still with no flag; and the
+      surplus budget drains as dead screen time (minutes at HD).
+      **Nick's design, the spec:** the Pi hosts the image, TELLS each
+      camera to start inferring, each camera reports DONE and waits,
+      and only then does the Pi advance the image. Host→board channel =
+      one control byte on the VCP (the wire is board→host-only today;
+      board polls stdin between frames). Same plumbing gives, in one
+      bite: (1) per-still handshake — sync errors impossible by
+      construction, settle windows and budget slack deleted; (2) phase
+      barrier — both boards always in the same phase, so (3) BOTH
+      boards run simultaneously (one reader thread per board, still
+      advances when ALL boards report done) — matrix wall time = the
+      slower board alone, N6 legs become free; (4) early phase exit —
+      the drain tail deleted. Per-board INA3221 channels already
+      support concurrent power logging. Failure containment: a dead
+      board stream drops out of the barrier, the rest continue solo
+      (score-what-was-collected, as today). *Verifiable:* a two-board
+      VGA run whose per-phase wall time ≈ the AE3's solo time, whose
+      per-board scores match back-to-back solo runs within noise, and
+      zero settle-discarded frames in the log (the handshake makes the
+      concept obsolete).
+- [ ] **Bite E3 — RF-DETR labeler bake-off (captured 2026-08-25, Nick's
+      ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
+      DINOv2 backbone weights — capture the license text verbatim per
+      the S26 rule before it becomes load-bearing) as the MAC-SIDE
+      teacher/labeler, replacing or beating the current COCO-init
+      YOLOX-S labeler (rung-A 0.658 @ e1 → 0.800 final). **Cheap gate
+      first, Nick's explicit shape: fine-tune ONE epoch on corpus_v2,
+      score rung A, put the number next to YOLOX-S's e1 0.658 — then
+      Nick decides whether a full 60–120-epoch run is worthwhile.**
+      Scope: env install (own venv — DETR deps must not disturb the
+      pinned gate/train envs), corpus_v2→RF-DETR format adapter, rung-A
+      scoring adapter (COCOeval, same 983-img protocol), one-epoch run
+      via train_ctl night discipline if it needs hours on MPS. Check en
+      route: query count ≥ densest frame (~130 GT boxes; default 300
+      OK). **Deployment fence, measured basis: RF-DETR is Mac-side
+      ONLY** — attention/softmax/LayerNorm/transpose all CPU-fallback
+      under vela (the compile gate showed a single Transpose falling
+      back on the AE3), so it is a teacher, never a board model; the
+      board students stay conv-only YOLOX. *Verifiable:* a printed
+      rung-A mAP50 @ e1 for RF-DETR next to YOLOX-S's 0.658 @ e1, with
+      wall-clock/epoch recorded, reviewed with Nick for the
+      full-run go/no-go.
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and

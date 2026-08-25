@@ -583,3 +583,54 @@ DEV_LOG; artifacts under ~/hil_runs/ + ~/nereus_ml/runs/; milestone
 report format per CLAUDE.md; STOP at the fix (or the explanation) for
 Nick's review before folding anything into the decision table.
 ```
+
+## 16 — Ready to paste: S8 bite E4 — closed-loop HIL handshake + two-board runs (written 2026-08-25, after the open-loop hazard was measured)
+
+```
+Run /agent-entry. This is an S8 HIL BENCH session on nereus000 — you
+OWN the bench (workbench discipline: check nereus000:8088/api/runner +
+/api/preflight first; one owner per port; 35 s settle; by-id ONLY;
+ae3-board-access before any mpremote against the AE3; hil-setup is the
+rig runbook). Branch from main after the E2 PR merges.
+
+CONTEXT (do not re-derive): the HIL harness is OPEN-LOOP — the board
+free-runs a pre-budgeted frame count while the host steps stills and
+discards frames arriving inside a settle window. The hazard is
+MEASURED: the 2026-08-25 AE3 HD leg scored frame-1s at 0.33 recall vs
+frame-2s at 0.59, because the AE3's ~3.5 s HD frame cycle exceeds the
+2.5 s settle — first frames straddle the still change. VGA legs audit
+clean (recall-by-frame_in_still deltas <=0.002 — that audit is the
+instrument). Also open-loop costs: the surplus-budget drain tail
+(minutes of dead screen at HD) and serialized single-board runs.
+
+GOAL (bite E4, TRACKER — Nick's design is the spec): the Pi hosts the
+image, TELLS each camera to start inferring, each camera reports DONE
+and waits, and only then does the Pi advance. One control byte
+host->board on the VCP (board polls stdin between frames). The same
+plumbing delivers: per-still handshake (sync errors impossible by
+construction; settle/budget-slack deleted), phase barrier, BOTH boards
+running simultaneously (still advances when ALL boards report done;
+matrix wall time = slower board alone), and early phase exit (drain
+tail deleted). Failure containment: a dead board stream drops out of
+the barrier, the rest continue solo, score-what-was-collected.
+
+METHOD — TEST-FIRST, Nick's explicit contract: the new communication
+method is PROVEN BY TESTS before anything is handed over for a demo.
+Nibble 1 plan, then: (a) protocol state machine as its own testable
+module; host tests against a FAKE board covering the ugly cases —
+board dies mid-phase, garbled/partial lines, one board stalls, host
+byte lost (timeout->recover), CRLF translation (the known CDC trap);
+(b) board-side stdin poll proven on ONE board with a trivial
+echo-probe before the full harness rides it; (c) bench acceptance =
+a two-board VGA run vs back-to-back solo runs — per-board scores
+within noise, per-phase wall time ~= the slower board alone, ZERO
+settle-discards in the log; then one AE3 HD leg whose
+recall-by-frame_in_still deltas are <=0.01 (the measured hazard,
+gone). Only after (c) passes does Nick get the demo.
+
+RULES: shielded USB cables only; no browser/kiosk on the Pi (hil-lcd
+only); no firmware flashing; boards left enumerated + ports free;
+artifacts under ~/hil_runs/; milestone reports per CLAUDE.md; the
+existing single-board path stays working until the new path's
+acceptance passes (never strand the bench).
+```

@@ -71,6 +71,11 @@ def main():
                     help="yolox exp name (yolox-nano | yolox-tiny)")
     ap.add_argument("--mosaic", type=float, default=0.0,
                     help="mosaic probability (0 disables)")
+    ap.add_argument("--blur", type=float, default=0.0,
+                    help="Gaussian-blur aug probability (bite E2 blur-"
+                         "tolerance fix; sigma U(0.3,2.5) at canvas "
+                         "scale). Label-preserving, so it stays ON "
+                         "through the no-aug tail (hflip/HSV-class)")
     ap.add_argument("--no-aug-epochs", type=int, default=10,
                     help="final epochs with mosaic off (YOLOX recipe)")
     ap.add_argument("--stop-after-hours", type=float, default=0,
@@ -112,7 +117,7 @@ def main():
     # mislabeled the labeler run in the control page)
 
     ds = CorpusDataset(CORPUS / "train.jsonl", canvas=args.canvas, train=True,
-                       mosaic_prob=args.mosaic)
+                       mosaic_prob=args.mosaic, blur_prob=args.blur)
     # persistent_workers=False on purpose: workers re-fork each epoch, so
     # the mosaic-off toggle for the no-aug tail actually reaches them.
     dl = DataLoader(ds, batch_size=args.batch, shuffle=True,
