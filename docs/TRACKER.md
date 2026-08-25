@@ -1949,6 +1949,34 @@ any urchin labelling effort is spent.
       documented reason it cannot. Needs: PR #63 merged (or branch from
       it) — the rig code lives there.
 
+- [ ] **Bite E4 — closed-loop HIL handshake + simultaneous two-board
+      runs (captured 2026-08-25, Nick's direction during the E2 bench
+      session: "we need to push to a better bi-directional method").**
+      Today's harness is open-loop: the board free-runs a pre-budgeted
+      frame count and the host discards frames that arrive inside a
+      settle window after each still change. Correct-by-margin, not
+      correct-by-construction — a render lag longer than the settle
+      would score frames against the wrong still with no flag; and the
+      surplus budget drains as dead screen time (minutes at HD).
+      **Nick's design, the spec:** the Pi hosts the image, TELLS each
+      camera to start inferring, each camera reports DONE and waits,
+      and only then does the Pi advance the image. Host→board channel =
+      one control byte on the VCP (the wire is board→host-only today;
+      board polls stdin between frames). Same plumbing gives, in one
+      bite: (1) per-still handshake — sync errors impossible by
+      construction, settle windows and budget slack deleted; (2) phase
+      barrier — both boards always in the same phase, so (3) BOTH
+      boards run simultaneously (one reader thread per board, still
+      advances when ALL boards report done) — matrix wall time = the
+      slower board alone, N6 legs become free; (4) early phase exit —
+      the drain tail deleted. Per-board INA3221 channels already
+      support concurrent power logging. Failure containment: a dead
+      board stream drops out of the barrier, the rest continue solo
+      (score-what-was-collected, as today). *Verifiable:* a two-board
+      VGA run whose per-phase wall time ≈ the AE3's solo time, whose
+      per-board scores match back-to-back solo runs within noise, and
+      zero settle-discarded frames in the log (the handshake makes the
+      concept obsolete).
 - [ ] **Bite E3 — RF-DETR labeler bake-off (captured 2026-08-25, Nick's
       ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
       DINOv2 backbone weights — capture the license text verbatim per
