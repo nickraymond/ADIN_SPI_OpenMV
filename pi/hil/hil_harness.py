@@ -561,11 +561,22 @@ def load_reviewed(stills_dir, reviewed_only=True):
     return out
 
 
-def save_still_overlay(path, still_path, dets_cam, boxes, Hinv):
+def save_still_overlay(path, still_path, dets_cam, boxes, Hinv,
+                       cam_wh=None):
     """GT (green, native) + detections mapped camera→still via H⁻¹ (yellow),
-    drawn on the SOURCE still — no camera JPEG needed."""
+    drawn on the SOURCE still — no camera JPEG needed. cam_wh draws the
+    camera's field of view as a cyan quadrilateral: GT outside it was
+    filtered from scoring, so a 'missed' urchin outside the cyan line is
+    not a miss."""
     img = Image.open(still_path).convert("RGB")
     d = ImageDraw.Draw(img)
+    if cam_wh is not None:
+        cw, ch = cam_wh
+        pts = np.array([[0, 0], [cw, 0], [cw, ch], [0, ch]], np.float64)
+        p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
+        p = p[:, :2] / p[:, 2:3]
+        poly = [(float(x) * STILL_W, float(y) * STILL_H) for x, y in p]
+        d.polygon(poly, outline=(0, 180, 255), width=2)
     for (_ci, x, y, w, h, _px) in boxes:
         d.rectangle([x, y, x + w, y + h], outline=(0, 255, 60), width=3)
     for det in dets_cam:
@@ -701,7 +712,7 @@ def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
                 os.path.join(out_dir, "overlays",
                              f"{label}_{st['phase']}_{p['still']}"),
                 os.path.join(args.stills_dir, "frames", p["still"]),
-                dets, boxes, Hinv)
+                dets, boxes, Hinv, cam_wh=(cam_w, cam_h))
 
 
 def print_summary(summary, args):
