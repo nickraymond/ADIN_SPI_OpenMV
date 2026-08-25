@@ -1,0 +1,15 @@
+# hil_review.toml -- S8 E4: a GUIDE CARD, not a runnable demo.
+#
+# The closed-loop HIL harness runs in an ssh terminal (it needs a live
+# console for Ctrl-C and prints the scored summary there), so it cannot
+# be a one-click [run] recipe. This card is the cookbook chapter:
+# launching, the review-page controls, stopping, and the failure
+# vocabulary -- with a live badge showing whether a run is up right now.
+#
+# A guide card carries no boards, no [run], no [health] -- the schema
+# refuses those combinations so a half-runnable recipe cannot exist.
+
+name = "hil-review"
+title = "HIL closed-loop run (review + scored)"
+summary = "Launch the closed-loop HIL harness -- boards infer in lockstep with the screen, you review detections live at :8092 -- and stop it cleanly. Needs the Urchin HIL playback recipe running first; this chapter walks the whole loop. From sprint S8 bite E4."
+guide = "guides/hil-review.html"

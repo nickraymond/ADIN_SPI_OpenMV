@@ -293,6 +293,20 @@ class TestShippedRecipes(unittest.TestCase):
         self.assertIn("ml/fomo/label_gui.py", body)
         self.assertIn(":8899", body)
 
+    def test_hil_review_guide_ships_and_names_the_harness(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        card = {r["name"]: r for r in recipes}["hil-review"]
+        path = os.path.join(workbench.RECIPE_DIR, card["guide"])
+        self.assertTrue(os.path.exists(path))
+        body = open(path).read()
+        # The chapter must point at the real harness, the real review
+        # page, the playback prerequisite, and the clean stop.
+        self.assertIn("pi/hil/hil_harness.py", body)
+        self.assertIn("--closed-loop", body)
+        self.assertIn(":8092", body)
+        self.assertIn("s8-hil-urchin", body)
+        self.assertIn("hil_harnes[s]", body)
+
     def test_hil_screen_guide_ships_and_names_the_playback(self):
         recipes, _ = load_recipes(workbench.RECIPE_DIR)
         card = {r["name"]: r for r in recipes}["hil-screen"]
