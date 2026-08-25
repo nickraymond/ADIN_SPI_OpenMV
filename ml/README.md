@@ -220,11 +220,15 @@ checkpoint — it keeps everything the model knows and only forces
 blur-tolerant features; from-scratch would relearn all of it first.
 
 ```bash
-# fine-tune tiny with blur aug (hours, not the ~1-day full retrain)
+# fine-tune tiny with blur aug (hours, not the ~1-day full retrain).
+# --resume restores the epoch counter (tiny ended at e119), so the
+# continuation is expressed as --epochs 160 = 40 MORE epochs, riding the
+# cosine tail's low LR (a natural fine-tune rate). Corpus stays v1 (the
+# original run's) so blur is the ONLY changed variable.
 ~/nereus_ml/venvs/gate/bin/python ml/yolox_urchin/train.py \
-    --arch yolox-tiny --corpus corpus_v2 --blur 0.5 \
+    --arch yolox-tiny --epochs 160 --batch 32 --mosaic 0.75 --blur 0.5 \
     --resume ~/nereus_ml/runs/stage1_yolox/stage1_tiny_v1/last.pt \
-    --run-name stage1_tiny_v1_blur --epochs 40 --mosaic 0.5
+    --run-name stage1_tiny_v1_blurft
 
 # acceptance: the blur curve, tiny-vs-nano (gate venv has TF+torch)
 ~/nereus_ml/venvs/gate/bin/python ml/yolox_urchin/eval_rung_a.py \
