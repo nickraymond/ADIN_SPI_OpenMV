@@ -307,6 +307,17 @@ class TestShippedRecipes(unittest.TestCase):
         self.assertIn("s8-hil-urchin", body)
         self.assertIn("hil_harnes[s]", body)
 
+    def test_hil_report_card_points_at_generated_report(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        card = {r["name"]: r for r in recipes}["s8-hil-report"]
+        # the chapter is GENERATED (hil_report.py) — the card must name
+        # the generator so a stale page is regenerable, and the file
+        # must exist wherever this suite runs post-generation
+        self.assertEqual(card["guide"], "guides/s8-hil-report.html")
+        self.assertIn("hil_report.py", card["summary"] + open(
+            os.path.join(workbench.RECIPE_DIR,
+                         "s8_hil_report.toml")).read())
+
     def test_hil_screen_guide_ships_and_names_the_playback(self):
         recipes, _ = load_recipes(workbench.RECIPE_DIR)
         card = {r["name"]: r for r in recipes}["hil-screen"]

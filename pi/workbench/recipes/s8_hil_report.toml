@@ -1,0 +1,11 @@
+# s8_hil_report.toml -- S8 bite C: the report card as a GUIDE CARD.
+#
+# The report is GENERATED from closed-loop HIL runs (pi/hil/hil_report.py
+# writes guides/s8-hil-report.html); this card is how Nick opens it.
+# Regenerate after any scored run:
+#   python3 pi/hil/hil_report.py ~/hil_runs/<vga_run> ~/hil_runs/<hd_run>
+
+name = "s8-hil-report"
+title = "S8 report card (urchin HIL)"
+summary = "The accuracy/cost report card from the latest closed-loop HIL runs: scorecard, recall vs pixels-on-target (the T2 money plot), energy per frame, and where each model looks. Regenerated per run by pi/hil/hil_report.py. From sprint S8 bite C."
+guide = "guides/s8-hil-report.html"
