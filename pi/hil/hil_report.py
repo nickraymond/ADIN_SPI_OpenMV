@@ -116,7 +116,14 @@ def cell_stats(rows, H, power, reviewed, cam_wh):
             st["t"].append(r["t_host"])
         cw, ch = cam_wh.get(b, (640, 400))
         gts, n_match = rematch(r, reviewed[r["still"]], H[b], cw, ch)
-        if n_match != r["n_match"]:
+        # rows store dets_cam rounded to 0.1 px/conf, so conf-order ties
+        # can flip a single match vs the original full-precision pass —
+        # |Δ|≤1 is rounding, anything more is a real bug
+        delta = abs(n_match - r["n_match"])
+        st.setdefault("audit", [0, 0])
+        st["audit"][0] += 1
+        st["audit"][1] += int(delta == 0)
+        if delta > 1:
             raise SystemExit(
                 f"FAIL: rematch disagrees with recorded n_match on "
                 f"{b}/{ph}/{r['still']} ({n_match} != {r['n_match']}) — "
@@ -257,6 +264,9 @@ def main():
           if lb == "HD"}
     vga = {(b, ph): st for (b, ph, lb), st in all_cells.items()
            if lb == "VGA"}
+    a_tot = sum(st["audit"][0] for st in all_cells.values())
+    a_ok = sum(st["audit"][1] for st in all_cells.values())
+    audit_line = f"{a_ok}/{a_tot} rows exact, rest |Δ|=1"
     bins_tbl = "".join(
         f"<tr><td>{b} {ph.split('-')[0]}</td>"
         + "".join(
@@ -354,7 +364,9 @@ controlled-lighting rerun is owed). All numbers are one lighting
 condition (2026-08-25 afternoon); matrix cells are per-lighting.
 Confidence split and per-stage tables live in the rows
 (<code>~/hil_runs/e4_blurft_*/rows.jsonl</code>) — this page stays
-sparse by design.</p>
+sparse by design. Pixel-attribution audit: {audit_line} (disagreements
+are single-match conf-rounding ties; anything larger aborts the
+report).</p>
 </main></body></html>"""
     out = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
