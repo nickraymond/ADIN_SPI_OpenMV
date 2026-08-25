@@ -22,7 +22,7 @@ import json
 import os
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 STILL_W, STILL_H = 1920, 1080
 IN_W = 256
@@ -61,7 +61,7 @@ def accumulate(rec, Hinv, grid, conf_floor):
                 grid[gy, gx] += score
 
 
-def render(still_path, grid, norm, out_path, lut):
+def render(still_path, grid, norm, out_path, lut, fov_poly=None):
     img = Image.open(still_path).convert("RGB").resize((960, 540))
     base = (np.asarray(img, np.float32) * 0.45)     # dim the still
     h = np.clip(grid / norm, 0, 1) if norm > 0 else grid * 0
@@ -70,7 +70,22 @@ def render(still_path, grid, norm, out_path, lut):
     heat = lut[(h * 255).astype(np.uint8)].astype(np.float32)
     a = (h ** 0.7)[..., None]                       # alpha from intensity
     out = np.clip(base * (1 - a) + heat * a, 0, 255).astype(np.uint8)
-    Image.fromarray(out).save(out_path, quality=85)
+    im = Image.fromarray(out)
+    if fov_poly is not None:
+        # the camera sees only part of the still — without this line a
+        # cold region outside the FOV reads as model blindness
+        d = ImageDraw.Draw(im)
+        d.polygon([(x * 960, y * 540) for x, y in fov_poly],
+                  outline=(0, 180, 255), width=2)
+    im.save(out_path, quality=85)
+
+
+def fov_polygon(Hinv, cam_w, cam_h):
+    pts = np.array([[0, 0], [cam_w, 0], [cam_w, cam_h], [0, cam_h]],
+                   np.float64)
+    p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
+    p = p[:, :2] / p[:, 2:3]
+    return [(float(x), float(y)) for x, y in p]
 
 
 def main():
@@ -89,6 +104,7 @@ def main():
                          f"need a closed-loop run from the cells-saving "
                          f"harness (re-run the leg)")
     Hinv = {}
+    fovs = {}                      # board -> still-fraction FOV polygon
     grids = {}                     # (board, phase, still) -> grid
     n_frames = {}
     for ln in open(cells_path):
@@ -103,6 +119,8 @@ def main():
                 Hinv[b] = np.linalg.inv(np.load(hp))
         if Hinv[b] is None:
             continue
+        if b not in fovs:
+            fovs[b] = fov_polygon(Hinv[b], rec["cam_w"], rec["cam_h"])
         key = (b, rec["phase"], rec["still"])
         grids.setdefault(key, np.zeros((GRID_H, GRID_W), np.float32))
         n_frames[key] = n_frames.get(key, 0) + 1
@@ -124,7 +142,7 @@ def main():
         name = f"{b}_{ph}_{os.path.splitext(still)[0]}.jpg"
         render(os.path.join(args.stills_dir, "frames", still),
                g / max(1, n_frames[(b, ph, still)]), norms[(b, ph)],
-               os.path.join(out_dir, name), lut)
+               os.path.join(out_dir, name), lut, fov_poly=fovs.get(b))
         entries.append((b, ph, still, name))
     print(f"{len(entries)} heat maps -> {out_dir}")
 
