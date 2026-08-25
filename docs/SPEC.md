@@ -180,8 +180,19 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
-- **N6 predict-loop USB death, UNATTRIBUTED (2026-08-25, S8 HIL dry-run
-  night; ~12 reproductions).** With a stage-1 model resident, repeated
+- **N6 predict-loop USB death — RESOLVED 2026-08-25: the N6's
+  UNSHIELDED USB cable.** Nick spotted it (the AE3's cable is shielded);
+  a shielded replacement took `n6_stage1_probe` from crash-in-≤30-predicts
+  to clean at bench-window numbers (tiny 31.25 ms ×30). Mechanism reads
+  as EMI: the fault class appeared the day the LCD/HDMI arrived on the
+  bench, and with no model running the old cable still showed 79 stream
+  reconnects in minutes (AE3: 0, same host+script). The one "clean
+  kiosk-off run" that confounded the display-stack A/B stays formally
+  unexplained (marginal links are intermittent). Bench rule going
+  forward: **shielded USB cables only on the camera boards.** The
+  original evidence trail follows for the record.
+  *(original entry)* (2026-08-25, S8 HIL dry-run
+  night; ~12 reproductions). With a stage-1 model resident, repeated
   `predict()` on the stock-v5.0.0 N6 kills its USB session within
   ~1–30 predicts — the device drops off the bus and re-enumerates
   (MSC exposed), presenting as `Errno 5` on the host. Reproduced with:
