@@ -94,9 +94,37 @@ k=2, midday (comparable to the open-loop midday baselines):
   Both dead branches are Nick's to delete post-merge.
 Artifacts: ~/hil_runs/e4_matrix_closed_{vga,hd}_d5 (final) + _vga/_hd
 (discard=1, the AE-effect evidence) + e4_compare.py in ~/bm_bench.
-Bench left clean: runner idle, boards enumerated, ports free, Pi on
-this branch. NEXT: PR review/merge (Nick), then TRACKER's E4 leftovers:
-none — bite complete pending merge.
+
+**Continued (same day, Nick's follow-on): BLUR-FT TINY DEPLOYED TO BOTH
+BOARDS + ladder rerun + heat maps (his ask).**
+- Acceptance eval first (README recipe): blurft ema.pt σ0 0.725 (−0.004
+  vs 0.729, bar ±0.02), above nano at EVERY σ; the collapse is gone
+  (σ2.2: 0.414→0.629). Export+compile clean both boards; both ROMFS
+  images rebuilt (tiny_v1 → tiny_blurft, vendor content + nano intact,
+  compiled tiny byte-exact in each image); **DFU flashes sha-verified by
+  partition read-back on both boards** (N6 alt 3; AE3 alt 6 "ROMFS0" —
+  Nick's explicit approval; ssh/scp-to-bench allow rules added to
+  settings.local.json at his direction).
+- TRAP caught live by the monitor's model line: the AE3's find_models
+  picked the STALE /flash tiny (biggest-wins) over the new /rom blurft —
+  run aborted, /flash/stage1_tiny_v1_ae3.tflite removed (one mpremote op
+  under ae3-board-access), rerun clean. Lesson: after a ROMFS model
+  swap, sweep /flash of same-family models or find_models lies.
+- **Ladder (closed-loop, both boards, 30px):** blurft tiny AE3 HD
+  0.81/0.56 (was 0.71/0.60, +0.10 recall) · N6 HD 0.43/0.31 (+0.07 — the
+  FLAGGED cell improves, consistent with glare/softness) · AE3 VGA
+  0.57/0.74 (+0.06) · N6 VGA 0.58/0.42 (−0.02, noise). Nano controls
+  moved ≤0.03 → gains are the model. All audits clean (discards 0,
+  frame deltas ≤0.036).
+- **Heat maps shipped (hil_heatmap.py + cells.jsonl):** obj·cls per
+  candidate cell → homography → source still; FOV boundary drawn (a
+  cold region outside it is unseen, not missed). Reading: nano burns
+  hot+scattered incl. bare rock (its false positives made visible);
+  blurft tiny dimmer but tighter on urchins. 96 maps/leg,
+  ~/hil_runs/e4_blurft_{vga,hd}/heatmaps/index.html.
+Bench left clean: runner idle, boards enumerated, ports free. NEXT: PR
+#66 review/merge (Nick); STAGE1.md decision-table refresh with the
+blurft row can ride the review.
 
 ---
 
