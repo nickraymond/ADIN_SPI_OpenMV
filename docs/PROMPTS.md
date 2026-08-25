@@ -522,3 +522,64 @@ enumerated + ports free at session end; artifacts (traces, tables,
 logs) recorded under ~/nereus_ml/ + repo eval tables. Milestone report
 format per CLAUDE.md.
 ```
+
+## 15 — Ready to paste: S8 bite E2 — root-cause the AE3-tiny HIL anomaly (written 2026-08-25, after the first scored matrix)
+
+```
+Run /agent-entry. This is an S8 HIL BENCH session on nereus000 — you
+OWN the bench and the HIL rig for this session (board contact through
+the S25 workbench discipline: check http://nereus000:8088/api/runner +
+/api/preflight first; one owner per port; 35 s settle; by-id ONLY;
+ae3-board-access skill before any mpremote against the AE3; the
+hil-setup skill is the rig runbook). PREREQUISITE: PR #63 merged (or
+branch from claude/yolox-decode-nms-sizing-3ca136) — the rig lives
+there.
+
+CONTEXT (do not re-derive): the 2026-08-25 HIL matrix
+(~/hil_runs/matrix_d70_1/, table in TRACKER header + PR #63) measured
+the AE3-tiny anomaly this session exists to explain: AE3 tiny-tiled
+recall 0.13 with 3-4x FEWER detections than AE3 nano-tiled (0.39),
+while the N6 orders them as bench mAP predicts (tiny 0.40 > nano 0.32)
+and AE3-tiny's few detections score HIGHER conf than nano's (p50 0.65
+vs 0.56). Same int8 tflite both boards; AE3 runs it from /rom (OSPI
+XIP, ROMFS0 image built 2026-08-24); timing NPU-consistent (351.7 ms
+~= 6x58.4). It computes fast but under-detects, on one board only.
+
+GOAL (bite E2, TRACKER): find WHY, fix it or measure the explanation.
+Success = an AE3 tiny-tiled HIL leg whose recall ordering vs nano
+matches the N6's, or a documented mechanism why it cannot.
+
+METHOD — Nick's explicit instruction: WORK IN A LOOP. Test one theory;
+when it does not hold, record the verdict and move to the next. The
+ladder, cheapest first (renumber freely if evidence reorders it):
+T1 desk: conf sweep on recorded rows (det_conf is in rows.jsonl) —
+   is tiny recall hiding below the 0.30 threshold?
+T2 desk: compile/deploy audit — was tiny built/deployed compatibly
+   with the AE3? Diff the artifact chain vs nano and vs the N6 copy:
+   export.py int8 config, vela profile (RTSS_HP_SRAM_OSPI for /rom vs
+   the /flash config), sha of the tflite INSIDE the AE3 ROMFS image vs
+   ~/nereus_ml/exports/stage1_tiny_v1/. Anything tiny-only or
+   AE3-only is a suspect. Recompiling + redeploying tiny to the AE3 by
+   the PROVEN routes (ml/README.md; ROMFS0 DFU) is IN SCOPE this
+   session — verify the artifact, do not assume it.
+T3 bench (the discriminator): golden-input diff — one known 256x256
+   input through (a) Mac int8 interpreter, (b) N6 /rom tiny, (c) AE3
+   /rom tiny; compare raw cells. (c) diverges => AE3 deployment/
+   runtime guilty. All agree => upstream (camera/ISP/preproc, T5).
+T4 bench: cell-cap/obj_thr — rerun one AE3 tiny-tiled leg with
+   cell_cap 256 / obj_thr 0.05 (harness _CFG knobs, no code change).
+T5 bench: AE3-camera domain — AE3-captured frames through the Mac
+   interpreter; isolates the warmer AE3 ISP from its runtime.
+Repeat HIL legs are allowed whenever a theory needs one (the rig is
+yours); hil-setup skill section 4 has the harness command; cameras and
+screen are positioned and calibrated per-run automatically — DO NOT
+move them.
+
+RULES: shielded USB cables only (SPEC — the N6 unshielded-cable
+incident); no browser/kiosk on the Pi while boards run (hil-lcd only);
+no firmware flashing (model deploys by the proven routes are fine);
+boards left enumerated + ports free; one verdict per theory in
+DEV_LOG; artifacts under ~/hil_runs/ + ~/nereus_ml/runs/; milestone
+report format per CLAUDE.md; STOP at the fix (or the explanation) for
+Nick's review before folding anything into the decision table.
+```

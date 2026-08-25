@@ -18,9 +18,11 @@ scoring. Bench truths bought this session: the N6 "firmware crash"
 class was its UNSHIELDED USB CABLE (EMI; shielded-only rule in SPEC);
 Pi WiFi dropped twice → powersave off, Ethernet owed; the new N6 cable
 bypasses the INA3221 CH3 shunt → N6 HIL power column owed after a
-re-wire. Artifacts: ~/hil_runs/matrix_d70_1/ + PR. NEXT: Nick reviews
-the matrix + report card (bite C's s8_report reuse), stills_v2 labels,
-simultaneous-two-board bite, on-board decode bite. Previous:*
+re-wire. Artifacts: ~/hil_runs/matrix_d70_1/ + PR #63. **NEXT SESSION
+(Nick's call 2026-08-25): bite E2 below — root-cause the AE3-tiny
+anomaly BEFORE the report card / bite D / S27.** Then: report card,
+stills_v2 labels, simultaneous-two-board bite, on-board decode.
+Previous:*
 *2026-08-24 (**S8 BENCH WINDOW COMPLETE: the nano-vs-tiny
 decision table is fully MEASURED — ms AND mJ, both boards, one model
 pair, INA3221 rig proven end-to-end — and tiny RUNS on the AE3 via a
@@ -1884,6 +1886,48 @@ any urchin labelling effort is spent.
       corpus arrives labelled, the new work here is a one-bite format
       converter (their labels → labels.jsonl) and B3's GUI becomes
       review/spot-fix rather than from-scratch labelling.
+
+- [ ] **Bite E2 — AE3-tiny anomaly root-cause  ← NEXT SESSION (Nick
+      2026-08-25; kickoff = PROMPTS.md §15).** The 2026-08-25 HIL matrix
+      measured AE3 tiny-tiled at 0.13 recall with 3-4× fewer detections
+      than AE3 nano-tiled (0.39) — while the N6 orders them the way
+      bench mAP predicts (tiny 0.40 > nano 0.32) and AE3-tiny's
+      detections score HIGHER confidence than nano's (p50 0.65 vs 0.56).
+      Same int8 tflite runs on both boards; the AE3 runs it from /rom
+      (OSPI XIP, the ROMFS0 image built 2026-08-24), timing is
+      NPU-consistent (351.7 ms ≈ 6×58.4) — so it computes fast but
+      under-detects, on one board only. **The session OWNS the bench**
+      (repeat HIL runs whenever a theory needs one) and — unlike prior
+      sessions — recompiling/redeploying TINY to the AE3 by the proven
+      routes is IN SCOPE (Nick's point 1: verify the artifact, don't
+      assume it). Work the theory ladder cheapest-first, one verdict per
+      theory, recorded not skipped (Nick: "test a theory; if it does not
+      work move to the next"):
+      **T1 (desk, zero bench):** conf-threshold sweep on the recorded
+      rows (per-detection confs are in matrix_d70_1/rows.jsonl) — is
+      tiny's recall hiding below conf 0.30?
+      **T2 (desk):** compile/export audit — diff the AE3-tiny artifact
+      chain vs nano's and vs the N6's copy (export.py config, vela
+      profile RTSS_HP_SRAM_OSPI vs the /flash DTCM config, sha of the
+      tflite INSIDE the ROMFS image vs ~/nereus_ml/exports/
+      stage1_tiny_v1/); anything tiny-only or AE3-only is a suspect.
+      **T3 (bench, the discriminator):** golden-input diff — push one
+      KNOWN 256×256 input through (a) the Mac int8 interpreter,
+      (b) N6 /rom tiny, (c) AE3 /rom tiny; compare raw cells. If (c)
+      diverges, the AE3 deployment/runtime is guilty; if all agree, the
+      difference is upstream (camera/ISP/preprocessing — T5).
+      **T4 (bench):** cell-cap/obj_thr interaction — rerun one AE3
+      tiny-tiled HIL leg with cell_cap 256 / obj_thr 0.05 (the caps are
+      _CFG knobs, no code change).
+      **T5 (bench):** AE3-camera domain — run tiny on AE3-captured
+      frames pushed through the MAC interpreter (harness saves none
+      today: add a dump-one-frame switch, or use jpeg-phase captures) —
+      isolates the AE3's warmer ISP from its runtime.
+      *Verifiable:* a written verdict per theory in DEV_LOG + the fix
+      (or the measured explanation) demonstrated by an AE3 tiny-tiled
+      HIL leg whose recall ordering vs nano matches the N6's, or a
+      documented reason it cannot. Needs: PR #63 merged (or branch from
+      it) — the rig code lives there.
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
