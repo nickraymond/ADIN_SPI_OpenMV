@@ -1,7 +1,27 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-24 (**S8 BENCH WINDOW COMPLETE: the nano-vs-tiny
+*Last updated: 2026-08-25 (**S8 HIL RIG BUILT, CALIBRATED, AND THE
+FIRST SCORED MATRIX MEASURED — both boards, all four model×mode cells,
+Nick's 24 reviewed stills, per-camera homography, power column.**
+Headline: TILED-native-px is the only living mode — whole-frame-256
+recall ≈ 0.00 on hardware for every board/model (the downscale artifact,
+now measured end-to-end); nano-tiled AE3 0.39 recall / 0.77 prec /
+85 mJ/frame; tiny-tiled N6 0.40 / 0.66; the AE3-tiny recall anomaly
+(0.13, 3-4× fewer detections than nano despite higher bench mAP; N6
+shows the OPPOSITE ordering) is the open analysis question. Median
+visible target 25 px at Nick's box-D camera distance (53% ≥ the 24-px
+floor) — pixels-on-target dominates everything. Rig: playback+LCD
+(pygame KMS, browser kiosk BANNED), aiming card + 16:10 sizing ladder,
+`hil-setup` skill, harness w/ sparse-cell wire + visibility-filtered
+scoring. Bench truths bought this session: the N6 "firmware crash"
+class was its UNSHIELDED USB CABLE (EMI; shielded-only rule in SPEC);
+Pi WiFi dropped twice → powersave off, Ethernet owed; the new N6 cable
+bypasses the INA3221 CH3 shunt → N6 HIL power column owed after a
+re-wire. Artifacts: ~/hil_runs/matrix_d70_1/ + PR. NEXT: Nick reviews
+the matrix + report card (bite C's s8_report reuse), stills_v2 labels,
+simultaneous-two-board bite, on-board decode bite. Previous:*
+*2026-08-24 (**S8 BENCH WINDOW COMPLETE: the nano-vs-tiny
 decision table is fully MEASURED — ms AND mJ, both boards, one model
 pair, INA3221 rig proven end-to-end — and tiny RUNS on the AE3 via a
 ROMFS0 DFU flash (read-back sha-verified; /rom is memory-mapped, so the

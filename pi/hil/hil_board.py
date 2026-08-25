@@ -214,6 +214,11 @@ for ph_i, ph in enumerate(PHASES):
             print(line)
         seq += 1
         gc.collect()
+        if kind == "jpeg":
+            # pace jpeg phases: a fast board (N6 black-screen jpegs are
+            # ~3 KB) burns the whole phase before the host's page-settle
+            # window opens, starving the calibration of usable frames
+            time.sleep_ms(150)
     if model is not None:
         del model
         gc.collect()

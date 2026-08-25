@@ -180,9 +180,13 @@ class BoardStream:
                                        "mid_frame": obj["seq"]}
                     jpg_line = raw_line.rstrip(b"\r\n")
                     if len(jpg_line) != obj["jpg"]:
-                        raise IOError(
-                            f"jpg payload {len(jpg_line)} != header "
-                            f"{obj['jpg']} at seq {obj['seq']}")
+                        # one corrupted line 1,270 frames into an
+                        # otherwise-clean run killed a whole leg — the
+                        # stream is line-oriented, so skip and realign
+                        print(f"    WARN seq {obj['seq']}: jpg payload "
+                              f"{len(jpg_line)} != {obj['jpg']}, "
+                              f"frame skipped")
+                        return "skip", obj
                     jpg = base64.b64decode(jpg_line)
                 tile_cells = []
                 for ncell in obj["cells"]:
@@ -191,11 +195,14 @@ class BoardStream:
                         return "end", {"reason": self.sb.end_reason,
                                        "error": self.sb.last_error,
                                        "mid_frame": obj["seq"]}
-                    cells = json.loads(raw_line)
-                    if len(cells) != ncell:
-                        raise IOError(
-                            f"cells payload {len(cells)} != header {ncell} "
-                            f"at seq {obj['seq']}")
+                    try:
+                        cells = json.loads(raw_line)
+                    except ValueError:
+                        cells = None
+                    if cells is None or len(cells) != ncell:
+                        print(f"    WARN seq {obj['seq']}: cells payload "
+                              f"corrupt/short (want {ncell}), frame skipped")
+                        return "skip", obj
                     tile_cells.append(cells)
                 obj["_jpg"] = jpg
                 obj["_cells"] = tile_cells
@@ -289,12 +296,14 @@ def run_board(label, port, args, playback, out_dir):
         # overlays are rendered onto the SOURCE stills via H⁻¹ instead
         phases.append({"kind": "model", "model": model, "mode": mode,
                        "frames": frames_model, "jpeg": False})
-    # jpeg phases: the board free-runs ~10 fps while the PAGE switch takes
-    # up to poll(300ms)+render — 30 frames guarantees several captured
-    # comfortably after the switch; selection is by arrival stamp.
-    phases += [{"kind": "jpeg", "frames": 30, "page": "loop"},
-               {"kind": "jpeg", "frames": 30, "page": "black"},
-               {"kind": "jpeg", "frames": 30, "page": "calib"}]
+    # jpeg phases: selection is by arrival stamp (page poll 300 ms +
+    # render + settle), so the phase must OUTLAST the settle window on a
+    # FAST board — the N6 streams jpeg frames at ~4 ms encode and burned
+    # all 30 frames before settle opened (matrix_d70_1: "calib phase
+    # never completed"). 90 frames ≈ 6-9 s on the N6, ~12-18 s on the AE3.
+    phases += [{"kind": "jpeg", "frames": 90, "page": "loop"},
+               {"kind": "jpeg", "frames": 90, "page": "black"},
+               {"kind": "jpeg", "frames": 90, "page": "calib"}]
 
     board_phases = [{k2: v for k2, v in p.items() if k2 != "page"}
                     for p in phases]
@@ -359,6 +368,8 @@ def run_board(label, port, args, playback, out_dir):
                 first_event = None
             else:
                 ev, obj = bs.next_event(timeout_s=60)
+            if ev == "skip":
+                continue                    # corrupted frame, realigned
             if ev == "info":
                 print(f"    board: {obj['board_models']}")
                 continue
@@ -452,6 +463,10 @@ def run_board(label, port, args, playback, out_dir):
                 if still_i < len(reviewed):
                     start_still(still_i)
                 # else: drain the phase's remaining frames unscored
+    except IOError as e:
+        # a dead stream must not discard the frames already collected —
+        # fall through to the post-pass with whatever we have
+        print(f"    STREAM ERROR (scoring what was collected): {e}")
     finally:
         if stats:
             summary.append(stats)
@@ -539,7 +554,10 @@ def run_board(label, port, args, playback, out_dir):
           f"{'match':>5} {'miss':>5} {'false':>5} {'inf ms':>7} "
           f"{'e2e ms/frame':>12}")
     for s in summary:
-        if s["phase"] in ("black", "calib") or not s["frames"]:
+        if s["phase"] in ("black", "calib"):
+            print(f"    ({s['phase']}: {s['frames']} post-settle frames)")
+            continue
+        if not s["frames"]:
             continue
         n = s["frames"]
         inf = sum(s["inf_us"]) / n / 1000

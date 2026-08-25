@@ -61,6 +61,30 @@ is proven minus the N6 leg; N6 = fresh bite with Nick's hands (LCD
 unplug A/B first). Then: full matrix + report card (bite C's s8_report
 machinery from `claude/s8-c-metrics` — reuse, not rewrite).
 
+**Continued (same night, Nick at the bench):** the N6 mystery CLOSED —
+**unshielded USB cable** (Nick spotted it; shielded swap → probe clean
+at bench numbers; SPEC updated, shielded-only rule). Camera aiming
+matured into the **16:10 sizing ladder** (boxes mode; Nick picked box D
+= 70%), markers pinned to D's corners, scorer grew a visibility filter
+(camera sees the central 63%×70% of each still; visible px ≈0.53× still
+scale, median target 20→25 px, 53% above the 24-px floor). Power column
+landed (INA3221 log per harness run; first whole-loop mJ/frame numbers).
+**AE3 scored matrix DONE at D-zoom: nano-tiled recall 0.39/prec 0.77 at
+85 mJ/frame; tiny-tiled 0.13/0.86 at 141 mJ/frame; whole-frame-256 ≈0
+recall on hardware (4-8 dets vs ~3k GT) — the downscale artifact
+measured end-to-end. Open puzzle: tiny detects 3-4× less than nano
+through the camera despite higher bench mAP — report-card analysis
+item.** En route: three harness robustness fixes (CRLF payload trap
+again, %r-vs-JSON header deafness, corrupt-frame skip + score-what-was-
+collected), jpeg-phase pacing (fast boards starved calibration), stills_v2
+pre-labeled (120 frames, 3 new aquarium clips, HEVC — transcode owed
+before loop playback). Bench ops: Pi dropped off WiFi twice (EMI-rich
+bench now) — power-save-off applied, Ethernet = Nick's calm-day fix.
+`hil-setup` skill shipped (ladder image included). New sized follow-ups:
+simultaneous two-board runs (phase-barrier still scheduler), on-board
+decode (product path), s8-two-colour recipe N6 model drift (ROMFS
+redeploy decision).
+
 **Branch:** `claude/s8-bench-deployment-latency-ac02d1`
 
 **Done:**
