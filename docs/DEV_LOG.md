@@ -69,6 +69,52 @@ Bench left clean: runner idle, both boards enumerated, ports free.
 Probe + golden BMP staged at pi:~/bm_bench/ (and on both /flash as
 golden_256.bmp, 197 KB) for the rerun.
 
+**Continued (same day, Nick at the bench — the fix session): E2's
+success criterion MET — AE3 tiny-tiled 0.70 recall vs nano 0.48 (HD,
+frame-2 subset), ordering matches the N6's.**
+- **Blur fine-tune shipped + launched** (nibble 2, Nick's plan
+  approval): blur aug in data.py (own rng stream — the shared-rng leak
+  was caught by the label-invariance test), --blur knob, blur-curve
+  eval mode. Float baselines banked: tiny 0.727/0.690/0.508/0.414 vs
+  nano 0.654/0.643/0.550/0.458 at σ 0/0.8/1.6/2.2 — **the benchmark
+  reproduces the HIL crossover (nano overtakes tiny at σ≥1.6)**.
+  Fine-tune (tiny e120→160, --blur 0.5, corpus/flags otherwise
+  identical) running at entry time.
+- **Focus rig built for Nick** (ad-hoc playback + composed
+  center-urchin target + aiming card + lap_var readout): AE3 patch
+  sharpness 100→331 after his lens work (N6 same target: 1232 → the
+  AE3 stays ~2× softer at best focus). Exposure/color self-fixed by
+  framing + camera re-init (means 92 vs 93, RGB neutral) — the wash
+  was AE metering a dark surround, not ISP damage. En route: eth0
+  joined the LAN (WiFi was the slow-page culprit; bm-bench profile
+  preserved), focus target lives in ~/hil_focus (frozen set untouched).
+- **Scored legs (all midday light):** AE3 VGA refocus tiny 0.13→0.28
+  raw (nano 0.33 — tie at the 30-px floor: 0.51 vs 0.52); N6 VGA
+  control tiny 0.33/nano 0.19 (ordering holds; ambient penalty vs the
+  5 AM matrix measured ~−0.06 recall/−0.19 prec — matrix cells are
+  per-lighting); **AE3 HD (7×5 tiles, geometry-computed) tiny 0.70/
+  0.60 vs nano 0.48/0.59 frame-2-only** — GT median 52 px, 96% above
+  Nick's 30-px floor. Harness grew --min-gt-px (ignore semantics),
+  --framesize HD, --budget-slack, cam-dims-from-#I.
+- **Nick's open-loop concern found a REAL defect**: AE3 HD frame-1s
+  0.33 vs frame-2s 0.59 (frame cycle > settle → first frames straddle
+  the still change). VGA legs audit clean (≤0.002). HD scoring is
+  frame-2-only until bite E4 (closed-loop handshake, Nick's design,
+  captured + kickoff = PROMPTS §16). Also captured: bite E3 (RF-DETR
+  labeler bake-off, one-epoch gate).
+
+**Broke/surprised us (fix session):**
+- The Pi's HIL files were untracked scp copies (backed up to
+  ~/hil_pi_backup_20260825, verified == the merged repo versions); the
+  Pi now runs the branch checkout properly.
+- An N6 launch via bare `ssh &` lost the console (process survived;
+  artifacts intact) — use the tracked-background pattern.
+
+**Next:** N6 HD leg finishing → heatmap summary report (Pi-hosted) →
+E2 PR for Nick's review → E4 session (PROMPTS §16). Blur fine-tune
+lands ~13:15; its blur-curve acceptance + deploy decision ride the PR
+review.
+
 ---
 
 ## 2026-08-24/25 — S8 bite E HIL: rig built end-to-end (stills+pre-labels, decode, playback, harness); N6 blocked by an unattributed predict-loop USB death; AE3 dry run = the discriminator

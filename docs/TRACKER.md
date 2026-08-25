@@ -1887,8 +1887,25 @@ any urchin labelling effort is spent.
       converter (their labels → labels.jsonl) and B3's GUI becomes
       review/spot-fix rather than from-scratch labelling.
 
-- [~] **Bite E2 — AE3-tiny anomaly root-cause — ROOT-CAUSED 2026-08-25,
-      WAITING on Nick's review + the optical rerun.** Verdict: the AE3's
+- [~] **Bite E2 — AE3-tiny anomaly root-cause — ROOT-CAUSED **AND
+      FIXED** 2026-08-25 (same session, Nick at the bench): success
+      criterion MET — AE3 tiny-tiled orders ABOVE nano (0.70 vs 0.48
+      recall, frame-2 subset) after Nick's lens refocus + HD native
+      tiling; PR open for Nick's review.** The fix stack, each step
+      measured: refocus (AE3 patch sharpness 100→331) took tiny from
+      0.13 to 0.28 at VGA (tie with nano); HD tiling (GT median px
+      25→52, 96% above the 30-px floor) took it to 0.70/0.60 —
+      pixels-on-target overwhelmed the residual ~2× optical softness
+      vs the N6. The blur fine-tune (tiny + blur aug, epochs 120→160)
+      remains in flight as margin + the turbid-water lever, no longer
+      the critical path. En route the same session: --min-gt-px floor
+      (Nick's 30-px call, ignore semantics), the ambient-light
+      confound measured (midday vs the 5 AM matrix: N6 recall −0.06,
+      precision −0.19 — matrix cells are per-lighting-condition), and
+      the open-loop scoring hazard found+bounded (bite E4). Artifacts:
+      ~/hil_runs/{ae3_refocus_1,n6_control_1,ae3_hd_1,n6_hd_1} +
+      ~/nereus_ml/runs/e2_anomaly_2026-08-25/; summary report on the
+      Pi. *(root-cause record follows)* Verdict: the AE3's
       HIL capture is optically SOFT (lap_var 233 vs the N6's 880, same
       screen) and tiny is blur-sensitive where nano is blur-immune —
       measured content-constant (blur sweep: tiny:nano 1.31→0.26 by
@@ -1950,8 +1967,21 @@ any urchin labelling effort is spent.
       it) — the rig code lives there.
 
 - [ ] **Bite E4 — closed-loop HIL handshake + simultaneous two-board
-      runs (captured 2026-08-25, Nick's direction during the E2 bench
-      session: "we need to push to a better bi-directional method").**
+      runs  ← NEXT SESSION (Nick 2026-08-25; kickoff = PROMPTS.md §16).
+      TEST-FIRST is the contract: the new communication method ships
+      with host-side tests proving the protocol BEFORE any demo is
+      handed over — protocol state machine unit-tested against a fake
+      board (drop/garble/die cases), then one bench A/B (two-board run
+      vs back-to-back solo runs, scores within noise, zero
+      settle-discards) as the acceptance.** The open-loop hazard is now
+      MEASURED, not theoretical: the 2026-08-25 AE3 HD leg scored
+      frame-1s at 0.33 recall vs frame-2s at 0.59 — at HD the AE3's
+      ~3.5 s frame cycle exceeds the 2.5 s settle, so first frames
+      straddle the still change (VGA legs audit clean, deltas ≤0.002;
+      the audit instrument is recall-by-frame_in_still). Until E4
+      lands, HD legs are scored FRAME-2-ONLY (the honest subset) or run
+      with settle > the slowest frame cycle (~5 s for AE3 HD).
+      *(original capture, the design spec, follows)*
       Today's harness is open-loop: the board free-runs a pre-budgeted
       frame count and the host discards frames that arrive inside a
       settle window after each still change. Correct-by-margin, not
