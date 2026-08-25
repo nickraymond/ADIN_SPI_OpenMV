@@ -1977,11 +1977,18 @@ any urchin labelling effort is spent.
       dets, still view + GT + dets via H⁻¹, Pause/Next/Auto/grab-frame/
       Abort) and REVIEW MODE — Nick reviews at the page before ANY
       automated testing. Render-ack added (LCD posts /api/shown after
-      the flip) + a 1-frame discard snapshot per go: the handshake is
-      end-to-end, screen included. NEXT: Nick's review session, then
-      acceptance (two-board VGA vs solos within noise + wall ≈ slower
-      board; AE3 HD leg frame_in_still deltas ≤0.01; AE3 stdin check
-      rides it under ae3-board-access), then PR. Review command:**
+      the flip) + a bounded AE-settle discard per go: the handshake is
+      end-to-end, screen included. **REVIEW SESSION RUN BY NICK +
+      ACCEPTANCE MET same day: both-boards-simultaneous VGA+HD matrix,
+      scores match the open-loop solos within noise, AE3-HD frame
+      deltas 0.527→0.006, settle-discards 0 everywhere, 8-cell matrix
+      ≈8 min bench (was ~30+). En route: the settle window was found
+      to have been silently doing sensor-AE settling (frame-1 penalty
+      0.05–0.08 at VGA) → explicit discard knob, fixed + re-measured.
+      The parallel-E4 collision (claude/e4-closed-loop-hil) resolved:
+      ceded, pin test + FOV overlay folded in with credit. PR open —
+      awaiting Nick's review/merge; demo = the hil-review cookbook
+      card. Review command:**
       `ssh pi@nereus000` then, with recipe s8-hil-urchin live:
       `cd ~/ADIN_SPI_OpenMV && python3 -u pi/hil/hil_harness.py
       --closed-loop --review --board 'N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00'

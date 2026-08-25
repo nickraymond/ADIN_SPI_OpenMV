@@ -60,13 +60,43 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
   the checkout — a repo pull does NOT update the renderer; `sudo cp` +
   restart does. Same trap class as the workbench guide-card paths.
 
-**Next:** Nick's REVIEW SESSION (his call: he reviews before any
-automated testing) — recipe `s8-hil-urchin` + the `--closed-loop
---review` command in TRACKER E4, page at nereus000:8092. After his
-pass: acceptance = two-board VGA vs back-to-back solos (scores within
-noise, wall ≈ slower board) + AE3 HD leg (frame_in_still deltas
-≤0.01); AE3 stdin poll gets its check there under ae3-board-access.
-Bench left clean: runner idle, both boards enumerated, ports free.
+**Continued (same day): Nick's review session RUN AND PASSED ("Ok seems
+to be working"), then the FULL CLOSED-LOOP MATRIX on his order —
+ACCEPTANCE MET.** Both boards SIMULTANEOUS, VGA + HD, nano+tiny tiled,
+k=2, midday (comparable to the open-loop midday baselines):
+- **The measured hazard is gone:** AE3-HD-tiny frame1/frame2 recall
+  0.179/0.706 open-loop (delta 0.527, from the artifact) → **0.710/
+  0.703 closed-loop (delta 0.006)**. All 8 cells ≤0.012; AE3 HD cells
+  0.004/0.006 (bar ≤0.01). Settle-discards 0 everywhere. The
+  frame-2-only crutch is retired — all frames score.
+- **Second-order find, fixed same session:** with the settle window
+  gone, frame-1 recall trailed frame-2 by 0.05–0.08 on every VGA cell
+  (both boards) — open-loop's settle had been silently doing the
+  sensor AE's settling. Fix = explicit bounded AE discard (`discard`
+  knob, default 5/go, ~150 ms at VGA); deltas collapsed AND VGA
+  scores rose to match the open-loop (AE-settled) baselines.
+- **Scores vs back-to-back open-loop solos (30px, recall/prec):**
+  AE3 VGA nano 0.50/0.70 tiny 0.51/0.77 (open floored recalls 0.52/
+  0.51 — match); AE3 HD nano 0.51/0.58 tiny 0.71/0.60 (open f2-only
+  0.49/0.58, 0.71/0.60 — match); N6 VGA raw nano 0.20/0.51 tiny
+  0.34/0.51 (open 0.19/0.50, 0.33/0.51); N6 HD nano 0.23/0.32 tiny
+  0.36/0.37 (open 0.22/0.31, 0.36/0.37). **The flagged N6-HD low cell
+  REPRODUCES closed-loop → real, not a harness artifact.**
+- **Wall:** VGA 4 cells 75 s (both boards at once; open-loop solos
+  167 s serialized + drains); HD 4 cells 290 s (open 522 s + the
+  minutes-long drain tails). Whole 8-cell matrix ≈ 8 min bench.
+- **E4 COLLISION resolved (Nick: "talk to each other"):** the E2
+  session had built a parallel E4 on `claude/e4-closed-loop-hil`
+  (Nick's mid-session "write PR 66" to them); it ceded — this branch
+  proceeds, their error-skip zero-bytes pin test folded in with
+  credit, their stranded FOV-overlay commit (cf2a754, pushed to the
+  dead E2 branch after #65 merged) re-implemented here (69a65ef).
+  Both dead branches are Nick's to delete post-merge.
+Artifacts: ~/hil_runs/e4_matrix_closed_{vga,hd}_d5 (final) + _vga/_hd
+(discard=1, the AE-effect evidence) + e4_compare.py in ~/bm_bench.
+Bench left clean: runner idle, boards enumerated, ports free, Pi on
+this branch. NEXT: PR review/merge (Nick), then TRACKER's E4 leftovers:
+none — bite complete pending merge.
 
 ---
 
