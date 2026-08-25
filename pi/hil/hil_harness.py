@@ -509,6 +509,7 @@ def run_board(label, port, args, playback, out_dir):
                 dets = dets[keep]
             used = set()
             match = 0
+            pairs = {}                  # det idx -> matched gt idx
             order = np.argsort(-dets[:, 4]) if len(dets) else []
             for di in order:
                 best, best_j = 0.0, -1
@@ -519,6 +520,7 @@ def run_board(label, port, args, playback, out_dir):
                             best, best_j = v, j
                 if best >= MATCH_IOU:
                     used.add(best_j)
+                    pairs[int(di)] = best_j
                     match += 1
             gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1)
                      for g in gt_cam]
@@ -536,10 +538,28 @@ def run_board(label, port, args, playback, out_dir):
                    "det_conf": [round(float(d[4]), 3) for d in dets],
                    "dets_cam": [[round(float(v), 1) for v in d[:5]]
                                 for d in dets]}
+            if args.min_gt_px > 0:
+                # pixel floor, COCO-style IGNORE semantics: sub-floor GT
+                # never count as misses, and detections matched to them
+                # leave the false count (deleting them from GT instead
+                # would flip correct small detections into falses)
+                fl = args.min_gt_px
+                kept = {j for j in range(len(gt_cam))
+                        if gt_px[j] >= fl}
+                m_f = sum(1 for j in pairs.values() if j in kept)
+                false_f = int(len(dets)) - len(pairs)
+                row.update({"floor_px": fl, "n_gt_floor": len(kept),
+                            "n_match_floor": m_f, "n_false_floor": false_f})
             rows_fh.write(json.dumps(row) + "\n")
             st["gt"] += len(boxes)
             st["det"] += int(len(dets))
             st["match"] += match
+            if args.min_gt_px > 0:
+                st["gt_floor"] = st.get("gt_floor", 0) + row["n_gt_floor"]
+                st["match_floor"] = (st.get("match_floor", 0)
+                                     + row["n_match_floor"])
+                st["false_floor"] = (st.get("false_floor", 0)
+                                     + row["n_false_floor"])
             key = (st["phase"], p["still"])
             if key not in overlaid:
                 overlaid.add(key)
@@ -563,9 +583,17 @@ def run_board(label, port, args, playback, out_dir):
         inf = sum(s["inf_us"]) / n / 1000
         e2e = (sum(s["cap_us"]) + sum(s["prep_us"])
                + sum(s["inf_us"])) / n / 1000
-        print(f"    {s['phase']:<12} {n:>6} {s['gt']:>5} {s['det']:>5} "
-              f"{s['match']:>5} {s['gt'] - s['match']:>5} "
-              f"{s['det'] - s['match']:>5} {inf:>7.1f} {e2e:>12.1f}")
+        line = (f"    {s['phase']:<12} {n:>6} {s['gt']:>5} {s['det']:>5} "
+                f"{s['match']:>5} {s['gt'] - s['match']:>5} "
+                f"{s['det'] - s['match']:>5} {inf:>7.1f} {e2e:>12.1f}")
+        if args.min_gt_px > 0 and s.get("gt_floor"):
+            gf, mf = s["gt_floor"], s["match_floor"]
+            ff = s["false_floor"]
+            prec = mf / (mf + ff) if mf + ff else 0.0
+            line += (f"   | >={args.min_gt_px:g}px: recall "
+                     f"{mf / gf if gf else 0:.2f} prec {prec:.2f} "
+                     f"(GT {gf})")
+        print(line)
     return summary
 
 
@@ -582,6 +610,12 @@ def main():
                     help="seconds after a still change before captures count")
     ap.add_argument("--all-stills", action="store_true",
                     help="score every still, not just reviewed ones")
+    ap.add_argument("--min-gt-px", type=float, default=0,
+                    help="GT pixel floor (min-side, camera px): sub-floor "
+                         "urchins are IGNORED (not misses, and matches to "
+                         "them are not falses) — the T2 24-32 px band; "
+                         "Nick's 2026-08-25 call is 30. Raw counts stay "
+                         "in every row; floored counts ride alongside")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
