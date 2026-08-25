@@ -213,6 +213,7 @@ addEventListener('keydown',e=>{
   else if(k==='l')set({mode:'loop'});
   else if(k==='s')set({mode:'step'});
   else if(k==='c')set({mode:'calib'});
+  else if(k==='x')set({mode:'boxes'});
   else if(k==='b')set({mode:'black'});
   else if(k==='ArrowRight')set({mode:'step',step:1});
   else if(k==='ArrowLeft')set({mode:'step',step:-1});
