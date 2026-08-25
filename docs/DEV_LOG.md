@@ -110,10 +110,21 @@ frame-2 subset), ordering matches the N6's.**
 - An N6 launch via bare `ssh &` lost the console (process survived;
   artifacts intact) — use the tracked-background pattern.
 
-**Next:** N6 HD leg finishing → heatmap summary report (Pi-hosted) →
-E2 PR for Nick's review → E4 session (PROMPTS §16). Blur fine-tune
-lands ~13:15; its blur-curve acceptance + deploy decision ride the PR
-review.
+**Final matrix (all 2026-08-25 midday; HD frame-2-only; summary page
+~/hil_runs/hil_summary_2026-08-25.html):** raw recall/precision —
+AE3 VGA tiny 0.28/0.83 nano 0.33/0.77 · AE3 HD **tiny 0.70/0.60**
+nano 0.48/0.59 · N6 VGA tiny 0.33/0.51 nano 0.19/0.50 · N6 HD tiny
+0.35/0.37 nano 0.21/0.29 **← FLAGGED: unattributed** (image sharp —
+Mac finds 566 candidates on its view; homography bias ≤6 px, correction
+moves <0.02; sync clean; board-side dets ~24/frame vs AE3's ~62; lead
+suspect midday glare at the N6's angle — rerun owed in controlled
+lighting). Calib-bias re-scoring falsified the homography theory for
+all four legs (≤1 px on three).
+
+**Next:** E2 PR for Nick's review → merge → E4 session (PROMPTS §16,
+closed-loop handshake, test-first). Blur fine-tune lands ~13:15; its
+blur-curve acceptance + the deploy decision ride the PR review. Bench
+left clean: runner idle, both boards enumerated, ports free.
 
 ---
 
