@@ -22,6 +22,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -272,7 +273,9 @@ def run_board(label, port, args, playback, out_dir):
     if not reviewed:
         raise SystemExit("FAIL: no reviewed stills to score")
     k = args.frames_per_still
-    frames_model = len(reviewed) * (k + 4) + 10
+    # settle discards ~8-10 frames/still on a fast whole-mode phase —
+    # budget generously; the host drains any surplus
+    frames_model = len(reviewed) * (k + 10) + 15
     # MODEL PHASES FIRST, on a clean heap: the N6 hard-faulted twice at or
     # after the jpeg→model transition (2026-08-25) — ordering models before
     # any to_jpeg churn isolates whether model+tensor-emit alone is stable
@@ -302,6 +305,17 @@ def run_board(label, port, args, playback, out_dir):
     print(f"\n=== {label} on {port}\n    phases: "
           + ", ".join(p.get("page") or f"{p['model']}-{p['mode']}"
                       for p in phases))
+    # power column (free, INA3221 CH1=AE3/CH3=N6): one logger per board
+    # run, JSONL beside rows.jsonl; frame rows carry t_host for alignment
+    power_proc = None
+    plog = os.path.join(_ROOT, "pi", "workbench", "power_log.py")
+    if os.path.exists(plog):
+        power_proc = subprocess.Popen(
+            [sys.executable, plog, "--ch", "1=AE3", "--ch", "3=N6",
+             "--hz", "10", "--out", out_dir],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"    power logger up (pid {power_proc.pid})")
+
     bs = BoardStream(port, script)
     # the FIRST attach after a board crash-reset tends to die instantly
     # (the soft reset re-enumerates the port under the fresh connection);
@@ -386,14 +400,19 @@ def run_board(label, port, args, playback, out_dir):
                 if (cur["page"] == "calib" and H is None
                         and jpeg_frames["black"]
                         and len(jpeg_frames["calib"]) >= 2):
-                    black = jpeg_gray(jpeg_frames["black"][-1])
-                    calib = jpeg_gray(jpeg_frames["calib"][-1])
-                    cents = find_markers(calib, black)
-                    H = solve_homography(playback.markers, cents)
+                    # save the raw views FIRST: a failed solve must leave
+                    # the evidence (what did the camera actually see?)
                     open(os.path.join(out_dir, f"calib_{label}.jpg"),
                          "wb").write(jpeg_frames["calib"][-1])
                     open(os.path.join(out_dir, f"black_{label}.jpg"),
                          "wb").write(jpeg_frames["black"][-1])
+                    if jpeg_frames["loop"]:
+                        open(os.path.join(out_dir, f"loopview_{label}.jpg"),
+                             "wb").write(jpeg_frames["loop"][-1])
+                    black = jpeg_gray(jpeg_frames["black"][-1])
+                    calib = jpeg_gray(jpeg_frames["calib"][-1])
+                    cents = find_markers(calib, black)
+                    H = solve_homography(playback.markers, cents)
                     img = Image.open(io.BytesIO(
                         jpeg_frames["calib"][-1])).convert("RGB")
                     d = ImageDraw.Draw(img)
@@ -403,9 +422,6 @@ def run_board(label, port, args, playback, out_dir):
                     img.save(os.path.join(out_dir,
                                           f"calib_{label}_markers.jpg"))
                     np.save(os.path.join(out_dir, f"H_{label}.npy"), H)
-                    if jpeg_frames["loop"]:
-                        open(os.path.join(out_dir, f"loopview_{label}.jpg"),
-                             "wb").write(jpeg_frames["loop"][-1])
                     print(f"    homography solved; markers at "
                           + ", ".join(f"({cx:.0f},{cy:.0f})"
                                       for cx, cy in cents))
@@ -420,6 +436,7 @@ def run_board(label, port, args, playback, out_dir):
             got_for_still += 1
             pb_i, name, boxes = reviewed[still_i]
             dets = frame_detections(obj)
+            obj["t_host"] = time.time()      # power-log alignment
             pending.append({"stats": stats, "still": name, "boxes": boxes,
                             "dets": dets, "obj": obj,
                             "frame_in_still": got_for_still})
@@ -440,6 +457,12 @@ def run_board(label, port, args, playback, out_dir):
             summary.append(stats)
         bs.stop()
         playback.set(mode="loop")
+        if power_proc is not None:
+            power_proc.terminate()
+            try:
+                power_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                power_proc.kill()
 
     # ---- post-pass: score every buffered frame against the homography ----
     if pending and H is None:
@@ -452,8 +475,23 @@ def run_board(label, port, args, playback, out_dir):
         for p in pending:
             boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
             st = p["stats"]
-            gt_cam = [map_still_box(H, x, y, w, h)
-                      for (_ci, x, y, w, h, _px) in boxes]
+            # VISIBILITY FILTER (markers-at-box-D setup): the camera sees
+            # only part of the still, so GT outside the frame must not
+            # score as misses — keep only GT boxes fully inside the
+            # camera frame (2 px margin), and symmetrically drop
+            # detections touching the frame edge.
+            m = 2.0
+            vis = [(b, g) for b, g in
+                   ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
+                    for b in boxes)
+                   if g[0] >= -m and g[1] >= -m
+                   and g[2] <= 640 + m and g[3] <= 400 + m]
+            boxes = [b for b, _g in vis]
+            gt_cam = [g for _b, g in vis]
+            if len(dets):
+                keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
+                        & (dets[:, 2] < 640 - m) & (dets[:, 3] < 400 - m))
+                dets = dets[keep]
             used = set()
             match = 0
             order = np.argsort(-dets[:, 4]) if len(dets) else []
@@ -472,7 +510,8 @@ def run_board(label, port, args, playback, out_dir):
             row = {"board": label, "phase": st["phase"],
                    "still": p["still"],
                    "frame_in_still": p["frame_in_still"],
-                   "seq": obj["seq"], "cap_us": obj["cap_us"],
+                   "seq": obj["seq"], "t_host": obj.get("t_host"),
+                   "cap_us": obj["cap_us"],
                    "prep_us": obj["prep_us"], "inf_us": obj["inf_us"],
                    "dec_us": obj["dec_us"], "dropped": obj["dropped"],
                    "n_gt": len(boxes), "n_det": int(len(dets)),

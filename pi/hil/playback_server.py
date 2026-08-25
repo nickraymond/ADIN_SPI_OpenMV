@@ -32,11 +32,40 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Marker CENTERS as fractions of the content box (the displayed still's
-# own pixel grid). The harness's calibration solver imports these — one
-# definition, zero drift. Order: TL, TR, BR, BL (homography convention).
-MARKERS = [(0.08, 0.10), (0.92, 0.10), (0.92, 0.90), (0.08, 0.90)]
+# own pixel grid). The harness's calibration solver reads these from
+# /api/state — one definition, zero drift. Order: TL, TR, BR, BL
+# (homography convention). Extreme-corner placement (3% inset, Nick
+# 2026-08-25): the cameras are 16:10 vs the 16:9 content, so corner
+# markers let the cameras zoom until the marker rectangle nearly fills
+# the frame — every content pixel then lands as large as possible on
+# the sensor (pixels-on-target is the accuracy currency).
+# 2026-08-25 (Nick's sizing-ladder pick): markers sit at the corners of
+# aim box D (70% scale, 16:10) — both cameras frame that box fully at
+# their working distance. The cameras therefore see only the central
+# 63% x 70% of the content; the harness scores only the GT visible in
+# frame. Visible still pixels land ~0.53x on the sensor (was 0.28x).
+MARKERS = [(0.185, 0.15), (0.815, 0.15), (0.815, 0.85), (0.185, 0.85)]
 MARKER_W = 0.045             # marker square width, fraction of content width
-MODES = ("loop", "step", "calib", "black")
+MODES = ("loop", "step", "calib", "black", "boxes")
+
+# "boxes" mode: nested 16:10 rectangles (the cameras' native aspect) for
+# picking the camera distance — Nick zooms until one letter fills his
+# view. The largest 16:10 rect inside the 16:9 content is 90% of its
+# width at full height; each entry scales that. Fractions of the content
+# box, served via /api/state so page and LCD client draw identically.
+AIM_BOXES = [(1.00, "#ff4040", "A"), (0.90, "#ffb000", "B"),
+             (0.80, "#30d030", "C"), (0.70, "#40b0ff", "D"),
+             (0.60, "#e060ff", "E")]
+
+
+def aim_boxes():
+    out = []
+    for s, color, label in AIM_BOXES:
+        bw, bh = 0.9 * s, s
+        out.append({"label": label, "color": color, "scale": s,
+                    "x": 0.5 - bw / 2, "y": 0.5 - bh / 2,
+                    "w": bw, "h": bh})
+    return out
 
 MIME = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".json": "application/json"}
@@ -87,7 +116,8 @@ class State:
             return {"seq": self.seq, "mode": self.mode, "clip": self.clip,
                     "still": self.still, "clips": self.clips,
                     "stills": self.stills, "markers": MARKERS,
-                    "marker_w": MARKER_W, "updated": self.updated}
+                    "marker_w": MARKER_W, "aim_boxes": aim_boxes(),
+                    "updated": self.updated}
 
     def set(self, req):
         """Apply a validated /api/set body. -> (ok, error-or-None)."""
@@ -143,6 +173,16 @@ function drawCal(){
   for(const [fx,fy] of st.markers){
     g.fillStyle='#fff';g.fillRect(fx*w-mw/2,fy*h-mw/2,mw,mw);}
 }
+function drawBoxes(){
+  const g=cal.getContext('2d'),w=cal.width,h=cal.height;
+  g.fillStyle='#000';g.fillRect(0,0,w,h);
+  for(const b of st.aim_boxes){
+    g.strokeStyle=b.color;g.lineWidth=3;
+    g.strokeRect(b.x*w,b.y*h,b.w*w,b.h*h);
+    g.fillStyle=b.color;g.font=(0.05*h)+'px sans-serif';
+    g.fillText(b.label+' '+Math.round(b.scale*100)+'%',
+               b.x*w+8,b.y*h+0.05*h+4);}
+}
 function apply(){
   if(!st||st.seq===shownSeq)return; shownSeq=st.seq;
   vid.style.display=img.style.display=cal.style.display='none';
@@ -155,6 +195,8 @@ function apply(){
     img.style.display='block';
   }else if(st.mode==='calib'){
     vid.pause();cal.style.display='block';drawCal();
+  }else if(st.mode==='boxes'){
+    vid.pause();cal.style.display='block';drawBoxes();
   }else{vid.pause();}
   document.title='HIL '+st.mode+(st.mode==='step'?' '+st.still:'');
 }

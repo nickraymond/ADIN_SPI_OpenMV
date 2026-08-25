@@ -51,6 +51,7 @@ def content_box(sw, sh):
 
 def main():
     pygame.display.init()
+    pygame.font.init()
     info = pygame.display.Info()
     screen = pygame.display.set_mode((info.current_w, info.current_h),
                                      pygame.FULLSCREEN)
@@ -100,6 +101,19 @@ def main():
                         screen, (255, 255, 255),
                         (bx + int(fx * bw) - mw // 2,
                          by + int(fy * bh) - mw // 2, mw, mw))
+            elif mode == "boxes":
+                screen.fill((0, 0, 0))
+                font = pygame.font.Font(None, max(24, int(0.06 * bh)))
+                for b in st.get("aim_boxes", []):
+                    col = tuple(int(b["color"][i:i + 2], 16)
+                                for i in (1, 3, 5))
+                    r = pygame.Rect(bx + int(b["x"] * bw),
+                                    by + int(b["y"] * bh),
+                                    int(b["w"] * bw), int(b["h"] * bh))
+                    pygame.draw.rect(screen, col, r, 3)
+                    screen.blit(font.render(
+                        f"{b['label']} {round(b['scale'] * 100)}%",
+                        True, col), (r.x + 8, r.y + 6))
             elif mode == "step" and st["stills"]:
                 blit_still(st["stills"][st["still"]])
             elif mode == "loop" and st["stills"]:
