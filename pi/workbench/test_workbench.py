@@ -293,6 +293,27 @@ class TestShippedRecipes(unittest.TestCase):
         self.assertIn("ml/fomo/label_gui.py", body)
         self.assertIn(":8899", body)
 
+    def test_hil_screen_guide_ships_and_names_the_playback(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        card = {r["name"]: r for r in recipes}["hil-screen"]
+        path = os.path.join(workbench.RECIPE_DIR, card["guide"])
+        self.assertTrue(os.path.exists(path))
+        body = open(path).read()
+        # The chapter must point at the real playback page and the demo card.
+        self.assertIn(":8091", body)
+        self.assertIn("hil_monterey", body)
+
+    def test_hil_urchin_recipe_runs_the_playback_server(self):
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        r = {x["name"]: x for x in recipes}["s8-hil-urchin"]
+        self.assertIn("pi/hil/playback_server.py", r["run"]["argv"])
+        self.assertEqual(len(r["boards"]), 2)   # HIL owns both cameras
+        # no firmware/models rows YET -> reconcile makes zero board
+        # contact at this stage (they arrive with the harness recipe)
+        for b in r["boards"]:
+            self.assertIsNone(b["firmware"])
+            self.assertEqual(b["models"], [])
+
 
 class FakeBench:
     """A fake /dev + /proc tree for passive-preflight tests."""

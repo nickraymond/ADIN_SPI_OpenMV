@@ -1,0 +1,32 @@
+# s8_hil_urchin.toml -- S8 bite E: the urchin HIL screen (stage 1: playback).
+#
+# Starts the HIL playback server on :8091 -- Monterey urchin footage looping
+# on the bench screen for the cameras to watch, plus the STEP/CALIB modes the
+# scored matrix harness drives (pi/hil/playback_server.py). Media lives in
+# ~/hil_monterey (clips + the frozen stills_v1 set; hil_stills.py provenance).
+#
+# Both boards are declared so the runner LOCKS them for the HIL session (no
+# other demo can grab a camera mid-run). No firmware/models rows yet, so
+# reconciliation makes ZERO board contact -- those rows arrive with the
+# harness stage, where the probe's one attach pays for verifying all four
+# model deployments.
+
+name = "s8-hil-urchin"
+title = "Urchin HIL — Monterey playback"
+summary = "Fullscreen urchin footage (loop / stepped stills / calibration pattern) on :8091 for the two-board HIL matrix. Point both cameras at the screen; keys: f fullscreen, l loop, s step, c calib, arrows step. From sprint S8 bite E."
+opens = ":8091"
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+
+[run]
+argv = ["python3", "pi/hil/playback_server.py"]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8091/"

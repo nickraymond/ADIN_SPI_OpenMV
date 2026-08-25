@@ -1,0 +1,22 @@
+# Keep usb-storage OFF the N6's mass-storage interface.
+#
+# Sibling of 99-ae3-no-msc.rules (S23 bite R) — same defect class,
+# measured on the N6 2026-08-25 (S8 HIL dry run): with a stage-1 model
+# resident, the board "hard-faulted" every ~1-9 frames across six runs;
+# dmesg showed usb-storage attach/reset cycles on 37c5:1206 at ~1/min.
+# The SCSI probe racing a busy board escalates to a USB DEVICE RESET,
+# which presents as a board crash mid-predict on healthy hardware.
+# The bench never uses the N6 as a disk; its deploys ride DFU (alt 3),
+# not MSC.
+#
+# Install:
+#   sudo cp 99-n6-no-msc.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+# Undo: remove the file, reload, and replug.
+#
+# VID 37C5 = OpenMV; PID 1206 = N6 application mode ("Pyboard Virtual
+# Comm Port", CDC + MSC composite).
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", \
+  ATTRS{idVendor}=="37c5", ATTRS{idProduct}=="1206", \
+  ENV{INTERFACE}=="8/6/80", \
+  RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/usb-storage/unbind 2>/dev/null || true'"

@@ -1,0 +1,33 @@
+# hil_aiming.toml -- both cameras live, NO models, NO blobs: the framing
+# view for pointing the cameras at the HIL screen (S8 bite E). Start this,
+# open :8090, adjust the mounts until the whole screen (all 4 calib
+# markers) sits in each camera's view, stop it, start the HIL demo.
+#
+# No models[] rows on purpose -- this recipe must run on ANY bench state
+# (it exists precisely for the moments when the bench is half-assembled).
+
+name = "hil-aiming"
+title = "Camera aiming view (HIL framing)"
+summary = "Live view from both cameras with detection and blobs OFF — for aiming the cameras at the HIL screen. Pair with the calib pattern on the playback page. From sprint S8 bite E."
+opens = ":8090"
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+
+[run]
+argv = [
+  "python3", "bench/n6_stream_host.py",
+  "--bind", "0.0.0.0", "--framesize", "VGA",
+  "--board", "AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00",
+  "--board", "N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00",
+  "--no-detect", "--no-blobs",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8090/"
