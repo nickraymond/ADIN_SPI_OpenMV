@@ -135,14 +135,13 @@ function layout(){                    // fixed 16:9 content box, centered
   cal.width=w;cal.height=h; if(st&&st.mode==='calib')drawCal();
 }
 function drawCal(){
+  // markers ONLY — a border or crosshair adds bright mass that biases the
+  // harness's quadrant-centroid marker detection
   const g=cal.getContext('2d'),w=cal.width,h=cal.height;
   g.fillStyle='#000';g.fillRect(0,0,w,h);
-  g.strokeStyle='#fff';g.lineWidth=2;g.strokeRect(1,1,w-2,h-2);
   const mw=st.marker_w*w;
   for(const [fx,fy] of st.markers){
     g.fillStyle='#fff';g.fillRect(fx*w-mw/2,fy*h-mw/2,mw,mw);}
-  g.beginPath();g.moveTo(w/2-20,h/2);g.lineTo(w/2+20,h/2);
-  g.moveTo(w/2,h/2-20);g.lineTo(w/2,h/2+20);g.stroke();
 }
 function apply(){
   if(!st||st.seq===shownSeq)return; shownSeq=st.seq;

@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from decode_np import (decode_all, dequantize, detect, merge_tiles,  # noqa: E402
-                       nms)
+from decode_np import (cells_to_dets, decode_all, dequantize,  # noqa: E402
+                       detect, merge_tiles, nms)
 
 try:
     import torch
@@ -93,6 +93,38 @@ class DecodeMath(unittest.TestCase):
         self.assertTrue((dets[:, 4] > 0.5).all())
         self.assertTrue((np.diff(dets[:, 4]) <= 1e-6).all())  # descending
         self.assertEqual(detect(heads, 256, conf=1.1).shape, (0, 6))
+
+    def test_sparse_cells_equal_full_decode(self):
+        """The board's sparse-cell wire (obj-thresholded, indexed, rounded
+        to 4dp) must reproduce detect()'s output: same boxes, same scores,
+        to rounding tolerance. Mirrors hil_board.py extract_cells."""
+        heads = _rand_heads(seed=13)
+        full = detect(heads, 256, conf=0.30, nms_iou=0.45)
+        cells = []
+        for o in heads:                    # NCHW (1,6,H,W)
+            _, _, hh, ww = o.shape
+            for y in range(hh):
+                for x in range(ww):
+                    c = o[0, :, y, x]
+                    if c[4] >= 0.10:       # board OBJ_THR
+                        cells.append([hh, y, x] +
+                                     [round(float(v), 4) for v in c])
+        sparse = cells_to_dets(cells, 256, conf=0.30, nms_iou=0.45)
+        # rounding can swap NMS order between near-equal scores, so compare
+        # as SETS: counts within 1, every full det has a sparse twin
+        self.assertLessEqual(abs(len(sparse) - len(full)), 1)
+        def _iou(a, b):
+            iw = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            ih = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+            inter = iw * ih
+            ua = ((a[2] - a[0]) * (a[3] - a[1])
+                  + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+            return inter / max(ua, 1e-9)
+        unmatched = sum(
+            not any(_iou(f, s) > 0.9 and abs(f[4] - s[4]) < 0.01
+                    for s in sparse) for f in full)
+        self.assertLessEqual(unmatched, 1,
+                             f"{unmatched}/{len(full)} full dets unmatched")
 
     def test_merge_tiles_dedups_seam_straddler(self):
         # same box seen by two overlapping tiles at different local coords

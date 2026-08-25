@@ -110,6 +110,32 @@ def detect(heads, input_size, conf=0.25, nms_iou=0.45):
                           1).astype(np.float32)
 
 
+def cells_to_dets(cells, input_size, conf=0.25, nms_iou=0.45):
+    """Sparse board-side cells -> (n,6) detections, same output contract as
+    detect(). Cell rows are [level_H, y, x, tx, ty, tw, th, obj, cls] —
+    what pi/hil/hil_board.py emits (obj-thresholded on-board; the wire
+    replacement for full tensors after the N6 tobytes hard-fault,
+    2026-08-25). Equivalence with detect() is unit-tested."""
+    if not len(cells):
+        return np.zeros((0, 6), np.float32)
+    a = np.asarray(cells, np.float32)
+    stride = input_size / a[:, 0]
+    cx = (a[:, 3] + a[:, 2]) * stride
+    cy = (a[:, 4] + a[:, 1]) * stride
+    w = np.exp(a[:, 5]) * stride
+    h = np.exp(a[:, 6]) * stride
+    score = a[:, 7] * a[:, 8]
+    m = score > conf
+    if not m.any():
+        return np.zeros((0, 6), np.float32)
+    cx, cy, w, h, score = cx[m], cy[m], w[m], h[m], score[m]
+    xyxy = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], 1)
+    keep = nms(xyxy, score, nms_iou)
+    out = np.concatenate([xyxy[keep], score[keep, None],
+                          np.zeros((len(keep), 1), np.float32)], 1)
+    return out.astype(np.float32)
+
+
 def merge_tiles(dets_per_tile, origins, nms_iou=0.45):
     """Tile detections -> one frame-coordinate set. dets_per_tile: list of
     (n,6) arrays from detect(); origins: matching [(x_off, y_off), ...].
