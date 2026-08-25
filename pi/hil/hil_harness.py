@@ -302,6 +302,9 @@ def run_closed_loop(args, playback, out_dir):
                     mode=mode, frame_timeout=args.frame_timeout)
     rows_path = os.path.join(out_dir, "rows.jsonl")
     rows_fh = open(rows_path, "a")
+    # raw sparse cells per scored frame — the heat-map renderer's input
+    # (pi/hil/hil_heatmap.py). Cheap: the cells are already in memory.
+    cells_fh = open(os.path.join(out_dir, "cells.jsonl"), "a")
     os.makedirs(os.path.join(out_dir, "overlays"), exist_ok=True)
 
     t_page_cmd = None
@@ -400,6 +403,13 @@ def run_closed_loop(args, playback, out_dir):
                 r.pending.append({"stats": r.stats, "still": name,
                                   "boxes": boxes, "dets": dets,
                                   "obj": obj, "frame_in_still": n})
+                cells_fh.write(json.dumps(
+                    {"board": lb,
+                     "phase": r.stats["phase"] if r.stats else "",
+                     "still": name, "frame_in_still": n,
+                     "seq": obj["seq"], "tiles": obj["tiles"],
+                     "cells": obj["_cells"],
+                     "cam_w": r.cam_w, "cam_h": r.cam_h}) + "\n")
                 st = r.stats
                 if st is not None:
                     st["frames"] += 1
@@ -526,6 +536,7 @@ def run_closed_loop(args, playback, out_dir):
                       r.cam_w, r.cam_h)
         print_summary(r.summary, args)
     rows_fh.close()
+    cells_fh.close()
     mon.set_run({**snap, "stage": "finished"})
     print(f"\nrows: {rows_path}")
     print("    monitor page stays up until Ctrl-C"
