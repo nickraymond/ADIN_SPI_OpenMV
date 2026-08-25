@@ -399,6 +399,46 @@ def test_phase_error_board_waits_ahead_and_rejoins():
     assert sorted(a[1] for a in _sends(acts, CMD_GO)) == ["A", "B"]
 
 
+def test_error_skipped_board_receives_zero_bytes_for_that_phase():
+    """Pin (credit: the parallel E4 implementation on
+    claude/e4-closed-loop-hil, ceded 2026-08-25): a board that
+    error-skips a phase must receive NO control byte at all during that
+    phase — a stray 'g' or 'p' would sit in its stdin, survive into the
+    next phase's drain window, and could kill the phase it actually
+    announced. Every byte to the skipped board is asserted, not just
+    the phase-end routing."""
+    c = _mk(labels=("A", "B"), n_model=2, n_stills=1, k=1)
+    _boot(c, ("A", "B"))
+    seq = 1
+    for ph in (0, 1):
+        _ack_page(c, seq, 0.0)
+        seq += 1
+        _run_phase_cycle(c, ("A", "B"), ph, 0.0)
+        if ph == 0:
+            for lb in ("A", "B"):
+                c.on_event(lb, "phase", {"phase": 1}, 0.0)
+                c.on_event(lb, "wait", {"ph": 1, "seq": 0}, 0.0)
+    to_b = []
+    c.on_event("A", "phase", {"phase": 2}, 0.0)
+    to_b += _sends(c.on_event("A", "wait", {"ph": 2, "seq": 0}, 0.0))
+    to_b += _sends(c.on_event(
+        "B", "phase", {"phase": 2, "error": "no tiny"}, 0.0))
+    to_b += _sends(c.on_event("B", "phase", {"phase": 3}, 0.0))
+    to_b += _sends(c.on_event("B", "wait", {"ph": 3, "seq": 0}, 0.0))
+    to_b += _sends(_ack_page(c, seq, 0.0))
+    to_b += _sends(_frame(c, "A", 2, 0.0))
+    to_b += _sends(c.on_event("A", "wait", {"ph": 2, "seq": 0}, 0.0))
+    # B heartbeats while parked ahead — still nothing may go to it
+    to_b += _sends(c.on_event("B", "wait", {"ph": 3, "seq": 0}, 5.0))
+    to_b += _sends(c.on_tick(6.0))
+    assert [a for a in to_b if a[1] == "B"] == []
+    # and once the conductor reaches phase 3, B is commanded again
+    c.on_event("A", "phase", {"phase": 3}, 6.0)
+    c.on_event("A", "wait", {"ph": 3, "seq": 0}, 6.0)
+    acts = _ack_page(c, seq + 1, 6.0)
+    assert any(a[1] == "B" for a in _sends(acts, CMD_GO))
+
+
 def test_all_boards_dead_finishes_scoring_what_was_collected():
     c = _mk(labels=("A",), n_stills=1, k=1)
     _to_model_phase(c, ("A",))

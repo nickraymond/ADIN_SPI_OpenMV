@@ -76,6 +76,13 @@ OBJ_THR = _CFG.get("obj_thr", 0.10)
 CELL_CAP = _CFG.get("cell_cap", 128)
 HANDSHAKE = _CFG.get("handshake", False)
 IDLE_S = _CFG.get("idle_s", 300)
+# AE-settle discards per go-byte (handshake only). One flushes the
+# buffered frame; the REST give the sensor's auto-exposure time to adapt
+# to the new still. Measured 2026-08-25 (first closed-loop VGA matrix):
+# with 1 discard, frame-1 recall trails frame-2 by 0.05-0.08 on every
+# cell of both boards — the open-loop settle window was silently doing
+# AE's settling. Explicit and bounded beats silent and wall-clock.
+DISCARD = _CFG.get("discard", 5)
 
 if HANDSHAKE:
     import select
@@ -247,9 +254,11 @@ for ph_i, ph in enumerate(PHASES):
                 break
             want_jpeg = (kind == "jpeg" or cmd == "j"
                          or (kind == "model" and ph.get("jpeg", False)))
-            # discard snapshot: the pipeline's buffered frame may have
-            # been exposed BEFORE the still the host just confirmed
-            csi0.snapshot()
+            # discard snapshots: the first flushes the pipeline's
+            # buffered frame (exposed BEFORE the still the host just
+            # confirmed); the rest are the AE settle (see DISCARD note)
+            for _ in range(DISCARD):
+                csi0.snapshot()
         else:
             if frames_left <= 0:
                 break
