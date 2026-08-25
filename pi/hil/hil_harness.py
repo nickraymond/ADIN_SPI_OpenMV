@@ -980,7 +980,14 @@ def main():
 
     out_dir = os.path.expanduser(args.out)
     os.makedirs(out_dir, exist_ok=True)
-    playback = Playback(args.playback)
+    try:
+        playback = Playback(args.playback)
+    except (urllib.error.URLError, OSError) as e:
+        raise SystemExit(
+            f"FAIL: no playback server at {args.playback} ({e}).\n"
+            f"Start the 'Urchin HIL — Monterey playback' recipe "
+            f"(s8-hil-urchin) on http://nereus000:8088 first — it owns "
+            f"the screen and the board locks.")
     n_rev = len(load_reviewed(args.stills_dir, not args.all_stills))
     print(f"scoring {n_rev} stills, {args.frames_per_still} frames each; "
           f"phases {args.phases}; out {out_dir}")
