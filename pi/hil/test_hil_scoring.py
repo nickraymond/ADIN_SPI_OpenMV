@@ -7,6 +7,7 @@ filter, greedy IOU match, and the pixel-floor IGNORE rules.
 Needs numpy (the Pi has it; a bare Mac python may not — skipped there,
 run on the bench before acceptance).
 """
+import json
 import os
 import sys
 import unittest
