@@ -208,7 +208,11 @@ def lcd_active(unit=LCD_UNIT):
         out = subprocess.run(
             ["systemctl", "show", unit, "-p", "ActiveState", "--value"],
             capture_output=True, text=True, timeout=5)
-        return out.stdout.strip() == "active"
+        # "activating" is HEALTHY here: on a cold boot the unit parks in
+        # an until-curl loop waiting for :8091 — which this wrapper is
+        # about to start. Requiring "active" deadlocked the first
+        # post-reboot click (measured 2026-08-26).
+        return out.stdout.strip() in ("active", "activating")
     except (OSError, subprocess.TimeoutExpired):
         return False
 
