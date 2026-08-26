@@ -17,6 +17,55 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (night) — S8 bite E8 — display controls + finish summary CODE-COMPLETE; bench dropped off the network mid-deploy
+
+**Branch:** `claude/s8-e8-display-controls` (stacked on E7; PR held
+until acceptance)
+
+**Done:**
+- Page: GT/AE3/N6 layer toggles (lightbox-honored), GT px-floor filter
+  (editable threshold, explicit AE3|N6-terms selector — a GT box's px
+  differs per camera, never silently picked; sub-floor GT dashed+
+  dimmed with its px printed; hide toggle), RUN COMPLETE scored
+  summary card. Harness: per-board gt_px on set_still; summary.json
+  from the rows.jsonl post-pass; match_frame gains iou_thr.
+- hil_rescore.py: re-score any saved run dir at arbitrary IOU/floor
+  (rows + the run's own H + calib geometry) — the homography
+  discriminator for the N6 question, and E11's before/after
+  instrument. Synthetic-fixture test pins known counts at 0.30/0.20.
+- Local suites green (49 pass; 9 numpy tests deferred to the Pi).
+
+**Broke/surprised us:**
+- nereus000 dropped off the network at the deploy step (ssh "Host is
+  down", ping 100%% loss, workbench dead, nereus001 unresolvable) —
+  the known drop class. Probed each side door ONCE, no loops; work
+  all pushed; Pi still carries the E7 checkout, boards were idle and
+  ports free at last contact.
+
+**Continued same night (bench back via LAN IP 192.168.1.163 — the drop
+was name-resolution/tailnet, the Pi was fine; memory updated):**
+- Pi scoring suite 8/8 (after a missing `import json` the Mac's
+  numpy-less skip had hidden — the skip guard deferred the whole
+  class, lesson noted).
+- **THE DISCRIMINATOR CONVICTED THE N6 LENS.** IOU 0.30→0.20 on BOTH
+  saved HD-tiny runs: AE3 recall +0.012/+0.010 (flat); **N6 +0.151/
+  +0.148 (0.44→0.59), precision +0.11** — identical across runs. ~15
+  recall points are near-miss alignment losses, exactly the barrel-
+  distortion signature Nick spotted in the aim boxes. E11's
+  prediction: distortion-aware calib alone recovers the N6 to
+  ~0.59/0.41 at strict IOU; the rest of the gap to AE3 0.77 is real
+  detection difference (lens/glare — Nick's better-lens test).
+- Session ended at Nick's pause: his review run stopped clean (scored,
+  061933 artifacts), runner idle, boards enumerated + free, PR
+  opened. OWED on E8: Nick's UI eyeball of the new controls on his
+  next card run (the run live during deploy predated the E8 page).
+
+**Next:** Nick eyeballs E8's controls on his next run → merge stack
+#67→#68→#69→E8. Then E10 (needs Nick's new-labels path), E9, E11 (its
+prediction number now in hand).
+
+---
+
 ## 2026-08-26 (later still) — S8 bite E7 — full-res camera views on every scored frame; the 10-minute probe upgraded the whole design
 
 **Branch:** `claude/s8-e7-camera-views` (stacked on E6; PR open)

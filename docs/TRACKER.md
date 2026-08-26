@@ -2186,9 +2186,29 @@ any urchin labelling effort is spent.
       grabs pressed, and the AE3 finishes the run; the grab-kill
       repro no longer exists on the page.
 
-- [ ] **Bite E8 — review page display controls + finish summary
-      (captured 2026-08-26, Nick's UI asks 1/3/5; one page-side bite,
-      monitor only, no board contact).**
+- [~] **Bite E8 — review page display controls + finish summary —
+      CODE + HOST TESTS DONE 2026-08-26 (branch
+      `claude/s8-e8-display-controls`, commit 817dcef); BENCH
+      ACCEPTANCE BLOCKED mid-deploy: nereus000 dropped off the network
+      (ping/http/ssh all dead, nereus001 unresolvable — the known drop
+      class; E4 saw the same, cleared by power-cycle). Delivered:
+      layer toggles (GT + per-board, lightbox-honored), px-floor
+      filter (threshold input + AE3/N6-terms selector + hide toggle,
+      sub-floor GT dashed+dimmed with its px printed), RUN COMPLETE
+      scored-summary card + summary.json (from the rows.jsonl
+      post-pass), match_frame iou_thr param, and hil_rescore.py (the
+      IOU discriminator / E11 instrument; synthetic-fixture tested:
+      known counts at 0.30 vs 0.20). RESUMED same night via the LAN IP
+      (192.168.1.163 — the drop was name-resolution, not the Pi): Pi
+      scoring suite 8/8, and the **DISCRIMINATOR CONVICTED THE N6
+      LENS — IOU 0.30→0.20 recall jump N6 +0.151/+0.148 on BOTH saved
+      HD runs vs AE3 +0.012 flat** (E11's prediction: distortion-aware
+      calib alone recovers the N6 to ~0.59/0.41 at strict IOU; the
+      remaining gap to AE3 0.77 is real detection difference — the
+      lens/glare class, Nick's better-lens test). PR open. OWED: Nick's
+      UI eyeball of the new controls on his next card run (his live
+      run predated the E8 page).
+      *(original capture follows)*
       **(a) Box-layer toggles:** per-layer on/off for GT / N6 / AE3
       boxes on the still view, honored in the lightbox zoom too — see
       the reference image bare, or any one board's boxes alone.
@@ -2237,6 +2257,34 @@ any urchin labelling effort is spent.
       DECISION, not a merge. *Verifiable:* the harness reports the new
       reviewed count, a review run steps through the new stills with
       GT drawn, and prior-run rows still reference stills that exist.
+
+- [ ] **Bite E11 — distortion-aware calibration (fast-follow, Nick
+      2026-08-26): the N6's barrel distortion is VISIBLE in the
+      aim-box view (nested rectangles bow outward; AE3 near-straight)
+      and the 4-corner DLT cannot model it — exact at the markers,
+      blind mid-field, which is where the urchins are. At 30-40 px
+      targets a few-px mid-field error erodes IOU-0.30 matches, so
+      distortion artificially drops the N6's recall AND precision
+      (the suspected driver of the flagged N6-HD low cell; the E8
+      IOU-0.20-vs-0.30 discriminator on saved rows can size the
+      effect before the fix is built).** Scope: calib pattern 4→9
+      markers (corners + edge mids + center; playback_server MARKERS
+      + the LCD client — NOTE hil-lcd runs an INSTALLED copy, sudo cp
+      + restart on deploy); find_markers generalized to 9 local
+      peaks; solve H + radial k1 by least squares; map_still_box /
+      dets_to_still_frac through the distortion-aware transform;
+      synthetic-k1 round-trip host test. The fitted k1 prints per
+      camera per calibration — a lens-quality meter for Nick's
+      upcoming better-lens test. Layer-cake honesty: this fixes the
+      MEASUREMENT; the model still sees distorted pixels (edge
+      urchins genuinely harder) — `img.lens_corr()` on-board fixes
+      both layers but costs per-frame time at HD and changes the
+      model's input mid-experiment; evaluate inside the bite, not
+      default. Software support stands regardless of the lens swap
+      (Nick's call). *Verifiable:* calib residual (px RMS at the 9
+      markers + a held-out check) reported per camera before/after;
+      an N6 HD leg re-scored with the new transform, delta reported
+      next to the E8 IOU discriminator's prediction.
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and

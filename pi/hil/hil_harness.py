@@ -142,7 +142,8 @@ def iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
-def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0):
+def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0,
+                iou_thr=MATCH_IOU):
     """One frame's scoring: visibility filter, edge filter, greedy IOU
     match, and the pixel-floor IGNORE semantics.
 
@@ -181,7 +182,7 @@ def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0):
                 v = iou(dets[di][:4], g)
                 if v > best:
                     best, best_j = v, j
-        if best >= MATCH_IOU:
+        if best >= iou_thr:
             used.add(best_j)
             pairs[int(di)] = best_j
             match += 1
@@ -412,11 +413,24 @@ def run_closed_loop(args, playback, out_dir):
                                               "shown_wait",
                                               "await_page_cmd"):
             pb_i, name, boxes = reviewed[con.still_i]
+            # per-board GT pixel sizes (min-side, CAMERA px via each
+            # board's H) — the page's px-floor filter needs them in the
+            # terms of an explicit camera, never a silent pick (E8)
+            gt_px = {}
+            for lb2 in labels:
+                r2 = runs[lb2]
+                if r2.H is not None:
+                    gt_px[lb2] = [
+                        round(min(g[2] - g[0], g[3] - g[1]), 1)
+                        for g in (map_still_box(r2.H, b[1], b[2],
+                                                b[3], b[4])
+                                  for b in boxes)]
             mon.set_still({
                 "name": name, "index": con.still_i,
                 "gt": [[b[1] / STILL_W, b[2] / STILL_H,
                         (b[1] + b[3]) / STILL_W, (b[2] + b[4]) / STILL_H]
-                       for b in boxes]})
+                       for b in boxes],
+                "gt_px": gt_px})
         for lb in labels:
             b = snap["boards"][lb]
             mon.set_board(lb, status=b["status"], got=b["got"],
@@ -659,7 +673,42 @@ def run_closed_loop(args, playback, out_dir):
         print_summary(r.summary, args)
     rows_fh.close()
     cells_fh.close()
-    mon.set_run({**snap, "stage": "finished"})
+    # E8 finish summary: ONE recall + ONE precision per camera, from the
+    # SCORED post-pass (rows.jsonl lineage — the artifact), persisted
+    # beside the rows and pushed to the page's finish card. The live
+    # counters agree (proven E6) but the record descends from the score.
+    summary_out = {"params": {"phases": args.phases,
+                              "framesize": args.framesize,
+                              "min_gt_px": args.min_gt_px,
+                              "frames_per_still": args.frames_per_still},
+                   "boards": {}}
+    for lb in labels:
+        tot = {"frames": 0, "gt": 0, "match": 0, "false": 0,
+               "wall_s": 0.0, "phases": [], "floor_px": args.min_gt_px}
+        for s in runs[lb].summary:
+            if s["phase"] in ("black", "calib") or not s["frames"]:
+                continue
+            if args.min_gt_px > 0:
+                g, m2, f2 = (s.get("gt_floor", 0), s.get("match_floor", 0),
+                             s.get("false_floor", 0))
+            else:
+                g, m2, f2 = s["gt"], s["match"], s["det"] - s["match"]
+            tot["frames"] += s["frames"]
+            tot["gt"] += g
+            tot["match"] += m2
+            tot["false"] += f2
+            tot["phases"].append(s["phase"])
+            if s.get("t0") is not None and s.get("t1") is not None:
+                tot["wall_s"] = round(tot["wall_s"] + s["t1"] - s["t0"], 1)
+        tot["recall"] = (round(tot["match"] / tot["gt"], 3)
+                         if tot["gt"] else None)
+        denom = tot["match"] + tot["false"]
+        tot["prec"] = round(tot["match"] / denom, 3) if denom else None
+        summary_out["boards"][lb] = tot
+    with open(os.path.join(out_dir, "summary.json"), "w") as fh:
+        json.dump(summary_out, fh, indent=2)
+    mon.set_run({**snap, "stage": "finished", "summary": summary_out})
+    print(f"    summary: {os.path.join(out_dir, 'summary.json')}")
     print(f"\nrows: {rows_path}")
     # after a COMPLETED review run the monitor stays up for reading;
     # after an abort the stop was the instruction — exit now (a second

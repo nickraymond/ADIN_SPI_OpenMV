@@ -218,11 +218,27 @@ PAGE = """<!DOCTYPE html>
   Abort run</button>
  <span id="hold"></span>
 </div>
+<div id="summary" class="panel"
+     style="display:none;margin:0 12px 10px"></div>
 <div class="wrap">
  <div class="panel" style="flex:2 1 560px">
   <div>still <span id="stname">&mdash;</span>
    &nbsp; <span style="color:#3c5">GT green</span>,
    detections per board coloured</div>
+  <div id="layerbar" style="margin:.25rem 0">
+   <span id="layerchecks"></span>
+   &nbsp; GT &ge;<input id="pxthr" type="number" value="30" min="0"
+    max="200" step="1" style="width:3.5em;background:#1d2126;color:#cde;
+    border:1px solid #3a4a58;border-radius:3px"
+    onchange="pxThr=+this.value">px
+   in <select id="pxterms" style="background:#1d2126;color:#cde;
+    border:1px solid #3a4a58;border-radius:3px"
+    onchange="pxTerms=this.value"></select> terms
+   <label><input type="checkbox" id="pxhide"
+    onchange="pxHide=this.checked"> hide smaller GT</label>
+   <span class="muted" style="color:#8fa3b3">(dashed = below
+    threshold)</span>
+  </div>
   <div class="imgbox" id="stillbox" onclick="zoom(this)"
        title="click to enlarge"><img id="still"></div>
  </div>
@@ -232,6 +248,66 @@ PAGE = """<!DOCTYPE html>
 <script>
 const COLORS=%s;
 let camTs={};
+// E8 display controls: per-layer visibility, GT px-floor filter.
+let show={};                 // layer ('GT' or board label) -> bool
+let pxThr=30, pxHide=false, pxTerms=null;
+let layerSig='';
+function buildControls(boards){
+ const sig=boards.join(',');
+ if(sig===layerSig) return;
+ layerSig=sig;
+ const chk=document.getElementById('layerchecks');
+ chk.innerHTML=['GT'].concat(boards).map((n,i)=>{
+  if(show[n]===undefined) show[n]=true;
+  const col=n==='GT'?'#3c5':COLORS[(i-1)%%COLORS.length];
+  return '<label style="color:'+col+'"><input type="checkbox" '+
+   (show[n]?'checked':'')+' onchange="show[\\''+n+'\\']=this.checked"> '+
+   n+'</label>';
+ }).join(' ');
+ const sel=document.getElementById('pxterms');
+ sel.innerHTML=boards.map(b=>'<option>'+b+'</option>').join('');
+ if(!pxTerms || !boards.includes(pxTerms)) pxTerms=boards[0]||null;
+ sel.value=pxTerms;
+}
+function addGT(el, st){
+ if(!show.GT) return;
+ const pxs=((st.gt_px||{})[pxTerms])||[];
+ (st.gt||[]).forEach((b,i)=>{
+  const px=pxs[i];
+  const sub=(px!=null && px<pxThr);
+  if(sub && pxHide) return;
+  const d=document.createElement('div'); d.className='bx';
+  d.style.borderColor='#3c5';
+  if(sub){ d.style.opacity=.45; d.style.borderStyle='dashed'; }
+  d.style.left=(b[0]*100)+'%%'; d.style.top=(b[1]*100)+'%%';
+  d.style.width=((b[2]-b[0])*100)+'%%';
+  d.style.height=((b[3]-b[1])*100)+'%%';
+  if(sub && px!=null) d.innerHTML='<span>'+px.toFixed(0)+'px</span>';
+  el.appendChild(d);});
+}
+function summaryCard(run){
+ const el=document.getElementById('summary');
+ const s=run.summary;
+ if(run.stage!=='finished' || !s){ el.style.display='none'; return; }
+ const p=s.params||{};
+ el.style.display='';
+ el.innerHTML='<b style="color:#8fb">RUN COMPLETE — scored summary'+
+  '</b> <span style="color:#8fa3b3">('+(p.phases||'')+', '+
+  (p.framesize||'')+', GT floor '+(p.min_gt_px??'?')+'px — from '+
+  'rows.jsonl, matches summary.json)</span>'+
+  '<table style="margin-top:.3rem;border-collapse:collapse">'+
+  '<tr>'+['board','recall','precision','GT','match','false','frames',
+          'wall s'].map(h=>'<td style="padding:.1rem .8rem;color:'+
+          '#8fa3b3">'+h+'</td>').join('')+'</tr>'+
+  Object.keys(s.boards||{}).sort().map(lb=>{
+   const b=s.boards[lb];
+   return '<tr>'+[lb,
+    b.recall==null?'—':b.recall.toFixed(3),
+    b.prec==null?'—':b.prec.toFixed(3),
+    b.gt,b.match,b['false'],b.frames,b.wall_s]
+    .map(v=>'<td style="padding:.1rem .8rem">'+v+'</td>').join('')+
+    '</tr>';}).join('')+'</table>';
+}
 async function rv(action,board){
  await fetch('/api/review',{method:'POST',
   headers:{'Content-Type':'application/json'},
@@ -294,10 +370,13 @@ async function poll(){
   }
   const box=document.getElementById('stillbox');
   box.querySelectorAll('.bx').forEach(b=>b.remove());
-  addBoxes(box,st.gt,'#3c5');
+  addGT(box,st);
   Object.keys(js.boards).sort().forEach((lb,i)=>{
-   addBoxes(box,js.boards[lb].dets_still,COLORS[i%%COLORS.length],lb);});
+   if(show[lb]!==false)
+    addBoxes(box,js.boards[lb].dets_still,COLORS[i%%COLORS.length],lb);});
  }
+ buildControls(Object.keys(js.boards).sort());
+ summaryCard(run);
  const host=document.getElementById('boards');
  Object.keys(js.boards).sort().forEach((lb,i)=>{
   let p=document.getElementById('bp_'+lb);
