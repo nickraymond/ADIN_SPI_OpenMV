@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import numpy as np
     from hil_harness import (CamMap, find_markers, map_still_box,
-                             match_frame, solve_cam_map,
+                             match_frame, PowerTail, solve_cam_map,
                              solve_homography, STILL_W, STILL_H)
     HAVE_DEPS = True
 except ImportError:
@@ -215,6 +215,71 @@ class TestFindMarkers9(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             find_markers(calib, black)
         self.assertIn("CC", str(ctx.exception))
+
+
+@unittest.skipUnless(HAVE_DEPS, "numpy not installed on this host")
+class TestPowerTail(unittest.TestCase):
+    """E9: the review page's per-frame power windows and the N/A rule."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="ptail_")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.path = os.path.join(self.dir, "power_test.jsonl")
+
+    def write(self, rows, mode="a"):
+        with open(self.path, mode) as fh:
+            for ts, label, mw in rows:
+                fh.write(json.dumps(
+                    {"ts": ts, "ch": 1, "label": label, "V": 5.0,
+                     "mA": mw / 5.0, "mW": mw}) + "\n")
+
+    def test_window_peak_and_mj(self):
+        # 10 Hz, 1 s window at 500 mW with one 900 mW sample:
+        # peak 0.90 W, mJ = mean * 1 s
+        rows = [(100.0 + i / 10.0, "AE3", 500.0) for i in range(11)]
+        rows[5] = (100.5, "AE3", 900.0)
+        self.write(rows)
+        pt = PowerTail(self.dir)
+        pw = pt.window("AE3", 100.0, 101.0)
+        self.assertEqual(pw["peak_w"], 0.9)
+        mean = (10 * 500.0 + 900.0) / 11
+        self.assertAlmostEqual(pw["mj"], round(mean, 1), places=1)
+
+    def test_dead_channel_is_none_never_a_number(self):
+        # the N6's bypassed CH3 signature: rows present, ~0 mW
+        self.write([(100.0 + i / 10.0, "N6", 0.0) for i in range(11)])
+        pt = PowerTail(self.dir)
+        self.assertIsNone(pt.window("N6", 100.0, 101.0))
+
+    def test_absent_label_and_absent_file(self):
+        self.write([(100.0, "AE3", 500.0)])
+        pt = PowerTail(self.dir)
+        self.assertIsNone(pt.window("N6", 99.0, 101.0))
+        self.assertIsNone(PowerTail(self.dir + "_nope")
+                          .window("AE3", 99.0, 101.0))
+
+    def test_tail_sees_rows_written_after_first_query(self):
+        self.write([(100.0, "AE3", 500.0)])
+        pt = PowerTail(self.dir)
+        self.assertIsNotNone(pt.window("AE3", 99.0, 101.0))
+        self.write([(200.0 + i / 10.0, "AE3", 700.0) for i in range(11)])
+        pw = pt.window("AE3", 200.0, 201.0)
+        self.assertEqual(pw["peak_w"], 0.7)
+
+    def test_partially_flushed_row_survives(self):
+        self.write([(100.0, "AE3", 500.0)])
+        half = json.dumps({"ts": 100.1, "ch": 1, "label": "AE3",
+                           "V": 5.0, "mA": 100.0, "mW": 500.0})
+        with open(self.path, "a") as fh:
+            fh.write(half[:20])                    # no newline yet
+        pt = PowerTail(self.dir)
+        self.assertIsNotNone(pt.window("AE3", 99.0, 101.0))
+        with open(self.path, "a") as fh:
+            fh.write(half[20:] + "\n")
+        pw = pt.window("AE3", 100.05, 100.2)
+        self.assertEqual(pw["peak_w"], 0.5)
 
 
 @unittest.skipUnless(HAVE_DEPS, "numpy not installed on this host")

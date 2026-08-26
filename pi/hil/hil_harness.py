@@ -18,6 +18,7 @@ scored frame), calib_<label>.jpg + marker overlay, overlays/*.jpg (GT
 green vs detections yellow), summary table on stdout.
 """
 import argparse
+import collections
 import io
 import json
 import os
@@ -404,6 +405,91 @@ def frame_detections(fr):
                        nms_iou=NMS_IOU)
 
 
+# ----------------------------------------------------------- power (E9)
+class PowerTail:
+    """Follow the run's own power_*.jsonl (written by the power_log.py
+    child this harness spawns) and answer per-board window queries.
+
+    The harness is the monitor's single feeder, so the tail lives here:
+    non-blocking reads of newly flushed rows on each query, bounded
+    per-label history. A window whose PEAK is under FLOOR_MW is a dead
+    channel (the N6's bypassed CH3 measures 0.0 mA), not a measurement
+    — callers get None and the page prints N/A, never a fake number
+    (Nick's E9 spec). When the shunt re-wire lands, CH3 crosses the
+    floor and real numbers appear with zero code change.
+
+    The window is [t_host - e2e, t_host]: board-reported busy time
+    anchored at host arrival. Wire-transfer time (after the board's
+    decode) shifts it slightly late — the mJ is approximate and is
+    labeled so on the page."""
+
+    FLOOR_MW = 50.0
+    KEEP_S = 120.0
+
+    def __init__(self, out_dir):
+        self.out_dir = out_dir
+        self.fh = None
+        self.buf = ""
+        self.rows = {}                 # label -> deque[(ts, mW)]
+
+    def _open(self):
+        if self.fh is not None:
+            return True
+        try:
+            names = sorted(f for f in os.listdir(self.out_dir)
+                           if f.startswith("power_")
+                           and f.endswith(".jsonl"))
+        except OSError:
+            return False
+        if not names:
+            return False
+        try:
+            self.fh = open(os.path.join(self.out_dir, names[-1]))
+        except OSError:
+            return False
+        return True
+
+    def _pump(self):
+        if not self._open():
+            return
+        data = self.fh.read()
+        if not data:
+            return
+        self.buf += data
+        lines = self.buf.split("\n")
+        self.buf = lines.pop()         # keep any partially flushed row
+        for ln in lines:
+            try:
+                r = json.loads(ln)
+                ts, mw = float(r["ts"]), float(r["mW"])
+                lb = r["label"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            dq = self.rows.setdefault(lb, collections.deque())
+            dq.append((ts, mw))
+            # prune against the label's own newest ts, not the wall
+            # clock — keeps replayed/synthetic logs testable
+            cut = dq[-1][0] - self.KEEP_S
+            while dq and dq[0][0] < cut:
+                dq.popleft()
+
+    def window(self, label, t0, t1):
+        """-> {"peak_w", "mj"} for [t0, t1], or None when the channel
+        is dead, absent, or has no samples in the window yet."""
+        self._pump()
+        dq = self.rows.get(label)
+        if not dq:
+            return None
+        mws = [mw for ts, mw in dq if t0 <= ts <= t1]
+        if not mws:
+            return None
+        peak = max(mws)
+        if peak < self.FLOOR_MW:
+            return None
+        return {"peak_w": round(peak / 1000.0, 2),
+                "mj": round(sum(mws) / len(mws) * (t1 - t0), 1)}
+
+
 # ------------------------------------------------------- closed loop (E4)
 def dets_to_still_frac(dets_cam, M):
     """Camera-px detections -> still-fraction boxes [x1,y1,x2,y2,conf]
@@ -459,6 +545,8 @@ class _BoardRun:
         # E6 live accuracy: running totals fed to the monitor per scored
         # frame via match_frame — the SAME function the post-pass uses
         self.live = {"gt": 0, "match": 0, "false": 0}
+        # E9 run-level power: valid per-frame windows only
+        self.power_tot = {"n": 0, "mj": 0.0, "peak_w": 0.0}
 
 
 def run_closed_loop(args, playback, out_dir):
@@ -524,6 +612,7 @@ def run_closed_loop(args, playback, out_dir):
              "--hz", "10", "--out", out_dir],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"    power logger up (pid {power_proc.pid})")
+    ptail = PowerTail(out_dir)         # E9: reads what the child writes
 
     evq = queue.Queue()
     streams = {}
@@ -703,9 +792,17 @@ def run_closed_loop(args, playback, out_dir):
                 e2e_ms = round((obj["cap_us"] + sum(obj["prep_us"])
                                 + sum(obj["inf_us"])
                                 + sum(obj["dec_us"])) / 1000, 1)
+                # E9: this frame's power window; None -> the page's N/A
+                pw = ptail.window(lb, obj["t_host"] - e2e_ms / 1000.0,
+                                  obj["t_host"])
+                if pw is not None:
+                    pt = r.power_tot
+                    pt["n"] += 1
+                    pt["mj"] += pw["mj"]
+                    pt["peak_w"] = max(pt["peak_w"], pw["peak_w"])
                 mon.set_board(
                     lb, n_det=int(len(dets)), inf_ms=inf_ms,
-                    e2e_ms=e2e_ms, acc=acc,
+                    e2e_ms=e2e_ms, acc=acc, power=pw,
                     # float() every value: numpy float32 leaking into the
                     # monitor state killed /api/monitor with an empty
                     # reply on the first live run (json can't dump it)
@@ -853,6 +950,12 @@ def run_closed_loop(args, playback, out_dir):
                          if tot["gt"] else None)
         denom = tot["match"] + tot["false"]
         tot["prec"] = round(tot["match"] / denom, 3) if denom else None
+        # E9: run-level power from the valid per-frame windows; None
+        # (a dead/bypassed channel, e.g. the N6's CH3) prints as N/A
+        ptot = runs[lb].power_tot
+        tot["power"] = ({"peak_w": round(ptot["peak_w"], 2),
+                         "mj_frame": round(ptot["mj"] / ptot["n"], 1)}
+                        if ptot["n"] else None)
         summary_out["boards"][lb] = tot
     with open(os.path.join(out_dir, "summary.json"), "w") as fh:
         json.dump(summary_out, fh, indent=2)
