@@ -31,8 +31,22 @@ peak W + mean mJ/frame; a window peaking under 50 mW is a dead channel
 and prints N/A, never a number (the N6's bypassed CH3, per spec).
 Acceptance (nano-VGA full card run): AE3 live 0.24 W / ~82 mJ, run
 mean 89.2 mJ/frame == the matrix's measured 85 mJ class; N6 N/A
-throughout; Pi suite 75/75. E9 PR open. NEXT: E10 (stills_v2 — STILL
-needs Nick's labels.jsonl path), then the icebox. Previous:*
+throughout; Pi suite 75/75. E9 PR open. **AND BITE E10 SHIPPED THE
+SAME NIGHT (Nick's paths: ~/nereus_ml/datasets/hil_monterey
+stills_v1+v2): guarded merge tool + deploy — the HIL set is now 5
+clips / 200 stills / 186 REVIEWED (was 24)**, old set archived on the
+Pi as stills_archived_20260826; append-only PROVEN (deployed frames
+byte-identical, all 24 previously-reviewed box sets unchanged —
+measured, not assumed), E11's run re-scores digit-identical against
+the new labels. Full E2E at Nick's ask: tiny-HD card run over ALL 186
+stills → AE3 0.683/0.476 (peak 0.41 W · 1144 mJ/frame), N6 0.652/0.498
+(power N/A) — near-parity HOLDS on the 2.6× larger GT set (6.3k GT vs
+2.5k; absolute numbers drop vs the 24-still set — the new clips are
+harder, that is the point of more data). N6 k1 repeats at −0.112
+(−0.113 this morning): the lens meter is stable. E10 PR open. NEXT:
+Nick reviews PRs #73+E10; then the unranked queue (CH3 shunt re-wire,
+better-lens test, HD evidence stream, attach-hostility, last 14 v1
+labels). Previous:*
 *2026-08-25 (**S8 HIL RIG BUILT, CALIBRATED, AND THE
 FIRST SCORED MATRIX MEASURED — both boards, all four model×mode cells,
 Nick's 24 reviewed stills, per-camera homography, power column.**
@@ -2289,7 +2303,24 @@ any urchin labelling effort is spent.
       measured ladder (AE3 VGA-nano ~160 mJ/frame class); the N6
       column reads N/A until its shunt returns, then real numbers
       with zero code change.
-- [ ] **Bite E10 — stills_v2: Nick's new labeled frames into the HIL
+- [~] **Bite E10 — SHIPPED + FULL E2E DONE 2026-08-26 (branch
+      `claude/s8-e10-stills-v2`; PR open; Nick approved the plan and
+      the archive/deploy live).** Sources = Nick's
+      ~/nereus_ml/datasets/hil_monterey/stills_{v1,v2} (v1 grew 24→66
+      reviewed, all 24 original box sets byte-unchanged — measured;
+      v2 = 3 NEW clips img_8811/8813/8814, 120/120 reviewed).
+      hil_stills_merge.py: guarded merge (collision/missing/orphan =
+      loud fail, nothing written) with --against enforcing append-only
+      vs the DEPLOYED set (frame bytes + reviewed boxes + no drops);
+      7 stdlib host tests. Deployed: 200 stills / 186 reviewed; old
+      set archived on the Pi (stills_archived_20260826). E2E: E11 run
+      re-scores digit-identical; nano-VGA run drew 30 GT on
+      img_8811_f0042; full tiny-HD over all 186 stills finished clean
+      (372 frames/board, AE3 0.683/0.476 + 1144 mJ/frame, N6
+      0.652/0.498 + N/A). Wall cost recorded: a full HD review leg is
+      now ~25 min (was ~4.5).
+      *(original capture follows)*
+      **(original) Bite E10 — stills_v2: Nick's new labeled frames into the HIL
       (captured 2026-08-26, Nick's ask 4: "I've updated more of the
       video images with my own labels").** Ingest the new labels.jsonl
       + frames into the frozen-stills pipeline (hil_stills.py wrote

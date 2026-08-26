@@ -17,6 +17,41 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (night 2) — S8 bite E10 — stills_v2 merged + deployed: 24 → 186 reviewed stills, append-only proven, full-set E2E run clean
+
+**Branch:** `claude/s8-e10-stills-v2` (PR open)
+
+**Done:**
+- Nick's sources mapped: stills_v1 (same 80 frames, reviewed 24→66,
+  all 24 original box sets byte-UNCHANGED — measured before merging)
+  + stills_v2 (3 new clips, 120/120 reviewed).
+- hil_stills_merge.py: guarded merge, --against enforces append-only
+  vs the deployed set (frame bytes, reviewed boxes, no drops); fails
+  loud, writes nothing on failure; 7 stdlib host tests. Deployed 200
+  stills / 186 reviewed; old set archived (stills_archived_20260826,
+  Nick's ask).
+- E2E (Nick's ask): E11's HD run re-scores digit-identical against
+  the new labels; a nano-VGA leg drew GT on the new clips
+  (img_8811_f0042 = 30 boxes); full tiny-HD over ALL 186 stills
+  finished clean — AE3 0.683/0.476 (0.41 W peak · 1144 mJ/frame from
+  E9's line), N6 0.652/0.498 (power N/A). Near-parity holds on the
+  2.6× GT set; absolute numbers drop vs the 24-still set (harder new
+  clips — that is why more data matters). N6 k1 repeated −0.112.
+
+**Broke/surprised us:**
+- Nick's demo click landed mid-deploy — the runner-idle guard in the
+  deploy chain did its job (no bytes moved); deploy waited for idle.
+  The settle window also correctly refused a too-fast restart.
+- Full-HD review legs now cost ~25 min (186 stills); worth knowing
+  before queuing matrix work on the enlarged set.
+
+**Next:** Nick reviews PRs #73 (E9) + E10; Pi live checkout on the E9
+branch (flip to main after merges). Queue after that: CH3 shunt
+re-wire, better-lens test (k1 meter ready), HD evidence stream,
+attach-hostility, last 14 v1 labels.
+
+---
+
 ## 2026-08-26 (evening 3) — S8 bite E9 — per-inference power on the review page; N/A is a rule, not a config
 
 **Branch:** `claude/s8-e9-review-power` (from main after E11's #72
