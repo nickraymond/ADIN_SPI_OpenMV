@@ -634,3 +634,54 @@ artifacts under ~/hil_runs/; milestone reports per CLAUDE.md; the
 existing single-board path stays working until the new path's
 acceptance passes (never strand the bench).
 ```
+
+## 17 — Ready to paste: S8 bites E9/E10/E11 — review-page follow-ons (written 2026-08-26, after the E5-E8 night)
+
+```
+Run /agent-entry. This is an S8 BENCH session on nereus000 — you OWN
+the bench (workbench discipline: check nereus000:8088/api/runner +
+/api/preflight first; one owner per port; 35 s settle; by-id ONLY;
+ae3-board-access before any mpremote against the AE3; if nereus000
+does not resolve, try the LAN IP 192.168.1.163 first — the name path
+drops, the Pi usually hasn't). Branch from main after PRs
+#67→#68→#69→#70 merge IN THAT ORDER (the E5-E8 stack; if any is
+unmerged, STOP and ask Nick).
+
+CONTEXT (do not re-derive): the HIL review is ONE workbench card
+(s8-hil-review) with model (nano/tiny) + framesize (VGA/HD) toggles;
+the :8092 monitor shows full-res camera views on every scored frame,
+live per-board accuracy, layer toggles, a GT px-floor filter with an
+AE3|N6-terms selector, click-to-zoom panels, and a RUN COMPLETE
+scored-summary card (+ summary.json in the run dir).
+pi/hil/hil_rescore.py re-scores any saved run at arbitrary IOU/floor.
+MEASURED and standing: the N6's lens distortion costs it ~0.15 recall
+at IOU 0.30 (discriminator, both saved HD runs; AE3 flat) — E11's
+prediction is that a 9-marker H+k1 calibration recovers the N6 to
+~0.59/0.41 strict. The AE3 grab-kill is fixed-by-removal (E7) but its
+true mechanism is UNATTRIBUTED; hil-lcd runs an INSTALLED copy
+(sudo cp + restart on changes to the LCD client or calib pattern).
+
+FIRST: confirm Nick has eyeballed E8's controls on a card run (the
+one thing PR #70 still owes). If not, that is a 2-minute card run
+before anything else.
+
+GOAL (Nick picks ONE; TRACKER's bite entry is the spec — read it
+before planning):
+- Bite E10 — stills_v2: ingest Nick's new labeled frames. His
+  labels.jsonl lives at: <NICK: PATH HERE>. Decide append-only vs
+  changed-v1 stills WITH Nick before merging (cross-run
+  comparability breaks if v1 stills change).
+- Bite E9 — per-inference power on the review page (peak W + ~mJ
+  aligned to the displayed frames; a channel without valid power
+  shows N/A — the N6 stays N/A until the CH3 shunt re-wire).
+- Bite E11 — distortion-aware calibration (playback pattern 4→9
+  markers; solve H + radial k1 least-squares; k1 printed per camera
+  as the lens meter; re-score an N6 HD leg against the 0.59/0.41
+  prediction; the hil-lcd installed-copy trap applies).
+
+METHOD: nibble 1 plan first (Nick's gate), then code + host tests,
+then bench acceptance from the card, then PR.
+
+RULES: shielded cables only; no browser/kiosk on the Pi; no firmware
+flashing; milestone reports per CLAUDE.md; bench left clean.
+```
