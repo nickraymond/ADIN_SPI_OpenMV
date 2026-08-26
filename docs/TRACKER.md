@@ -2048,6 +2048,25 @@ any urchin labelling effort is spent.
       per-board scores match back-to-back solo runs within noise, and
       zero settle-discarded frames in the log (the handshake makes the
       concept obsolete).
+- [ ] **Bite E5 — one-click HIL review from the workbench  ← NEXT
+      (Nick 2026-08-25 night; kickoff = PROMPTS.md §17).** Today the
+      step-through review (cams + detections + GT + Next/Pause/Abort at
+      :8092) needs two pasted commands (the hil-review guide card).
+      Make it ONE CLICK: a runnable recipe (`s8-hil-review`) whose argv
+      is a small wrapper owning BOTH the playback server and the
+      closed-loop harness in --review mode — starts them in order,
+      opens :8092, and on runner Stop tears down cleanly (harness gets
+      SIGINT first so boards are released via the proven path, then
+      playback; never strand a port). Constraints: one runner, one
+      recipe — so the wrapper replaces, not fights, the s8-hil-urchin
+      recipe while reviewing; board locks via the recipe's boards[];
+      reconciliation must know how to put it back. Wrapper is testable
+      host-side (fake children, teardown-order test). Bench acceptance:
+      cold bench → click card → page LIVE with both cams stepping →
+      Stop from the workbench page → runner idle, boards free,
+      35 s settle honored, zero stranded processes — twice in a row.
+      Reuse: hil_harness --closed-loop --review as-is; the guide card
+      stays as the manual fallback and gets a pointer to the new card.
 - [~] **Bite E3 — RF-DETR labeler bake-off — GATE RUN LAUNCHED
       2026-08-25 (Nick's go, in the E4 session).** Done: own venv
       (rfdetr 1.9.4, Apache-2.0 captured verbatim →

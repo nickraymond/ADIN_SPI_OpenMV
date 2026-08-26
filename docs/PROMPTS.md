@@ -634,3 +634,46 @@ artifacts under ~/hil_runs/; milestone reports per CLAUDE.md; the
 existing single-board path stays working until the new path's
 acceptance passes (never strand the bench).
 ```
+
+## 17 — Ready to paste: S8 bite E5 — one-click HIL review recipe (written 2026-08-25 night)
+
+```
+Run /agent-entry. This is an S8 BENCH session on nereus000 — you OWN
+the bench (workbench discipline: check nereus000:8088/api/runner +
+/api/preflight first; one owner per port; 35 s settle; by-id ONLY;
+ae3-board-access before any mpremote against the AE3). Branch from
+main after PR #66 merges (the closed-loop rig lives there; if it is
+not merged yet, STOP and ask Nick).
+
+CONTEXT (do not re-derive): the closed-loop HIL review works today via
+the hil-review GUIDE card: start the s8-hil-urchin playback recipe,
+then run pi/hil/hil_harness.py --closed-loop --review over ssh, then
+open nereus000:8092 (camera views + detections, still + GT, Pause/
+Next/Auto/grab-frame/Abort). Nick wants this ONE CLICK from the
+workbench — no terminal.
+
+GOAL (bite E5, TRACKER): a runnable recipe `s8-hil-review` whose argv
+is a small wrapper (pi/hil/hil_review_run.py or similar) that owns
+BOTH children: start playback_server, wait for :8091, start
+hil_harness --closed-loop --review --board <both, by-id> --min-gt-px
+30 --out ~/hil_runs/review_<date>, and open :8092 as the recipe's
+page. On runner Stop: SIGINT the harness FIRST (its clean path
+releases the board ports and scores what was collected), wait for it,
+then stop playback, then exit. Never strand a process or a port; the
+runner's 35 s settle and reconciliation must hold. The existing
+s8-hil-urchin recipe and the hil-review guide card STAY (manual
+fallback; add a pointer to the new card in the chapter).
+
+METHOD — nibble 1 plan first (Nick's gate), then: wrapper as its own
+module with host tests (fake child processes; teardown ORDER pinned:
+harness-before-playback; a hung child gets a bounded grace then
+escalation, and the exit code reflects it); recipe toml with boards[]
+locks + health; workbench suite extended (zero-problems test stays
+green). Bench acceptance, run TWICE from cold: click card → LIVE →
+both cams stepping on the page → Stop from the page → runner idle,
+boards enumerated + free, no orphan pids, artifacts under ~/hil_runs/.
+Then Nick's demo = the click.
+
+RULES: shielded cables only; no browser/kiosk on the Pi; no firmware
+flashing; milestone reports per CLAUDE.md; bench left clean.
+```
