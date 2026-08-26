@@ -2138,9 +2138,28 @@ any urchin labelling effort is spent.
       precision delta on nano-VGA (0.52 vs 0.70, recall equal) is the
       known lighting condition, recorded not chased.
 
-- [ ] **Bite E7 — review camera views: safe AND correctly timed
-      (captured 2026-08-26, Nick at the bench, two measured symptoms,
-      one subsystem).**
+- [~] **Bite E7 — review camera views: safe AND correctly timed —
+      BUILT + BENCH-ACCEPTED 2026-08-26 (same session; PR open, Nick's
+      eyeball owed).** Route changed at Nick's push, probe-verified
+      first: NOT thumbnails — the FULL-RES frame, JPEG-encoded IN
+      PLACE in the frame buffer AFTER the last tile
+      (`to_jpeg(copy=False)`; probe: 180 ms / 64 B heap at HD with
+      tiny resident; probe_e7_inplace_jpeg.py = evidence), b64
+      streamed in 3072-byte chunks — wire unchanged, parser untouched.
+      Every scored model frame now carries the camera view (timed by
+      the existing render-ack + AE-discards), panels track the run
+      live at 1280×800, lightbox zooms real detail; grab/jpeg-all
+      buttons removed; MemoryError costs the picture never the script.
+      Acceptance: HD+tiny FULL 24-still run, zero button presses, AE3
+      finished, both homographies solved, acc 0.774/0.565 ==
+      pre-E7 runs; VGA nano control + mid-run stop clean. CAVEAT
+      recorded: the probe could NOT reproduce the 04:26 kill
+      (copy=True survived a fresh heap) — the true mechanism stays
+      unattributed; the in-place path removes the allocation class
+      regardless. SPIN-OFF (Nick: "I want to see this"): ~5 fps HD
+      evidence-JPEG streaming from the AE3 is now measurable-cheap —
+      iceboxed below, rides S21's alert+evidence path.
+      *(original capture follows)*
       **Symptom 1 (the killer):** the monitor's 📷 grab-frame at
       HD+tiny ends the AE3's board script — event log 04:26:23:
       `review: jpeg (AE3)` → `AE3 DROPPED: stream end: eot` same
@@ -2558,6 +2577,16 @@ live bite, and nothing here should be assumed benign because it is old.)*
   consumer path, this is a real design constraint, not a bench quirk.
 
 ## Icebox (captured, not scheduled)
+
+- **AE3 HD evidence-JPEG streaming demo (Nick 2026-08-26, from the E7
+  probe: "I want to see this 5 fps HD streaming when we can").** The
+  in-place encode measured 180 ms/frame at HD q50 with a model
+  resident and zero heap — an ~5 fps HD JPEG export ceiling on the
+  MicroPython path. Natural home: S21's alert + evidence-JPEG bite (a
+  detection ships the actual HD frame it fired on); a standalone
+  workbench demo card would also be cheap. Note S22 bite 1b's q90
+  burst-loss debt sits on the relay path any high-rate stills stream
+  would ride.
 
 - **Starfish / sun-star detector (Nick 2026-08-21, captured during S26).**
   "A massive win would be eventually adding a starfish detector and being
