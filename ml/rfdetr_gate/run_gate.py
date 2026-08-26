@@ -74,6 +74,9 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=4)
     ap.add_argument("--skip-train", action="store_true",
                     help="score the checkpoint already in --out")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint to score with --skip-train "
+                         "(default: <out>/checkpoint_best_ema.pth)")
     ap.add_argument("--no-resume", action="store_true",
                     help="staged-training default is AUTO-RESUME from "
                          "<out>/checkpoint.pth when it exists (Stop "
@@ -85,7 +88,12 @@ def main():
 
     from rfdetr import RFDETRBase
     if args.skip_train:
-        ck = out / "checkpoint_best_total.pth"
+        # score the EMA weights (the YOLOX ruler's convention). NOTE
+        # measured 2026-08-26: staged runs update checkpoint_best_ema/
+        # _regular each epoch but leave checkpoint_best_total STALE —
+        # scoring that would silently re-score old weights.
+        ck = args.ckpt or (out / "checkpoint_best_ema.pth")
+        print(f"scoring {ck}", flush=True)
         model = RFDETRBase(pretrain_weights=str(ck))
     else:
         model = RFDETRBase()           # 300 queries (>= densest 130 ✓)
