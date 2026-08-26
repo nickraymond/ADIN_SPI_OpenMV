@@ -22,9 +22,17 @@ npy kept for legacy runs), renderers unchanged (they draw the served
 marker list); Pi suite 70/70. Also this session: **PR #70 (E8) was
 found merged into the e7 BRANCH, not main** — corrective PR #71
 opened+merged, E8's controls eyeballed by Nick (that debt cleared).
-E11 PR open; Nick's card-click demo owed. NEXT (Nick's picks, this
-kickoff): E9 (per-inference power on the review page), E10 (stills_v2
-— still needs Nick's labels.jsonl path). Previous:*
+E11 PR #72 MERGED same session (Nick's demo run = a clean full HD-tiny
+leg). **THEN BITE E9 SHIPPED AND BENCH-ACCEPTED the same evening:
+per-inference power on the review page** — PowerTail windows the run's
+own power_*.jsonl per scored frame ([t_host−e2e, t_host]); panels show
+"peak X W · ~Y mJ" and the finish card + summary.json carry run-level
+peak W + mean mJ/frame; a window peaking under 50 mW is a dead channel
+and prints N/A, never a number (the N6's bypassed CH3, per spec).
+Acceptance (nano-VGA full card run): AE3 live 0.24 W / ~82 mJ, run
+mean 89.2 mJ/frame == the matrix's measured 85 mJ class; N6 N/A
+throughout; Pi suite 75/75. E9 PR open. NEXT: E10 (stills_v2 — STILL
+needs Nick's labels.jsonl path), then the icebox. Previous:*
 *2026-08-25 (**S8 HIL RIG BUILT, CALIBRATED, AND THE
 FIRST SCORED MATRIX MEASURED — both boards, all four model×mode cells,
 Nick's 24 reviewed stills, per-camera homography, power column.**
@@ -2253,7 +2261,21 @@ any urchin labelling effort is spent.
       isolate each layer incl. in zoom, sub-threshold GT hide/show
       tracks a threshold he edits, and the finish card's two numbers
       per camera match the harness's printed summary exactly.
-- [ ] **Bite E9 — per-inference power on the review page (captured
+- [~] **Bite E9 — CODE + TESTS + BENCH ACCEPTANCE DONE 2026-08-26
+      (branch `claude/s8-e9-review-power`; PR open; Nick's demo = the
+      click).** PowerTail (harness-side, single-feeder) tails the
+      run's power_*.jsonl; per scored frame the window
+      [t_host−e2e, t_host] yields peak W + ~mJ on the board panel;
+      summary.json + RUN COMPLETE card carry run-level peak W / mean
+      mJ/frame. Dead-channel rule = window peak < 50 mW → N/A (no
+      config to forget; the shunt re-wire crosses the floor with zero
+      code change). Acceptance (nano-VGA full run): AE3 0.24 W /
+      ~82 mJ live, 89.2 mJ/frame run mean == the matrix's 85 mJ
+      measured class; N6 N/A throughout; Pi suite 75/75. mJ is
+      approximate (10 Hz sampling; window anchored at host arrival,
+      wire time shifts it slightly late — comment in PowerTail).
+      *(original capture follows)*
+      **(original) Bite E9 — per-inference power on the review page (captured
       2026-08-26, Nick's UI ask 2).** The closed-loop run already
       spawns power_log.py (INA3221, CH1=AE3, CH3=N6) into the run
       dir, and every frame row carries t_host. Show, per board,
