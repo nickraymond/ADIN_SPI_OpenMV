@@ -17,6 +17,38 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (night) — S8 bite E8 — display controls + finish summary CODE-COMPLETE; bench dropped off the network mid-deploy
+
+**Branch:** `claude/s8-e8-display-controls` (stacked on E7; PR held
+until acceptance)
+
+**Done:**
+- Page: GT/AE3/N6 layer toggles (lightbox-honored), GT px-floor filter
+  (editable threshold, explicit AE3|N6-terms selector — a GT box's px
+  differs per camera, never silently picked; sub-floor GT dashed+
+  dimmed with its px printed; hide toggle), RUN COMPLETE scored
+  summary card. Harness: per-board gt_px on set_still; summary.json
+  from the rows.jsonl post-pass; match_frame gains iou_thr.
+- hil_rescore.py: re-score any saved run dir at arbitrary IOU/floor
+  (rows + the run's own H + calib geometry) — the homography
+  discriminator for the N6 question, and E11's before/after
+  instrument. Synthetic-fixture test pins known counts at 0.30/0.20.
+- Local suites green (49 pass; 9 numpy tests deferred to the Pi).
+
+**Broke/surprised us:**
+- nereus000 dropped off the network at the deploy step (ssh "Host is
+  down", ping 100%% loss, workbench dead, nereus001 unresolvable) —
+  the known drop class. Probed each side door ONCE, no loops; work
+  all pushed; Pi still carries the E7 checkout, boards were idle and
+  ports free at last contact.
+
+**Next (when the bench returns):** deploy E8 branch → Pi numpy tests →
+`hil_rescore.py ~/hil_runs/review_20260826_053949` (+ the 045611 run)
+for the N6 IOU discriminator table → one card run for the UI eyeball →
+PR. Then E10 (Nick's new labels), E9, E11.
+
+---
+
 ## 2026-08-26 (later still) — S8 bite E7 — full-res camera views on every scored frame; the 10-minute probe upgraded the whole design
 
 **Branch:** `claude/s8-e7-camera-views` (stacked on E6; PR open)
