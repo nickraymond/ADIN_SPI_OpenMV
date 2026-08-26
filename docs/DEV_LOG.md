@@ -17,6 +17,43 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (later) — S8 bite E6 — card toggles (model, framesize) + live per-board accuracy; the bench fought back and lost
+
+**Branch:** `claude/s8-e6-review-params` (stacked on E5; PR open)
+
+**Done:**
+- Workbench `[params]`: enum choices per recipe → toggles on the card;
+  server validates every pick, appends `--<key> <value>` to argv. ONE
+  `s8-hil-review` card (model nano/tiny × framesize VGA/HD) replaces
+  E5's pair. Suite → 95.
+- Live accuracy on :8092: `match_frame` extracted as the single
+  scoring function (rows post-pass + live counters). Acceptance proof:
+  page numbers == scored summary EXACTLY (tiny-HD AE3 0.771/0.558
+  GT 2510; N6 0.43/0.303 GT 2370). Panel lightbox on PR #67.
+- Acceptance (post-reboot): tiny+HD full 24-still run → finished →
+  Stop clean; nano+VGA → mid-run Stop (abort path) clean. rc=0, no
+  orphans, ports free, artifacts under ~/hil_runs/.
+
+**Broke/surprised us:**
+- FOUR consecutive card starts died at first board attach before
+  Nick's reboot: raw-repl refusal (N6 ×2, AE3 ×1 — the refusal's soft
+  reset then RE-ENUMERATED the AE3, and it sat ~3.5 min under a
+  DIFFERENT USB serial `040A0E05…`, unexplained, cleared by reboot).
+  Hardening shipped: attach does ONE bounded retry that waits ≤45 s
+  for the port node. Root cause of the attach-hostile state after
+  E4-script teardowns is NOT established — flagged.
+- Cold-boot deadlock (found by the reboot): hil-lcd parks
+  "activating" in an until-curl loop waiting for :8091, which the
+  wrapper itself starts — the wrapper's "active"-only check refused
+  forever. Fix: accept "activating".
+- Night-vs-midday: nano-VGA precision 0.52 vs the matrix's 0.70 with
+  recall equal — the measured lighting condition, not a scorer bug.
+
+**Next:** Nick's demo = the click (toggles + zoom + live accuracy),
+PR review. Attach-hostility root-cause is a candidate new bite.
+
+---
+
 ## 2026-08-26 — S8 bite E5 — one-click closed-loop HIL review: nano/tiny cards shipped, bench acceptance ×2 from cold PASSED
 
 **Branch:** `claude/s8-hil-review-recipe-2b59f5` (worktree; PR open)

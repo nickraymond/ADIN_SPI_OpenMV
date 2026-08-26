@@ -2112,6 +2112,32 @@ any urchin labelling effort is spent.
       the hil-review guide card STAY as the manual fallback (chapter
       points at the cards).
 
+- [~] **Bite E6 — card UI toggles + live accuracy — CODE + TESTS +
+      BENCH ACCEPTANCE DONE 2026-08-26 (post-reboot: tiny+HD full run
+      + nano+VGA mid-run-abort both clean); PR open, Nick's demo = the
+      click.** ONE `s8-hil-review` card (supersedes E5's nano/tiny
+      pair — Nick's call once the framesize axis appeared) with
+      `[params]` toggles model=nano/tiny, framesize=VGA/HD: the
+      workbench schema grew enum params (server validates every pick,
+      appends `--<key> <value>`, nothing free-form reaches argv;
+      suite →95), the wrapper grew `--model`. LIVE ACCURACY per board
+      on :8092 ("recall · prec (GT n ≥30px)", running): `match_frame`
+      extracted as the ONE scoring function — post-pass rows and the
+      live counters both call it, and the acceptance run proved it:
+      page tiny-HD AE3 0.771/0.558 GT 2510 · N6 0.43/0.303 GT 2370 ==
+      the scored summary EXACTLY. Click-any-panel-to-enlarge lightbox
+      (live-updating zoom; on PR #67 as E5 polish). Bench truths
+      bought: (1) first attach after a prior run's teardown can refuse
+      raw repl on EITHER board and the refusal's soft reset can
+      re-enumerate the device — harness attach now does ONE bounded
+      retry that waits for the port node (the AE3 additionally
+      surfaced ~3.5 min under a DIFFERENT USB serial `040A0E05…`,
+      unexplained — flagged, cleared by Nick's reboot); (2) cold-boot
+      deadlock found+fixed: hil-lcd parks "activating" waiting for
+      :8091, so the wrapper accepts activating. Night-vs-midday
+      precision delta on nano-VGA (0.52 vs 0.70, recall equal) is the
+      known lighting condition, recorded not chased.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
