@@ -135,12 +135,6 @@ LETTER_SCALE = 0.4          # VGA * 0.4 = 256x160, top-left, gray pad
 IN_W = 256
 
 
-def b64line(raw):
-    """Bare b64, NO terminator (the CDC CRLF trap -- see module note)."""
-    e = binascii.b2a_base64(raw)
-    return e[:-1] if e[-1:] == b"\n" else e
-
-
 def find_models():
     """Stage-1 artifacts by SIZE: nano is the small one, tiny the big one.
     Names differ per board image, so resolve, never hard-code. /flash is
@@ -270,10 +264,6 @@ for ph_i, ph in enumerate(PHASES):
         cap_us = time.ticks_diff(time.ticks_us(), t0)
         now_ms = time.ticks_ms()
 
-        jb = b""
-        if want_jpeg:
-            jb = b64line(img.to_jpeg(quality=QUALITY, copy=True).bytearray())
-
         prep_us, inf_us, dec_us = [], [], []
         cell_lines, ncells, ndropped, tiles = [], [], [], []
         if kind == "model":
@@ -306,13 +296,33 @@ for ph_i, ph in enumerate(PHASES):
                 ncells.append(len(cells))
                 ndropped.append(dropped)
 
+        # E7 (probe-verified 2026-08-26): the JPEG is encoded AFTER the
+        # last tile, IN PLACE in the frame buffer (copy=False) — zero
+        # heap beside a resident model (measured: 180 ms / 64 B at HD
+        # with tiny loaded). The frame is consumed by the encode; fine,
+        # the tiles are done with it. b64 goes out in 3072-byte chunks
+        # (3072 is divisible by 3, so the concatenation is one valid b64 line
+        # whose length the host checks exactly). A MemoryError costs
+        # the picture, never the script.
+        jbuf = None
+        jlen = 0
+        if want_jpeg:
+            try:
+                jbuf = img.to_jpeg(quality=QUALITY, copy=False).bytearray()
+                jlen = (len(jbuf) + 2) // 3 * 4
+            except MemoryError:
+                jbuf = None
+                jlen = 0
         print("#F " + json.dumps(
             {"seq": seq, "ph": ph_i, "ms": now_ms, "cap_us": cap_us,
              "prep_us": prep_us, "inf_us": inf_us, "dec_us": dec_us,
-             "tiles": tiles, "jpg": len(jb), "cells": ncells,
+             "tiles": tiles, "jpg": jlen, "cells": ncells,
              "dropped": ndropped}))
-        if jb:
-            sys.stdout.write(jb)
+        if jbuf is not None:
+            mv = memoryview(jbuf)
+            for i in range(0, len(jbuf), 3072):
+                e = binascii.b2a_base64(mv[i:i + 3072])
+                sys.stdout.write(e[:-1] if e[-1:] == b"\n" else e)
             sys.stdout.write("\n")
         for line in cell_lines:
             print(line)

@@ -213,7 +213,6 @@ PAGE = """<!DOCTYPE html>
  <button onclick="rv('resume')">Resume</button>
  <button onclick="rv('next')">Next still &rarr;</button>
  <button onclick="rv('auto')">Switch to AUTO</button>
- <button onclick="rv('jpeg_all')">Toggle camera-view every frame</button>
  <button style="border-color:#a44"
   onclick="if(confirm('End the run and score what was collected?'))rv('abort')">
   Abort run</button>
@@ -307,9 +306,7 @@ async function poll(){
    p.innerHTML='<div id="bh_'+lb+'"></div>'+
     '<div class="imgbox" id="cb_'+lb+'" onclick="zoom(this)" '+
     'title="click to enlarge"><img id="ci_'+lb+'"></div>'+
-    '<div id="bs_'+lb+'" style="white-space:pre"></div>'+
-    '<button onclick="rv(\\'jpeg\\',\\''+lb+'\\')">'+
-    '\\uD83D\\uDCF7 grab camera frame</button>';
+    '<div id="bs_'+lb+'" style="white-space:pre"></div>';
    host.appendChild(p);
   }
   const b=js.boards[lb], col=COLORS[i%%COLORS.length];

@@ -88,6 +88,33 @@ def test_stream_jpg_length_mismatch_yields_skip():
     assert ev == "skip" and obj["seq"] == 3
 
 
+def test_stream_model_frame_with_chunked_b64_jpg(tmp_path):
+    """E7: the board now emits the camera JPEG on MODEL frames, built by
+    concatenating 3072-byte b64 chunks (the in-place encode path). The
+    wire must be indistinguishable from the old single-shot b64 line:
+    exact length in the header, one line, decodes to the source bytes."""
+    import base64
+    import binascii
+    raw = bytes(range(256)) * 40                  # 10,240 B fake "jpeg"
+    chunks = b"".join(
+        binascii.b2a_base64(raw[i:i + 3072]).rstrip(b"\n")
+        for i in range(0, len(raw), 3072))
+    assert len(chunks) == (len(raw) + 2) // 3 * 4  # the board's jlen math
+    hdr = {"seq": 7, "ph": 0, "ms": 0, "cap_us": 1000, "prep_us": [1],
+           "inf_us": [2], "dec_us": [3], "tiles": [[0, 0]],
+           "jpg": len(chunks), "cells": [1], "dropped": [0]}
+    body = json.dumps([[20, 0, 0, 0.1, 0.1, 0.2, 0.2, 0.9, 0.8]])
+    bs = BoardStream(FakeSerial(
+        [("#F " + json.dumps(hdr)).encode() + b"\n",
+         chunks + b"\r\n",                        # CDC CRLF, as on the wire
+         body.encode() + b"\n"]))
+    ev, obj = bs.next_event()
+    assert ev == "frame" and obj["seq"] == 7
+    assert base64.b64decode(chunks) == raw
+    assert obj["_jpg"] == raw                     # jpg AND cells coexist
+    assert len(obj["_cells"][0]) == 1
+
+
 def test_stream_death_mid_frame_reports_end():
     hdr = _f(4, ncells=2)[0]
     bs = BoardStream(FakeSerial([hdr], end_reason="usb: gone"))
