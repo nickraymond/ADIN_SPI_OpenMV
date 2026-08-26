@@ -2138,6 +2138,35 @@ any urchin labelling effort is spent.
       precision delta on nano-VGA (0.52 vs 0.70, recall equal) is the
       known lighting condition, recorded not chased.
 
+- [ ] **Bite E7 — review camera views: safe AND correctly timed
+      (captured 2026-08-26, Nick at the bench, two measured symptoms,
+      one subsystem).**
+      **Symptom 1 (the killer):** the monitor's 📷 grab-frame at
+      HD+tiny ends the AE3's board script — event log 04:26:23:
+      `review: jpeg (AE3)` → `AE3 DROPPED: stream end: eot` same
+      second, one-click reproducible; the N6's grab at 04:26:16
+      survived. Mechanism class: on-demand full-payload JPEG emission
+      (~HD, ~3× VGA) beside the resident 35-tile tiny model — the
+      same fragility (D38 fb-alloc family) that made E4 drop
+      per-frame JPEGs from model phases in the first place; the grab
+      button reintroduces that path.
+      **Symptom 2 (what invites the click):** in auto mode the camera
+      panels go STALE during model phases (no JPEG flows at all), so
+      the display shows the calib view / last grab and looks wrong —
+      Nick pressed grab to refresh. Note the scored frames are
+      already correctly timed (shown-ack + AE-settle discards); the
+      missing piece is a camera IMAGE riding that same timing.
+      **Shape of the fix (board script is pushed per run — no
+      firmware flash):** per-still, with the FIRST scored frame after
+      the handshake's discards, the board emits ONE DOWNSCALED camera
+      JPEG (e.g. quarter-size; bound the payload) → monitor panels
+      update once per still, correctly timed, automatically; the
+      full-res grab button is then removed at HD (or bounded the same
+      way). *Verifiable:* an HD+tiny auto run where both camera
+      panels track every still change with no stale frames, zero
+      grabs pressed, and the AE3 finishes the run; the grab-kill
+      repro no longer exists on the page.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
