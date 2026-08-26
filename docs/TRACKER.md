@@ -2167,6 +2167,58 @@ any urchin labelling effort is spent.
       grabs pressed, and the AE3 finishes the run; the grab-kill
       repro no longer exists on the page.
 
+- [ ] **Bite E8 — review page display controls + finish summary
+      (captured 2026-08-26, Nick's UI asks 1/3/5; one page-side bite,
+      monitor only, no board contact).**
+      **(a) Box-layer toggles:** per-layer on/off for GT / N6 / AE3
+      boxes on the still view, honored in the lightbox zoom too — see
+      the reference image bare, or any one board's boxes alone.
+      **(b) GT pixel-floor filter:** an adjustable threshold (default
+      30 px, the T2 floor) + a hide/show toggle for GT boxes smaller
+      than it — "how do my labels relate to the practical limit".
+      DESIGN NOTE, decide in the plan nibble: a box's px size is
+      CAMERA px and differs per board (per-H); the page needs per-board
+      gt_px from the harness (it computes them already) or an explicit
+      "px in AE3/N6 terms" selector — do not silently pick one.
+      **(c) Finish summary card:** when the run reaches `finished`, the
+      page shows a per-camera report — ONE precision and ONE recall
+      number per board (the same match_frame totals as the live line,
+      proven == the scored artifact in E6), plus GT count, phases,
+      wall — and the same summary is persisted as `summary.json` in
+      the run dir. "How do the details I watched relate to the score."
+      *Verifiable:* Nick reviews a run using only the page: toggles
+      isolate each layer incl. in zoom, sub-threshold GT hide/show
+      tracks a threshold he edits, and the finish card's two numbers
+      per camera match the harness's printed summary exactly.
+- [ ] **Bite E9 — per-inference power on the review page (captured
+      2026-08-26, Nick's UI ask 2).** The closed-loop run already
+      spawns power_log.py (INA3221, CH1=AE3, CH3=N6) into the run
+      dir, and every frame row carries t_host. Show, per board,
+      next to the timing numbers: PEAK W during the inference window
+      and approximate mJ for the inference duration, aligned to the
+      frames being displayed. **A channel without valid power shows
+      N/A, never a fake number** (Nick's spec) — the N6's CH3 is
+      bypassed by the 2026-08-25 re-wire until the shunt re-wire
+      lands (that hardware debt stays with bite D). *Verifiable:* an
+      AE3 run shows live peak-W/mJ consistent with the E4-era
+      measured ladder (AE3 VGA-nano ~160 mJ/frame class); the N6
+      column reads N/A until its shunt returns, then real numbers
+      with zero code change.
+- [ ] **Bite E10 — stills_v2: Nick's new labeled frames into the HIL
+      (captured 2026-08-26, Nick's ask 4: "I've updated more of the
+      video images with my own labels").** Ingest the new labels.jsonl
+      + frames into the frozen-stills pipeline (hil_stills.py wrote
+      stills_v1's manifest — the page and scorer MUST keep agreeing on
+      canonical order), deploy to ~/hil_monterey/stills on nereus000,
+      and verify the harness picks up the enlarged reviewed set
+      (currently 24 scored stills). NEEDS FROM NICK AT KICKOFF: where
+      the new labels live (label-GUI output path) and whether v1's 24
+      stay byte-identical (append-only v2) — cross-run comparability
+      breaks if existing stills change, so a changed v1 still is a
+      DECISION, not a merge. *Verifiable:* the harness reports the new
+      reviewed count, a review run steps through the new stills with
+      GT drawn, and prior-run rows still reference stills that exist.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
