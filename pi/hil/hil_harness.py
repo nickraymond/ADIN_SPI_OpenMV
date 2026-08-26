@@ -334,8 +334,14 @@ def run_closed_loop(args, playback, out_dir):
     for p in phases:
         bp = {"kind": p["kind"], "frames": 0}     # 0 = until told (E4)
         if p["kind"] == "model":
+            # jpeg True (E7): the board now encodes AFTER the last tile,
+            # in place in the frame buffer — zero heap beside the model
+            # (probe 2026-08-26) — so every scored frame carries the
+            # camera view and the panels track the run live. E4's
+            # jpeg:False was the full-payload-beside-model caution; the
+            # in-place path removes that class by construction.
             bp.update({"model": p["model"], "mode": p["mode"],
-                       "jpeg": False})
+                       "jpeg": True})
         board_phases.append(bp)
     mode = "review" if args.review else "auto"
     script = ("_CFG = " + repr({"framesize": args.framesize,
