@@ -2078,9 +2078,14 @@ any urchin labelling effort is spent.
       thermal/CPU-GPU plots, NEVER a bespoke monitor; skill
       `training-control` captures the rule). Run detached on the Mac,
       watch at :8894; ~1,250 optimizer steps/epoch, early pace ≈8 s/step
-      → epoch ETA ~2.5-3 h + rung-A eval. AWAITING: the printed mAP50 @
-      e1 next to YOLOX-S's 0.658 → Nick's full-run go/no-go (wall-clock
-      per epoch is half the answer). *(original capture follows)*
+      → epoch ETA ~2.5-3 h + rung-A eval. **GATE NUMBER LANDED
+      2026-08-25 22:0x: rung-A mAP50 = 0.715 @ e1 — ABOVE YOLOX-S's
+      0.658 e1 start (0.800 final). Wall: 1.83 h/epoch (lean batch-2
+      config after a swap-thrash restart; batch-4 thrashed the 16 GB…
+      32 GB Mac into 14 GB of swap — lean is the config of record).
+      Full-run pricing at this pace: 60–120 epochs ≈ 4.6–9.1 days
+      Mac-bound (dataloader workers + a one-time image pre-resize
+      shave ~20–40%). NICK'S GO/NO-GO PENDING.** *(original capture follows)*
       **(captured 2026-08-25, Nick's ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
       DINOv2 backbone weights — capture the license text verbatim per
       the S26 rule before it becomes load-bearing) as the MAC-SIDE
