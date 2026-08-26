@@ -238,45 +238,62 @@ class TestSupervisor(unittest.TestCase):
         self.assertTrue(s._stop.is_set())
 
 
-class TestRecipeCards(unittest.TestCase):
-    """The two cards and the wrapper must agree on the board identities
-    and differ ONLY in the phase list -- pinned here so they cannot
-    drift apart (the by-id names live in both places by design)."""
+class TestRecipeCard(unittest.TestCase):
+    """The card and the wrapper must agree on the board identities and
+    on the param enums (the card's toggles land as the wrapper's
+    --model/--framesize flags) -- pinned here so they cannot drift
+    apart (the by-id names live in both places by design)."""
 
     RECIPES = os.path.join(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))),
         "pi", "workbench", "recipes")
 
-    CARDS = {"s8_hil_review_nano.toml": "nano-tiled",
-             "s8_hil_review_tiny.toml": "tiny-tiled"}
-
-    def load(self, fname):
+    def load(self):
         import tomllib
-        with open(os.path.join(self.RECIPES, fname), "rb") as fh:
+        with open(os.path.join(self.RECIPES, "s8_hil_review.toml"),
+                  "rb") as fh:
             return tomllib.load(fh)
 
-    def test_cards_match_wrapper_board_identities(self):
-        for fname in self.CARDS:
-            obj = self.load(fname)
-            self.assertEqual({b["by_id"] for b in obj["boards"]},
-                             set(hil_review_run.BOARDS.values()),
-                             "%s boards drifted from hil_review_run.BOARDS"
-                             % fname)
+    def test_card_matches_wrapper_board_identities(self):
+        obj = self.load()
+        self.assertEqual({b["by_id"] for b in obj["boards"]},
+                         set(hil_review_run.BOARDS.values()),
+                         "card boards drifted from hil_review_run.BOARDS")
 
-    def test_cards_run_the_wrapper_with_their_phase(self):
-        for fname, phases in self.CARDS.items():
-            argv = self.load(fname)["run"]["argv"]
-            self.assertIn("pi/hil/hil_review_run.py", argv)
-            self.assertEqual(argv[argv.index("--phases") + 1], phases,
-                             "%s phase list wrong" % fname)
+    def test_card_params_match_wrapper_choices(self):
+        # every enum value the card offers must be a value the
+        # wrapper's argparse actually accepts, and the defaults (first
+        # entry) must match the wrapper's own defaults
+        obj = self.load()
+        self.assertEqual(obj["params"]["model"], ["nano", "tiny"])
+        self.assertEqual(obj["params"]["framesize"], ["VGA", "HD"])
+        self.assertIn("pi/hil/hil_review_run.py", obj["run"]["argv"])
+        # the wrapper accepts each combination without argparse error
+        for model in obj["params"]["model"]:
+            for fs in obj["params"]["framesize"]:
+                import argparse
+                try:
+                    # parse only: patch out the run itself
+                    import unittest.mock as mock
+                    with mock.patch.object(hil_review_run.Supervisor,
+                                           "run", return_value=0), \
+                         mock.patch.object(hil_review_run, "lcd_active",
+                                           return_value=True), \
+                         mock.patch.object(
+                             hil_review_run.Supervisor, "install_signals"):
+                        rc = hil_review_run.main(
+                            ["--model", model, "--framesize", fs])
+                    self.assertEqual(rc, 0)
+                except (SystemExit, argparse.ArgumentError) as e:
+                    self.fail("wrapper rejected --model %s --framesize %s"
+                              " (%s)" % (model, fs, e))
 
-    def test_cards_declare_stop_grace_and_monitor_health(self):
-        for fname in self.CARDS:
-            obj = self.load(fname)
-            self.assertGreaterEqual(obj["run"]["stop_grace"], 40)
-            self.assertIn(":8092", obj["health"]["http"])
-            self.assertEqual(obj["opens"], ":8092")
-            self.assertIn("hil-lcd.service", obj["services"])
+    def test_card_declares_stop_grace_and_monitor_health(self):
+        obj = self.load()
+        self.assertGreaterEqual(obj["run"]["stop_grace"], 40)
+        self.assertIn(":8092", obj["health"]["http"])
+        self.assertEqual(obj["opens"], ":8092")
+        self.assertIn("hil-lcd.service", obj["services"])
 
 
 if __name__ == "__main__":

@@ -322,6 +322,11 @@ async function poll(){
    'inference          '+(b.inf_ms??'?')+' ms\\n'+
    'e2e frame          '+(b.e2e_ms??'?')+' ms\\n'+
    'dets               '+(b.n_det??'?')+
+   (b.acc?'\\naccuracy (run)     recall '+
+     (b.acc.recall==null?'\\u2014':b.acc.recall.toFixed(2))+
+     ' \\u00b7 prec '+
+     (b.acc.prec==null?'\\u2014':b.acc.prec.toFixed(2))+
+     ' (GT '+b.acc.gt+(b.acc.floor?' \\u2265'+b.acc.floor+'px':'')+')':'')+
    (b.model?'\\nmodel              '+b.model:'');
   const ts=(js.cam_ts||{})[lb];
   if(ts && camTs[lb]!==ts){
