@@ -2084,6 +2084,160 @@ any urchin labelling effort is spent.
       wall-clock/epoch recorded, reviewed with Nick for the
       full-run go/no-go.
 
+- [~] **Bite E5 — one-click closed-loop review from the workbench —
+      CODE + HOST TESTS + BENCH ACCEPTANCE (×2 from cold) DONE
+      2026-08-26; PR open, Nick's demo = the click.** Cards
+      `s8-hil-review-nano` / `-tiny` (option A, Nick 2026-08-25:
+      picking a card IS picking the model); argv =
+      `pi/hil/hil_review_run.py`, which owns BOTH children: start
+      playback → wait for :8091 → check hil-lcd.service → run
+      `hil_harness --closed-loop --review` (both boards by-id, 30 px
+      floor, out `~/hil_runs/review_<stamp>`); page = :8092. Stop =
+      SIGINT the harness FIRST (its clean path quits the boards,
+      releases the ports, scores what was collected), THEN playback —
+      each child in its OWN process group so the runner's group signal
+      cannot invert the order; escalation SIGINT→SIGTERM→named strand
+      (never SIGKILL), exit code 0/1/2/3 says which. En route:
+      workbench `[run] stop_grace` (schema+runner, suite 81→85 — an
+      abort that still writes scoring/overlays must fit the SIGINT
+      grace) and two harness hardenings (abort skips the review park —
+      one SIGINT means stop; playback loop-reset guarded so a dead
+      playback cannot destroy scoring). 11 wrapper host tests: fake
+      children, BOTH orders pinned by signal timestamps, escalation +
+      crash propagation, card↔wrapper board-identity lock. Acceptance
+      measured on the bench: nano card click→LIVE→auto-stepping
+      (still 0→9, both boards in lockstep)→Stop mid-run = idle in
+      4.8 s, rc=0, both boards scored, zero orphan pids, ports free;
+      tiny card click→LIVE→Next×2→Stop identical. `s8-hil-urchin` and
+      the hil-review guide card STAY as the manual fallback (chapter
+      points at the cards).
+
+- [~] **Bite E6 — card UI toggles + live accuracy — CODE + TESTS +
+      BENCH ACCEPTANCE DONE 2026-08-26 (post-reboot: tiny+HD full run
+      + nano+VGA mid-run-abort both clean); PR open, Nick's demo = the
+      click.** ONE `s8-hil-review` card (supersedes E5's nano/tiny
+      pair — Nick's call once the framesize axis appeared) with
+      `[params]` toggles model=nano/tiny, framesize=VGA/HD: the
+      workbench schema grew enum params (server validates every pick,
+      appends `--<key> <value>`, nothing free-form reaches argv;
+      suite →95), the wrapper grew `--model`. LIVE ACCURACY per board
+      on :8092 ("recall · prec (GT n ≥30px)", running): `match_frame`
+      extracted as the ONE scoring function — post-pass rows and the
+      live counters both call it, and the acceptance run proved it:
+      page tiny-HD AE3 0.771/0.558 GT 2510 · N6 0.43/0.303 GT 2370 ==
+      the scored summary EXACTLY. Click-any-panel-to-enlarge lightbox
+      (live-updating zoom; on PR #67 as E5 polish). Bench truths
+      bought: (1) first attach after a prior run's teardown can refuse
+      raw repl on EITHER board and the refusal's soft reset can
+      re-enumerate the device — harness attach now does ONE bounded
+      retry that waits for the port node (the AE3 additionally
+      surfaced ~3.5 min under a DIFFERENT USB serial `040A0E05…`,
+      unexplained — flagged, cleared by Nick's reboot); (2) cold-boot
+      deadlock found+fixed: hil-lcd parks "activating" waiting for
+      :8091, so the wrapper accepts activating. Night-vs-midday
+      precision delta on nano-VGA (0.52 vs 0.70, recall equal) is the
+      known lighting condition, recorded not chased.
+
+- [~] **Bite E7 — review camera views: safe AND correctly timed —
+      BUILT + BENCH-ACCEPTED 2026-08-26 (same session; PR open, Nick's
+      eyeball owed).** Route changed at Nick's push, probe-verified
+      first: NOT thumbnails — the FULL-RES frame, JPEG-encoded IN
+      PLACE in the frame buffer AFTER the last tile
+      (`to_jpeg(copy=False)`; probe: 180 ms / 64 B heap at HD with
+      tiny resident; probe_e7_inplace_jpeg.py = evidence), b64
+      streamed in 3072-byte chunks — wire unchanged, parser untouched.
+      Every scored model frame now carries the camera view (timed by
+      the existing render-ack + AE-discards), panels track the run
+      live at 1280×800, lightbox zooms real detail; grab/jpeg-all
+      buttons removed; MemoryError costs the picture never the script.
+      Acceptance: HD+tiny FULL 24-still run, zero button presses, AE3
+      finished, both homographies solved, acc 0.774/0.565 ==
+      pre-E7 runs; VGA nano control + mid-run stop clean. CAVEAT
+      recorded: the probe could NOT reproduce the 04:26 kill
+      (copy=True survived a fresh heap) — the true mechanism stays
+      unattributed; the in-place path removes the allocation class
+      regardless. SPIN-OFF (Nick: "I want to see this"): ~5 fps HD
+      evidence-JPEG streaming from the AE3 is now measurable-cheap —
+      iceboxed below, rides S21's alert+evidence path.
+      *(original capture follows)*
+      **Symptom 1 (the killer):** the monitor's 📷 grab-frame at
+      HD+tiny ends the AE3's board script — event log 04:26:23:
+      `review: jpeg (AE3)` → `AE3 DROPPED: stream end: eot` same
+      second, one-click reproducible; the N6's grab at 04:26:16
+      survived. Mechanism class: on-demand full-payload JPEG emission
+      (~HD, ~3× VGA) beside the resident 35-tile tiny model — the
+      same fragility (D38 fb-alloc family) that made E4 drop
+      per-frame JPEGs from model phases in the first place; the grab
+      button reintroduces that path.
+      **Symptom 2 (what invites the click):** in auto mode the camera
+      panels go STALE during model phases (no JPEG flows at all), so
+      the display shows the calib view / last grab and looks wrong —
+      Nick pressed grab to refresh. Note the scored frames are
+      already correctly timed (shown-ack + AE-settle discards); the
+      missing piece is a camera IMAGE riding that same timing.
+      **Shape of the fix (board script is pushed per run — no
+      firmware flash):** per-still, with the FIRST scored frame after
+      the handshake's discards, the board emits ONE DOWNSCALED camera
+      JPEG (e.g. quarter-size; bound the payload) → monitor panels
+      update once per still, correctly timed, automatically; the
+      full-res grab button is then removed at HD (or bounded the same
+      way). *Verifiable:* an HD+tiny auto run where both camera
+      panels track every still change with no stale frames, zero
+      grabs pressed, and the AE3 finishes the run; the grab-kill
+      repro no longer exists on the page.
+
+- [ ] **Bite E8 — review page display controls + finish summary
+      (captured 2026-08-26, Nick's UI asks 1/3/5; one page-side bite,
+      monitor only, no board contact).**
+      **(a) Box-layer toggles:** per-layer on/off for GT / N6 / AE3
+      boxes on the still view, honored in the lightbox zoom too — see
+      the reference image bare, or any one board's boxes alone.
+      **(b) GT pixel-floor filter:** an adjustable threshold (default
+      30 px, the T2 floor) + a hide/show toggle for GT boxes smaller
+      than it — "how do my labels relate to the practical limit".
+      DESIGN NOTE, decide in the plan nibble: a box's px size is
+      CAMERA px and differs per board (per-H); the page needs per-board
+      gt_px from the harness (it computes them already) or an explicit
+      "px in AE3/N6 terms" selector — do not silently pick one.
+      **(c) Finish summary card:** when the run reaches `finished`, the
+      page shows a per-camera report — ONE precision and ONE recall
+      number per board (the same match_frame totals as the live line,
+      proven == the scored artifact in E6), plus GT count, phases,
+      wall — and the same summary is persisted as `summary.json` in
+      the run dir. "How do the details I watched relate to the score."
+      *Verifiable:* Nick reviews a run using only the page: toggles
+      isolate each layer incl. in zoom, sub-threshold GT hide/show
+      tracks a threshold he edits, and the finish card's two numbers
+      per camera match the harness's printed summary exactly.
+- [ ] **Bite E9 — per-inference power on the review page (captured
+      2026-08-26, Nick's UI ask 2).** The closed-loop run already
+      spawns power_log.py (INA3221, CH1=AE3, CH3=N6) into the run
+      dir, and every frame row carries t_host. Show, per board,
+      next to the timing numbers: PEAK W during the inference window
+      and approximate mJ for the inference duration, aligned to the
+      frames being displayed. **A channel without valid power shows
+      N/A, never a fake number** (Nick's spec) — the N6's CH3 is
+      bypassed by the 2026-08-25 re-wire until the shunt re-wire
+      lands (that hardware debt stays with bite D). *Verifiable:* an
+      AE3 run shows live peak-W/mJ consistent with the E4-era
+      measured ladder (AE3 VGA-nano ~160 mJ/frame class); the N6
+      column reads N/A until its shunt returns, then real numbers
+      with zero code change.
+- [ ] **Bite E10 — stills_v2: Nick's new labeled frames into the HIL
+      (captured 2026-08-26, Nick's ask 4: "I've updated more of the
+      video images with my own labels").** Ingest the new labels.jsonl
+      + frames into the frozen-stills pipeline (hil_stills.py wrote
+      stills_v1's manifest — the page and scorer MUST keep agreeing on
+      canonical order), deploy to ~/hil_monterey/stills on nereus000,
+      and verify the harness picks up the enlarged reviewed set
+      (currently 24 scored stills). NEEDS FROM NICK AT KICKOFF: where
+      the new labels live (label-GUI output path) and whether v1's 24
+      stay byte-identical (append-only v2) — cross-run comparability
+      breaks if existing stills change, so a changed v1 still is a
+      DECISION, not a merge. *Verifiable:* the harness reports the new
+      reviewed count, a review run steps through the new stills with
+      GT drawn, and prior-run rows still reference stills that exist.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
@@ -2423,6 +2577,16 @@ live bite, and nothing here should be assumed benign because it is old.)*
   consumer path, this is a real design constraint, not a bench quirk.
 
 ## Icebox (captured, not scheduled)
+
+- **AE3 HD evidence-JPEG streaming demo (Nick 2026-08-26, from the E7
+  probe: "I want to see this 5 fps HD streaming when we can").** The
+  in-place encode measured 180 ms/frame at HD q50 with a model
+  resident and zero heap — an ~5 fps HD JPEG export ceiling on the
+  MicroPython path. Natural home: S21's alert + evidence-JPEG bite (a
+  detection ships the actual HD frame it fired on); a standalone
+  workbench demo card would also be cheap. Note S22 bite 1b's q90
+  burst-loss debt sits on the relay path any high-rate stills stream
+  would ride.
 
 - **Starfish / sun-star detector (Nick 2026-08-21, captured during S26).**
   "A massive win would be eventually adding a starfish detector and being

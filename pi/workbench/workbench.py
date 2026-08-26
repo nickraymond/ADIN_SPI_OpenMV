@@ -66,13 +66,19 @@ DISK_MIN_FREE_MB = 500
 # ---------------------------------------------------------------------------
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
-            "boards", "run", "health", "guide"}
+            "boards", "run", "health", "guide", "params"}
 BOARD_KEYS = {"label", "by_id", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
-RUN_KEYS = {"argv", "cwd"}
+RUN_KEYS = {"argv", "cwd", "stop_grace"}
+STOP_GRACE_MAX = 120
 HEALTH_KEYS = {"http"}
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# [params] (S8 E6): per-recipe enum choices rendered as toggles on the
+# card. A key becomes the child's --<key> flag; a value is appended as
+# its argument. Enums ONLY -- nothing free-form ever reaches argv.
+PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+PARAM_VAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 THUMB_RE = re.compile(r"^thumbs/[A-Za-z0-9._-]+$")
 GUIDE_RE = re.compile(r"^guides/[A-Za-z0-9._-]+\.html$")
@@ -174,7 +180,7 @@ def validate_recipe(obj, source):
         if not GUIDE_RE.match(guide):
             errs.append("%s: guide must look like guides/<file>.html "
                         "(shipped in the recipes dir)" % source)
-        for k in ("run", "health", "boards", "services"):
+        for k in ("run", "health", "boards", "services", "params"):
             if k in obj:
                 errs.append("%s: a guide card cannot carry '%s' -- it is "
                             "documentation, not a runnable demo" % (source, k))
@@ -182,8 +188,29 @@ def validate_recipe(obj, source):
             return None, errs
         return {"name": name, "title": title, "summary": summary,
                 "opens": None, "thumbnail": thumbnail, "services": [],
-                "boards": [], "run": None, "health": None,
+                "boards": [], "run": None, "health": None, "params": {},
                 "guide": guide}, []
+
+    params = obj.get("params", {})
+    if not isinstance(params, dict):
+        errs.append("%s: params must be a table of key = [choices]" % source)
+        params = {}
+    else:
+        if params and "run" not in obj:
+            errs.append("%s: params need a [run] block to feed" % source)
+        for k, vals in params.items():
+            pw = "%s params.%s" % (source, k)
+            if not PARAM_KEY_RE.match(k):
+                errs.append("%s: key must match %s (it becomes the "
+                            "child's --%s flag)" % (pw, PARAM_KEY_RE.pattern,
+                                                    k))
+            if (not isinstance(vals, list) or len(vals) < 2
+                    or len(set(vals)) != len(vals)
+                    or not all(isinstance(v, str) and PARAM_VAL_RE.match(v)
+                               for v in vals)):
+                errs.append("%s: choices must be >=2 unique strings "
+                            "matching %s (first = default)"
+                            % (pw, PARAM_VAL_RE.pattern))
 
     boards_raw = obj.get("boards")
     boards = []
@@ -205,13 +232,25 @@ def validate_recipe(obj, source):
             errs.append("%s: must be a table" % where)
         else:
             _unknown(r, RUN_KEYS, where, errs)
+            # stop_grace: seconds the runner waits after SIGINT before
+            # escalating (default Runner.GRACE_INT). For children whose
+            # clean stop does real work -- the HIL review wrapper scores
+            # collected frames and writes overlays before exiting.
+            sg = r.get("stop_grace")
+            if sg is not None and (isinstance(sg, bool)
+                                   or not isinstance(sg, int)
+                                   or not 1 <= sg <= STOP_GRACE_MAX):
+                errs.append("%s: stop_grace must be an integer 1..%d "
+                            "(seconds)" % (where, STOP_GRACE_MAX))
+                sg = None
             argv = r.get("argv")
             if (not isinstance(argv, list) or not argv
                     or not all(isinstance(a, str) and a for a in argv)):
                 errs.append("%s: argv must be a non-empty array of "
                             "non-empty strings" % where)
             else:
-                run = {"argv": argv, "cwd": r.get("cwd", ".")}
+                run = {"argv": argv, "cwd": r.get("cwd", "."),
+                       "stop_grace": sg}
 
     health = None
     if "health" in obj:
@@ -226,7 +265,32 @@ def validate_recipe(obj, source):
         return None, errs
     return {"name": name, "title": title, "summary": summary, "opens": opens,
             "thumbnail": thumbnail, "services": services, "boards": boards,
-            "run": run, "health": health, "guide": None}, []
+            "run": run, "health": health, "guide": None,
+            "params": params}, []
+
+
+def resolve_params(recipe, chosen):
+    """Validate the operator's param picks against the recipe's enums.
+
+    Returns (extra_argv, picks, error). Missing keys take the FIRST
+    declared choice (the default); unknown keys and undeclared values
+    are refused -- nothing free-form ever reaches the child's argv.
+    """
+    declared = recipe.get("params") or {}
+    chosen = chosen or {}
+    unknown = sorted(set(chosen) - set(declared))
+    if unknown:
+        return None, None, ("recipe %r declares no param(s) %s"
+                            % (recipe["name"], ", ".join(unknown)))
+    extra, picks = [], {}
+    for key, values in declared.items():
+        v = chosen.get(key, values[0])
+        if v not in values:
+            return None, None, ("param %s must be one of %s, not %r"
+                                % (key, "/".join(values), v))
+        picks[key] = v
+        extra += ["--%s" % key, v]
+    return extra, picks, None
 
 
 def load_recipes(dirpath=RECIPE_DIR):
@@ -488,6 +552,8 @@ class Runner:
         self.settle_until = 0.0  # monotonic; boards quiet until then
         self.settle_boards = set()
         self.reconcile_report = []
+        self.extra_argv = []
+        self.params = {}
         self._adopt()
 
     # -- pidfile ----------------------------------------------------------
@@ -534,7 +600,7 @@ class Runner:
                         break
 
     # -- lifecycle --------------------------------------------------------
-    def start(self, recipe, board_states):
+    def start(self, recipe, board_states, extra_argv=None, params=None):
         with self._lk:
             if self.state in ("reconciling", "starting", "live", "stopping"):
                 raise StartRefused(
@@ -573,6 +639,10 @@ class Runner:
             self.proc = None
             self.pid = None
             self.reconcile_report = []
+            # enum-validated picks from resolve_params -- appended to
+            # argv verbatim, never interpolated
+            self.extra_argv = list(extra_argv or [])
+            self.params = dict(params or {})
             self.state = "reconciling"
         threading.Thread(target=self._bringup, args=(recipe,),
                          daemon=True).start()
@@ -676,7 +746,7 @@ class Runner:
             logf = open(self.logpath, "wb")
             try:
                 self.proc = subprocess.Popen(
-                    recipe["run"]["argv"],
+                    recipe["run"]["argv"] + self.extra_argv,
                     cwd=os.path.join(self.repo, recipe["run"]["cwd"]),
                     stdout=logf, stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL, start_new_session=True)
@@ -814,9 +884,14 @@ class Runner:
             if self.state not in ("starting", "live"):
                 return self.state
             self.state = "stopping"
-        print("runner: stopping (%s)" % reason, flush=True)
+            # a recipe whose clean stop does real work (the HIL review
+            # wrapper scores + writes overlays) declares its own grace
+            run = (self.recipe or {}).get("run") or {}
+            grace_int = run.get("stop_grace") or self.GRACE_INT
+        print("runner: stopping (%s; SIGINT grace %.0f s)"
+              % (reason, grace_int), flush=True)
         self._signal_group(signal.SIGINT)
-        gone = self._wait_gone(self.GRACE_INT)
+        gone = self._wait_gone(grace_int)
         if not gone:
             self._signal_group(signal.SIGTERM)
             gone = self._wait_gone(self.GRACE_TERM)
@@ -836,7 +911,7 @@ class Runner:
                 self.error = ("pid %d ignored SIGINT (%.0f s) and SIGTERM "
                               "(%.0f s); the workbench never sends SIGKILL "
                               "(it can take a board off the USB bus)"
-                              % (self.pid, self.GRACE_INT, self.GRACE_TERM))
+                              % (self.pid, grace_int, self.GRACE_TERM))
                 print("runner: STUCK -- %s" % self.error, flush=True)
             return self.state
 
@@ -858,6 +933,7 @@ class Runner:
                                            - time.monotonic() + 0.999)),
                     "recipe": r["name"] if r else None,
                     "title": r.get("title") if r else None,
+                    "params": self.params if r else {},
                     "opens": r.get("opens") if r else None,
                     "error": self.error,
                     "pid": self.pid if self.state not in ("idle",) else None,
@@ -1008,14 +1084,18 @@ def make_handler(cfg, runner: Runner):
                                         "err": "%r is a guide card -- it "
                                         "documents a procedure, there is "
                                         "nothing to run" % name})
+            extra, picks, perr = resolve_params(recipe, body.get("params"))
+            if perr:
+                return self._json(400, {"ok": False, "err": perr})
             needed = {b["by_id"] for b in recipe["boards"]}
             states = [b for b in pf["boards"] if b["by_id"] in needed]
             try:
-                runner.start(recipe, states)
+                runner.start(recipe, states, extra_argv=extra, params=picks)
             except StartRefused as e:
                 print("runner: REFUSED %s -- %s" % (name, e), flush=True)
                 return self._json(409, {"ok": False, "err": str(e)})
-            return self._json(200, {"ok": True, "state": "starting"})
+            return self._json(200, {"ok": True, "state": "starting",
+                                    "params": picks})
 
         def _devmode(self):
             state = runner.stop(reason="dev mode requested")

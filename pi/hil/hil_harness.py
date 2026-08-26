@@ -142,10 +142,95 @@ def iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
+def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0):
+    """One frame's scoring: visibility filter, edge filter, greedy IOU
+    match, and the pixel-floor IGNORE semantics.
+
+    THE single source of truth — the post-pass (score_pending) and the
+    live monitor counters (E6) both call this, so the number on the
+    page and the number in rows.jsonl can never disagree.
+
+    Returns {"boxes","gt_cam","dets","pairs","n_match","gt_px"} plus,
+    when min_gt_px > 0, {"n_gt_floor","n_match_floor","n_false_floor"}.
+    """
+    # VISIBILITY FILTER (markers-at-box-D setup): the camera sees only
+    # part of the still, so GT outside the frame must not score as
+    # misses — keep only GT boxes fully inside the camera frame (2 px
+    # margin), and symmetrically drop detections touching the edge.
+    m = 2.0
+    vis = [(b, g) for b, g in
+           ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
+            for b in boxes)
+           if g[0] >= -m and g[1] >= -m
+           and g[2] <= cam_w + m and g[3] <= cam_h + m]
+    boxes_vis = [b for b, _g in vis]
+    gt_cam = [g for _b, g in vis]
+    if len(dets):
+        keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
+                & (dets[:, 2] < cam_w - m)
+                & (dets[:, 3] < cam_h - m))
+        dets = dets[keep]
+    used = set()
+    match = 0
+    pairs = {}                  # det idx -> matched gt idx
+    order = np.argsort(-dets[:, 4]) if len(dets) else []
+    for di in order:
+        best, best_j = 0.0, -1
+        for j, g in enumerate(gt_cam):
+            if j not in used:
+                v = iou(dets[di][:4], g)
+                if v > best:
+                    best, best_j = v, j
+        if best >= MATCH_IOU:
+            used.add(best_j)
+            pairs[int(di)] = best_j
+            match += 1
+    gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1) for g in gt_cam]
+    out = {"boxes": boxes_vis, "gt_cam": gt_cam, "dets": dets,
+           "pairs": pairs, "n_match": match, "gt_px": gt_px}
+    if min_gt_px > 0:
+        # pixel floor, COCO-style IGNORE semantics: sub-floor GT never
+        # count as misses, and detections matched to them leave the
+        # false count (deleting them from GT instead would flip correct
+        # small detections into falses)
+        kept = {j for j in range(len(gt_cam)) if gt_px[j] >= min_gt_px}
+        out["n_gt_floor"] = len(kept)
+        out["n_match_floor"] = sum(1 for j in pairs.values() if j in kept)
+        out["n_false_floor"] = int(len(dets)) - len(pairs)
+    return out
+
+
 # ------------------------------------------------------------ board stream
 # BoardStream (the #I/#PH/#W/#F wire parser) moved to hil_protocol.py in
 # bite E4 so the fake-board test suite covers it; it now wraps an
 # already-started SerialBoard.
+
+
+def start_stream(port, script, label=""):
+    """One serial attach with ONE retry for the raw-repl refusal.
+
+    Measured 2026-08-26 (N6, first card start after a prior run's
+    teardown): SerialBoard.start raised TransportError('could not
+    enter raw repl') on two consecutive card starts, then a manual
+    attach minutes later succeeded first try — a transient
+    first-attach state, same class as the sterile-stream retry at the
+    call sites. One bounded retry, never a loop (ae3-board-access).
+    TransportError is NOT an OSError (n6_stream_host's supervisor
+    note), so the attach boundary catches broadly."""
+    try:
+        return BoardStream(SerialBoard(port).start(script))
+    except Exception as e:
+        print(f"    {label}: first attach refused ({e}) — one retry "
+              f"once the port settles")
+        # the failed attach's soft reset can RE-ENUMERATE the device
+        # (measured AE3 2026-08-26: by-id link vanished and came back
+        # ~30 s later; the 5 s retry hit 'failed to access') — wait,
+        # bounded, for the node to exist again before the one retry
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline and not os.path.exists(port):
+            time.sleep(0.5)
+        time.sleep(5)
+        return BoardStream(SerialBoard(port).start(script))
 
 
 def frame_detections(fr):
@@ -221,6 +306,9 @@ class _BoardRun:
         self.Hinv = None
         self.cam_w, self.cam_h = 640, 400
         self.last_frame = None        # (obj, dets) awaiting attribution
+        # E6 live accuracy: running totals fed to the monitor per scored
+        # frame via match_frame — the SAME function the post-pass uses
+        self.live = {"gt": 0, "match": 0, "false": 0}
 
 
 def run_closed_loop(args, playback, out_dir):
@@ -246,8 +334,14 @@ def run_closed_loop(args, playback, out_dir):
     for p in phases:
         bp = {"kind": p["kind"], "frames": 0}     # 0 = until told (E4)
         if p["kind"] == "model":
+            # jpeg True (E7): the board now encodes AFTER the last tile,
+            # in place in the frame buffer — zero heap beside the model
+            # (probe 2026-08-26) — so every scored frame carries the
+            # camera view and the panels track the run live. E4's
+            # jpeg:False was the full-payload-beside-model caution; the
+            # in-place path removes that class by construction.
             bp.update({"model": p["model"], "mode": p["mode"],
-                       "jpeg": False})
+                       "jpeg": True})
         board_phases.append(bp)
     mode = "review" if args.review else "auto"
     script = ("_CFG = " + repr({"framesize": args.framesize,
@@ -285,14 +379,14 @@ def run_closed_loop(args, playback, out_dir):
     streams = {}
     runs = {lb: _BoardRun(lb) for lb in labels}
     for lb, port in board_list:
-        bs = BoardStream(SerialBoard(port).start(script))
+        bs = start_stream(port, script, label=lb)
         ev0, obj0 = bs.next_event(timeout_s=60)
         if ev0 == "end":
             print(f"    {lb}: first attach died sterile "
                   f"({obj0.get('reason')}) — one retry in 5 s")
             bs.stop()
             time.sleep(5)
-            bs = BoardStream(SerialBoard(port).start(script))
+            bs = start_stream(port, script, label=lb)
             ev0, obj0 = bs.next_event(timeout_s=60)
         streams[lb] = bs
         evq.put((lb, ev0, obj0))
@@ -423,13 +517,32 @@ def run_closed_loop(args, playback, out_dir):
                 if any(obj["dropped"]):
                     print(f"    NOTE {lb} seq {obj['seq']}: cell cap "
                           f"dropped {obj['dropped']} (dense frame)")
+                acc = None
+                if r.H is not None:
+                    mf = match_frame(dets, boxes, r.H, r.cam_w, r.cam_h,
+                                     args.min_gt_px)
+                    lv = r.live
+                    if args.min_gt_px > 0:
+                        lv["gt"] += mf["n_gt_floor"]
+                        lv["match"] += mf["n_match_floor"]
+                        lv["false"] += mf["n_false_floor"]
+                    else:
+                        lv["gt"] += len(mf["boxes"])
+                        lv["match"] += mf["n_match"]
+                        lv["false"] += int(len(mf["dets"])) - mf["n_match"]
+                    denom = lv["match"] + lv["false"]
+                    acc = {"recall": round(lv["match"] / lv["gt"], 3)
+                           if lv["gt"] else None,
+                           "prec": round(lv["match"] / denom, 3)
+                           if denom else None,
+                           "gt": lv["gt"], "floor": args.min_gt_px}
                 inf_ms = round(sum(obj["inf_us"]) / 1000, 1)
                 e2e_ms = round((obj["cap_us"] + sum(obj["prep_us"])
                                 + sum(obj["inf_us"])
                                 + sum(obj["dec_us"])) / 1000, 1)
                 mon.set_board(
                     lb, n_det=int(len(dets)), inf_ms=inf_ms,
-                    e2e_ms=e2e_ms,
+                    e2e_ms=e2e_ms, acc=acc,
                     # float() every value: numpy float32 leaking into the
                     # monitor state killed /api/monitor with an empty
                     # reply on the first live run (json can't dump it)
@@ -459,6 +572,7 @@ def run_closed_loop(args, playback, out_dir):
             elif kind == "finish":
                 pass                              # con.done ends the loop
 
+    aborted = False
     try:
         while not con.done:
             now = time.monotonic()
@@ -501,6 +615,9 @@ def run_closed_loop(args, playback, out_dir):
                 execute(con.on_tick(now))
                 update_monitor()
     except KeyboardInterrupt:
+        # Stop means stop (E5): the workbench wrapper sends ONE SIGINT
+        # and waits — score, skip the review park, exit
+        aborted = True
         print("\n    interrupted — ending boards cleanly, scoring what "
               "was collected")
         for lb in labels:
@@ -515,7 +632,12 @@ def run_closed_loop(args, playback, out_dir):
                 streams[lb].stop()
             except Exception:
                 pass
-        playback.set(mode="loop")
+        try:
+            playback.set(mode="loop")
+        except OSError:
+            # a dead playback must not abort scoring (partial failure
+            # never destroys good data)
+            print("    (playback gone — loop-mode reset skipped)")
         if power_proc is not None:
             power_proc.terminate()
             try:
@@ -539,9 +661,11 @@ def run_closed_loop(args, playback, out_dir):
     cells_fh.close()
     mon.set_run({**snap, "stage": "finished"})
     print(f"\nrows: {rows_path}")
-    print("    monitor page stays up until Ctrl-C"
-          if args.review else "")
-    if args.review:
+    # after a COMPLETED review run the monitor stays up for reading;
+    # after an abort the stop was the instruction — exit now (a second
+    # SIGINT sent blind could land mid-scoring on the next run)
+    if args.review and not aborted:
+        print("    monitor page stays up until Ctrl-C")
         try:
             while True:
                 time.sleep(3600)
@@ -645,41 +769,9 @@ def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
     for p in pending:
         boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
         st = p["stats"]
-        # VISIBILITY FILTER (markers-at-box-D setup): the camera sees
-        # only part of the still, so GT outside the frame must not
-        # score as misses — keep only GT boxes fully inside the
-        # camera frame (2 px margin), and symmetrically drop
-        # detections touching the frame edge.
-        m = 2.0
-        vis = [(b, g) for b, g in
-               ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
-                for b in boxes)
-               if g[0] >= -m and g[1] >= -m
-               and g[2] <= cam_w + m and g[3] <= cam_h + m]
-        boxes = [b for b, _g in vis]
-        gt_cam = [g for _b, g in vis]
-        if len(dets):
-            keep = ((dets[:, 0] > m) & (dets[:, 1] > m)
-                    & (dets[:, 2] < cam_w - m)
-                    & (dets[:, 3] < cam_h - m))
-            dets = dets[keep]
-        used = set()
-        match = 0
-        pairs = {}                  # det idx -> matched gt idx
-        order = np.argsort(-dets[:, 4]) if len(dets) else []
-        for di in order:
-            best, best_j = 0.0, -1
-            for j, g in enumerate(gt_cam):
-                if j not in used:
-                    v = iou(dets[di][:4], g)
-                    if v > best:
-                        best, best_j = v, j
-            if best >= MATCH_IOU:
-                used.add(best_j)
-                pairs[int(di)] = best_j
-                match += 1
-        gt_px = [round(min(g[2] - g[0], g[3] - g[1]), 1)
-                 for g in gt_cam]
+        mf = match_frame(dets, boxes, H, cam_w, cam_h, args.min_gt_px)
+        boxes, gt_cam, dets = mf["boxes"], mf["gt_cam"], mf["dets"]
+        pairs, match, gt_px = mf["pairs"], mf["n_match"], mf["gt_px"]
         row = {"board": label, "phase": st["phase"],
                "still": p["still"],
                "frame_in_still": p["frame_in_still"],
@@ -695,17 +787,10 @@ def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
                "dets_cam": [[round(float(v), 1) for v in d[:5]]
                             for d in dets]}
         if args.min_gt_px > 0:
-            # pixel floor, COCO-style IGNORE semantics: sub-floor GT
-            # never count as misses, and detections matched to them
-            # leave the false count (deleting them from GT instead
-            # would flip correct small detections into falses)
-            fl = args.min_gt_px
-            kept = {j for j in range(len(gt_cam))
-                    if gt_px[j] >= fl}
-            m_f = sum(1 for j in pairs.values() if j in kept)
-            false_f = int(len(dets)) - len(pairs)
-            row.update({"floor_px": fl, "n_gt_floor": len(kept),
-                        "n_match_floor": m_f, "n_false_floor": false_f})
+            row.update({"floor_px": args.min_gt_px,
+                        "n_gt_floor": mf["n_gt_floor"],
+                        "n_match_floor": mf["n_match_floor"],
+                        "n_false_floor": mf["n_false_floor"]})
         rows_fh.write(json.dumps(row) + "\n")
         st["gt"] += len(boxes)
         st["det"] += int(len(dets))
@@ -808,7 +893,7 @@ def run_board(label, port, args, playback, out_dir):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"    power logger up (pid {power_proc.pid})")
 
-    bs = BoardStream(SerialBoard(port).start(script))
+    bs = start_stream(port, script, label=label)
     # the FIRST attach after a board crash-reset tends to die instantly
     # (the soft reset re-enumerates the port under the fresh connection);
     # one retry, only when the stream produced NOTHING
@@ -818,7 +903,7 @@ def run_board(label, port, args, playback, out_dir):
               f"one retry in 5 s")
         bs.stop()
         time.sleep(5)
-        bs = BoardStream(SerialBoard(port).start(script))
+        bs = start_stream(port, script, label=label)
         ev0, obj0 = bs.next_event(timeout_s=60)
     first_event = (ev0, obj0)
     rows_path = os.path.join(out_dir, "rows.jsonl")
@@ -940,7 +1025,10 @@ def run_board(label, port, args, playback, out_dir):
         if stats:
             summary.append(stats)
         bs.stop()
-        playback.set(mode="loop")
+        try:
+            playback.set(mode="loop")
+        except OSError:
+            print("    (playback gone — loop-mode reset skipped)")
         if power_proc is not None:
             power_proc.terminate()
             try:
