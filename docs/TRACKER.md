@@ -2085,7 +2085,11 @@ any urchin labelling effort is spent.
       32 GB Mac into 14 GB of swap — lean is the config of record).
       Full-run pricing at this pace: 60–120 epochs ≈ 4.6–9.1 days
       Mac-bound (dataloader workers + a one-time image pre-resize
-      shave ~20–40%). NICK'S GO/NO-GO PENDING.** *(original capture follows)*
+      shave ~20–40%). NICK'S GO/NO-GO PENDING. Staged
+      curve (EMA ckpt, same ruler): e1 0.715 → e5/6 **0.772** (morning
+      2026-08-26; ~6 epochs overnight, lean config, paused by Nick).
+      Crossing YOLOX-S's 0.800 final looks likely within a few more
+      epochs — the Monterey label-test viewer triggers at ≥0.80.** *(original capture follows)*
       **(captured 2026-08-25, Nick's ask during the E2 session).** Evaluate RF-DETR (Apache-2.0, incl.
       DINOv2 backbone weights — capture the license text verbatim per
       the S26 rule before it becomes load-bearing) as the MAC-SIDE
