@@ -2238,6 +2238,34 @@ any urchin labelling effort is spent.
       reviewed count, a review run steps through the new stills with
       GT drawn, and prior-run rows still reference stills that exist.
 
+- [ ] **Bite E11 — distortion-aware calibration (fast-follow, Nick
+      2026-08-26): the N6's barrel distortion is VISIBLE in the
+      aim-box view (nested rectangles bow outward; AE3 near-straight)
+      and the 4-corner DLT cannot model it — exact at the markers,
+      blind mid-field, which is where the urchins are. At 30-40 px
+      targets a few-px mid-field error erodes IOU-0.30 matches, so
+      distortion artificially drops the N6's recall AND precision
+      (the suspected driver of the flagged N6-HD low cell; the E8
+      IOU-0.20-vs-0.30 discriminator on saved rows can size the
+      effect before the fix is built).** Scope: calib pattern 4→9
+      markers (corners + edge mids + center; playback_server MARKERS
+      + the LCD client — NOTE hil-lcd runs an INSTALLED copy, sudo cp
+      + restart on deploy); find_markers generalized to 9 local
+      peaks; solve H + radial k1 by least squares; map_still_box /
+      dets_to_still_frac through the distortion-aware transform;
+      synthetic-k1 round-trip host test. The fitted k1 prints per
+      camera per calibration — a lens-quality meter for Nick's
+      upcoming better-lens test. Layer-cake honesty: this fixes the
+      MEASUREMENT; the model still sees distorted pixels (edge
+      urchins genuinely harder) — `img.lens_corr()` on-board fixes
+      both layers but costs per-frame time at HD and changes the
+      model's input mid-experiment; evaluate inside the bite, not
+      default. Software support stands regardless of the lens swap
+      (Nick's call). *Verifiable:* calib residual (px RMS at the 9
+      markers + a held-out check) reported per camera before/after;
+      an N6 HD leg re-scored with the new transform, delta reported
+      next to the E8 IOU discriminator's prediction.
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
