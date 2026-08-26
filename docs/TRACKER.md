@@ -2186,9 +2186,29 @@ any urchin labelling effort is spent.
       grabs pressed, and the AE3 finishes the run; the grab-kill
       repro no longer exists on the page.
 
-- [ ] **Bite E8 — review page display controls + finish summary
-      (captured 2026-08-26, Nick's UI asks 1/3/5; one page-side bite,
-      monitor only, no board contact).**
+- [~] **Bite E8 — review page display controls + finish summary —
+      CODE + HOST TESTS DONE 2026-08-26 (branch
+      `claude/s8-e8-display-controls`, commit 817dcef); BENCH
+      ACCEPTANCE BLOCKED mid-deploy: nereus000 dropped off the network
+      (ping/http/ssh all dead, nereus001 unresolvable — the known drop
+      class; E4 saw the same, cleared by power-cycle). Delivered:
+      layer toggles (GT + per-board, lightbox-honored), px-floor
+      filter (threshold input + AE3/N6-terms selector + hide toggle,
+      sub-floor GT dashed+dimmed with its px printed), RUN COMPLETE
+      scored-summary card + summary.json (from the rows.jsonl
+      post-pass), match_frame iou_thr param, and hil_rescore.py (the
+      IOU discriminator / E11 instrument; synthetic-fixture tested:
+      known counts at 0.30 vs 0.20). RESUMED same night via the LAN IP
+      (192.168.1.163 — the drop was name-resolution, not the Pi): Pi
+      scoring suite 8/8, and the **DISCRIMINATOR CONVICTED THE N6
+      LENS — IOU 0.30→0.20 recall jump N6 +0.151/+0.148 on BOTH saved
+      HD runs vs AE3 +0.012 flat** (E11's prediction: distortion-aware
+      calib alone recovers the N6 to ~0.59/0.41 at strict IOU; the
+      remaining gap to AE3 0.77 is real detection difference — the
+      lens/glare class, Nick's better-lens test). PR open. OWED: Nick's
+      UI eyeball of the new controls on his next card run (his live
+      run predated the E8 page).
+      *(original capture follows)*
       **(a) Box-layer toggles:** per-layer on/off for GT / N6 / AE3
       boxes on the still view, honored in the lightbox zoom too — see
       the reference image bare, or any one board's boxes alone.
