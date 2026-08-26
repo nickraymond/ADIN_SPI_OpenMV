@@ -119,6 +119,21 @@ class TestSchema(unittest.TestCase):
         out, errs = errs_of(recipe(run={"argv": ["x"], "cmd": "y"}))
         self.assertIsNone(out)
 
+    def test_stop_grace_validated(self):
+        for bad in (0, -1, workbench.STOP_GRACE_MAX + 1, "40", 40.5, True):
+            out, errs = errs_of(recipe(run={"argv": ["x"],
+                                            "stop_grace": bad}))
+            self.assertIsNone(out, bad)
+            self.assertTrue(any("stop_grace" in e for e in errs), errs)
+        out, errs = errs_of(recipe(run={"argv": ["x"], "stop_grace": 40}))
+        self.assertEqual(errs, [])
+        self.assertEqual(out["run"]["stop_grace"], 40)
+
+    def test_stop_grace_defaults_to_absent(self):
+        out, errs = errs_of(recipe(run={"argv": ["x"]}))
+        self.assertEqual(errs, [])
+        self.assertIsNone(out["run"]["stop_grace"])
+
     def test_model_sha256_validated(self):
         def boards(sha):
             return [{"label": "AE3", "by_id": "usb-x", "models": [
@@ -338,6 +353,23 @@ class TestShippedRecipes(unittest.TestCase):
         for b in r["boards"]:
             self.assertIsNone(b["firmware"])
             self.assertEqual(b["models"], [])
+
+    def test_hil_review_cards_run_the_wrapper_with_stop_grace(self):
+        # E5: the one-click cards. Same boards as s8-hil-urchin (the
+        # lock + settle ride on them), the wrapper as argv, a stop
+        # grace that covers abort-time scoring, LIVE gated on the
+        # monitor page. Board-identity/phase agreement with the wrapper
+        # is pinned in pi/hil/test_hil_review_run.py.
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        by_name = {x["name"]: x for x in recipes}
+        urchin = {b["by_id"] for b in by_name["s8-hil-urchin"]["boards"]}
+        for name in ("s8-hil-review-nano", "s8-hil-review-tiny"):
+            r = by_name[name]
+            self.assertIn("pi/hil/hil_review_run.py", r["run"]["argv"], name)
+            self.assertEqual({b["by_id"] for b in r["boards"]}, urchin, name)
+            self.assertGreaterEqual(r["run"]["stop_grace"], 40, name)
+            self.assertIn(":8092", r["health"]["http"], name)
+            self.assertIn("hil-lcd.service", r["services"], name)
 
 
 class FakeBench:
@@ -619,6 +651,24 @@ class TestRunner(unittest.TestCase):
     def test_recipe_without_run_refused(self):
         with self.assertRaises(StartRefused):
             self.r.start(run_recipe(SLEEPER, run=None), READY)
+
+    def test_stop_honors_recipe_stop_grace(self):
+        # A SIGINT-deaf child + a declared stop_grace: the runner must
+        # wait the RECIPE's grace before escalating to SIGTERM (the HIL
+        # review wrapper scores + writes overlays inside that window).
+        deaf = [sys.executable, "-c",
+                "import signal, time\n"
+                "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+                "time.sleep(60)"]
+        self.r.GRACE_INT = 0.05
+        rec = run_recipe(deaf)
+        rec["run"]["stop_grace"] = 1
+        self.r.start(rec, READY)
+        self.wait_state("live")
+        time.sleep(0.3)  # let the child install its handler
+        t0 = time.monotonic()
+        self.assertEqual(self.r.stop(), "idle")
+        self.assertGreaterEqual(time.monotonic() - t0, 0.9)
 
     def test_stubborn_child_goes_stuck_never_sigkill(self):
         self.r.start(run_recipe(STUBBORN), READY)

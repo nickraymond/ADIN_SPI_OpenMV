@@ -1,0 +1,28 @@
+# s8_hil_review_tiny.toml -- S8 bite E5: one-click closed-loop HIL review, TINY.
+#
+# Identical to s8_hil_review_nano.toml except the phase list -- picking a
+# card IS picking the model (Nick's option A, 2026-08-25). See the nano
+# card for the design notes; test_hil_review_run.py pins the two cards
+# and the wrapper's board identities together.
+
+name = "s8-hil-review-tiny"
+title = "HIL review — closed loop (tiny)"
+summary = "One click: playback screen + closed-loop harness in review mode, tiny-tiled (the blur-ft deployment), both boards, 30 px GT floor. Review detections at :8092 (Pause/Next/Auto/Abort); Stop scores what was collected and releases the ports. Artifacts land under ~/hil_runs/. From sprint S8 bite E5."
+opens = ":8092"
+services = ["hil-lcd.service"]
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+
+[run]
+argv = ["python3", "-u", "pi/hil/hil_review_run.py", "--phases", "tiny-tiled"]
+cwd = "."
+stop_grace = 40
+
+[health]
+http = "http://127.0.0.1:8092/"

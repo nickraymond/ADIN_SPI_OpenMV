@@ -69,7 +69,8 @@ TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
             "boards", "run", "health", "guide"}
 BOARD_KEYS = {"label", "by_id", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
-RUN_KEYS = {"argv", "cwd"}
+RUN_KEYS = {"argv", "cwd", "stop_grace"}
+STOP_GRACE_MAX = 120
 HEALTH_KEYS = {"http"}
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -205,13 +206,25 @@ def validate_recipe(obj, source):
             errs.append("%s: must be a table" % where)
         else:
             _unknown(r, RUN_KEYS, where, errs)
+            # stop_grace: seconds the runner waits after SIGINT before
+            # escalating (default Runner.GRACE_INT). For children whose
+            # clean stop does real work -- the HIL review wrapper scores
+            # collected frames and writes overlays before exiting.
+            sg = r.get("stop_grace")
+            if sg is not None and (isinstance(sg, bool)
+                                   or not isinstance(sg, int)
+                                   or not 1 <= sg <= STOP_GRACE_MAX):
+                errs.append("%s: stop_grace must be an integer 1..%d "
+                            "(seconds)" % (where, STOP_GRACE_MAX))
+                sg = None
             argv = r.get("argv")
             if (not isinstance(argv, list) or not argv
                     or not all(isinstance(a, str) and a for a in argv)):
                 errs.append("%s: argv must be a non-empty array of "
                             "non-empty strings" % where)
             else:
-                run = {"argv": argv, "cwd": r.get("cwd", ".")}
+                run = {"argv": argv, "cwd": r.get("cwd", "."),
+                       "stop_grace": sg}
 
     health = None
     if "health" in obj:
@@ -814,9 +827,14 @@ class Runner:
             if self.state not in ("starting", "live"):
                 return self.state
             self.state = "stopping"
-        print("runner: stopping (%s)" % reason, flush=True)
+            # a recipe whose clean stop does real work (the HIL review
+            # wrapper scores + writes overlays) declares its own grace
+            run = (self.recipe or {}).get("run") or {}
+            grace_int = run.get("stop_grace") or self.GRACE_INT
+        print("runner: stopping (%s; SIGINT grace %.0f s)"
+              % (reason, grace_int), flush=True)
         self._signal_group(signal.SIGINT)
-        gone = self._wait_gone(self.GRACE_INT)
+        gone = self._wait_gone(grace_int)
         if not gone:
             self._signal_group(signal.SIGTERM)
             gone = self._wait_gone(self.GRACE_TERM)
@@ -836,7 +854,7 @@ class Runner:
                 self.error = ("pid %d ignored SIGINT (%.0f s) and SIGTERM "
                               "(%.0f s); the workbench never sends SIGKILL "
                               "(it can take a board off the USB bus)"
-                              % (self.pid, self.GRACE_INT, self.GRACE_TERM))
+                              % (self.pid, grace_int, self.GRACE_TERM))
                 print("runner: STUCK -- %s" % self.error, flush=True)
             return self.state
 

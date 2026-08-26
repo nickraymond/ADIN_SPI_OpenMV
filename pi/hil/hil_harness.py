@@ -459,6 +459,7 @@ def run_closed_loop(args, playback, out_dir):
             elif kind == "finish":
                 pass                              # con.done ends the loop
 
+    aborted = False
     try:
         while not con.done:
             now = time.monotonic()
@@ -501,6 +502,9 @@ def run_closed_loop(args, playback, out_dir):
                 execute(con.on_tick(now))
                 update_monitor()
     except KeyboardInterrupt:
+        # Stop means stop (E5): the workbench wrapper sends ONE SIGINT
+        # and waits — score, skip the review park, exit
+        aborted = True
         print("\n    interrupted — ending boards cleanly, scoring what "
               "was collected")
         for lb in labels:
@@ -515,7 +519,12 @@ def run_closed_loop(args, playback, out_dir):
                 streams[lb].stop()
             except Exception:
                 pass
-        playback.set(mode="loop")
+        try:
+            playback.set(mode="loop")
+        except OSError:
+            # a dead playback must not abort scoring (partial failure
+            # never destroys good data)
+            print("    (playback gone — loop-mode reset skipped)")
         if power_proc is not None:
             power_proc.terminate()
             try:
@@ -539,9 +548,11 @@ def run_closed_loop(args, playback, out_dir):
     cells_fh.close()
     mon.set_run({**snap, "stage": "finished"})
     print(f"\nrows: {rows_path}")
-    print("    monitor page stays up until Ctrl-C"
-          if args.review else "")
-    if args.review:
+    # after a COMPLETED review run the monitor stays up for reading;
+    # after an abort the stop was the instruction — exit now (a second
+    # SIGINT sent blind could land mid-scoring on the next run)
+    if args.review and not aborted:
+        print("    monitor page stays up until Ctrl-C")
         try:
             while True:
                 time.sleep(3600)
@@ -940,7 +951,10 @@ def run_board(label, port, args, playback, out_dir):
         if stats:
             summary.append(stats)
         bs.stop()
-        playback.set(mode="loop")
+        try:
+            playback.set(mode="loop")
+        except OSError:
+            print("    (playback gone — loop-mode reset skipped)")
         if power_proc is not None:
             power_proc.terminate()
             try:
