@@ -15,7 +15,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import numpy as np
-    from hil_harness import match_frame, STILL_W, STILL_H
+    from hil_harness import (CamMap, find_markers, map_still_box,
+                             match_frame, solve_cam_map,
+                             solve_homography, STILL_W, STILL_H)
     HAVE_DEPS = True
 except ImportError:
     HAVE_DEPS = False
@@ -110,6 +112,111 @@ class TestMatchFrame(unittest.TestCase):
         self.assertIn(1, mf["pairs"])              # det idx 1 = conf 0.9
 
 
+# The 9-marker grid playback_server serves (row-major), and a plausible
+# camera geometry: box D fills most of a 640x400 frame with mild
+# perspective — the E11 synthetic fixture.
+SRC9 = [(x, y) for y in (0.15, 0.5, 0.85) for x in (0.185, 0.5, 0.815)]
+DST4 = [(41.0, 28.0), (601.0, 44.0), (588.0, 371.0), (52.0, 355.0)]
+
+
+def synthetic_cam(k1):
+    """A ground-truth CamMap with known H (from 4 plausible corner
+    correspondences) and known k1, plus its 9 observed marker px."""
+    import math
+    src4 = [SRC9[0], SRC9[2], SRC9[8], SRC9[6]]     # TL TR BR BL
+    H = solve_homography(np.array(src4), np.array(DST4))
+    M = CamMap(H, k1, 320.0, 200.0, math.hypot(640, 400) / 2)
+    return M, M.frac_to_cam(np.array(SRC9))
+
+
+@unittest.skipUnless(HAVE_DEPS, "numpy not installed on this host")
+class TestCamMapSolver(unittest.TestCase):
+    """E11: the H + radial-k1 fit and its distortion model."""
+
+    def test_distort_undistort_round_trip(self):
+        M = CamMap(np.eye(3), -0.25, 320.0, 200.0, 377.4)
+        pts = np.array([[10.0, 20.0], [320.0, 200.0], [600.0, 380.0]])
+        self.assertLess(np.abs(M.undistort(M.distort(pts)) - pts).max(),
+                        1e-6)
+
+    def test_solver_recovers_known_k1(self):
+        # barrel distortion of the N6 class: solver must find k1 and a
+        # map that reproduces the observed markers to sub-pixel
+        M_true, dst9 = synthetic_cam(-0.18)
+        M, diag = solve_cam_map(SRC9, dst9, 640, 400)
+        self.assertLess(abs(M.k1 - (-0.18)), 0.02)
+        self.assertLess(diag["rms_px"], 0.2)
+        err = np.abs(M.frac_to_cam(np.array(SRC9)) - dst9).max()
+        self.assertLess(err, 0.5)
+
+    def test_zero_distortion_stays_zero(self):
+        # a straight lens (the AE3 class) must not grow a fake k1
+        _, dst9 = synthetic_cam(0.0)
+        M, diag = solve_cam_map(SRC9, dst9, 640, 400)
+        self.assertLess(abs(M.k1), 0.01)
+        self.assertLess(diag["rms_px"], 0.2)
+
+    def test_dlt4_midfield_error_is_the_before_number(self):
+        # on a distorted camera the old 4-corner exact DLT must show a
+        # clearly worse mid-field error than the k1-aware fit
+        _, dst9 = synthetic_cam(-0.18)
+        _, diag = solve_cam_map(SRC9, dst9, 640, 400)
+        self.assertGreater(diag["dlt4_mid_rms_px"], 2.0)
+        self.assertGreater(diag["dlt4_mid_rms_px"],
+                           10 * max(diag["rms_px"], 0.01))
+
+    def test_legacy_H_wrap_matches_plain_projective_math(self):
+        # a bare 3x3 H through map_still_box == the pre-E11 math
+        box = map_still_box(H_identity(), 100, 100, 50, 80)
+        self.assertAlmostEqual(box[0], 100.0)
+        self.assertAlmostEqual(box[1], 100.0)
+        self.assertAlmostEqual(box[2], 150.0)
+        self.assertAlmostEqual(box[3], 180.0)
+
+    def test_cam_map_json_round_trip(self):
+        M_true, _ = synthetic_cam(-0.18)
+        M2 = CamMap.from_dict(json.loads(json.dumps(M_true.to_dict())))
+        pts = np.array(SRC9)
+        self.assertLess(np.abs(M2.frac_to_cam(pts)
+                               - M_true.frac_to_cam(pts)).max(), 1e-9)
+
+
+@unittest.skipUnless(HAVE_DEPS, "numpy not installed on this host")
+class TestFindMarkers9(unittest.TestCase):
+    def test_nine_centroids_row_major_order(self):
+        # 9 bright squares, one per 3x3 cell, at known centers; the
+        # black frame carries mild room glow that subtraction removes
+        h, w = 400, 640
+        black = np.full((h, w), 6.0, np.float32)
+        calib = black.copy()
+        centers = []
+        for r in range(3):
+            for c in range(3):
+                cx = int(w * (c + 0.5) / 3) + (5 * (c - 1))
+                cy = int(h * (r + 0.5) / 3) + (4 * (r - 1))
+                calib[cy - 6:cy + 7, cx - 6:cx + 7] = 250.0
+                centers.append((cx, cy))
+        cents = find_markers(calib, black)
+        self.assertEqual(len(cents), 9)
+        for (mx, my), (ex, ey) in zip(cents, centers):
+            self.assertLess(abs(mx - ex), 1.0)
+            self.assertLess(abs(my - ey), 1.0)
+
+    def test_dark_cell_fails_loud_with_cell_name(self):
+        h, w = 400, 640
+        black = np.zeros((h, w), np.float32)
+        calib = black.copy()
+        for r in range(3):
+            for c in range(3):
+                if (r, c) == (1, 1):
+                    continue                        # center marker dark
+                cx, cy = int(w * (c + 0.5) / 3), int(h * (r + 0.5) / 3)
+                calib[cy - 6:cy + 7, cx - 6:cx + 7] = 250.0
+        with self.assertRaises(SystemExit) as ctx:
+            find_markers(calib, black)
+        self.assertIn("CC", str(ctx.exception))
+
+
 @unittest.skipUnless(HAVE_DEPS, "numpy not installed on this host")
 class TestRescore(unittest.TestCase):
     """hil_rescore against a synthetic run dir with known counts."""
@@ -150,6 +257,18 @@ class TestRescore(unittest.TestCase):
         # loose: both match — the "recall jump" the discriminator reads
         self.assertEqual(out[("A", 0.20)],
                          {"gt": 2, "match": 2, "false": 0, "frames": 2})
+
+    def test_calib_json_preferred_over_legacy_npy(self):
+        # E11: an identity calib json beside a WRONG npy — counts must
+        # follow the identity mapping, proof the k1-aware json wins
+        import hil_rescore
+        with open(os.path.join(self.dir, "calib_A.json"), "w") as fh:
+            json.dump(CamMap(H_identity()).to_dict(), fh)
+        np.save(os.path.join(self.dir, "H_A.npy"),
+                np.diag([2.0, 2.0, 1.0]))
+        out, _ = hil_rescore.rescore(self.dir, self.stills, [0.30], 30.0)
+        self.assertEqual(out[("A", 0.30)],
+                         {"gt": 2, "match": 1, "false": 1, "frames": 2})
 
 
 if __name__ == "__main__":

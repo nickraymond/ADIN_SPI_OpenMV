@@ -34,8 +34,8 @@ import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from hil_harness import (MATCH_IOU, iou, load_reviewed,  # noqa: E402
-                         map_still_box)
+from hil_harness import (MATCH_IOU, iou, load_cam_maps,  # noqa: E402
+                         load_reviewed, map_still_box)
 
 PX_BINS = [(0, 24), (24, 32), (32, 48), (48, 64), (64, 10 ** 9)]
 PX_LABELS = ["<24", "24-32", "32-48", "48-64", "64+"]
@@ -81,9 +81,8 @@ def rematch(row, boxes, H, cam_w, cam_h):
 def load_run(run_dir, stills_dir):
     rows = [json.loads(ln) for ln in
             open(os.path.join(run_dir, "rows.jsonl"))]
-    H = {}
-    for p in glob.glob(os.path.join(run_dir, "H_*.npy")):
-        H[os.path.basename(p)[2:-4]] = np.load(p)
+    # k1-aware calib json preferred, bare-H npy legacy fallback (E11)
+    H = load_cam_maps(run_dir)
     power = []
     for p in sorted(glob.glob(os.path.join(run_dir, "power_*.jsonl"))):
         power += [json.loads(ln) for ln in open(p)]

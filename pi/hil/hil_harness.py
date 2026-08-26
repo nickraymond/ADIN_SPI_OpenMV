@@ -80,55 +80,199 @@ def jpeg_gray(jpg_bytes):
                       np.float32)
 
 
+MARKER_GRID = (("TL", "TM", "TR"), ("ML", "CC", "MR"), ("BL", "BM", "BR"))
+
+
 def find_markers(calib_gray, black_gray):
-    """4 marker centroids (camera px), TL/TR/BR/BL. The black-frame
-    subtraction kills the room; each camera-frame quadrant then holds
-    exactly one bright blob. Loud failure when a quadrant is dark."""
+    """9 marker centroids (camera px), ROW-MAJOR TL..BR — the same order
+    playback_server.MARKERS serves (E11). The black-frame subtraction
+    kills the room; the markers sit at aim-box-D corners/edge-mids/
+    center, so a correctly aimed camera puts exactly one bright blob in
+    each 3x3 cell of its frame. Loud failure names the dark cell."""
     diff = np.clip(calib_gray - black_gray, 0, None)
     h, w = diff.shape
-    cy, cx = h // 2, w // 2
-    quads = {"TL": (slice(0, cy), slice(0, cx)),
-             "TR": (slice(0, cy), slice(cx, w)),
-             "BR": (slice(cy, h), slice(cx, w)),
-             "BL": (slice(cy, h), slice(0, cx))}
+    ys = [0, h // 3, 2 * h // 3, h]
+    xs = [0, w // 3, 2 * w // 3, w]
     cents = []
-    for name in ("TL", "TR", "BR", "BL"):
-        ys, xs = quads[name]
-        q = diff[ys, xs]
-        peak = float(q.max())
-        if peak < 30:
-            raise SystemExit(
-                f"FAIL: calibration marker not visible in camera quadrant "
-                f"{name} (peak {peak:.0f} < 30) — is the camera aimed at "
-                f"the screen and the screen bright?")
-        m = np.where(q > 0.5 * peak, q, 0.0) ** 2
-        yy, xx = np.mgrid[0:q.shape[0], 0:q.shape[1]]
-        cents.append((float((xx * m).sum() / m.sum()) + xs.start,
-                      float((yy * m).sum() / m.sum()) + ys.start))
+    for r in range(3):
+        for c in range(3):
+            q = diff[ys[r]:ys[r + 1], xs[c]:xs[c + 1]]
+            peak = float(q.max())
+            if peak < 30:
+                raise SystemExit(
+                    f"FAIL: calibration marker not visible in camera cell "
+                    f"{MARKER_GRID[r][c]} (peak {peak:.0f} < 30) — is the "
+                    f"camera aimed at the screen and the screen bright?")
+            m = np.where(q > 0.5 * peak, q, 0.0) ** 2
+            yy, xx = np.mgrid[0:q.shape[0], 0:q.shape[1]]
+            cents.append((float((xx * m).sum() / m.sum()) + xs[c],
+                          float((yy * m).sum() / m.sum()) + ys[r]))
     return cents
 
 
 def solve_homography(src, dst):
-    """DLT, 4 exact correspondences: src (frac) -> dst (camera px)."""
+    """Least-squares DLT, N >= 4 correspondences (exact at 4):
+    src (frac) -> dst (camera px)."""
     A, b = [], []
     for (sx, sy), (dx, dy) in zip(src, dst):
         A.append([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy])
         b.append(dx)
         A.append([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy])
         b.append(dy)
-    h = np.linalg.solve(np.asarray(A, np.float64), np.asarray(b, np.float64))
+    h = np.linalg.lstsq(np.asarray(A, np.float64),
+                        np.asarray(b, np.float64), rcond=None)[0]
     return np.append(h, 1.0).reshape(3, 3)
 
 
-def map_still_box(H, x, y, w, h):
-    """Label box (still px 1920x1080) -> camera-px bounding box."""
+class CamMap:
+    """Still-fraction <-> camera-px mapping (E11): homography H plus ONE
+    radial distortion term k1 about the image center.
+
+        observed = c + (ideal - c) * (1 + k1 * r^2),  r = |ideal - c| / R
+
+    H maps still fractions to IDEAL (undistorted) camera px; distortion
+    is applied after H going forward, inverted before H^-1 coming back.
+    R = half-diagonal keeps k1 dimensionless and comparable across
+    framesizes — the per-lens meter Nick reads. k1=0 degenerates to the
+    pure DLT this replaces, so a legacy 3x3 H wraps losslessly."""
+
+    def __init__(self, H, k1=0.0, cx=0.0, cy=0.0, R=1.0):
+        self.H = np.asarray(H, np.float64)
+        self.Hinv = np.linalg.inv(self.H)
+        self.k1 = float(k1)
+        self.cx, self.cy, self.R = float(cx), float(cy), float(R)
+
+    def distort(self, pts):
+        pts = np.asarray(pts, np.float64)
+        if not self.k1:
+            return pts
+        p = pts - (self.cx, self.cy)
+        r2 = (p ** 2).sum(axis=1, keepdims=True) / self.R ** 2
+        return p * (1.0 + self.k1 * r2) + (self.cx, self.cy)
+
+    def undistort(self, pts, iters=8):
+        """Fixed-point inverse of distort — converges fast while
+        |k1| r^2 << 1, true of any usable lens."""
+        pts = np.asarray(pts, np.float64)
+        if not self.k1:
+            return pts
+        d = pts - (self.cx, self.cy)
+        u = d.copy()
+        for _ in range(iters):
+            r2 = (u ** 2).sum(axis=1, keepdims=True) / self.R ** 2
+            u = d / (1.0 + self.k1 * r2)
+        return u + (self.cx, self.cy)
+
+    def frac_to_cam(self, pts):
+        """Nx2 still fractions -> Nx2 OBSERVED camera px."""
+        pts = np.asarray(pts, np.float64)
+        p = (self.H @ np.hstack([pts, np.ones((len(pts), 1))]).T).T
+        return self.distort(p[:, :2] / p[:, 2:3])
+
+    def cam_to_frac(self, pts):
+        """Nx2 observed camera px -> Nx2 still fractions."""
+        u = self.undistort(pts)
+        p = (self.Hinv @ np.hstack([u, np.ones((len(u), 1))]).T).T
+        return p[:, :2] / p[:, 2:3]
+
+    def to_dict(self):
+        return {"H": self.H.tolist(), "k1": self.k1, "cx": self.cx,
+                "cy": self.cy, "R": self.R}
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(np.asarray(d["H"]), d["k1"], d["cx"], d["cy"], d["R"])
+
+
+def as_cam_map(M):
+    """Accept a CamMap or a legacy 3x3 H (k1=0)."""
+    return M if isinstance(M, CamMap) else CamMap(M)
+
+
+def _fit_k1(src, dst, cx, cy, R):
+    """Best (CamMap, rms_px) for src (frac) -> dst (observed px): 1-D
+    search over k1 (coarse grid + parabolic refine) with a least-squares
+    DLT inside each evaluation. numpy-only, deterministic."""
+
+    def fit(k1):
+        m = CamMap(np.eye(3), k1, cx, cy, R)
+        H = solve_homography(src, m.undistort(dst))
+        m = CamMap(H, k1, cx, cy, R)
+        err = m.frac_to_cam(src) - dst
+        return m, float(np.sqrt((err ** 2).sum(axis=1).mean()))
+
+    grid = np.arange(-0.5, 0.5001, 0.01)
+    rms = [fit(k)[1] for k in grid]
+    i = int(np.argmin(rms))
+    k1 = float(grid[i])
+    if 0 < i < len(grid) - 1:
+        a, b, c = rms[i - 1], rms[i], rms[i + 1]
+        denom = a - 2 * b + c
+        if denom > 0:
+            k1 += 0.01 * 0.5 * (a - c) / denom
+    return fit(k1)
+
+
+def solve_cam_map(src_frac, dst_px, cam_w, cam_h):
+    """Fit H + radial k1 to marker correspondences (E11).
+
+    -> (CamMap, diag) where diag carries the honesty numbers printed per
+    camera: fit RMS at all markers, leave-one-out RMS (full refit per
+    held-out marker), and the OLD 4-corner exact DLT's error at the
+    non-corner markers — the mid-field blindness this bite removes."""
+    src = np.asarray(src_frac, np.float64)
+    dst = np.asarray(dst_px, np.float64)
+    cx, cy = cam_w / 2.0, cam_h / 2.0
+    R = float(np.hypot(cam_w, cam_h)) / 2.0
+    M, rms = _fit_k1(src, dst, cx, cy, R)
+    loo = []
+    for i in range(len(src)):
+        keep = [j for j in range(len(src)) if j != i]
+        m_i, _ = _fit_k1(src[keep], dst[keep], cx, cy, R)
+        loo.append(((m_i.frac_to_cam(src[i:i + 1])
+                     - dst[i:i + 1]) ** 2).sum())
+    diag = {"rms_px": round(rms, 2),
+            "loo_rms_px": round(float(np.sqrt(np.mean(loo))), 2),
+            "k1": round(M.k1, 4)}
+    corners = [int(np.argmin(src[:, 0] + src[:, 1])),
+               int(np.argmax(src[:, 0] - src[:, 1])),
+               int(np.argmax(src[:, 0] + src[:, 1])),
+               int(np.argmin(src[:, 0] - src[:, 1]))]
+    mid = [j for j in range(len(src)) if j not in corners]
+    if mid:
+        H4 = CamMap(solve_homography(src[corners], dst[corners]))
+        err = H4.frac_to_cam(src[mid]) - dst[mid]
+        diag["dlt4_mid_rms_px"] = round(
+            float(np.sqrt((err ** 2).sum(axis=1).mean())), 2)
+    return M, diag
+
+
+def load_cam_maps(run_dir):
+    """{board: CamMap} from a saved run dir: calib_<board>.json when the
+    run was scored k1-aware (E11+), else H_<board>.npy wrapped at k1=0 —
+    legacy runs re-score exactly as they always did. Shared by
+    hil_rescore and hil_report."""
+    maps = {}
+    for f in os.listdir(run_dir):
+        if (f.startswith("calib_") and f.endswith(".json")):
+            with open(os.path.join(run_dir, f)) as fh:
+                maps[f[6:-5]] = CamMap.from_dict(json.load(fh))
+    for f in os.listdir(run_dir):
+        if f.startswith("H_") and f.endswith(".npy"):
+            lb = f[2:-4]
+            if lb not in maps:
+                maps[lb] = CamMap(np.load(os.path.join(run_dir, f)))
+    return maps
+
+
+def map_still_box(M, x, y, w, h):
+    """Label box (still px 1920x1080) -> OBSERVED camera-px bounding
+    box. M is a CamMap or a legacy 3x3 H."""
     pts = np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
                    np.float64)
     pts[:, 0] /= STILL_W
     pts[:, 1] /= STILL_H
-    ones = np.ones((4, 1))
-    p = (H @ np.hstack([pts, ones]).T).T
-    p = p[:, :2] / p[:, 2:3]
+    p = as_cam_map(M).frac_to_cam(pts)
     return (float(p[:, 0].min()), float(p[:, 1].min()),
             float(p[:, 0].max()), float(p[:, 1].max()))
 
@@ -158,6 +302,7 @@ def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0,
     # part of the still, so GT outside the frame must not score as
     # misses — keep only GT boxes fully inside the camera frame (2 px
     # margin), and symmetrically drop detections touching the edge.
+    H = as_cam_map(H)
     m = 2.0
     vis = [(b, g) for b, g in
            ((b, map_still_box(H, b[1], b[2], b[3], b[4]))
@@ -255,15 +400,15 @@ def frame_detections(fr):
 
 
 # ------------------------------------------------------- closed loop (E4)
-def dets_to_still_frac(dets_cam, Hinv):
+def dets_to_still_frac(dets_cam, M):
     """Camera-px detections -> still-fraction boxes [x1,y1,x2,y2,conf]
-    (H maps still fractions -> camera px, so Hinv lands in fractions)."""
+    through the inverse mapping (undistort, then H^-1)."""
+    M = as_cam_map(M)
     out = []
     for det in dets_cam:
         pts = np.array([[det[0], det[1]], [det[2], det[1]],
                         [det[2], det[3]], [det[0], det[3]]], np.float64)
-        p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
-        p = p[:, :2] / p[:, 2:3]
+        p = M.cam_to_frac(pts)
         out.append([float(p[:, 0].min()), float(p[:, 1].min()),
                     float(p[:, 0].max()), float(p[:, 1].max()),
                     float(det[4])])
@@ -303,8 +448,7 @@ class _BoardRun:
         self.summary = []
         self.jpeg_frames = {"loop": [], "black": [], "calib": []}
         self.pending = []
-        self.H = None
-        self.Hinv = None
+        self.H = None                 # CamMap once calib solves (E11)
         self.cam_w, self.cam_h = 640, 400
         self.last_frame = None        # (obj, dets) awaiting attribution
         # E6 live accuracy: running totals fed to the monitor per scored
@@ -504,8 +648,8 @@ def run_closed_loop(args, playback, out_dir):
                             and len(r.jpeg_frames["calib"]) >= 2):
                         r.H = solve_board_H(lb, r.jpeg_frames, playback,
                                             out_dir)
-                        r.Hinv = np.linalg.inv(r.H)
-                        mon.log(f"{lb} homography solved")
+                        mon.log(f"{lb} calib solved "
+                                f"(k1 {r.H.k1:+.3f})")
                     continue
                 pb_i, name, boxes = reviewed[slot]
                 r.pending.append({"stats": r.stats, "still": name,
@@ -565,8 +709,8 @@ def run_closed_loop(args, playback, out_dir):
                                float(d[2]) / r.cam_w,
                                float(d[3]) / r.cam_h,
                                float(d[4])] for d in dets],
-                    dets_still=(dets_to_still_frac(dets, r.Hinv)
-                                if r.Hinv is not None else None))
+                    dets_still=(dets_to_still_frac(dets, r.H)
+                                if r.H is not None else None))
                 if obj["_jpg"]:
                     mon.set_cam(lb, obj["_jpg"])
             elif kind == "frame_stray":
@@ -745,20 +889,20 @@ def load_reviewed(stills_dir, reviewed_only=True):
     return out
 
 
-def save_still_overlay(path, still_path, dets_cam, boxes, Hinv,
+def save_still_overlay(path, still_path, dets_cam, boxes, M,
                        cam_wh=None):
-    """GT (green, native) + detections mapped camera→still via H⁻¹ (yellow),
-    drawn on the SOURCE still — no camera JPEG needed. cam_wh draws the
-    camera's field of view as a cyan quadrilateral: GT outside it was
-    filtered from scoring, so a 'missed' urchin outside the cyan line is
-    not a miss."""
+    """GT (green, native) + detections mapped camera→still through the
+    inverse CamMap (yellow), drawn on the SOURCE still — no camera JPEG
+    needed. cam_wh draws the camera's field of view as a cyan
+    quadrilateral: GT outside it was filtered from scoring, so a
+    'missed' urchin outside the cyan line is not a miss."""
+    M = as_cam_map(M)
     img = Image.open(still_path).convert("RGB")
     d = ImageDraw.Draw(img)
     if cam_wh is not None:
         cw, ch = cam_wh
         pts = np.array([[0, 0], [cw, 0], [cw, ch], [0, ch]], np.float64)
-        p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
-        p = p[:, :2] / p[:, 2:3]
+        p = M.cam_to_frac(pts)
         poly = [(float(x) * STILL_W, float(y) * STILL_H) for x, y in p]
         d.polygon(poly, outline=(0, 180, 255), width=2)
     for (_ci, x, y, w, h, _px) in boxes:
@@ -766,8 +910,7 @@ def save_still_overlay(path, still_path, dets_cam, boxes, Hinv,
     for det in dets_cam:
         pts = np.array([[det[0], det[1]], [det[2], det[1]],
                         [det[2], det[3]], [det[0], det[3]]], np.float64)
-        p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
-        p = p[:, :2] / p[:, 2:3]
+        p = M.cam_to_frac(pts)
         x1, y1 = p[:, 0].min() * STILL_W, p[:, 1].min() * STILL_H
         x2, y2 = p[:, 0].max() * STILL_W, p[:, 1].max() * STILL_H
         d.rectangle([x1, y1, x2, y2], outline=(255, 220, 0), width=3)
@@ -790,17 +933,27 @@ def solve_board_H(label, jpeg_frames, playback, out_dir):
     black = jpeg_gray(jpeg_frames["black"][-1])
     calib = jpeg_gray(jpeg_frames["calib"][-1])
     cents = find_markers(calib, black)
-    H = solve_homography(playback.markers, cents)
+    cam_h_px, cam_w_px = calib.shape
+    M, diag = solve_cam_map(playback.markers, cents, cam_w_px, cam_h_px)
     img = Image.open(io.BytesIO(jpeg_frames["calib"][-1])).convert("RGB")
     d = ImageDraw.Draw(img)
     for cx, cy in cents:
         d.ellipse([cx - 6, cy - 6, cx + 6, cy + 6],
                   outline=(255, 0, 0), width=3)
     img.save(os.path.join(out_dir, f"calib_{label}_markers.jpg"))
-    np.save(os.path.join(out_dir, f"H_{label}.npy"), H)
-    print("    homography solved; markers at "
-          + ", ".join(f"({cx:.0f},{cy:.0f})" for cx, cy in cents))
-    return H
+    # calib json is the real artifact; the bare-H npy stays for legacy
+    # tooling (k1=0 read of it reproduces pre-E11 behavior)
+    cal = dict(M.to_dict(), cam_w=cam_w_px, cam_h=cam_h_px,
+               markers_px=[[round(x, 2), round(y, 2)] for x, y in cents],
+               **diag)
+    with open(os.path.join(out_dir, f"calib_{label}.json"), "w") as fh:
+        json.dump(cal, fh)
+    np.save(os.path.join(out_dir, f"H_{label}.npy"), M.H)
+    print(f"    calib solved: k1 {diag['k1']:+.4f} (lens meter), "
+          f"fit RMS {diag['rms_px']} px, LOO {diag['loo_rms_px']} px; "
+          f"4-corner DLT mid-field err was "
+          f"{diag.get('dlt4_mid_rms_px', '—')} px")
+    return M
 
 
 def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
@@ -813,7 +966,7 @@ def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
               f"accuracy NOT scored")
     if H is None:
         return
-    Hinv = np.linalg.inv(H)
+    M = as_cam_map(H)
     overlaid = set()
     for p in pending:
         boxes, dets, obj = p["boxes"], p["dets"], p["obj"]
@@ -857,7 +1010,7 @@ def score_pending(pending, H, label, args, out_dir, rows_fh, cam_w, cam_h):
                 os.path.join(out_dir, "overlays",
                              f"{label}_{st['phase']}_{p['still']}"),
                 os.path.join(args.stills_dir, "frames", p["still"]),
-                dets, boxes, Hinv, cam_wh=(cam_w, cam_h))
+                dets, boxes, M, cam_wh=(cam_w, cam_h))
 
 
 def print_summary(summary, args):

@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hil_harness import match_frame                    # noqa: E402
+from hil_harness import match_frame, load_cam_maps     # noqa: E402
 
 
 def load_labels(stills_dir):
@@ -42,17 +42,17 @@ def rescore(run_dir, stills_dir, ious, floor):
     """-> {(board, iou): {"gt","match","false","frames"}}, boards"""
     run_dir = os.path.expanduser(run_dir)
     labels = load_labels(stills_dir)
-    H, cam_wh = {}, {}
-    for f in os.listdir(run_dir):
-        if f.startswith("H_") and f.endswith(".npy"):
-            lb = f[2:-4]
-            H[lb] = np.load(os.path.join(run_dir, f))
-            with Image.open(os.path.join(run_dir,
-                                         "calib_%s.jpg" % lb)) as im:
-                cam_wh[lb] = im.size
+    # calib_<board>.json (k1-aware, E11) preferred; H npy legacy fallback
+    H = load_cam_maps(run_dir)
+    cam_wh = {}
+    for lb in H:
+        with Image.open(os.path.join(run_dir,
+                                     "calib_%s.jpg" % lb)) as im:
+            cam_wh[lb] = im.size
     if not H:
-        raise SystemExit("FAIL: no H_<board>.npy in %s — did the run "
-                         "reach calibration?" % run_dir)
+        raise SystemExit("FAIL: no calib_<board>.json or H_<board>.npy "
+                         "in %s — did the run reach calibration?"
+                         % run_dir)
     out = {}
     n_skipped = 0
     with open(os.path.join(run_dir, "rows.jsonl")) as fh:
