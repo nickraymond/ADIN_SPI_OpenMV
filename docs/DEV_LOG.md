@@ -17,6 +17,45 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 — S8 bite E5 — one-click closed-loop HIL review: nano/tiny cards shipped, bench acceptance ×2 from cold PASSED
+
+**Branch:** `claude/s8-hil-review-recipe-2b59f5` (worktree; PR open)
+
+**Done:**
+- Wrapper `pi/hil/hil_review_run.py` (the cards' argv) owns both
+  children: playback up → :8091 answers → hil-lcd check → harness
+  `--closed-loop --review`, both boards by-id, 30 px floor, out
+  `~/hil_runs/review_<stamp>`. Stop = harness FIRST (clean path scores
+  + releases ports), then playback; children in their own process
+  groups because the runner's group SIGINT would otherwise kill
+  playback in the same instant and break the harness's teardown
+  (its `finally` talks to playback). Escalation SIGINT→SIGTERM→named
+  strand, never SIGKILL; rc 0/1/2/3.
+- Cards `s8-hil-review-nano`/`-tiny` (Nick's option A — the menu is
+  the model picker). Workbench grew `[run] stop_grace` (suite 81→85);
+  harness: abort skips the review park (one SIGINT means stop),
+  playback loop-reset guarded. 11 wrapper host tests pin both orders
+  via fake-child signal timestamps. Guide chapter → points at the
+  cards, stays as manual fallback.
+- Bench acceptance ×2 from cold: nano click→LIVE→auto still 0→9 both
+  boards in lockstep→Stop mid-run = idle in 4.8 s, rc=0, both boards
+  scored, no orphans, ports free, full artifact set; tiny
+  click→LIVE→Next×2→Stop identical.
+
+**Broke/surprised us:**
+- The harness's review park needs a SECOND Ctrl-C after an abort —
+  and a second SIGINT sent blind can land mid-scoring and destroy
+  artifacts. Fixed at source (abort skips the park) instead of
+  working around it in the wrapper.
+- The runner's stuck state is sticky and its SIGINT grace was 10 s —
+  an abort that scores + writes overlays can exceed that, so
+  `stop_grace` became a recipe key rather than a global bump.
+
+**Next:** Nick's demo (click a card), PR review/merge. N6 power column
+still owed behind the CH3 shunt re-wire (unchanged).
+
+---
+
 ## 2026-08-25 — S8 bite E4 — closed-loop HIL handshake BUILT + PROVEN solo (N6): 21 fake-board tests, stdin echo-probe 6/6, live monitor page with review controls; settle-discards deleted by construction
 
 **Branch:** `claude/s8-hil-open-loop-protocol-c8aaea` (worktree; 3 commits pushed)

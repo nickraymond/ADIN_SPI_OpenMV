@@ -2084,6 +2084,34 @@ any urchin labelling effort is spent.
       wall-clock/epoch recorded, reviewed with Nick for the
       full-run go/no-go.
 
+- [~] **Bite E5 — one-click closed-loop review from the workbench —
+      CODE + HOST TESTS + BENCH ACCEPTANCE (×2 from cold) DONE
+      2026-08-26; PR open, Nick's demo = the click.** Cards
+      `s8-hil-review-nano` / `-tiny` (option A, Nick 2026-08-25:
+      picking a card IS picking the model); argv =
+      `pi/hil/hil_review_run.py`, which owns BOTH children: start
+      playback → wait for :8091 → check hil-lcd.service → run
+      `hil_harness --closed-loop --review` (both boards by-id, 30 px
+      floor, out `~/hil_runs/review_<stamp>`); page = :8092. Stop =
+      SIGINT the harness FIRST (its clean path quits the boards,
+      releases the ports, scores what was collected), THEN playback —
+      each child in its OWN process group so the runner's group signal
+      cannot invert the order; escalation SIGINT→SIGTERM→named strand
+      (never SIGKILL), exit code 0/1/2/3 says which. En route:
+      workbench `[run] stop_grace` (schema+runner, suite 81→85 — an
+      abort that still writes scoring/overlays must fit the SIGINT
+      grace) and two harness hardenings (abort skips the review park —
+      one SIGINT means stop; playback loop-reset guarded so a dead
+      playback cannot destroy scoring). 11 wrapper host tests: fake
+      children, BOTH orders pinned by signal timestamps, escalation +
+      crash propagation, card↔wrapper board-identity lock. Acceptance
+      measured on the bench: nano card click→LIVE→auto-stepping
+      (still 0→9, both boards in lockstep)→Stop mid-run = idle in
+      4.8 s, rc=0, both boards scored, zero orphan pids, ports free;
+      tiny card click→LIVE→Next×2→Stop identical. `s8-hil-urchin` and
+      the hil-review guide card STAY as the manual fallback (chapter
+      points at the cards).
+
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and
 toolchain host (Docker, dataset work, model compilation) and artifacts
