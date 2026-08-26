@@ -151,17 +151,22 @@ class CamMap:
         return p * (1.0 + self.k1 * r2) + (self.cx, self.cy)
 
     def undistort(self, pts, iters=8):
-        """Fixed-point inverse of distort — converges fast while
-        |k1| r^2 << 1, true of any usable lens."""
+        """Inverse of distort. The radial model is scalar in the radius
+        — d = u + k1 u^3 / R^2 — so Newton on that cubic converges
+        quadratically to machine precision in a few steps (a fixed-point
+        form was measurably too slow at N6-class k1)."""
         pts = np.asarray(pts, np.float64)
         if not self.k1:
             return pts
-        d = pts - (self.cx, self.cy)
+        p = pts - (self.cx, self.cy)
+        d = np.sqrt((p ** 2).sum(axis=1, keepdims=True))
         u = d.copy()
         for _ in range(iters):
-            r2 = (u ** 2).sum(axis=1, keepdims=True) / self.R ** 2
-            u = d / (1.0 + self.k1 * r2)
-        return u + (self.cx, self.cy)
+            f = u + self.k1 * u ** 3 / self.R ** 2 - d
+            fp = 1.0 + 3.0 * self.k1 * u ** 2 / self.R ** 2
+            u = u - f / fp
+        scale = np.where(d > 0, u / np.where(d > 0, d, 1.0), 1.0)
+        return p * scale + (self.cx, self.cy)
 
     def frac_to_cam(self, pts):
         """Nx2 still fractions -> Nx2 OBSERVED camera px."""
