@@ -67,12 +67,18 @@ class GateCtl(train_ctl.Ctl):
             return None
 
     def start(self):
+        # staged training (Nick 2026-08-25 night): Start spawns the
+        # LEAN config (batch 2 — batch 4 swap-thrashed this Mac) toward
+        # self.epochs, auto-resuming from checkpoint.pth via run_gate's
+        # default. Stop → restart later loses only the partial epoch.
         with self.lock:
             if self.pid() is not None:
                 raise RuntimeError("already running")
             logf = open(LOG, "a")
             self.proc = subprocess.Popen(
-                [str(VENV_PY), "-u", str(GATE)],
+                [str(VENV_PY), "-u", str(GATE),
+                 "--epochs", str(self.epochs),
+                 "--batch", "2", "--grad-accum", "8"],
                 stdout=logf, stderr=logf, start_new_session=True,
                 env={"PYTORCH_ENABLE_MPS_FALLBACK": "1",
                      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -107,8 +113,11 @@ class GateCtl(train_ctl.Ctl):
         rows = self._metrics()
         cur = rows[-1] if rows else {}
         step = int(float(cur.get("step", 0) or 0))
-        epoch = f"{cur.get('epoch', 0)} / 1 (step {step}/{STEPS_PER_EPOCH})"
-        pct = round(100 * min(1.0, step / STEPS_PER_EPOCH), 1)
+        ep_now = cur.get("epoch", 0)
+        total = STEPS_PER_EPOCH * self.epochs
+        epoch = (f"{ep_now} / {self.epochs} "
+                 f"(step {step % STEPS_PER_EPOCH}/{STEPS_PER_EPOCH})")
+        pct = round(100 * min(1.0, step / total), 1)
         now = time.time()
         hist = getattr(self, "_pace_hist", [])
         if not hist or hist[-1][1] != step:
@@ -118,8 +127,9 @@ class GateCtl(train_ctl.Ctl):
         if len(hist) >= 2 and hist[-1][1] > hist[0][1]:
             spm = ((hist[-1][1] - hist[0][1])
                    / (hist[-1][0] - hist[0][0]) * 60)
-            eta_h = (STEPS_PER_EPOCH - step) / spm / 60 if spm else 0
-            pace = f"{spm:.1f} steps/min · epoch ETA {eta_h:.1f} h"
+            rem = STEPS_PER_EPOCH - (step % STEPS_PER_EPOCH)
+            pace = (f"{spm:.1f} steps/min · this epoch ETA "
+                    f"{rem / spm / 60:.1f} h" if spm else "measuring…")
         lines = []
         if LOG.exists():
             raw = LOG.read_bytes()[-6000:].decode("utf-8", "replace")
@@ -204,8 +214,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8898)
+    ap.add_argument("--epochs", type=int, default=30,
+                    help="target the Start button trains toward "
+                         "(staged: Stop/Start resumes by checkpoint)")
     args = ap.parse_args()
     ctl = GateCtl()
+    ctl.epochs = args.epochs
     train_ctl.PAGE = PAGE            # the handler serves module PAGE
     threading.Thread(target=ctl._sampler_loop, daemon=True).start()
     # NO scorer loop: the gate scores rung A itself at the end

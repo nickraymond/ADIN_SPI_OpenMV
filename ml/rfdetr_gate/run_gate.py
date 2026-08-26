@@ -74,6 +74,11 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=4)
     ap.add_argument("--skip-train", action="store_true",
                     help="score the checkpoint already in --out")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="staged-training default is AUTO-RESUME from "
+                         "<out>/checkpoint.pth when it exists (Stop "
+                         "costs only the partial epoch; Start "
+                         "continues); this forces a fresh start")
     args = ap.parse_args()
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -84,11 +89,20 @@ def main():
         model = RFDETRBase(pretrain_weights=str(ck))
     else:
         model = RFDETRBase()           # 300 queries (>= densest 130 ✓)
+        kw = {}
+        # rfdetr 1.9 leaves no plain checkpoint.pth — the full-state
+        # file is checkpoint_best_regular.pth (weights+optimizer+epoch)
+        for name in ("checkpoint.pth", "checkpoint_best_regular.pth"):
+            ck = out / name
+            if ck.exists() and not args.no_resume:
+                kw["resume"] = str(ck)
+                print(f"RESUMING from {ck}", flush=True)
+                break
         t0 = time.time()
         model.train(dataset_dir=str(Path(args.dataset).expanduser()),
                     epochs=args.epochs, batch_size=args.batch,
                     grad_accum_steps=args.grad_accum,
-                    output_dir=str(out))
+                    output_dir=str(out), **kw)
         wall = time.time() - t0
         print(f"TRAIN WALL: {wall:.0f}s "
               f"({wall / max(1, args.epochs):.0f}s/epoch)", flush=True)
