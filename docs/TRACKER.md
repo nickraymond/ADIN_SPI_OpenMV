@@ -1,7 +1,31 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-25 (**S8 HIL RIG BUILT, CALIBRATED, AND THE
+*Last updated: 2026-08-26 evening (**S8 BITE E11 BENCH-ACCEPTED —
+distortion-aware calibration (9-marker grid, H + radial k1) RECOVERED
+THE N6 TO FULL AE3 PARITY at strict IOU: HD-tiny N6 0.781 recall /
+0.593 prec vs AE3 0.783/0.574 (N6 was 0.43/0.30; AE3 = the flat
+control), and the E8 IOU-0.20 discriminator jump collapsed
++0.151→+0.009 == AE3's.** THE ENTIRE N6 DEFICIT AT THIS CELL WAS
+MEASUREMENT ARTIFACT, not detection — supersedes the E8 conviction's
+interpretation (the lens is guilty of distortion, not of detection
+loss; Nick's better-lens test is now an image-quality question, not an
+accuracy recovery). Lens meter: k1 N6 −0.113 vs AE3 −0.013; the old
+4-corner DLT was 25.7 px wrong mid-field on the N6 (AE3 4.4 px). E11's
+0.59/0.41 prediction UNDERSHOT because it was derived through the
+distorted mapping — IOU loosening cannot repair mid-field bias.
+`img.lens_corr()` priced ~150 ms/frame at HD on the N6 (probe,
+measure-only; NOT enabled — changes the model's input, and parity
+arrived without it). Machinery: CamMap (H+k1) threaded through
+harness/rescore/report/heatmap, calib_<board>.json persisted (bare-H
+npy kept for legacy runs), renderers unchanged (they draw the served
+marker list); Pi suite 70/70. Also this session: **PR #70 (E8) was
+found merged into the e7 BRANCH, not main** — corrective PR #71
+opened+merged, E8's controls eyeballed by Nick (that debt cleared).
+E11 PR open; Nick's card-click demo owed. NEXT (Nick's picks, this
+kickoff): E9 (per-inference power on the review page), E10 (stills_v2
+— still needs Nick's labels.jsonl path). Previous:*
+*2026-08-25 (**S8 HIL RIG BUILT, CALIBRATED, AND THE
 FIRST SCORED MATRIX MEASURED — both boards, all four model×mode cells,
 Nick's 24 reviewed stills, per-camera homography, power column.**
 Headline: TILED-native-px is the only living mode — whole-frame-256
@@ -2258,7 +2282,29 @@ any urchin labelling effort is spent.
       reviewed count, a review run steps through the new stills with
       GT drawn, and prior-run rows still reference stills that exist.
 
-- [ ] **Bite E11 — distortion-aware calibration (fast-follow, Nick
+- [~] **Bite E11 — distortion-aware calibration — CODE + TESTS + BENCH
+      ACCEPTANCE DONE 2026-08-26 (branch
+      `claude/s8-e11-distortion-calib`; PR open; Nick's demo = the
+      click).** Delivered: MARKERS 4→9 (box-D corners + edge-mids +
+      center, row-major; page and hil-lcd draw the served list —
+      zero renderer change, installed copy sha-verified identical),
+      find_markers 3×3 cells with loud per-cell failure, solve_cam_map
+      (1-D k1 search over least-squares DLT; prints k1 + fit RMS + LOO
+      RMS + the old DLT's mid-field error), CamMap (H+k1; Newton
+      radial inverse) through map_still_box / dets_to_still_frac /
+      overlays / rescore / report / heatmap; calib_<board>.json
+      persisted, H npy kept for legacy; Pi suite 70/70 (one Newton
+      fix caught BY the Pi run — the fixed-point inverse missed 1e-6).
+      **MEASURED (HD-tiny card run, AE3 flat control): N6 0.43/0.30 →
+      0.781/0.593 == AE3 parity (0.783/0.574); discriminator jump
+      +0.151→+0.009; k1 N6 −0.113 / AE3 −0.013; DLT mid-field err N6
+      25.7 px / AE3 4.4 px. The prediction (0.59/0.41) undershot —
+      it was computed through the distorted mapping. lens_corr probe:
+      ~150 ms/frame HD N6, recorded not enabled.** Legacy runs
+      re-score byte-identically (json preferred, npy k1=0 fallback,
+      pinned by test).
+      *(original capture follows)*
+      **(original) Bite E11 — distortion-aware calibration (fast-follow, Nick
       2026-08-26): the N6's barrel distortion is VISIBLE in the
       aim-box view (nested rectangles bow outward; AE3 near-straight)
       and the 4-corner DLT cannot model it — exact at the markers,

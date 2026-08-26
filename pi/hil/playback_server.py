@@ -44,7 +44,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # their working distance. The cameras therefore see only the central
 # 63% x 70% of the content; the harness scores only the GT visible in
 # frame. Visible still pixels land ~0.53x on the sensor (was 0.28x).
-MARKERS = [(0.185, 0.15), (0.815, 0.15), (0.815, 0.85), (0.185, 0.85)]
+# 2026-08-26 (E11): 4 -> 9 markers — the box-D corners plus edge-mids
+# and center, a 3x3 grid. Four corners solve an exact H that is blind
+# to lens distortion mid-field (the N6's barrel bow); nine points
+# overdetermine H and expose radial k1 to the harness's least-squares
+# fit. ROW-MAJOR order (TL,TM,TR / ML,CC,MR / BL,BM,BR) — the
+# harness's find_markers returns centroids in the same order.
+MARKERS = [(x, y)
+           for y in (0.15, 0.5, 0.85)
+           for x in (0.185, 0.5, 0.815)]
 MARKER_W = 0.045             # marker square width, fraction of content width
 MODES = ("loop", "step", "calib", "black", "boxes")
 

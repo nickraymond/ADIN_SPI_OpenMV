@@ -20,9 +20,13 @@ are comparable; the caption carries the scale. PIL + numpy only.
 import argparse
 import json
 import os
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hil_harness import load_cam_maps               # noqa: E402
 
 STILL_W, STILL_H = 1920, 1080
 IN_W = 256
@@ -42,8 +46,9 @@ def heat_lut():
     return lut.astype(np.uint8)
 
 
-def accumulate(rec, Hinv, grid, conf_floor):
-    """Deposit one frame's cells into `grid` (GRID_H×GRID_W, float)."""
+def accumulate(rec, M, grid, conf_floor):
+    """Deposit one frame's cells into `grid` (GRID_H×GRID_W, float).
+    M = the board's CamMap (camera px -> still fractions, k1-aware)."""
     for tile_xy, cells in zip(rec["tiles"], rec["cells"]):
         tx0, ty0 = tile_xy
         for hh, y, x, tx, ty, _tw, _th, ob, cl in cells:
@@ -54,8 +59,7 @@ def accumulate(rec, Hinv, grid, conf_floor):
             # decode_np semantics: center = (t + grid_idx) * stride
             cx = tx0 + (tx + x) * stride
             cy = ty0 + (ty + y) * stride
-            p = Hinv @ np.array([cx, cy, 1.0])
-            fx, fy = p[0] / p[2], p[1] / p[2]
+            fx, fy = M.cam_to_frac(np.array([[cx, cy]]))[0]
             gx, gy = int(fx * GRID_W), int(fy * GRID_H)
             if 0 <= gx < GRID_W and 0 <= gy < GRID_H:
                 grid[gy, gx] += score
@@ -80,11 +84,10 @@ def render(still_path, grid, norm, out_path, lut, fov_poly=None):
     im.save(out_path, quality=85)
 
 
-def fov_polygon(Hinv, cam_w, cam_h):
+def fov_polygon(M, cam_w, cam_h):
     pts = np.array([[0, 0], [cam_w, 0], [cam_w, cam_h], [0, cam_h]],
                    np.float64)
-    p = (Hinv @ np.hstack([pts, np.ones((4, 1))]).T).T
-    p = p[:, :2] / p[:, 2:3]
+    p = M.cam_to_frac(pts)
     return [(float(x), float(y)) for x, y in p]
 
 
@@ -103,28 +106,25 @@ def main():
         raise SystemExit(f"FAIL: no cells.jsonl under {run} — heat maps "
                          f"need a closed-loop run from the cells-saving "
                          f"harness (re-run the leg)")
-    Hinv = {}
+    maps = load_cam_maps(run)      # k1-aware json, bare-H npy fallback
+    warned = set()
     fovs = {}                      # board -> still-fraction FOV polygon
     grids = {}                     # (board, phase, still) -> grid
     n_frames = {}
     for ln in open(cells_path):
         rec = json.loads(ln)
         b = rec["board"]
-        if b not in Hinv:
-            hp = os.path.join(run, f"H_{b}.npy")
-            if not os.path.exists(hp):
-                print(f"WARN: no homography for {b} — skipping its cells")
-                Hinv[b] = None
-            else:
-                Hinv[b] = np.linalg.inv(np.load(hp))
-        if Hinv[b] is None:
+        if b not in maps:
+            if b not in warned:
+                warned.add(b)
+                print(f"WARN: no calibration for {b} — skipping its cells")
             continue
         if b not in fovs:
-            fovs[b] = fov_polygon(Hinv[b], rec["cam_w"], rec["cam_h"])
+            fovs[b] = fov_polygon(maps[b], rec["cam_w"], rec["cam_h"])
         key = (b, rec["phase"], rec["still"])
         grids.setdefault(key, np.zeros((GRID_H, GRID_W), np.float32))
         n_frames[key] = n_frames.get(key, 0) + 1
-        accumulate(rec, Hinv[b], grids[key], args.conf_floor)
+        accumulate(rec, maps[b], grids[key], args.conf_floor)
 
     out_dir = os.path.join(run, "heatmaps")
     os.makedirs(out_dir, exist_ok=True)
