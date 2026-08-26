@@ -17,6 +17,48 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (evening 2) — S8 bite E11 — 9-marker H+k1 calibration: the N6 recovers to FULL AE3 parity; the "lens deficit" was measurement artifact
+
+**Branch:** `claude/s8-e11-distortion-calib` (from main after the
+corrective merge; PR open)
+
+**Done:**
+- Session opened on a landmine: PR #70 (E8) had been merged into the
+  `claude/s8-e7-camera-views` BRANCH, not main — all four stack PRs
+  read MERGED but E8 never reached main. Corrective PR #71 (exactly
+  E8's commits) opened and merged by Nick; E8's owed UI eyeball also
+  cleared by Nick at kickoff.
+- E11 shipped per plan: MARKERS 4→9 (renderers unchanged — they draw
+  the served list; installed hil-lcd sha-verified identical),
+  find_markers 3×3 cells, solve_cam_map (k1 grid search + parabolic
+  refine over least-squares DLT, LOO + before-number diagnostics),
+  CamMap threaded through scoring/overlays/rescore/report/heatmap,
+  calib_<board>.json persisted (npy legacy fallback pinned by test).
+  Pi suite 70/70.
+- **Acceptance (HD-tiny card run, auto, all 24 stills): N6 0.781
+  recall / 0.593 prec vs AE3 0.783/0.574 — FULL PARITY (N6 was
+  0.43/0.30; AE3 flat = valid control). Discriminator jump collapsed
+  +0.151→+0.009 == AE3. k1: N6 −0.113, AE3 −0.013; old DLT mid-field
+  error N6 25.7 px vs AE3 4.4 px.** lens_corr probe: ~150 ms/frame at
+  HD on the N6 — recorded, not enabled (D46).
+
+**Broke/surprised us:**
+- The E8 prediction (0.59/0.41) UNDERSHOT by ~0.19 recall: it was
+  derived through the distorted mapping, and IOU loosening cannot
+  repair mid-field bias. Lesson: a discriminator run through a broken
+  instrument bounds the effect from BELOW.
+- The fixed-point radial inverse missed the 1e-6 round-trip at
+  N6-class k1 — caught only by the Pi test run (the Mac skips numpy
+  tests); replaced with Newton on the radial cubic. The E8
+  run-the-suite-on-the-Pi lesson paid out within one day.
+
+**Next:** Nick's card-click demo + PR review; then E9 (per-inference
+power) and E10 (stills_v2 — still needs Nick's labels.jsonl path).
+Bench left clean: runner idle, boards free, live checkout on the E11
+branch (flip to main after merge).
+
+---
+
 ## 2026-08-26 (night) — S8 bite E8 — display controls + finish summary CODE-COMPLETE; bench dropped off the network mid-deploy
 
 **Branch:** `claude/s8-e8-display-controls` (stacked on E7; PR held
