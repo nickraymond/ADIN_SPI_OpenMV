@@ -95,6 +95,13 @@ class StateMachine(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("no stills", err)
 
+    def test_shown_seq_tracks_renderer_monotonically(self):
+        self.assertEqual(self.st.snapshot()["shown_seq"], 0)
+        self.st.mark_shown(3)
+        self.assertEqual(self.st.snapshot()["shown_seq"], 3)
+        self.st.mark_shown(2)          # a late/stale ack never regresses
+        self.assertEqual(self.st.snapshot()["shown_seq"], 3)
+
 
 class HttpApi(unittest.TestCase):
     """The real handler over a real socket — the artifact, not the units."""
@@ -137,6 +144,15 @@ class HttpApi(unittest.TestCase):
         self.assertEqual(r.status, 200)
         self.assertEqual(json.loads(data)["mode"], "calib")
         r, _ = self.req("POST", "/api/set", {"mode": "nope"})
+        self.assertEqual(r.status, 400)
+
+    def test_shown_endpoint_roundtrip_and_bad_body(self):
+        r, data = self.req("POST", "/api/shown", {"seq": 7})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(json.loads(data)["shown_seq"], 7)
+        r, data = self.req("GET", "/api/state")
+        self.assertEqual(json.loads(data)["shown_seq"], 7)
+        r, _ = self.req("POST", "/api/shown", {"nope": 1})
         self.assertEqual(r.status, 400)
 
     def test_media_confinement(self):

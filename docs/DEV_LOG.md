@@ -17,6 +17,142 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-25 — S8 bite E4 — closed-loop HIL handshake BUILT + PROVEN solo (N6): 21 fake-board tests, stdin echo-probe 6/6, live monitor page with review controls; settle-discards deleted by construction
+
+**Branch:** `claude/s8-hil-open-loop-protocol-c8aaea` (worktree; 3 commits pushed)
+
+**Done:**
+- Nick's design as spec'd (TRACKER E4) + his mid-session addition: a live
+  review web page. Wire: host→board bytes `g/j/p/q` on the VCP; board
+  parks between frames (`#W` heartbeat 5 s), drains stdin (duplicate
+  absorption), 1 discard snapshot per go (the fb pipeline holds one
+  pre-still-change frame). `hil_protocol.py` = wire parser + pure
+  Conductor (barrier, timeouts, drop-and-continue); frames outside a
+  confirmed still are named STRAY and never scored — the conductor, not
+  arrival timing, attributes every frame to its still.
+- TEST-FIRST held: 23 protocol tests (fake board: dies mid-phase,
+  garble→re-run, stall→3-strikes drop, lost byte→heartbeat resend,
+  CRLF, phase-refusal rejoin, abort drain-race) BEFORE the bench;
+  playback suite 13 (render-ack `/api/shown` — LCD client acks AFTER
+  the flip; installed copy at /usr/local/bin updated, survives reboot).
+- N6 stdin echo-probe PASS 6/6 first attempt (~7 ms delivery; bytes
+  buffer across a 4 s no-poll window; host→board `\r`→LF measured).
+  Log: pi `~/hil_runs/e4_probe_stdin_n6.log`.
+- Closed-loop solo N6 runs CLEAN (auto + review modes): calib-first
+  phases, homography solved, `settle_discards=0 stray_frames=0`,
+  24-still model phase **14.1 s wall** (open-loop: minutes of
+  budget+settle+drain). Monitor page :8092 verified in a real browser:
+  still + GT + dets via H⁻¹, camera view + dets (H-free), Pause/Next/
+  Auto/grab-frame/Abort all exercised live. Review mode = Nick's
+  human-paced gate; abort scores what was collected.
+
+**Broke/surprised us:**
+- numpy float32 leaked into the monitor state and killed /api/monitor
+  with EMPTY replies — found only when a real browser hit the page
+  mid-run; fixed at source + `default=float` + loud 500s + regression
+  test. Cross-port `<img>` (:8092→:8091) hit ERR_BLOCKED_BY_CLIENT in
+  a policy-managed browser → stills now served same-origin (/still/).
+- nereus000 dropped OFF the network mid-verification (ping/ssh/HTTP
+  dead ~15 min; the known bench drop class) — Nick power-cycled;
+  fresh boot came back clean, run state was already safe (ports
+  released before the drop).
+- `hil-lcd.service` runs an INSTALLED COPY (`/usr/local/bin/…`), not
+  the checkout — a repo pull does NOT update the renderer; `sudo cp` +
+  restart does. Same trap class as the workbench guide-card paths.
+
+**Continued (same day): Nick's review session RUN AND PASSED ("Ok seems
+to be working"), then the FULL CLOSED-LOOP MATRIX on his order —
+ACCEPTANCE MET.** Both boards SIMULTANEOUS, VGA + HD, nano+tiny tiled,
+k=2, midday (comparable to the open-loop midday baselines):
+- **The measured hazard is gone:** AE3-HD-tiny frame1/frame2 recall
+  0.179/0.706 open-loop (delta 0.527, from the artifact) → **0.710/
+  0.703 closed-loop (delta 0.006)**. All 8 cells ≤0.012; AE3 HD cells
+  0.004/0.006 (bar ≤0.01). Settle-discards 0 everywhere. The
+  frame-2-only crutch is retired — all frames score.
+- **Second-order find, fixed same session:** with the settle window
+  gone, frame-1 recall trailed frame-2 by 0.05–0.08 on every VGA cell
+  (both boards) — open-loop's settle had been silently doing the
+  sensor AE's settling. Fix = explicit bounded AE discard (`discard`
+  knob, default 5/go, ~150 ms at VGA); deltas collapsed AND VGA
+  scores rose to match the open-loop (AE-settled) baselines.
+- **Scores vs back-to-back open-loop solos (30px, recall/prec):**
+  AE3 VGA nano 0.50/0.70 tiny 0.51/0.77 (open floored recalls 0.52/
+  0.51 — match); AE3 HD nano 0.51/0.58 tiny 0.71/0.60 (open f2-only
+  0.49/0.58, 0.71/0.60 — match); N6 VGA raw nano 0.20/0.51 tiny
+  0.34/0.51 (open 0.19/0.50, 0.33/0.51); N6 HD nano 0.23/0.32 tiny
+  0.36/0.37 (open 0.22/0.31, 0.36/0.37). **The flagged N6-HD low cell
+  REPRODUCES closed-loop → real, not a harness artifact.**
+- **Wall:** VGA 4 cells 75 s (both boards at once; open-loop solos
+  167 s serialized + drains); HD 4 cells 290 s (open 522 s + the
+  minutes-long drain tails). Whole 8-cell matrix ≈ 8 min bench.
+- **E4 COLLISION resolved (Nick: "talk to each other"):** the E2
+  session had built a parallel E4 on `claude/e4-closed-loop-hil`
+  (Nick's mid-session "write PR 66" to them); it ceded — this branch
+  proceeds, their error-skip zero-bytes pin test folded in with
+  credit, their stranded FOV-overlay commit (cf2a754, pushed to the
+  dead E2 branch after #65 merged) re-implemented here (69a65ef).
+  Both dead branches are Nick's to delete post-merge.
+Artifacts: ~/hil_runs/e4_matrix_closed_{vga,hd}_d5 (final) + _vga/_hd
+(discard=1, the AE-effect evidence) + e4_compare.py in ~/bm_bench.
+
+**Continued (same day, Nick's follow-on): BLUR-FT TINY DEPLOYED TO BOTH
+BOARDS + ladder rerun + heat maps (his ask).**
+- Acceptance eval first (README recipe): blurft ema.pt σ0 0.725 (−0.004
+  vs 0.729, bar ±0.02), above nano at EVERY σ; the collapse is gone
+  (σ2.2: 0.414→0.629). Export+compile clean both boards; both ROMFS
+  images rebuilt (tiny_v1 → tiny_blurft, vendor content + nano intact,
+  compiled tiny byte-exact in each image); **DFU flashes sha-verified by
+  partition read-back on both boards** (N6 alt 3; AE3 alt 6 "ROMFS0" —
+  Nick's explicit approval; ssh/scp-to-bench allow rules added to
+  settings.local.json at his direction).
+- TRAP caught live by the monitor's model line: the AE3's find_models
+  picked the STALE /flash tiny (biggest-wins) over the new /rom blurft —
+  run aborted, /flash/stage1_tiny_v1_ae3.tflite removed (one mpremote op
+  under ae3-board-access), rerun clean. Lesson: after a ROMFS model
+  swap, sweep /flash of same-family models or find_models lies.
+- **Ladder (closed-loop, both boards, 30px):** blurft tiny AE3 HD
+  0.81/0.56 (was 0.71/0.60, +0.10 recall) · N6 HD 0.43/0.31 (+0.07 — the
+  FLAGGED cell improves, consistent with glare/softness) · AE3 VGA
+  0.57/0.74 (+0.06) · N6 VGA 0.58/0.42 (−0.02, noise). Nano controls
+  moved ≤0.03 → gains are the model. All audits clean (discards 0,
+  frame deltas ≤0.036).
+- **Heat maps shipped (hil_heatmap.py + cells.jsonl):** obj·cls per
+  candidate cell → homography → source still; FOV boundary drawn (a
+  cold region outside it is unseen, not missed). Reading: nano burns
+  hot+scattered incl. bare rock (its false positives made visible);
+  blurft tiny dimmer but tighter on urchins. 96 maps/leg,
+  ~/hil_runs/e4_blurft_{vga,hd}/heatmaps/index.html.
+Bench left clean: runner idle, boards enumerated, ports free.
+
+**Continued (same day, Nick's ordering: E3 first, report card while it
+runs):**
+- **E3 RF-DETR gate LAUNCHED** (Mac, detached): own venv (rfdetr 1.9.4,
+  Apache-2.0 verbatim-captured), corpus_v2→COCO adapter (densest frame
+  110 < 300 queries ✓), one-epoch driver on the exact rung-A protocol.
+  Three launch repairs, each measured: macOS has no `setsid`; fresh
+  venv lacked cv2 (eval_rung_a module import); rfdetr needs the
+  [train] extras. ~1,250 optimizer steps/epoch; early pace ≈8 s/step →
+  ETA ~2.5-3 h/epoch — the wall-clock half of Nick's go/no-go.
+- **Bite C report card SHIPPED** (workbench card `s8-hil-report`,
+  generator pi/hil/hil_report.py, sparse per Nick): scorecard with
+  energy (AE3 160→1,387 mJ/frame VGA-nano→HD-tiny; N6 "owed" behind
+  the CH3 shunt), the T2 money plot (blur-ft tiny 62% vs nano 46% in
+  the 24-32 px floor band on the AE3), 2 heat maps. Per-GT px
+  attribution recomputed + self-audited against recorded counts.
+- **UI correction (Nick, recorded as a rule): the training UI is
+  train_ctl, nothing else.** My first pass was a bespoke read-only
+  page — wrong; replaced by gate_ctl.py subclassing train_ctl (same
+  page: Start/Pause/Stop, progress bar, thermal warning, CPU/GPU
+  series; rfdetr-true hint: stop mid-epoch discards the epoch; adopts
+  the detached run). Gate cockpit :8894 (the labeler's old train_ctl
+  still holds :8898). Skill `training-control` added so future
+  sessions reach for the cockpit, not a new page.
+
+NEXT: PR #66 review/merge (Nick); the E3 mAP50 lands in ~3 h → Nick's
+full-run go/no-go; STAGE1.md decision-table refresh rides the review.
+
+---
+
 ## 2026-08-25 — S8 bite E2 — AE3-tiny anomaly ROOT-CAUSED: soft AE3 capture × tiny's blur-sensitivity; runtime/artifact/deployment all exonerated by measurement
 
 **Branch:** `claude/ae3-tiny-recall-anomaly-619197` (worktree)

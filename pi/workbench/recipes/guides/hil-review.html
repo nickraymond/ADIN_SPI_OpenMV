@@ -1,0 +1,112 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>HIL closed-loop run — cookbook</title><style>
+ body { background:#14171a; color:#dde3e8; font:15px/1.5 system-ui;
+        max-width:46rem; margin:0 auto; padding:1.2rem; }
+ h1 { font-size:1.3rem; } h2 { font-size:1.05rem; margin-top:1.4rem; }
+ code, pre { background:#1d2126; border:1px solid #2c333a; border-radius:5px; }
+ code { padding:.05rem .3rem; }
+ pre { padding:.6rem .8rem; overflow-x:auto; }
+ .muted { color:#8fa3b3; }
+ .badge { padding:.2rem .6rem; border-radius:5px; font-weight:700; }
+ .up { background:#1d4; color:#000; } .down { background:#555; color:#ddd; }
+ a { color:#6cf; }
+ .warn { border-left:3px solid #ca3; padding-left:.7rem; color:#e8d9a0; }
+ table { border-collapse:collapse; }
+ td { border:1px solid #2c333a; padding:.25rem .6rem; }
+</style></head><body>
+<h1>📖 HIL closed-loop run — launch, review, stop</h1>
+<p class="muted">S8 bite E4. The Pi shows a still, tells each camera to
+infer, each camera reports done, and only then does the still advance —
+sync errors are impossible by construction (no settle windows, no
+discarded frames). You watch and steer from a live page.</p>
+
+<p>Run status:
+ <span id="badge" class="badge down">checking…</span>
+ <a id="openlink" href="http://nereus000:8092/" target="_blank"
+    style="display:none">Open the review page →</a>
+</p>
+
+<h2>1. Start the screen (one click)</h2>
+<p>On the <a href="http://nereus000:8088/" target="_blank">workbench</a>,
+start the <b>Urchin HIL — Monterey playback</b> card
+(<code>s8-hil-urchin</code>). It owns the playback server (:8091) and
+the board locks; the bench LCD lights up by itself. One demo at a time —
+if another card is LIVE, stop it from the page first and wait out the
+35&nbsp;s settle.</p>
+
+<h2>2. Launch the harness (ssh terminal)</h2>
+<p>The harness runs in a terminal you keep open — it prints the scored
+summary there, and Ctrl-C is part of the stop story. Review mode (the
+run holds at every still for your <b>Next</b>):</p>
+<pre>ssh pi@nereus000
+cd ~/ADIN_SPI_OpenMV && python3 -u pi/hil/hil_harness.py --closed-loop --review \
+  --board 'N6=/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00' \
+  --board 'AE3=/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_0829c14000000000-if00' \
+  --phases nano-tiled --min-gt-px 30 --out ~/hil_runs/$(date +%Y%m%d)_review</pre>
+<p class="muted">Variants: drop a <code>--board</code> line for a solo
+run · <code>--phases nano-tiled,tiny-tiled</code> for more phases ·
+omit <code>--review</code> for a hands-off scored run ·
+<code>--framesize HD</code> for the HD tiling. Boards are ALWAYS the
+by-id paths — <code>ttyACM&lt;n&gt;</code> is enumeration order and the
+names are backwards from the guess (the "Pyboard" is the N6).</p>
+
+<h2>3. Review at the page</h2>
+<p>Open <a href="http://nereus000:8092/" target="_blank">nereus000:8092</a>
+(the badge above goes green when a run is up). Top panel: the source
+still with <span style="color:#3c5">GT green</span> and each board's
+detections in its own colour, mapped through that board's homography.
+Per-board panels: the camera's own view with its detections in camera
+pixels — the truthful "what is this camera reporting".</p>
+<table>
+ <tr><td><b>Next still →</b></td><td>done looking; advance the barrier</td></tr>
+ <tr><td><b>📷 grab camera frame</b></td><td>one extra frame WITH the camera JPEG (refreshes the camera panel)</td></tr>
+ <tr><td><b>Pause / Resume</b></td><td>freeze between frames (boards park and heartbeat)</td></tr>
+ <tr><td><b>Switch to AUTO</b></td><td>stop holding; run the rest hands-off</td></tr>
+ <tr><td><b>Toggle camera-view every frame</b></td><td>every frame ships its JPEG (slower, full visibility)</td></tr>
+ <tr><td><b>Abort run</b></td><td>end now; everything collected so far is still scored</td></tr>
+</table>
+<p class="muted">A board shown <b>DEAD</b> has dropped out of the
+barrier (its reason is printed next to it) — the remaining boards
+continue solo and the run stays valid. That is the designed failure
+containment, not a broken run.</p>
+
+<h2>4. Stop, and leave the bench clean</h2>
+<ol>
+ <li><b>Abort run</b> on the page (or let the run finish). The terminal
+   prints the score table; artifacts land under
+   <code>~/hil_runs/&lt;name&gt;/</code> (rows.jsonl, calib +
+   overlays, power log).</li>
+ <li>In review mode the page stays up for reading — <b>Ctrl-C in the
+   ssh terminal</b> ends it. Board ports are already released by
+   then.</li>
+ <li>Done with the bench? Stop <code>s8-hil-urchin</code> from the
+   <a href="http://nereus000:8088/" target="_blank">workbench page</a>
+   (never by killing its process).</li>
+</ol>
+
+<h2>5. If it complains</h2>
+<p><code>FAIL: no playback server at http://localhost:8091</code> —
+step 1 was skipped; start the playback recipe first.</p>
+<p>Page shows nothing at :8092 / <code>Address already in use</code> —
+a previous harness is still holding the port:</p>
+<pre>pkill -INT -f 'hil_harnes[s]'</pre>
+<p class="muted">(SIGINT, not -9: the harness unwinds through its clean
+path — boards told to end, ports released, collected frames scored.)</p>
+<p><code>FAIL: calibration marker not visible in quadrant …</code> — a
+camera or the screen moved; re-aim per the <b>hil-screen</b> chapter,
+then rerun.</p>
+
+<script>
+// Reachability badge: no-cors fetch resolves iff SOMETHING answers there.
+// It cannot read the response (cross-origin) -- up/down is all it knows.
+const URL_ = document.getElementById('openlink').href;
+async function probe(){
+  const b=document.getElementById('badge'), a=document.getElementById('openlink');
+  try { await fetch(URL_, {mode:'no-cors', signal:AbortSignal.timeout(2500)});
+        b.textContent='RUN LIVE'; b.className='badge up';
+        a.style.display='inline'; }
+  catch(e){ b.textContent='no run up — launch one (steps 1–2)';
+            b.className='badge down'; a.style.display='none'; }
+}
+probe(); setInterval(probe, 5000);
+</script></body></html>
