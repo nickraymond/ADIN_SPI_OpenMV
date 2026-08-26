@@ -17,6 +17,80 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (later still) — S8 bite E7 — full-res camera views on every scored frame; the 10-minute probe upgraded the whole design
+
+**Branch:** `claude/s8-e7-camera-views` (stacked on E6; PR open)
+
+**Done:**
+- Nick's probe call paid off: `to_jpeg(copy=False)` AFTER the last tile
+  encodes the HD frame IN PLACE in the frame buffer — 180 ms, 64 B
+  heap, with tiny resident; next capture + inference unaffected
+  (probe_e7_inplace_jpeg.py, one attach, VERDICT lines). So the E7 fix
+  ships FULL-Res camera views, not the planned 320×200 thumbs.
+- hil_board: encode moved after the tile loop, chunked b64 out (3072 B
+  chunks → one exact-length wire line; parser untouched), MemoryError
+  costs the picture never the script. Harness: model phases ship jpeg
+  again. Monitor: grab + jpeg-all buttons gone; cam panels update
+  every scored frame on the render-ack+AE-discard timing; lightbox
+  zooms true 1280×800.
+- Acceptance: HD+tiny FULL run, zero button presses — AE3 finished,
+  calib solved both boards, acc 0.774/0.565 == pre-E7; VGA nano
+  control + mid-run stop clean. Protocol suite 38→39 (chunked-b64
+  wire equivalence).
+
+**Broke/surprised us:**
+- The probe FALSIFIED my kill theory: copy=True with model resident
+  SURVIVED a fresh heap (2.8 MB free). The 04:26 AE3 "eot" kill stays
+  unattributed — the in-place path removes the allocation class
+  anyway, but the record says "suspected", not "convicted".
+- Nick's parked 04:56 run held the board ports (review park by
+  design) — the probe needed a workbench Stop first; fine, but worth
+  remembering: "bench is yours" still means checking the runner.
+
+**Next:** Nick's eyeball of the live camera views; E8 (display
+controls) is the next queued bite. Iceboxed: the ~5 fps HD
+evidence-JPEG streaming demo the probe made cheap (Nick wants to see
+it; rides S21).
+
+---
+
+## 2026-08-26 (later) — S8 bite E6 — card toggles (model, framesize) + live per-board accuracy; the bench fought back and lost
+
+**Branch:** `claude/s8-e6-review-params` (stacked on E5; PR open)
+
+**Done:**
+- Workbench `[params]`: enum choices per recipe → toggles on the card;
+  server validates every pick, appends `--<key> <value>` to argv. ONE
+  `s8-hil-review` card (model nano/tiny × framesize VGA/HD) replaces
+  E5's pair. Suite → 95.
+- Live accuracy on :8092: `match_frame` extracted as the single
+  scoring function (rows post-pass + live counters). Acceptance proof:
+  page numbers == scored summary EXACTLY (tiny-HD AE3 0.771/0.558
+  GT 2510; N6 0.43/0.303 GT 2370). Panel lightbox on PR #67.
+- Acceptance (post-reboot): tiny+HD full 24-still run → finished →
+  Stop clean; nano+VGA → mid-run Stop (abort path) clean. rc=0, no
+  orphans, ports free, artifacts under ~/hil_runs/.
+
+**Broke/surprised us:**
+- FOUR consecutive card starts died at first board attach before
+  Nick's reboot: raw-repl refusal (N6 ×2, AE3 ×1 — the refusal's soft
+  reset then RE-ENUMERATED the AE3, and it sat ~3.5 min under a
+  DIFFERENT USB serial `040A0E05…`, unexplained, cleared by reboot).
+  Hardening shipped: attach does ONE bounded retry that waits ≤45 s
+  for the port node. Root cause of the attach-hostile state after
+  E4-script teardowns is NOT established — flagged.
+- Cold-boot deadlock (found by the reboot): hil-lcd parks
+  "activating" in an until-curl loop waiting for :8091, which the
+  wrapper itself starts — the wrapper's "active"-only check refused
+  forever. Fix: accept "activating".
+- Night-vs-midday: nano-VGA precision 0.52 vs the matrix's 0.70 with
+  recall equal — the measured lighting condition, not a scorer bug.
+
+**Next:** Nick's demo = the click (toggles + zoom + live accuracy),
+PR review. Attach-hostility root-cause is a candidate new bite.
+
+---
+
 ## 2026-08-26 — S8 bite E5 — one-click closed-loop HIL review: nano/tiny cards shipped, bench acceptance ×2 from cold PASSED
 
 **Branch:** `claude/s8-hil-review-recipe-2b59f5` (worktree; PR open)

@@ -208,22 +208,29 @@ def lcd_active(unit=LCD_UNIT):
         out = subprocess.run(
             ["systemctl", "show", unit, "-p", "ActiveState", "--value"],
             capture_output=True, text=True, timeout=5)
-        return out.stdout.strip() == "active"
+        # "activating" is HEALTHY here: on a cold boot the unit parks in
+        # an until-curl loop waiting for :8091 — which this wrapper is
+        # about to start. Requiring "active" deadlocked the first
+        # post-reboot click (measured 2026-08-26).
+        return out.stdout.strip() in ("active", "activating")
     except (OSError, subprocess.TimeoutExpired):
         return False
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--phases", default="nano-tiled",
-                    help="harness phase list (the nano/tiny cards differ "
-                         "only here)")
+    ap.add_argument("--model", default="nano", choices=("nano", "tiny"),
+                    help="which deployed model to review (the card's UI "
+                         "toggle lands here as --model <choice>)")
+    ap.add_argument("--phases", default=None,
+                    help="explicit harness phase list; overrides --model "
+                         "(manual use only)")
     ap.add_argument("--board", action="append",
                     metavar="LABEL=BY_ID_NAME",
                     help="override the default two boards (by-id name, "
                          "not a path)")
     ap.add_argument("--min-gt-px", default="30")
-    ap.add_argument("--framesize", default="VGA")
+    ap.add_argument("--framesize", default="VGA", choices=("VGA", "HD"))
     ap.add_argument("--out-base", default="~/hil_runs")
     ap.add_argument("--playback-port", type=int, default=8091)
     ap.add_argument("--skip-lcd-check", action="store_true",
@@ -239,6 +246,7 @@ def main(argv=None):
 
     boards = args.board or ["%s=%s" % (lb, name)
                             for lb, name in BOARDS.items()]
+    phases = args.phases or ("%s-tiled" % args.model)
     out_dir = os.path.join(os.path.expanduser(args.out_base),
                            "review_" + time.strftime("%Y%m%d_%H%M%S"))
     playback_argv = [sys.executable, "-u",
@@ -248,7 +256,7 @@ def main(argv=None):
                     os.path.join(_HERE, "hil_harness.py"),
                     "--closed-loop", "--review",
                     "--playback", "http://127.0.0.1:%d" % args.playback_port,
-                    "--phases", args.phases,
+                    "--phases", phases,
                     "--framesize", args.framesize,
                     "--min-gt-px", str(args.min_gt_px),
                     "--out", out_dir]
@@ -257,7 +265,8 @@ def main(argv=None):
         dev = name if name.startswith("/") else os.path.join(BY_ID_DIR, name)
         harness_argv += ["--board", "%s=%s" % (label, dev)]
 
-    print("wrapper: phases=%s out=%s" % (args.phases, out_dir), flush=True)
+    print("wrapper: phases=%s framesize=%s out=%s"
+          % (phases, args.framesize, out_dir), flush=True)
     sup = Supervisor(playback_argv, harness_argv,
                      "http://127.0.0.1:%d/api/state" % args.playback_port)
     sup.install_signals()

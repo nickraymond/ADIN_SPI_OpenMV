@@ -134,6 +134,72 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(errs, [])
         self.assertIsNone(out["run"]["stop_grace"])
 
+    def test_params_validated(self):
+        good = recipe(run={"argv": ["x"]},
+                      params={"model": ["nano", "tiny"]})
+        out, errs = errs_of(good)
+        self.assertEqual(errs, [])
+        self.assertEqual(out["params"], {"model": ["nano", "tiny"]})
+        for bad in ({"model": ["nano"]},          # < 2 choices
+                    {"model": ["a", "a"]},        # dupes
+                    {"model": ["ok", "no spaces"]},
+                    {"model": ["ok", 3]},
+                    {"Bad-Key": ["a", "b"]},
+                    {"model": "nano"}):           # not a list
+            out, errs = errs_of(recipe(run={"argv": ["x"]}, params=bad))
+            self.assertIsNone(out, bad)
+
+    def test_params_need_a_run_block(self):
+        out, errs = errs_of(recipe(params={"model": ["a", "b"]}))
+        self.assertIsNone(out)
+        self.assertTrue(any("run" in e for e in errs), errs)
+
+    def test_guide_card_cannot_carry_params(self):
+        out, errs = errs_of({"name": "g", "title": "G",
+                             "guide": "guides/g.html",
+                             "params": {"model": ["a", "b"]}})
+        self.assertIsNone(out)
+
+
+class TestResolveParams(unittest.TestCase):
+    def rec(self):
+        out, errs = validate_recipe(
+            recipe(run={"argv": ["x"]},
+                   params={"model": ["nano", "tiny"],
+                           "framesize": ["VGA", "HD"]}), "t.toml")
+        assert not errs
+        return out
+
+    def test_defaults_are_first_choice(self):
+        extra, picks, err = workbench.resolve_params(self.rec(), None)
+        self.assertIsNone(err)
+        self.assertEqual(picks, {"model": "nano", "framesize": "VGA"})
+        self.assertEqual(extra, ["--model", "nano", "--framesize", "VGA"])
+
+    def test_choice_applies(self):
+        extra, picks, err = workbench.resolve_params(
+            self.rec(), {"framesize": "HD"})
+        self.assertIsNone(err)
+        self.assertEqual(picks["framesize"], "HD")
+        self.assertEqual(picks["model"], "nano")
+
+    def test_undeclared_value_refused(self):
+        _e, _p, err = workbench.resolve_params(
+            self.rec(), {"model": "yolo11x"})
+        self.assertIn("must be one of", err)
+
+    def test_unknown_key_refused(self):
+        _e, _p, err = workbench.resolve_params(self.rec(), {"quality": "90"})
+        self.assertIn("declares no param", err)
+
+    def test_paramless_recipe_ignores_nothing_silently(self):
+        out, _ = validate_recipe(recipe(run={"argv": ["x"]}), "t.toml")
+        extra, picks, err = workbench.resolve_params(out, {"model": "nano"})
+        self.assertIn("declares no param", err)
+        extra, picks, err = workbench.resolve_params(out, {})
+        self.assertIsNone(err)
+        self.assertEqual(extra, [])
+
     def test_model_sha256_validated(self):
         def boards(sha):
             return [{"label": "AE3", "by_id": "usb-x", "models": [
@@ -354,22 +420,23 @@ class TestShippedRecipes(unittest.TestCase):
             self.assertIsNone(b["firmware"])
             self.assertEqual(b["models"], [])
 
-    def test_hil_review_cards_run_the_wrapper_with_stop_grace(self):
-        # E5: the one-click cards. Same boards as s8-hil-urchin (the
-        # lock + settle ride on them), the wrapper as argv, a stop
-        # grace that covers abort-time scoring, LIVE gated on the
-        # monitor page. Board-identity/phase agreement with the wrapper
-        # is pinned in pi/hil/test_hil_review_run.py.
+    def test_hil_review_card_runs_the_wrapper_with_params(self):
+        # E5+E6: the one-click card. Same boards as s8-hil-urchin (the
+        # lock + settle ride on them), the wrapper as argv, model +
+        # framesize as UI toggles, a stop grace that covers abort-time
+        # scoring, LIVE gated on the monitor page. Param-enum agreement
+        # with the wrapper is pinned in pi/hil/test_hil_review_run.py.
         recipes, _ = load_recipes(workbench.RECIPE_DIR)
         by_name = {x["name"]: x for x in recipes}
         urchin = {b["by_id"] for b in by_name["s8-hil-urchin"]["boards"]}
-        for name in ("s8-hil-review-nano", "s8-hil-review-tiny"):
-            r = by_name[name]
-            self.assertIn("pi/hil/hil_review_run.py", r["run"]["argv"], name)
-            self.assertEqual({b["by_id"] for b in r["boards"]}, urchin, name)
-            self.assertGreaterEqual(r["run"]["stop_grace"], 40, name)
-            self.assertIn(":8092", r["health"]["http"], name)
-            self.assertIn("hil-lcd.service", r["services"], name)
+        r = by_name["s8-hil-review"]
+        self.assertIn("pi/hil/hil_review_run.py", r["run"]["argv"])
+        self.assertEqual({b["by_id"] for b in r["boards"]}, urchin)
+        self.assertEqual(r["params"], {"model": ["nano", "tiny"],
+                                       "framesize": ["VGA", "HD"]})
+        self.assertGreaterEqual(r["run"]["stop_grace"], 40)
+        self.assertIn(":8092", r["health"]["http"])
+        self.assertIn("hil-lcd.service", r["services"])
 
 
 class FakeBench:
@@ -651,6 +718,28 @@ class TestRunner(unittest.TestCase):
     def test_recipe_without_run_refused(self):
         with self.assertRaises(StartRefused):
             self.r.start(run_recipe(SLEEPER, run=None), READY)
+
+    def test_param_picks_reach_the_child_argv(self):
+        # E6: enum-validated picks are appended to argv verbatim.
+        marker = os.path.join(tempfile.gettempdir(),
+                              "wb_param_%d.txt" % os.getpid())
+        self.addCleanup(lambda: os.path.exists(marker) and os.unlink(marker))
+        argv = [sys.executable, "-c",
+                "import sys, time\n"
+                "open(sys.argv[1], 'w').write(' '.join(sys.argv[2:]))\n"
+                "time.sleep(60)", marker]
+        self.r.start(run_recipe(argv), READY,
+                     extra_argv=["--model", "tiny", "--framesize", "HD"],
+                     params={"model": "tiny", "framesize": "HD"})
+        self.wait_state("live")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not os.path.exists(marker):
+            time.sleep(0.02)   # the child's write can trail the LIVE flip
+        self.assertEqual(open(marker).read(),
+                         "--model tiny --framesize HD")
+        self.assertEqual(self.r.snapshot()["params"],
+                         {"model": "tiny", "framesize": "HD"})
+        self.r.stop()
 
     def test_stop_honors_recipe_stop_grace(self):
         # A SIGINT-deaf child + a declared stop_grace: the runner must

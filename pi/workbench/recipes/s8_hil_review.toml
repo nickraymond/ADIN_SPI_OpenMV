@@ -1,0 +1,41 @@
+# s8_hil_review.toml -- S8 bites E5+E6: one-click closed-loop HIL review.
+#
+# ONE card, two UI toggles ([params]): model nano/tiny and framesize
+# VGA/HD (Nick 2026-08-26 -- supersedes the two-card option A once the
+# framesize axis appeared; enums only, the server validates every pick,
+# nothing free-form reaches argv). The wrapper
+# (pi/hil/hil_review_run.py) starts the playback screen, waits for
+# :8091, checks hil-lcd.service, then runs the closed-loop harness in
+# review mode against BOTH boards. Stop tears down harness-FIRST (its
+# clean path quits the boards, releases the serial ports and scores
+# what was collected), then playback; stop_grace covers abort-time
+# scoring. Manual ssh fallback: the hil-review guide card.
+#
+# HD note: an AE3 HD frame cycle is ~3.5 s, so review stepping is
+# noticeably slower than VGA -- that is the board, not a hang.
+
+name = "s8-hil-review"
+title = "HIL review — closed loop"
+summary = "One click: playback screen + closed-loop harness in review mode, both boards, 30 px GT floor. Pick the model (nano/tiny) and capture size (VGA/HD) on the card. Review detections + live accuracy at :8092 (Pause/Next/Auto/Abort, click a panel to enlarge); Stop scores what was collected and releases the ports. Artifacts under ~/hil_runs/. From sprint S8 bites E5+E6."
+opens = ":8092"
+services = ["hil-lcd.service"]
+
+[params]
+model = ["nano", "tiny"]
+framesize = ["VGA", "HD"]
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+
+[[boards]]
+label = "N6"
+by_id = "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_020023000450433547373200-if00"
+
+[run]
+argv = ["python3", "-u", "pi/hil/hil_review_run.py"]
+cwd = "."
+stop_grace = 40
+
+[health]
+http = "http://127.0.0.1:8092/"
