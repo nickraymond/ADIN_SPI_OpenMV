@@ -206,6 +206,26 @@ def match_frame(dets, boxes, H, cam_w, cam_h, min_gt_px=0):
 # already-started SerialBoard.
 
 
+def start_stream(port, script, label=""):
+    """One serial attach with ONE retry for the raw-repl refusal.
+
+    Measured 2026-08-26 (N6, first card start after a prior run's
+    teardown): SerialBoard.start raised TransportError('could not
+    enter raw repl') on two consecutive card starts, then a manual
+    attach minutes later succeeded first try — a transient
+    first-attach state, same class as the sterile-stream retry at the
+    call sites. One bounded retry, never a loop (ae3-board-access).
+    TransportError is NOT an OSError (n6_stream_host's supervisor
+    note), so the attach boundary catches broadly."""
+    try:
+        return BoardStream(SerialBoard(port).start(script))
+    except Exception as e:
+        print(f"    {label}: first attach refused ({e}) — one retry "
+              f"in 5 s")
+        time.sleep(5)
+        return BoardStream(SerialBoard(port).start(script))
+
+
 def frame_detections(fr):
     """Board frame -> detections in CAMERA px (VGA 640x400)."""
     if fr["tiles"] == [[0, 0]] and len(fr["_cells"]) == 1:   # whole mode
@@ -346,14 +366,14 @@ def run_closed_loop(args, playback, out_dir):
     streams = {}
     runs = {lb: _BoardRun(lb) for lb in labels}
     for lb, port in board_list:
-        bs = BoardStream(SerialBoard(port).start(script))
+        bs = start_stream(port, script, label=lb)
         ev0, obj0 = bs.next_event(timeout_s=60)
         if ev0 == "end":
             print(f"    {lb}: first attach died sterile "
                   f"({obj0.get('reason')}) — one retry in 5 s")
             bs.stop()
             time.sleep(5)
-            bs = BoardStream(SerialBoard(port).start(script))
+            bs = start_stream(port, script, label=lb)
             ev0, obj0 = bs.next_event(timeout_s=60)
         streams[lb] = bs
         evq.put((lb, ev0, obj0))
@@ -860,7 +880,7 @@ def run_board(label, port, args, playback, out_dir):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"    power logger up (pid {power_proc.pid})")
 
-    bs = BoardStream(SerialBoard(port).start(script))
+    bs = start_stream(port, script, label=label)
     # the FIRST attach after a board crash-reset tends to die instantly
     # (the soft reset re-enumerates the port under the fresh connection);
     # one retry, only when the stream produced NOTHING
@@ -870,7 +890,7 @@ def run_board(label, port, args, playback, out_dir):
               f"one retry in 5 s")
         bs.stop()
         time.sleep(5)
-        bs = BoardStream(SerialBoard(port).start(script))
+        bs = start_stream(port, script, label=label)
         ev0, obj0 = bs.next_event(timeout_s=60)
     first_event = (ev0, obj0)
     rows_path = os.path.join(out_dir, "rows.jsonl")
