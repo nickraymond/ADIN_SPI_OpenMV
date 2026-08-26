@@ -98,15 +98,20 @@ class GateCtl(train_ctl.Ctl):
                 "corpus": "corpus_v2 → COCO (19,997 imgs)"}
 
     def _gate_scores(self):
-        """[(step_or_label, mAP50), ...] from the gate's console log —
-        the baseline val, any epoch vals, and the final GATE line."""
-        if not LOG.exists():
+        """[(epoch, mAP50), ...] from the durable scores file (every
+        scorecard run appends there; stdout/console parsing was the
+        2026-08-26 gap — a manual score never reached the log)."""
+        p = self.rundir / "rung_a_scores.jsonl"
+        if not p.exists():
             return []
-        txt = re.sub(r"\x1b\[[0-9;]*m", "", LOG.read_text(errors="replace"))
-        out = []
-        for m in re.finditer(r"mAP50\s*=\s*([0-9.]+)", txt):
-            out.append(float(m.group(1)))
-        return out
+        pts = {}
+        for ln in open(p):
+            try:
+                r = __import__("json").loads(ln)
+                pts[int(r["epoch"])] = float(r["map50"])
+            except (ValueError, KeyError):
+                continue
+        return sorted(pts.items())
 
     def status(self):
         state, _ = self.pstate()
@@ -182,16 +187,15 @@ class GateCtl(train_ctl.Ctl):
                 s.set_color("#3a434c")
             ax.tick_params(colors="#8fa3b3", labelsize=7)
         if scores:
-            axes[0].plot(range(len(scores)), scores, color="#1d4",
-                         lw=1.4, marker="o", ms=4)
-            for i, v in enumerate(scores):
-                axes[0].annotate(f"{v:.3f}", (i, v), xytext=(3, 4),
+            sx, sy = zip(*scores)
+            axes[0].plot(sx, sy, color="#1d4", lw=1.4, marker="o", ms=4)
+            for e, v in scores:
+                axes[0].annotate(f"{v:.3f}", (e, v), xytext=(3, 4),
                                  textcoords="offset points", fontsize=7,
                                  color="#8fa3b3")
             axes[0].set_ylabel("rung-A mAP50", fontsize=8,
                                color="#8fa3b3")
-            axes[0].set_xlabel("eval # (baseline → epoch → gate)",
-                               fontsize=8, color="#8fa3b3")
+            axes[0].set_xlabel("epoch", fontsize=8, color="#8fa3b3")
             axes[0].set_ylim(0, 1)
             axes[0].axhline(0.658, color="#ca3", lw=1,
                             ls="--", alpha=0.8)

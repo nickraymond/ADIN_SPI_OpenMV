@@ -116,8 +116,22 @@ def main():
               f"({wall / max(1, args.epochs):.0f}s/epoch)", flush=True)
 
     ap50 = rung_a_score(model, out)
-    print(f"\nRF-DETR GATE: rung-A mAP50 = {ap50:.3f} @ e{args.epochs} "
-          f"(YOLOX-S labeler was 0.658 @ e1, 0.800 final)")
+    # durable score history — the cockpit plot reads THIS, not stdout
+    # (a manual scorecard's stdout never reaches the console log)
+    ep_hint = 0
+    mc = out / "metrics.csv"
+    if mc.exists():
+        try:
+            ep_hint = int(float(
+                [ln for ln in mc.read_text().splitlines()
+                 if ln.strip()][-1].split(",")[0]))
+        except (ValueError, IndexError):
+            pass
+    with open(out / "rung_a_scores.jsonl", "a") as fh:
+        fh.write(json.dumps({"ts": time.time(), "epoch": ep_hint,
+                             "map50": round(ap50, 4)}) + "\n")
+    print(f"\nRF-DETR GATE: rung-A mAP50 = {ap50:.3f} (epoch ~{ep_hint}; "
+          f"YOLOX-S labeler was 0.658 @ e1, 0.800 final)")
 
 
 if __name__ == "__main__":
