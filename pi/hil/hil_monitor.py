@@ -297,14 +297,17 @@ function summaryCard(run){
   'rows.jsonl, matches summary.json)</span>'+
   '<table style="margin-top:.3rem;border-collapse:collapse">'+
   '<tr>'+['board','recall','precision','GT','match','false','frames',
-          'wall s'].map(h=>'<td style="padding:.1rem .8rem;color:'+
+          'wall s','peak W','~mJ/frame'].map(h=>
+          '<td style="padding:.1rem .8rem;color:'+
           '#8fa3b3">'+h+'</td>').join('')+'</tr>'+
   Object.keys(s.boards||{}).sort().map(lb=>{
    const b=s.boards[lb];
    return '<tr>'+[lb,
     b.recall==null?'—':b.recall.toFixed(3),
     b.prec==null?'—':b.prec.toFixed(3),
-    b.gt,b.match,b['false'],b.frames,b.wall_s]
+    b.gt,b.match,b['false'],b.frames,b.wall_s,
+    b.power?b.power.peak_w.toFixed(2):'N/A',
+    b.power?b.power.mj_frame.toFixed(0):'N/A']
     .map(v=>'<td style="padding:.1rem .8rem">'+v+'</td>').join('')+
     '</tr>';}).join('')+'</table>';
 }
@@ -397,6 +400,9 @@ async function poll(){
    'frames this still  '+(b.got??'?')+'\\n'+
    'inference          '+(b.inf_ms??'?')+' ms\\n'+
    'e2e frame          '+(b.e2e_ms??'?')+' ms\\n'+
+   ('power' in b ? 'power              '+(b.power ?
+     'peak '+b.power.peak_w.toFixed(2)+' W \\u00b7 ~'+
+     b.power.mj.toFixed(0)+' mJ' : 'N/A')+'\\n' : '')+
    'dets               '+(b.n_det??'?')+
    (b.acc?'\\naccuracy (run)     recall '+
      (b.acc.recall==null?'\\u2014':b.acc.recall.toFixed(2))+

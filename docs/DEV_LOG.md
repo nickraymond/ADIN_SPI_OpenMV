@@ -17,6 +17,35 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-26 (evening 3) — S8 bite E9 — per-inference power on the review page; N/A is a rule, not a config
+
+**Branch:** `claude/s8-e9-review-power` (from main after E11's #72
+merged; PR open)
+
+**Done:**
+- PowerTail in the harness (the monitor's single feeder): tails the
+  power_*.jsonl the run already spawns, answers per-frame windows
+  [t_host−e2e, t_host] → peak W + ~mJ on each board panel; run-level
+  peak W / mean mJ/frame on the finish card and in summary.json.
+- The N/A rule is a measurement, not a flag: window peak < 50 mW =
+  dead channel → None → "N/A". The N6's bypassed CH3 (0.0 mA measured)
+  hits it; the shunt re-wire will cross it with zero code change.
+- Acceptance (nano-VGA full card run): AE3 live 0.24 W / ~82 mJ, run
+  mean 89.2 mJ/frame — matches the matrix's measured 85 mJ/frame
+  nano-tiled class; N6 N/A throughout; finish card + summary.json
+  agree. Pi suite 75/75. Clean stop, ports free.
+
+**Broke/surprised us:** nothing — the plumbing (power child, t_host
+stamps) was already in place from E4; the bite was wiring + honesty
+rules. Note: mJ is approximate (10 Hz; window anchored at host
+arrival, wire time shifts it slightly late — recorded in the code).
+
+**Next:** Nick's click demo + PR review. E10 remains blocked on Nick's
+labels.jsonl path. Live checkout on the E9 branch (flip to main after
+merge).
+
+---
+
 ## 2026-08-26 (evening 2) — S8 bite E11 — 9-marker H+k1 calibration: the N6 recovers to FULL AE3 parity; the "lens deficit" was measurement artifact
 
 **Branch:** `claude/s8-e11-distortion-calib` (from main after the
