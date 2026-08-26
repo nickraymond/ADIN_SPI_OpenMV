@@ -198,6 +198,13 @@ PAGE = """<!DOCTYPE html>
  .dead{color:#f66;font-weight:bold}
  pre{background:#14171a;padding:6px;border-radius:4px;max-height:150px;
      overflow-y:auto;white-space:pre-wrap}
+ /* click-to-enlarge (E5 polish): the clicked panel goes fullscreen but
+    keeps its DOM, so boxes and the live poll keep updating inside it */
+ .imgbox{cursor:zoom-in}
+ .panel.zoom{position:fixed;inset:0;z-index:50;margin:0;border-radius:0;
+     overflow:auto;background:#0d1013;display:flex;flex-direction:column}
+ .panel.zoom .imgbox{cursor:zoom-out;margin:auto;width:96vw;
+     max-width:170vh}
 </style></head><body>
 <h1>HIL closed-loop monitor</h1>
 <div id="bar">connecting&hellip;</div>
@@ -217,7 +224,8 @@ PAGE = """<!DOCTYPE html>
   <div>still <span id="stname">&mdash;</span>
    &nbsp; <span style="color:#3c5">GT green</span>,
    detections per board coloured</div>
-  <div class="imgbox" id="stillbox"><img id="still"></div>
+  <div class="imgbox" id="stillbox" onclick="zoom(this)"
+       title="click to enlarge"><img id="still"></div>
  </div>
  <div id="boards" style="display:contents"></div>
 </div>
@@ -230,6 +238,15 @@ async function rv(action,board){
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({action,board})});
 }
+function zoom(box){
+ const p=box.closest('.panel');
+ document.querySelectorAll('.panel.zoom').forEach(
+  x=>{if(x!==p)x.classList.remove('zoom')});
+ p.classList.toggle('zoom');
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape')
+ document.querySelectorAll('.panel.zoom').forEach(
+  x=>x.classList.remove('zoom')); });
 function boxes(el,list,color,label){
  el.querySelectorAll('.bx').forEach(b=>b.remove());
  (list||[]).forEach(b=>{
@@ -288,7 +305,8 @@ async function poll(){
   if(!p){
    p=document.createElement('div'); p.className='panel'; p.id='bp_'+lb;
    p.innerHTML='<div id="bh_'+lb+'"></div>'+
-    '<div class="imgbox" id="cb_'+lb+'"><img id="ci_'+lb+'"></div>'+
+    '<div class="imgbox" id="cb_'+lb+'" onclick="zoom(this)" '+
+    'title="click to enlarge"><img id="ci_'+lb+'"></div>'+
     '<div id="bs_'+lb+'" style="white-space:pre"></div>'+
     '<button onclick="rv(\\'jpeg\\',\\''+lb+'\\')">'+
     '\\uD83D\\uDCF7 grab camera frame</button>';
