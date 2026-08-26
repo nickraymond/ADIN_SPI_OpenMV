@@ -221,7 +221,14 @@ def start_stream(port, script, label=""):
         return BoardStream(SerialBoard(port).start(script))
     except Exception as e:
         print(f"    {label}: first attach refused ({e}) — one retry "
-              f"in 5 s")
+              f"once the port settles")
+        # the failed attach's soft reset can RE-ENUMERATE the device
+        # (measured AE3 2026-08-26: by-id link vanished and came back
+        # ~30 s later; the 5 s retry hit 'failed to access') — wait,
+        # bounded, for the node to exist again before the one retry
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline and not os.path.exists(port):
+            time.sleep(0.5)
         time.sleep(5)
         return BoardStream(SerialBoard(port).start(script))
 
