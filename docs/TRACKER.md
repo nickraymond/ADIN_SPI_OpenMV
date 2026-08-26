@@ -2198,13 +2198,16 @@ any urchin labelling effort is spent.
       scored-summary card + summary.json (from the rows.jsonl
       post-pass), match_frame iou_thr param, and hil_rescore.py (the
       IOU discriminator / E11 instrument; synthetic-fixture tested:
-      known counts at 0.30 vs 0.20). OWED when the bench returns:
-      Pi-side scoring tests (numpy suite, 9 tests), the discriminator
-      run on the saved N6-HD runs (the E11 prediction number), and
-      one card run eyeballing toggles + finish card. Resume: checkout
-      `claude/s8-e8-display-controls` on the Pi (it still carries E7),
-      pytest test_hil_scoring.py, `python3 pi/hil/hil_rescore.py
-      ~/hil_runs/review_20260826_053949`, then a card run.
+      known counts at 0.30 vs 0.20). RESUMED same night via the LAN IP
+      (192.168.1.163 — the drop was name-resolution, not the Pi): Pi
+      scoring suite 8/8, and the **DISCRIMINATOR CONVICTED THE N6
+      LENS — IOU 0.30→0.20 recall jump N6 +0.151/+0.148 on BOTH saved
+      HD runs vs AE3 +0.012 flat** (E11's prediction: distortion-aware
+      calib alone recovers the N6 to ~0.59/0.41 at strict IOU; the
+      remaining gap to AE3 0.77 is real detection difference — the
+      lens/glare class, Nick's better-lens test). PR open. OWED: Nick's
+      UI eyeball of the new controls on his next card run (his live
+      run predated the E8 page).
       *(original capture follows)*
       **(a) Box-layer toggles:** per-layer on/off for GT / N6 / AE3
       boxes on the still view, honored in the lightbox zoom too — see

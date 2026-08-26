@@ -42,10 +42,27 @@ until acceptance)
   all pushed; Pi still carries the E7 checkout, boards were idle and
   ports free at last contact.
 
-**Next (when the bench returns):** deploy E8 branch → Pi numpy tests →
-`hil_rescore.py ~/hil_runs/review_20260826_053949` (+ the 045611 run)
-for the N6 IOU discriminator table → one card run for the UI eyeball →
-PR. Then E10 (Nick's new labels), E9, E11.
+**Continued same night (bench back via LAN IP 192.168.1.163 — the drop
+was name-resolution/tailnet, the Pi was fine; memory updated):**
+- Pi scoring suite 8/8 (after a missing `import json` the Mac's
+  numpy-less skip had hidden — the skip guard deferred the whole
+  class, lesson noted).
+- **THE DISCRIMINATOR CONVICTED THE N6 LENS.** IOU 0.30→0.20 on BOTH
+  saved HD-tiny runs: AE3 recall +0.012/+0.010 (flat); **N6 +0.151/
+  +0.148 (0.44→0.59), precision +0.11** — identical across runs. ~15
+  recall points are near-miss alignment losses, exactly the barrel-
+  distortion signature Nick spotted in the aim boxes. E11's
+  prediction: distortion-aware calib alone recovers the N6 to
+  ~0.59/0.41 at strict IOU; the rest of the gap to AE3 0.77 is real
+  detection difference (lens/glare — Nick's better-lens test).
+- Session ended at Nick's pause: his review run stopped clean (scored,
+  061933 artifacts), runner idle, boards enumerated + free, PR
+  opened. OWED on E8: Nick's UI eyeball of the new controls on his
+  next card run (the run live during deploy predated the E8 page).
+
+**Next:** Nick eyeballs E8's controls on his next run → merge stack
+#67→#68→#69→E8. Then E10 (needs Nick's new-labels path), E9, E11 (its
+prediction number now in hand).
 
 ---
 
