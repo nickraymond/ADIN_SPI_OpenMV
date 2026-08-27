@@ -63,6 +63,9 @@ def main():
     ap.add_argument("--conf", type=float, default=0.40)
     ap.add_argument("--n", type=int, default=8)
     ap.add_argument("--panel-w", type=int, default=1280)
+    ap.add_argument("--quality", type=int, default=82,
+                    help="JPEG quality (bump with --panel-w 1920 for "
+                         "print/blog-grade composites)")
     args = ap.parse_args()
     out = Path(args.out).expanduser()
     gal = out / "gallery"
@@ -130,7 +133,7 @@ def main():
                                          round(p.shape[0] * s))))
         comp = np.hstack(panels)
         fn = gal / f"{Path(name).stem}.jpg"
-        cv2.imwrite(str(fn), comp, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        cv2.imwrite(str(fn), comp, [cv2.IMWRITE_JPEG_QUALITY, args.quality])
         print(f"  {fn.name}  [{why[i]}]  GT {rows[i][4] and len(rows[i][4])}"
               f"  gap {next(s['tp_gap'] for s in stats if s['i'] == i):+d}")
 
