@@ -1,7 +1,25 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-26 evening (**S8 BITE E11 BENCH-ACCEPTED —
+*Last updated: 2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
+OWN LABELS, DESK-ONLY — RF-DETR (best-EMA e17) BEATS YOLOX-S IN THE
+DEPLOYMENT DOMAIN, on GT that structurally favors YOLOX-S:** HIL
+mAP50 0.876 vs 0.808 (186 reviewed stills / 4,966 boxes = the E10
+set, disjoint from both training corpora), small-GT <48 px 0.406 vs
+0.140, crowded frames 0.856 vs 0.798, hardest clip img_8813 0.890 vs
+0.657, recall @ matched precision ≈0.91 = 0.785 vs 0.701. mAP50-95
+(0.760 vs 0.446) is anchored — GT was corrected FROM YOLOX-S
+auto-boxes — and is not decision-grade; overlays confirm RF-DETR's
+extra TPs are real animals. Rung-A (0.800 vs ~0.789 parity) could not
+see any of this: the bench split saturates ≥64 px. Machinery:
+`ml/labeler_eval/` + `~/nereus_ml/runs/labeler_hil_eval/`; training
+paused/resumed via the :8894 cockpit (~15 min). **RECOMMENDATION ON
+E3's GATE (Nick owns it): adopt RF-DETR as stage-2 labeler; SKIP the
+7-14-day full run — rung-A plateaued e13→e20 (~0.79); finish the
+running 30-epoch job, re-score HIL at final EMA, adopt that
+checkpoint.** PR open. NOTE: the kickoff named this bite E6; E6 was
+taken (card UI) — captured as E12. Previous:*
+*2026-08-26 evening (**S8 BITE E11 BENCH-ACCEPTED —
 distortion-aware calibration (9-marker grid, H + radial k1) RECOVERED
 THE N6 TO FULL AE3 PARITY at strict IOU: HD-tiny N6 0.781 recall /
 0.593 prec vs AE3 0.783/0.574 (N6 was 0.43/0.30; AE3 = the flat
@@ -2384,6 +2402,26 @@ any urchin labelling effort is spent.
       markers + a held-out check) reported per camera before/after;
       an N6 HD leg re-scored with the new transform, delta reported
       next to the E8 IOU discriminator's prediction.
+
+- [~] **Bite E12 — labeler bake-off on Nick's HIL labels (kickoff
+      named it E6; E6 was taken) — SCORED 2026-08-27, PR open, Nick's
+      gate = the E3 go/no-go.** Both labelers, one COCOeval protocol
+      (maxDets 300), GT = 186 reviewed stills / 4,966 boxes (the E10
+      set; disjoint from both training corpora). Headline: RF-DETR
+      best-EMA (e17) 0.876 vs YOLOX-S 0.808 mAP50; the gap widens
+      monotonically as targets shrink (<48 px: 0.406 vs 0.140) and
+      holds on crowded frames (0.856 vs 0.798) and the hardest clip
+      (img_8813 0.890 vs 0.657); recall @ matched precision ≈0.91 =
+      0.785 vs 0.701. STATED CAVEAT: GT corrected from YOLOX-S
+      auto-boxes → mAP50-95 (0.760 vs 0.446) anchors to the incumbent
+      and is not decision-grade; the 8-frame overlay gallery
+      (`~/nereus_ml/runs/labeler_hil_eval/gallery/`) is the
+      tie-breaker and supports RF-DETR. Machinery `ml/labeler_eval/`
+      (hil_gt / infer_hil / score_hil / gallery_hil), re-runnable in
+      ~30 min desk time. *Recommendation for Nick: adopt RF-DETR as
+      the stage-2 labeler; skip the 7-14-day full run (rung-A
+      plateaued ~0.79 e13→e20); finish the running 30-epoch job and
+      re-score HIL at final EMA.*
 
 **BENCH TOPOLOGY CHANGED 2026-08-20 (Nick, D44): BOTH boards are on
 nereus000's USB.** The Mac holds no board — it is the training and

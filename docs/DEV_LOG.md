@@ -17,6 +17,50 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
+
+**Branch:** `claude/labeler-eval-yolox-rfdetr-e2b746` (PR open). Desk
+session, zero board contact. NOTE: the kickoff called this "bite E6"
+but E6 was already the card-UI bite — captured in TRACKER as E12.
+
+**Done:**
+- GT verified: 186 reviewed stills / 4,966 boxes (stills_v1 66 +
+  stills_v2 120, the E10 deployed set; disjoint from both training
+  corpora). Both labelers scored with ONE COCOeval protocol
+  (maxDets 300 — frames reach 91 GT) via new `ml/labeler_eval/`
+  (hil_gt / infer_hil / score_hil / gallery_hil); artifacts at
+  `~/nereus_ml/runs/labeler_hil_eval/`.
+- **RF-DETR (best-EMA e17) wins where it matters: HIL mAP50 0.876 vs
+  0.808; small-GT (<48 px) 0.406 vs 0.140; crowded frames 0.856 vs
+  0.798; hardest clip img_8813 0.890 vs 0.657; recall at matched
+  precision ≈0.91 = 0.785 vs 0.701.** mAP50-95 (0.446 vs 0.760) is
+  NOT decision-grade — the GT was corrected from YOLOX-S auto-boxes,
+  so box tightness anchors to the incumbent; mAP50 + matched-precision
+  recall are the anchor-robust reads, and the 8-frame overlay gallery
+  confirms RF-DETR's extra TPs are real animals (e.g. img_8813_f0304:
+  14/17 TP · 0 FP vs 6/17 · 1 FP).
+- The running RF-DETR job was PAUSED via the :8894 cockpit during
+  inference and resumed after (~15 min GPU pause, SIGSTOP/SIGCONT,
+  no state lost). Report artifact published (decision table +
+  overlays + go/no-go).
+
+**Broke/surprised us:**
+- Even at conf 0.05 YOLOX-S only reaches 0.829 recall on this GT —
+  Nick hand-added many boxes the prelabeler never proposed, which is
+  what makes the set a fair deployment-domain instrument.
+- Rung-A could not see any of this (0.800 vs ~0.789 parity): the
+  bench split saturates in the ≥64 px regime where both models score
+  ~0.92-0.97. Domain GT was the discriminator, at 186 frames.
+
+**Next:** Nick's call on the E3 go/no-go. Recommendation: adopt
+RF-DETR best-EMA as the stage-2 labeler; SKIP the 7-14-day full run
+(rung-A plateaued e13→e20 at ~0.79) — let the running 30-epoch job
+finish, re-score this HIL protocol at final EMA (one command), adopt
+that checkpoint. Owed: nothing hardware; the eval is re-runnable
+end-to-end from the three commands in the PR.
+
+---
+
 ## 2026-08-26 (night 2) — S8 bite E10 — stills_v2 merged + deployed: 24 → 186 reviewed stills, append-only proven, full-set E2E run clean
 
 **Branch:** `claude/s8-e10-stills-v2` (PR open)
