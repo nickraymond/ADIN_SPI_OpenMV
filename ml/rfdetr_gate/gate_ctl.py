@@ -21,6 +21,7 @@ Adopts an already-running detached gate process on launch.
 """
 import argparse
 import csv
+import os
 import re
 import signal
 import subprocess
@@ -57,6 +58,79 @@ class GateCtl(train_ctl.Ctl):
     def __init__(self):
         super().__init__(["--run-name", "rfdetr_gate", "--epochs", "1"])
         self.rundir = RUN_DIR
+        self.maint_every = 0          # score+recycle every N epochs
+
+    def pstate(self):
+        # during maintenance the training process is legitimately gone;
+        # without this the page would flash STOPPED mid-recycle
+        if self.scoring:
+            return "SCORING", self.pid()
+        return super().pstate()
+
+    def _scored_epochs(self):
+        p = self.rundir / "rung_a_scores.jsonl"
+        if not p.exists():
+            return set()
+        out = set()
+        for ln in open(p):
+            try:
+                out.add(int(__import__("json").loads(ln)["epoch"]))
+            except (ValueError, KeyError):
+                pass
+        return out
+
+    def _maint_loop(self):
+        """Nick's cadence (2026-08-26): every maint_every-th epoch,
+        STOP the run (full process exit — this IS the daily memory-creep
+        recycle), score the checkpoint onto the plot, START fresh
+        (auto-resume). Never touches a user PAUSED run. A swapped
+        process can take minutes to honor SIGTERM — wait, don't kill."""
+        while True:
+            time.sleep(60)
+            try:
+                state, pid = super().pstate()
+                if state != "RUNNING" or not self.maint_every:
+                    continue
+                mc = self.rundir / "metrics.csv"
+                if not mc.exists():
+                    continue
+                last = [ln for ln in mc.read_text().splitlines()
+                        if ln.strip()][-1]
+                ep = int(float(last.split(",")[0]))
+                if (ep < self.maint_every
+                        or ep % self.maint_every
+                        or ep in self._scored_epochs()):
+                    continue
+                print(f"[maint] epoch {ep}: stop → score → recycle",
+                      flush=True)
+                self.scoring = True
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(90):            # ≤15 min for swapped exit
+                    time.sleep(10)
+                    if super().pstate()[0] == "STOPPED":
+                        break
+                else:
+                    print("[maint] process would not exit — leaving it",
+                          flush=True)
+                    self.scoring = False
+                    continue
+                out = subprocess.run(
+                    [str(VENV_PY), "-u", str(GATE), "--skip-train"],
+                    capture_output=True, text=True, timeout=3600,
+                    env={"PYTORCH_ENABLE_MPS_FALLBACK": "1",
+                         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                         "HOME": str(Path.home())})
+                m = re.search(r"mAP50 = ([0-9.]+)", out.stdout)
+                print(f"[maint] scored: "
+                      f"{m.group(1) if m else 'NO SCORE — see log'}",
+                      flush=True)
+                (self.rundir / "ctl_plot.png").unlink(missing_ok=True)
+                self.scoring = False
+                self.start()                   # fresh process, resumes
+                print("[maint] recycled + resumed", flush=True)
+            except Exception as e:
+                self.scoring = False
+                print(f"[maint] error (will retry): {e}", flush=True)
 
     def _adopt(self):
         try:
@@ -221,9 +295,15 @@ def main():
     ap.add_argument("--epochs", type=int, default=30,
                     help="target the Start button trains toward "
                          "(staged: Stop/Start resumes by checkpoint)")
+    ap.add_argument("--score-every", type=int, default=5,
+                    help="every N epochs: stop, score rung-A onto the "
+                         "plot, recycle the process (the memory-creep "
+                         "cleanup), resume; 0 = manual only")
     args = ap.parse_args()
     ctl = GateCtl()
     ctl.epochs = args.epochs
+    ctl.maint_every = args.score_every
+    threading.Thread(target=ctl._maint_loop, daemon=True).start()
     train_ctl.PAGE = PAGE            # the handler serves module PAGE
     threading.Thread(target=ctl._sampler_loop, daemon=True).start()
     # NO scorer loop: the gate scores rung A itself at the end
