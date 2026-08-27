@@ -2086,7 +2086,7 @@ any urchin labelling effort is spent.
       Full-run pricing at this pace: 60–120 epochs ≈ 4.6–9.1 days
       Mac-bound (dataloader workers + a one-time image pre-resize
       shave ~20–40%). NICK'S GO/NO-GO PENDING. Staged
-      curve (EMA ckpt, same ruler): e1 0.715 → e5/6 **0.772** (morning
+      curve (EMA ckpt, same ruler): e1 0.715 → e5/6 0.772 → e12/13 **0.786** (morning
       2026-08-26; ~6 epochs overnight, lean config, paused by Nick).
       Crossing YOLOX-S's 0.800 final looks likely within a few more
       epochs — the Monterey label-test viewer triggers at ≥0.80.** *(original capture follows)*
