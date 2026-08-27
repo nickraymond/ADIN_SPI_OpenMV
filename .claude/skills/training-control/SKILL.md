@@ -78,3 +78,12 @@ Do not fork the HTML; do not write a new server.
 - Lightning's metrics.csv flushes lazily (rows can lag minutes at slow
   step rates); "measuring…" pace is buffering, not a hang — confirm
   liveness via the GPU % series instead.
+- **Long-lived MPS training processes accumulate memory** (measured
+  2026-08-26: swap 3.7→8.8 GB over ~24 h of one process; GPU sawtooths
+  to 0 as paging stalls set in — the precursor of the full swap-thrash
+  that ate 2026-08-25 night). Recycle daily: Stop just AFTER an epoch
+  checkpoint lands, Start (auto-resume) — costs minutes, clears the
+  creep. A swapped process also takes MINUTES to honor SIGTERM (it
+  pages in before it can exit) — wait, don't SIGKILL.
+- GPU dropping to 0 for a few minutes at every epoch boundary is
+  NORMAL: per-epoch validation + ~0.5 GB of checkpoint writes.
