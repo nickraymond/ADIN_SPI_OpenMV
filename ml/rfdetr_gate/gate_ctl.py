@@ -146,10 +146,18 @@ class GateCtl(train_ctl.Ctl):
         for pid in out:
             try:
                 cmd = subprocess.check_output(
-                    ["ps", "-o", "command=", "-p", pid], text=True)
+                    ["ps", "-o", "command=", "-p", pid],
+                    text=True).strip()
             except subprocess.CalledProcessError:
                 continue
-            if cmd.strip().startswith(str(VENV_PY)):
+            # the venv python resolves to the framework binary in ps
+            # (…/Python.app/Contents/MacOS/Python), so allowlisting the
+            # venv path rejects the REAL trainer; exclude wrapper
+            # shells/utilities instead
+            head = os.path.basename(cmd.split()[0]).lower()
+            if head in ("zsh", "bash", "sh", "tail", "grep", "ssh"):
+                continue
+            if "python" in head and "run_gate.py" in cmd:
                 return int(pid)
         return None
 
