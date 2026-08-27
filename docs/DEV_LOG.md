@@ -148,6 +148,21 @@ runs):**
   still holds :8898). Skill `training-control` added so future
   sessions reach for the cockpit, not a new page.
 
+**2026-08-26 addendum — the phantom-recycle incident (all fixed,
+commits carry detail):** staged E3 curve e1 0.715 → e6 0.772 → e13
+0.786; cockpit grew the every-5-epoch score+recycle loop (Nick's
+cadence). Three compounding traps found live: pgrep -f matches
+diagnostic shells that merely MENTION the script (a SIGTERM hit a
+phantom while the 24 h trainer lived on — _adopt now verifies the
+pid's executable, excluding wrapper shells; note macOS ps shows a venv
+python as the resolved framework binary, so path-allowlists reject the
+real process); long-lived MPS processes creep into swap (recycle
+daily, at checkpoint boundaries; swapped processes honor SIGTERM
+slowly — wait, never SIGKILL); rfdetr resume MUST use last.ckpt
+(checkpoint_best_regular silently cold-restarts the optimizer — its
+warning went unread; e7–e13 of the curve carry that confound). All in
+the training-control skill.
+
 NEXT: PR #66 review/merge (Nick); the E3 mAP50 lands in ~3 h → Nick's
 full-run go/no-go; STAGE1.md decision-table refresh rides the review.
 
