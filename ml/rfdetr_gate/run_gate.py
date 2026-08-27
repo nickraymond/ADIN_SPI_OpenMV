@@ -98,9 +98,12 @@ def main():
     else:
         model = RFDETRBase()           # 300 queries (>= densest 130 ✓)
         kw = {}
-        # rfdetr 1.9 leaves no plain checkpoint.pth — the full-state
-        # file is checkpoint_best_regular.pth (weights+optimizer+epoch)
-        for name in ("checkpoint.pth", "checkpoint_best_regular.pth"):
+        # resume from last.ckpt FIRST: it carries optimizer + LR-sched
+        # state. checkpoint_best_regular is a lightweight fallback that
+        # restarts the optimizer COLD (rfdetr warns; we missed it on
+        # 2026-08-25 — the e6→e13 curve segment carries that confound)
+        for name in ("last.ckpt", "checkpoint.pth",
+                     "checkpoint_best_regular.pth"):
             ck = out / name
             if ck.exists() and not args.no_resume:
                 kw["resume"] = str(ck)

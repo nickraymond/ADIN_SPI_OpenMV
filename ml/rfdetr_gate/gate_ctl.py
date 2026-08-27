@@ -133,12 +133,25 @@ class GateCtl(train_ctl.Ctl):
                 print(f"[maint] error (will retry): {e}", flush=True)
 
     def _adopt(self):
+        """Find the REAL trainer. pgrep -f matches any command line
+        containing the text — including diagnostic shells that merely
+        mention run_gate.py. That phantom ate a SIGTERM on 2026-08-26
+        (the 'recycle' hit a shell; the 24 h trainer lived on). Verify
+        each candidate's executable via ps before trusting it."""
         try:
             out = subprocess.check_output(
                 ["pgrep", "-f", r"run_gate\.py"], text=True).split()
-            return int(out[0]) if out else None
         except subprocess.CalledProcessError:
             return None
+        for pid in out:
+            try:
+                cmd = subprocess.check_output(
+                    ["ps", "-o", "command=", "-p", pid], text=True)
+            except subprocess.CalledProcessError:
+                continue
+            if cmd.strip().startswith(str(VENV_PY)):
+                return int(pid)
+        return None
 
     def start(self):
         # staged training (Nick 2026-08-25 night): Start spawns the
