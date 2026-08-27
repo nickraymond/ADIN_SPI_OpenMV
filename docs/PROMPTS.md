@@ -677,3 +677,45 @@ Then Nick's demo = the click.
 RULES: shielded cables only; no browser/kiosk on the Pi; no firmware
 flashing; milestone reports per CLAUDE.md; bench left clean.
 ```
+
+## 18 — Ready to paste: S8 bite E6 — labeler bake-off on Nick's own labels (written 2026-08-27, after RF-DETR plateaued at rung-A parity)
+
+```
+Run /agent-entry. This is a DESK session on the Mac — ZERO bench
+hardware, no board contact, no Pi requirements. Branch from main
+(after PR #66 merges) or from claude/s8-hil-open-loop-protocol-c8aaea
+if it has not merged.
+
+CONTEXT (do not re-derive): two candidate LABELERS exist on the Mac.
+(1) YOLOX-S: ~/nereus_ml/runs/stage1_yolox/stage1_s_labeler/last.pt,
+rung-A mAP50 0.800, the current labeler of record; eval via
+ml/yolox_urchin/eval_rung_a.py machinery. (2) RF-DETR: best-EMA
+checkpoint in ~/nereus_ml/runs/rfdetr_gate/ (~e17-20; scores file
+rung_a_scores.jsonl), rung-A ~0.79 — PARITY, so rung-A cannot decide.
+The deployment-domain ground truth is NICK'S OWN hand-labeled
+underwater frames from the Monterey videos: the reviewed=true entries
+of the HIL stills labels.jsonl (Mac copy under ~/nereus_ml/datasets/
+hil_monterey or the source dir hil_stills.py wrote — VERIFY the path
+and count first; stills_v2 may hold more reviewed frames; report the
+exact N to Nick before scoring). These frames were never in either
+training corpus.
+
+GOAL (bite E6, TRACKER): score BOTH labelers against Nick's labels,
+same protocol for both (COCOeval): headline mAP50, a conf-swept
+precision/recall table, and a PER-SIZE breakdown (the small/crowded
+regime is the decision driver). Build side-by-side overlay galleries
+(GT green, model boxes per model) for Nick's eyeball — sparse
+reporting, tables first, minimal images (his standing instruction).
+STATED CAVEAT that must appear in the report: the GT was corrected
+FROM YOLOX-S auto-boxes, so box geometry anchors toward YOLOX-S —
+RF-DETR must win by a clear margin for a quantitative claim; the
+overlays are the tie-breaker. If training is still running via the
+gate cockpit (:8894), PAUSE it while evaluating (GPU contention) and
+resume after — use the cockpit, per the training-control skill.
+
+Output: a short report (workbench-card style optional, desk artifact
+fine), the decision table Nick reads to pick the labeler, and the E3
+full-run go/no-go recommendation (RF-DETR's remaining case is
+qualitative superiority or crowd-regime wins; at rung-A parity the
+7-14 day full run needs one of those to be worth it).
+```

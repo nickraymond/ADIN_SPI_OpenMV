@@ -2048,7 +2048,27 @@ any urchin labelling effort is spent.
       per-board scores match back-to-back solo runs within noise, and
       zero settle-discarded frames in the log (the handshake makes the
       concept obsolete).
-- [ ] **Bite E5 — one-click HIL review from the workbench  ← NEXT
+- [ ] **Bite E6 — labeler bake-off on NICK'S OWN labels  ← NEXT (Nick
+      2026-08-27; kickoff = PROMPTS.md §18).** The rung-A ruler cannot
+      settle the labeler question: RF-DETR plateaued at ~0.79 (e15
+      0.7897 → e20 0.7886, noise-flat) vs YOLOX-S's 0.800 — parity,
+      on a corpus that is neither camera's deployment domain. Nick's
+      call: score BOTH labelers (YOLOX-S stage1_s_labeler last.pt,
+      rung-A 0.800 · RF-DETR best-EMA ~e17) against the underwater
+      frames NICK HAND-LABELED from the Monterey videos (the reviewed
+      entries in the hil stills labels.jsonl — his urchins, his boxes,
+      never in either training corpus). Deliverables: mAP50 + a
+      conf-swept precision/recall table per model, a PER-SIZE breakdown
+      (small/crowded urchins are the regime that matters and where
+      DETR behavior may diverge from the headline), and side-by-side
+      overlay galleries for the eyeball. **Stated caveat, not buried:
+      the GT provenance leans YOLOX-S — Nick corrected YOLOX-S
+      auto-boxes, so box geometry anchors toward it; RF-DETR must win
+      by a MARGIN to claim the crown, and the overlays are the tie-
+      breaker.** Desk-only (Mac), zero bench. Output feeds the E3
+      full-run go/no-go and the labeler decision.
+- [ ] **Bite E5 — one-click HIL review from the workbench** *(was NEXT;
+      now follows E6 — Nick 2026-08-27)*
       (Nick 2026-08-25 night; kickoff = PROMPTS.md §17).** Today the
       step-through review (cams + detections + GT + Next/Pause/Abort at
       :8092) needs two pasted commands (the hil-review guide card).
