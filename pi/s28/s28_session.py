@@ -63,6 +63,13 @@ class BurstSession:
             if tag == b"#I":
                 self.info = obj
                 return "info", obj
+            if tag == b"#D":
+                # board breadcrumb inside a long op — surface it so a
+                # hang names its exact step, then keep waiting
+                import sys as _sys
+                _sys.stderr.write("    [board] %s\n" % json.dumps(obj))
+                _sys.stderr.flush()
+                continue
             if tag == b"#RDY":
                 return "ready", obj
             if tag == b"#W":

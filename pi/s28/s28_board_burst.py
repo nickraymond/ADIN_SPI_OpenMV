@@ -134,15 +134,38 @@ def send_frame(img, meta):
 
 
 def op_cfg(csi0, cmd):
-    csi0.pixformat(getattr(csi, cmd["pixformat"]))
-    csi0.framesize(getattr(csi, cmd.get("framesize", "VGA")))
-    if "fps" in cmd:
-        csi0.framerate(cmd["fps"])
+    """Reconfigure the sensor -- but ONLY on a real change. Re-applying
+    the CURRENT mode redundantly hung the direct-csi path on this build
+    (measured 2026-09-02: a cfg to the boot mode RGB565/VGA never
+    returned, while a genuine change to BAYER worked). So: skip unchanged
+    fields, drain the pipeline BEFORE re-init (a re-init too soon after a
+    capture is the SPEC sensor-control hazard), and emit a #D breadcrumb
+    around each sensor call so a hang names its exact step."""
+    global _cur_pf, _cur_fs, _cur_fps
+    pf = cmd["pixformat"]
+    fs = cmd.get("framesize", "VGA")
+    fps = cmd.get("fps")
+    changed = (pf != _cur_pf) or (fs != _cur_fs)
+    if changed:
+        # drain: let the current pipeline finish a frame before re-init
+        emit("#D", {"op": "cfg", "step": "drain"})
+        csi0.snapshot()
+        emit("#D", {"op": "cfg", "step": "pixformat"})
+        csi0.pixformat(getattr(csi, pf))
+        emit("#D", {"op": "cfg", "step": "framesize"})
+        csi0.framesize(getattr(csi, fs))
+        _cur_pf, _cur_fs = pf, fs
+    if fps is not None and fps != _cur_fps:
+        emit("#D", {"op": "cfg", "step": "framerate"})
+        csi0.framerate(fps)
+        _cur_fps = fps
+    emit("#D", {"op": "cfg", "step": "settle"})
     for _ in range(3):
-        csi0.snapshot()                  # settle the new mode
+        csi0.snapshot()                  # settle the (possibly new) mode
     img = csi0.snapshot()
     emit("#OK", {"op": "cfg", "w": img.width(), "h": img.height(),
-                 "pixformat": cmd["pixformat"], "mem_free": gc.mem_free()})
+                 "pixformat": pf, "changed": changed,
+                 "mem_free": gc.mem_free()})
 
 
 def op_conv(csi0, cmd):
@@ -257,6 +280,12 @@ def op_burst(csi0, cmd):
 OPS = {"cfg": op_cfg, "conv": op_conv, "lock": op_lock,
        "manual": op_manual, "expo_probe": op_expo_probe,
        "burst": op_burst}
+
+# current sensor mode — op_cfg only re-inits on a real change (a
+# redundant re-init hung this build; see op_cfg).
+_cur_pf = "RGB565"
+_cur_fs = "VGA"
+_cur_fps = None
 
 csi0 = csi.CSI()
 csi0.reset()
