@@ -180,6 +180,25 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **S28 capture-stacking unknowns (raised 2026-09-01 at sprint
+  planning; each is a measurement, not a docs lookup):**
+  (a) **PAG7936 true max exposure** — manual exposure clamps to
+  frame_time − margin (`pag7936.c:786` @ 7d4dbf7a), so the +2/+3 EV
+  shutter-only bracket needs `set_framerate` lowered first; the floor
+  framerate / max frame time is unmeasured. (b) **Where do AWB gains
+  apply on the AE3's RGB565 path?** `set_auto_whitebal` on this sensor
+  only toggles stats collection (no on-chip WB gains) — if WB is
+  applied per-frame somewhere downstream, a "locked-WB" burst may not
+  actually be locked; find the application point in the pipeline.
+  (c) **AE3 BAYER capture:** bit depth, delivered framerate, and where
+  debayer runs (board vs host). (d) **Frame-dependent ISP stages** —
+  any denoise/tonemap that varies frame-to-frame breaks stack math;
+  verify the AE3 pipeline is static under locked settings.
+  (e) **HIL LCD backlight PWM/refresh vs a burst** — does the screen
+  alias frame-to-frame across N captures? Measure before trusting any
+  LCD-scene stacking number (scene call 2026-09-01: LCD first, printed
+  reference card once the pipeline works). (f) **N6 sensor manual
+  exposure/gain/WB API** — unchecked; audit before bite 4's N6 rows.
 - **AE3 HIL capture is optically soft — WHY is unverified (flagged
   2026-08-25, bite E2).** Measured: lap_var 233 vs the N6's 880 on the
   same screen content, and the AE3's view is heavily zoomed (screen

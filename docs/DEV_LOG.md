@@ -17,6 +17,38 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-01 — S28 OPENED — frame stacking & bracketed exposure: plan approved, support audit run at the desk
+
+**Branch:** `claude/hdr-stacking-sprint-plan-6590ad` (docs-only PR).
+Desk session, ZERO board contact.
+
+**Done:**
+- New sprint S28 added to TRACKER (Nick approved the 5-bite shape +
+  scene call): same-exposure stacking (A) + shutter-only bracket (B)
+  vs a single HD still, compare tool as a workbench card, AE3 first.
+  Kickoff design notes (from the Nereus BM camera red-channel work)
+  vendored at docs/stacking_kickoff_notes.md; kickoff prompt =
+  PROMPTS §17; unknowns flagged in SPEC §Open questions.
+- Support audit vs OpenMV src @ 7d4dbf7a (bite 0 ~70%): NO built-in
+  stacking/HDR merge in imlib; manual exposure/gain lock + readback
+  exist; exposure clamps to frame_time − margin → brackets need
+  set_framerate lowered (true max unmeasured); PIXFORMAT_BAYER
+  supported on the PAG7936; to_ndarray + ulab is the uint16
+  accumulator route (img.add() saturates — unusable); WB is host-side
+  stats, application point unknown.
+
+**Broke/surprised us:** nothing on hardware. Desk surprise: the AE3
+sensor supports raw Bayer capture, which makes "stack in the rawest
+domain" actually reachable — and it matters twice (RGB565 red is
+5-bit + gamma-encoded, the wrong domain for the bracket's
+divide-by-ratio math).
+
+**Next:** finish bite 0's remainder (AWB application point, Bayer bit
+depth/debayer, ISP stages, memory arithmetic), then the bite-1 plan
+(locked-burst proof + exposure-range + LCD-PWM check) for Nick's gate.
+
+---
+
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
 
 **Branch:** `claude/labeler-eval-yolox-rfdetr-e2b746` (PR open). Desk

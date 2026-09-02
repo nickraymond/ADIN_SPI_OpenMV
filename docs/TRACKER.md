@@ -1,7 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
+*Last updated: 2026-09-01 (**NEW SPRINT S28 — capture-side frame
+stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
+plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
+support audit run against OpenMV src @ `7d4dbf7a`: **no built-in
+stacking/HDR merge exists in imlib — but every primitive does**
+(manual exposure/gain lock + readback, `PIXFORMAT_BAYER` on the AE3's
+PAG7936, `to_ndarray` + ulab for uint16 accumulation; `img.add()`
+saturates at 8-bit — unusable). Constraint that shapes bite 3: manual
+exposure clamps to frame_time − margin, so +2/+3 EV brackets need
+`set_framerate` lowered first — true max exposure UNMEASURED. Scene
+call (Nick): start on the HIL LCD (PWM/refresh aliasing measured in
+bite 1 before trusting it), printed AprilTag/patch card once the
+pipeline works. Demo = a workbench compare card: single vs stacked vs
+bracketed side by side with the metrics table. Kickoff = PROMPTS §17.
+Previous:*
+*2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
 OWN LABELS, DESK-ONLY — RF-DETR (best-EMA e17) BEATS YOLOX-S IN THE
 DEPLOYMENT DOMAIN, on GT that structurally favors YOLOX-S:** HIL
 mAP50 0.876 vs 0.808 (186 reviewed stills / 4,966 boxes = the E10
@@ -2713,6 +2728,88 @@ retrained model to both boards and reads its scorecard — without Claude.
 **Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
 urchin HIL demo); S25 bite 3.
 
+
+### S28 — Capture-side frame stacking & bracketed exposure (AE3 first)  `[ ]`  *(NEW 2026-09-01 — Nick approved the plan + scene call. Design notes: `docs/stacking_kickoff_notes.md` (from the Nereus BM camera work — the red channel at 4–5 m depth measures 3.5–14% of full scale and nothing post-hoc recovers it below ~5%; the fix is capture-time photons + noise). Bandwidth unchanged — still one image shipped — and denoised frames compress SMALLER at equal q.)*
+**Goal:** a measured answer to "does multi-frame capture buy image
+quality worth shipping": **(A) same-exposure stacking** (lock AE/gain/WB,
+burst N, average/median before encode — √N noise + sub-LSB dither) and
+**(B) shutter-only bracket** (+2/+3 EV long frames, red-from-long
+channel merge), each A/B'd against a **single HD still on the same
+scene**, reviewed in a compare tool on the workbench. AE3 first (Nick);
+N6 rows once the method wins. The two experiments are run SEPARATELY —
+they answer different questions and compose later.
+**Support audit (2026-09-01, OpenMV src @ `7d4dbf7a` — the AE3 build's
+base rev): NO built-in stacking/HDR merge exists in imlib** — but all
+primitives do: `set_auto_exposure(False, us)` (CLAMPED to frame_time −
+margin, `pag7936.c:786` — long frames need `set_framerate` lowered
+first; true max UNMEASURED), `set_auto_gain(False, db)` + `get_gain_db`
+readback, `PIXFORMAT_BAYER` on the PAG7936 (linear domain — RGB565 is
+5-bit red + gamma-encoded, the wrong domain for the bracket's
+divide-by-exposure-ratio math), `Image.to_ndarray` + ulab (enabled) for
+uint16 accumulation (`img.add()` saturates at 8-bit — unusable). WB on
+this sensor is host-side stats with NO on-chip gains — where AWB
+actually applies is an open question (SPEC).
+- [ ] **Bite 0 — support audit (desk, zero board contact). ~70% done
+      2026-09-01** (the facts above). Remaining: where AWB gains apply
+      on the RGB565 path; Bayer bit depth + where debayer runs; any
+      frame-dependent ISP stages (denoise/tonemap) that would break
+      stack math; memory arithmetic for the chosen route (on-board
+      accumulate vs stream-and-stack on the Pi). *Exit:* facts in SPEC;
+      route chosen.
+- [ ] **Bite 1 — locked-burst proof + exposure-range measurement (first
+      board window).** Converge AE/AWB → freeze exposure/gain/WB →
+      burst N=8/16 → **PROVE the lock** (per-frame register readback +
+      per-frame mean/σ — "verify frames statistically identical" is the
+      notes' load-bearing rule) → stream frames losslessly to the Pi.
+      Same window: max `exposure_us` at lowered framerate (bite 3's
+      feasibility gate), burst wall time, memory headroom, and the
+      **LCD-PWM/refresh check** — does the screen alias frame-to-frame
+      across a burst (measured, not assumed; the scene is the HIL LCD
+      until the printed card arrives). Lighting recorded per run (a
+      measured condition). *Exit:* burst on disk with provably frozen
+      settings + per-frame noise numbers. No stacking yet.
+- [ ] **Bite 2 — offline stack + the compare tool (the sprint's
+      deliverable for Nick).** Mean / median / sigma-clipped merges on
+      the Pi from bite-1 bursts; control = single HD still, same scene,
+      same minute, per board. Tool = a workbench card producing a
+      static HTML report (the `hil_report`/gallery pattern — REUSE, not
+      a new web app): side-by-side panels (single · N=8 · N=16 · per
+      merge mode), zoom, and the metrics table — patch SNR, red
+      fraction, per-channel σ, **file size at equal encoder quality**.
+      *Exit:* √N SNR demonstrated (or the leak explained — an AE lock
+      or ISP stage that drifts); Nick reviews at the page.
+- [ ] **Bite 3 — shutter bracket + channel-wise merge.** NORMAL frame
+      first, then +2/+3 EV via shutter ONLY (never gain — gain adds
+      back the noise the photons are buying out); red-from-long merge
+      in LINEAR domain (Bayer if bites 0/1 confirm it; else
+      gamma-characterized), green/blue clipping in the long frame
+      expected and irrelevant; motion-blur check on the long frames
+      (fallback per the notes: low-pass the long-frame red). *Exit:*
+      red fraction/SNR vs exposure-ratio table in the same tool, next
+      to the stack rows.
+- [ ] **Bite 4 — N6 rows + the decision.** Winning config repeated on
+      the N6 (its sensor's manual-control API gets its own mini-audit
+      first — unchecked); Nick picks A / B / A+B / neither; config
+      knobs (N, EV steps, merge mode) speced into the capture config,
+      never hard-coded; the on-board accumulator (ulab uint16 vs C
+      helper) sized as a follow-on ONLY if the numbers justify it.
+      Cycle-time + power cost per capture recorded (INA3221 CH1 = AE3;
+      N6 N/A until the CH3 shunt re-wire).
+**Demo (Nick):** open the workbench, click the S28 compare card, and
+read one page where single vs stacked vs bracketed sit side by side
+with the metrics table — the production call is made from it.
+**Scene (Nick's call 2026-09-01):** START on the HIL LCD (rig already
+up); the printed AprilTag/gray+color-patch reference card comes once
+the pipeline works. Consequence: bite 1's LCD-PWM check is mandatory
+before any LCD-scene number is trusted, and bench-honesty stands
+regardless — the bench proves the SNR mechanics; the red-channel win is
+validated underwater (dive rig / field), not on a screen.
+**Needs:** bench windows on nereus000 (interleaves with S8's remaining
+E-bite reviews at Nick's call); HIL LCD rig; no new hardware.
+**Synergies, recorded not chased:** the dive-recorder rig (stacked
+stills are exactly its capture mode; ~3-week deadline), S21's
+evidence-JPEG path, and smaller files at equal quality for every
+transport downstream.
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
