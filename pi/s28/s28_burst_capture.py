@@ -42,7 +42,8 @@ sys.path.insert(0, os.path.join(_ROOT, "bench"))
 import numpy as np                                   # noqa: E402
 from PIL import Image                                # noqa: E402
 
-from s28_session import (BurstSession, gray_plane, lock_verdict)  # noqa: E402
+from s28_session import (BurstSession, lock_verdict,             # noqa: E402
+                         rgb565_to_gray)
 from s28_patch_card import STILL_CARD, STILL_GRAY    # noqa: E402
 
 BOARD_SCRIPT = os.path.join(_HERE, "s28_board_burst.py")
@@ -215,24 +216,29 @@ class Run:
 
 # ----------------------------------------------------------------- stages
 def stage_calib(run, cam_label):
-    """Black + markers frames at HD GRAYSCALE -> CamMap (E11 solver).
-    The fresh-per-run calibration IS the moved-bench answer."""
+    """Markers + black frames -> CamMap (E11 solver). Captured as RGB565
+    and converted to gray ON THE HOST (GRAYSCALE HD hangs the direct-csi
+    path on this build — measured 2026-09-02; the proven hil_harness
+    calibration also works from the board's normal color frames). VGA is
+    the safe, boot-native mode; HD bursts scale from it (letterbox is
+    exactly 2x). The fresh-per-run calibration IS the moved-bench answer.
+    """
     from hil_harness import find_markers, solve_cam_map
-    geom = run.cfg("GRAYSCALE", "HD", fps=30)
+    geom = run.cfg("RGB565", "VGA", fps=30)
     # Converge + lock ON THE MARKER PATTERN, then shoot markers AND
     # black under the SAME lock — converging on black slams AE to max
     # exposure and blooms the marker blobs (centroid bias).
     lcd_show(run.pb, mode="calib")
     run.converge(3)
     run.lock()
-    mark = run.burst("calib_markers", dict(geom, pixformat="GRAYSCALE"), 1)
+    mark = run.burst("calib_markers", geom, 1)
     lcd_show(run.pb, mode="black")
     time.sleep(1.0)
-    black = run.burst("calib_black", dict(geom, pixformat="GRAYSCALE"), 1)
+    black = run.burst("calib_black", geom, 1)
 
     def _load(row):
         p = os.path.join(run.out, row["file"])
-        return gray_plane(open(p, "rb").read(), row["w"], row["h"])
+        return rgb565_to_gray(open(p, "rb").read(), row["w"], row["h"])
 
     cents = find_markers(_load(mark[0]), _load(black[0]))
     M, diag = solve_cam_map(run.pb.markers, cents, geom["w"], geom["h"])
@@ -365,6 +371,18 @@ def main():
     sb = attach(args.port, script, print)
     sess = BurstSession(sb, sb.ser.write)
     run = Run(sess, pb, out_dir)
+
+    # A hung op or an external `timeout` must NOT leave the AE3 mid-raw-
+    # repl (that is the bite-R wedge). Turn SIGTERM into a clean stop so
+    # the finally below runs sb.stop() (Ctrl-C + reset releases the port).
+    import signal
+
+    def _term(sig, frm):
+        raise KeyboardInterrupt("SIGTERM")
+    try:
+        signal.signal(signal.SIGTERM, _term)
+    except (ValueError, OSError):
+        pass
     try:
         info = sess.wait_info(timeout_s=30)
         run.log("board up: %s (%dx%d, free %d)"
@@ -396,9 +414,15 @@ def main():
                 % (sess.skips, sess.resends))
         print("\nscore it:  python3 pi/s28/s28_burst_stats.py --run %s"
               % out_dir)
+    except (KeyboardInterrupt, IOError, SystemExit) as e:
+        run.log("ABORT (%r) — stopping board cleanly" % e)
+        raise
     finally:
         run.close()
-        sb.stop()
+        try:
+            sb.stop()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

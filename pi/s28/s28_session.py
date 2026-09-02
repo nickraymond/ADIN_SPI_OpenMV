@@ -108,6 +108,10 @@ class BurstSession:
                 raise RuntimeError("board died before #I: %s"
                                    % obj.get("reason"))
 
+    @staticmethod
+    def _watchdog(sig, frm):
+        raise IOError("op watchdog fired — board silent past its budget")
+
     def command(self, timeout_s=60, **cmd):
         """Send one op and return its typed replies, robust to a lost
         command byte (the E4 failure mode). Sends, then collects replies
@@ -115,7 +119,29 @@ class BurstSession:
         with nothing collected yet means the byte never landed -> resend
         (bounded; the board's pre-poll drain makes a duplicate harmless).
         -> list of (tag, obj). err/end raise.
+
+        A SIGALRM watchdog is the BACKSTOP for a board that hangs mid-op
+        (e.g. a C-level snapshot that never returns): SerialBoard's
+        readline() blocks forever on a silent-but-alive board, defeating
+        the per-event deadline, so without this a hung op runs until an
+        external kill — which leaves the AE3 wedged. On fire the collector
+        raises here, and its caller stops the board cleanly.
         """
+        armed = False
+        try:
+            import signal
+            signal.signal(signal.SIGALRM, self._watchdog)
+            signal.alarm(int(timeout_s) + 5)
+            armed = True
+        except (ValueError, AttributeError, OSError):
+            pass                          # not main thread / no SIGALRM
+        try:
+            return self._command_loop(timeout_s, cmd)
+        finally:
+            if armed:
+                signal.alarm(0)
+
+    def _command_loop(self, timeout_s, cmd):
         self.send(**cmd)
         sent_t = time.monotonic()
         resends = 0
@@ -187,6 +213,16 @@ def bayer_planes(buf, w, h):
 
 def gray_plane(buf, w, h):
     return np.frombuffer(buf, np.uint8).reshape(h, w).astype(np.float32)
+
+
+def rgb565_to_gray(buf, w, h, byteswap=False):
+    """RGB565 buffer -> HxW float32 luma. Calibration captures the
+    board's normal RGB565 (GRAYSCALE HD hangs the direct-csi path on
+    this build — measured 2026-09-02) and converts to gray HERE, exactly
+    as the proven hil_harness calibration does with its JPEG frames."""
+    rgb = rgb565_to_rgb(buf, w, h, byteswap=byteswap).astype(np.float32)
+    return (0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1]
+            + 0.114 * rgb[:, :, 2])
 
 
 # ----------------------------------------------------------- calibration

@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -23,8 +24,8 @@ sys.path.insert(0, os.path.join(_ROOT, "bench"))
 
 from s28_session import (BurstSession, bayer_planes, bracket_check,  # noqa: E402
                          flicker_verdict, lock_verdict, noise_stats,
-                         orient_check, patch_region, rgb565_to_rgb,
-                         scale_cam_map)
+                         orient_check, patch_region, rgb565_to_gray,
+                         rgb565_to_rgb, scale_cam_map)
 import s28_patch_card as card                         # noqa: E402
 
 
@@ -160,6 +161,34 @@ def test_quit_tolerates_immediate_end():
     sess, sent = make_session([b'#DONE {}\n'])
     sess.quit()
     assert json.loads(sent[0]) == {"op": "quit"}
+
+
+def test_watchdog_breaks_a_silent_alive_board():
+    # SerialBoard.readline() blocks forever on a silent-but-alive board;
+    # the SIGALRM watchdog must break it so a hung op cannot run past its
+    # budget (which is what wedged the AE3). Uses a real blocking reader.
+    class BlockingReader:
+        end_reason = ""
+        last_error = ""
+
+        def readline(self):
+            time.sleep(30)                # never returns a line in time
+            return b""
+    sess = BurstSession(BlockingReader(), lambda b: None)
+    t0 = time.monotonic()
+    try:
+        sess.command(op="cfg", timeout_s=1)
+        assert False, "watchdog should have fired"
+    except IOError as e:
+        assert "watchdog" in str(e)
+    assert time.monotonic() - t0 < 20     # fired ~ (1+5)s, not 30
+
+
+def test_rgb565_to_gray_luma():
+    buf = bytes([0xF8, 0x00, 0x00, 0x1F])    # red then blue
+    g = rgb565_to_gray(buf, 2, 1)
+    # red luma (0.299*248) > blue luma (0.114*248)
+    assert g[0, 0] > g[0, 1] > 0
 
 
 # ----------------------------------------------------------------- decode
