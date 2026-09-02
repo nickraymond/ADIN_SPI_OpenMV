@@ -28,18 +28,25 @@ class BurstSession:
     b'' at end (end_reason/last_error attributes); writer: callable(bytes).
     """
 
+    # #RDY = board is in its command loop (ready for a command AND, when
+    # it follows an op's replies, that op is complete). #W = a parked
+    # heartbeat; seen past grace after a send it means the byte was lost.
+    RESEND_GRACE = 3.0
+    MAX_RESEND = 5
+
     def __init__(self, reader, writer):
         self.rd = reader
         self.wr = writer
         self.info = None
         self.skips = 0                    # b64-length mismatches survived
+        self.resends = 0                  # lost command bytes recovered
 
     def send(self, **cmd):
         self.wr((json.dumps(cmd) + "\n").encode())
 
     def next_event(self, timeout_s=60):
         """-> (tag, payload). Tags: info/ok/conv/lock/table/frame/err/
-        done/end/skip. A frame payload carries '_data' (decoded bytes)."""
+        done/ready/wait/end/skip. A frame payload carries '_data'."""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             line = self.rd.readline()
@@ -56,6 +63,10 @@ class BurstSession:
             if tag == b"#I":
                 self.info = obj
                 return "info", obj
+            if tag == b"#RDY":
+                return "ready", obj
+            if tag == b"#W":
+                return "wait", obj
             if tag == b"#OK":
                 return "ok", obj
             if tag == b"#CONV":
@@ -86,38 +97,68 @@ class BurstSession:
                 return "frame", obj
         raise IOError("board silent for %ds" % timeout_s)
 
-    def expect(self, want, timeout_s=60):
-        """Read until one of `want` (set of tags); err/end raise."""
+    def wait_info(self, timeout_s=30):
+        """Consume the boot #I. Ready/wait heartbeats before it fall
+        through (they cannot precede #I, but be liberal)."""
         while True:
             tag, obj = self.next_event(timeout_s)
-            if tag in want:
-                return tag, obj
+            if tag == "info":
+                return obj
+            if tag == "end":
+                raise RuntimeError("board died before #I: %s"
+                                   % obj.get("reason"))
+
+    def command(self, timeout_s=60, **cmd):
+        """Send one op and return its typed replies, robust to a lost
+        command byte (the E4 failure mode). Sends, then collects replies
+        until the op-complete #RDY; a #W heartbeat seen past RESEND_GRACE
+        with nothing collected yet means the byte never landed -> resend
+        (bounded; the board's pre-poll drain makes a duplicate harmless).
+        -> list of (tag, obj). err/end raise.
+        """
+        self.send(**cmd)
+        sent_t = time.monotonic()
+        resends = 0
+        got = []
+        while True:
+            tag, obj = self.next_event(timeout_s)
+            if tag == "ready":
+                if got:
+                    return got            # op complete
+                # a #RDY that predates our send (board was already
+                # parked) — ignore and keep waiting for the op's replies
+                continue
+            if tag == "wait":
+                if (not got and resends < self.MAX_RESEND
+                        and time.monotonic() - sent_t > self.RESEND_GRACE):
+                    self.send(**cmd)
+                    self.resends += 1
+                    resends += 1
+                    sent_t = time.monotonic()
+                continue
             if tag == "err":
                 raise RuntimeError("board error in op %r: %s"
-                                   % (obj.get("op"), obj.get("err")))
+                                   % (cmd.get("op"), obj.get("err")))
             if tag == "end":
-                raise RuntimeError("board stream ended: %s %s"
-                                   % (obj.get("reason"), obj.get("error")))
-            # info/skip/other tags fall through the wait
+                raise RuntimeError("board stream ended in op %r: %s %s"
+                                   % (cmd.get("op"), obj.get("reason"),
+                                      obj.get("error")))
+            if tag == "skip":
+                got.append((tag, obj))    # frame consumed, payload lost
+            elif tag in ("ok", "conv", "lock", "table", "frame"):
+                got.append((tag, obj))
+            # info/other: ignore
 
-    def collect_burst(self, n, timeout_s=120):
-        """-> list of frame payloads (skips excluded, counted)."""
-        frames = []
-        got = 0
-        while got < n:
-            tag, obj = self.next_event(timeout_s)
-            if tag == "frame":
-                frames.append(obj)
-                got += 1
-            elif tag == "skip":
-                got += 1                  # frame consumed, payload lost
-            elif tag == "err":
-                raise RuntimeError("board error mid-burst: %s"
-                                   % obj.get("err"))
-            elif tag == "end":
-                raise RuntimeError("board stream ended mid-burst: %s"
-                                   % obj.get("reason"))
-        return frames
+    def quit(self, timeout_s=15):
+        """Ask the board to end; tolerate an already-unwinding board."""
+        self.send(op="quit")
+        try:
+            while True:
+                tag, _ = self.next_event(timeout_s)
+                if tag in ("done", "end"):
+                    return
+        except (RuntimeError, IOError):
+            return
 
 
 # ---------------------------------------------------------------- decode

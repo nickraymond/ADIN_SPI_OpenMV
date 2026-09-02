@@ -34,6 +34,15 @@
 # (gap == sensor period, no emission in between); it refuses loudly if
 # n*frame_size + slack exceeds free heap. "paced" emits between captures
 # (gap ~= emission time, recorded per frame -- fine on a static scene).
+#
+# READY/HEARTBEAT PROTOCOL (mirrors S8 bite E4, proven on this wire):
+# between ops the board DRAINS stdin, emits #RDY once (ready for a
+# command), then heartbeats #W every 2 s while polling. The host waits
+# for readiness before sending and RESENDS a command if it keeps seeing
+# #W past a grace window -- because a first command byte CAN be lost on
+# this raw-REPL wire (measured E4). The pre-poll drain absorbs a
+# duplicate that a resend-race delivers, so a resent command is never
+# double-executed.
 import binascii
 import gc
 import json
@@ -44,6 +53,7 @@ import time
 import csi
 
 IDLE_S = 600          # no command for this long -> quit to a usable REPL
+HB_MS = 2000          # #W heartbeat cadence while awaiting a command
 SLACK = 262144        # heap slack the tight burst must leave free
 
 _poll = select.poll()
@@ -54,10 +64,26 @@ def emit(tag, obj):
     print(tag + " " + json.dumps(obj))
 
 
+def _drain_stdin():
+    """Discard any buffered stdin (E4 duplicate-absorption): a resend
+    that raced a slow op sits here and would otherwise be read as a
+    spurious next command."""
+    while _poll.poll(0):
+        if sys.stdin.read(1) == "":
+            break
+
+
 def read_cmd():
-    """One JSON command line from stdin, or None on idle timeout."""
+    """Drain, announce ready (#RDY), then park polling stdin for one JSON
+    command line -- heartbeating #W so the host can tell parked-alive
+    from dead and can detect a lost command byte. -> command dict, or a
+    synthetic quit on idle timeout (a dead host must not wedge the board).
+    """
+    _drain_stdin()
+    emit("#RDY", {})
     buf = ""
     t0 = time.ticks_ms()
+    last_hb = t0
     while True:
         if _poll.poll(100):
             ch = sys.stdin.read(1)
@@ -77,8 +103,13 @@ def read_cmd():
             if len(buf) > 1024:          # malformed flood -- fail loud
                 emit("#E", {"op": "parse", "err": "line too long"})
                 buf = ""
-        elif time.ticks_diff(time.ticks_ms(), t0) > IDLE_S * 1000:
-            return None
+        else:
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_hb) >= HB_MS:
+                emit("#W", {})
+                last_hb = now
+            if time.ticks_diff(now, t0) > IDLE_S * 1000:
+                return {"op": "quit"}
 
 
 def meta_read(csi0):
@@ -240,7 +271,7 @@ emit("#I", {"fw": sys.version, "w": _first.width(), "h": _first.height(),
 
 while True:
     cmd = read_cmd()
-    if cmd is None or cmd.get("op") == "quit":
+    if cmd.get("op") == "quit":
         break
     fn = OPS.get(cmd.get("op"))
     if fn is None:

@@ -2780,7 +2780,18 @@ actually applies is an open question (SPEC).
       card + uniform gray, ONE patch definition shared with stats),
       `s28_burst_stats.py` (LOCK/NOISE/ORIENT/EXPO/BRACKET/FLICKER
       verdicts → stats.json; RGB565 byte order PROVEN against the
-      red/blue patches, never assumed). *(original scope)* Converge
+      red/blue patches, never assumed).
+      **BENCH CONTACT 2026-09-02: first run exposed + FIXED a real
+      protocol bug** — the board entered its command loop silently, so a
+      lost first command byte (a measured E4 wire failure) hung both
+      ends. Fix mirrors E4: board drains stdin → `#RDY` → `#W`
+      heartbeat; host `command()` resends on `#W` past grace. Added
+      `--plan smoke` (no LCD/calib/HD/gray first-contact). Suite 21→25.
+      **Board then WEDGED (bite-R raw-repl refusal — the timeout-killed
+      hung run left it mid-raw-repl; mpremote also hangs, so it's the
+      board not the code); /flash untouched. Bench acceptance OWED:
+      Nick replugs the AE3 → `--plan smoke`.** *(original scope)*
+      Converge
       AE/AWB → freeze exposure/gain/WB →
       burst N=8/16 → **PROVE the lock** (per-frame register readback +
       per-frame mean/σ — "verify frames statistically identical" is the

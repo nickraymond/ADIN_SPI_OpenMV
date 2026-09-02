@@ -74,6 +74,38 @@ tests green, zero board contact):**
 `s28_burst_stats.py` verdicts (lock HELD, expo table, PWM verdict) —
 then Nick's manual ladder + PR merge.
 
+**SAME SESSION, LATER (2026-09-02) — first bench contact exposed a
+real protocol bug; FIXED at the desk; board wedged (needs Nick's
+replug) so bench acceptance still owed:**
+- Deployed the branch on nereus000, generated ~/s28_media, playback +
+  hil-lcd came up clean (LCD showed the S28 card). Ran `--plan quick`.
+- **The board attached and emitted #I, then the run HUNG on the first
+  command's reply (540 s to the timeout).** Root cause, found by
+  comparing against the E4 Conductor: **a first command byte can be
+  lost on this raw-REPL wire (measured E4), and my board entered its
+  command loop SILENTLY — no ready signal, no heartbeat — so a lost
+  byte hangs both ends forever.** E4 solved exactly this with a
+  #W-heartbeat + host resend; I had not reused it.
+- **FIX (mirrors E4, proven pattern):** the board now DRAINS stdin,
+  emits `#RDY` (ready), then heartbeats `#W` every 2 s while awaiting a
+  command; the host's new `command()` resends when it sees `#W` past a
+  grace window with no reply yet (the pre-poll drain makes a
+  resend-race duplicate harmless). Added `--plan smoke` (no LCD / no
+  calib / no HD / no GRAYSCALE — the true one-variable first contact).
+  Suite 21 → **25** (added lost-byte-recovery, ready-handshake,
+  stream-end, expo-collection, quit tests). Board + collector compile.
+- **BLOCKED: the AE3 is wedged in the bite-R raw-repl refusal** — the
+  `timeout`-killed hung run left it mid-raw-repl (SIGTERM skipped
+  sb.stop()); a clean `mpremote exec` also hangs, confirming it is the
+  board, not the code. On this Pi 5 that clears ONLY with a physical
+  replug (warm reset doesn't clear SRAM9; uhubctl doesn't cut VBUS).
+  /flash is UNTOUCHED (raw-REPL RAM script only — nothing written).
+  Recovery = Nick replugs the AE3's USB, then re-run `--plan smoke`.
+
+**Next:** Nick replugs AE3 → `--plan smoke` (core capture+lock, no LCD)
+→ then `--plan quick`/`full` on the LCD → `s28_burst_stats.py`. The
+playback server was left running on ~/s28_media; hil-lcd active.
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT

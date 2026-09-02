@@ -132,18 +132,26 @@ class Run:
         self.log_fh.write(line + "\n")
         self.log_fh.flush()
 
+    def _one(self, tag, replies, op):
+        hits = [obj for t, obj in replies if t == tag]
+        if not hits:
+            raise SystemExit("FAIL: op %s returned no %s (got %s)"
+                             % (op, tag, [t for t, _ in replies]))
+        return hits[0]
+
     def cfg(self, pixformat, framesize, fps=30):
-        self.sess.send(op="cfg", pixformat=pixformat, framesize=framesize,
-                       fps=fps)
-        _, ok = self.sess.expect({"ok"})
+        replies = self.sess.command(op="cfg", pixformat=pixformat,
+                                    framesize=framesize, fps=fps)
+        ok = self._one("ok", replies, "cfg")
         self.log("cfg %s %s fps=%d -> %dx%d free=%d"
                  % (pixformat, framesize, fps, ok["w"], ok["h"],
                     ok["mem_free"]))
         return ok
 
     def converge(self, secs=6):
-        self.sess.send(op="conv", secs=secs)
-        _, conv = self.sess.expect({"conv"}, timeout_s=secs + 30)
+        replies = self.sess.command(op="conv", secs=secs,
+                                    timeout_s=secs + 30)
+        conv = self._one("conv", replies, "conv")
         rows = conv["rows"]
         tail = rows[-3:]
         exp_spread = max(r[1] for r in tail) - min(r[1] for r in tail)
@@ -156,8 +164,7 @@ class Run:
         return rows
 
     def lock(self):
-        self.sess.send(op="lock")
-        _, lk = self.sess.expect({"lock"})
+        lk = self._one("lock", self.sess.command(op="lock"), "lock")
         self.log("locked: exp=%d us gain=%.2f dB wb=%s"
                  % (lk["exp_us"], lk["gain_db"], lk["rgb_gain_db"]))
         return lk
@@ -168,8 +175,7 @@ class Run:
             cmd["fps"] = fps
         if gain_db is not None:
             cmd["gain_db"] = gain_db
-        self.sess.send(**cmd)
-        _, lk = self.sess.expect({"lock"})
+        lk = self._one("lock", self.sess.command(**cmd), "manual")
         self.log("manual: asked %d us (fps=%s) -> got %d us"
                  % (exposure_us, fps, lk["exp_us"]))
         return lk
@@ -179,8 +185,9 @@ class Run:
         -> list of meta rows (with '_data' stripped)."""
         sdir = os.path.join(self.out, "frames", stage)
         os.makedirs(sdir, exist_ok=True)
-        self.sess.send(op="burst", n=n, mode=mode)
-        frames = self.sess.collect_burst(n, timeout_s=timeout_s)
+        replies = self.sess.command(op="burst", n=n, mode=mode,
+                                    timeout_s=timeout_s)
+        frames = [obj for t, obj in replies if t == "frame"]
         rows = []
         for fr in frames:
             fname = "f%03d.bin" % fr["seq"]
@@ -258,10 +265,9 @@ def stage_expo(run):
     run.cfg("BAYER", "VGA", fps=30)
     rows = []
     for fps in EXPO_FPS:
-        run.sess.send(op="expo_probe", fps=fps, targets=EXPO_TARGETS)
-        for _ in EXPO_TARGETS:
-            _, row = run.sess.expect({"table"})
-            rows.append(row)
+        replies = run.sess.command(op="expo_probe", fps=fps,
+                                   targets=EXPO_TARGETS, timeout_s=60)
+        rows += [obj for t, obj in replies if t == "table"]
         run.log("expo fps=%d: max readback %d us"
                 % (fps, max(r["got"] for r in rows if r["fps"] == fps)))
     with open(os.path.join(run.out, "expo_rows.jsonl"), "w") as fh:
@@ -283,6 +289,17 @@ def stage_bracket(run, has_lcd):
         fps = max(1, min(30, int(1e6 // (want + 5000))))
         run.manual(want, fps=fps, gain_db=lk["gain_db"])
         run.burst("bracket_ev%d" % ev, geom, 3)
+
+
+def stage_smoke(run):
+    """Minimal first-contact: no LCD, no calib, no HD, no GRAYSCALE —
+    just prove attach + stdin round-trip + cfg + converge + lock + a
+    small BAYER VGA burst land frames with settings HELD. The one-
+    variable-at-a-time first rung before anything else is trusted."""
+    geom = run.cfg("BAYER", "VGA", fps=30)
+    run.converge(4)
+    run.lock()
+    run.burst("smoke_bayer_vga", geom, 4)
 
 
 def stage_pwm(run, still, scene_name):
@@ -307,8 +324,10 @@ def main():
                     help="board label for calib_<label>.json")
     ap.add_argument("--playback", default="http://127.0.0.1:8091")
     ap.add_argument("--out", required=True, help="run dir (created)")
-    ap.add_argument("--plan", choices=("full", "quick", "pwm"),
-                    default="full")
+    ap.add_argument("--plan", choices=("smoke", "full", "quick", "pwm"),
+                    default="full",
+                    help="smoke = no LCD/calib/HD/gray, just prove the "
+                         "core capture+lock path first")
     ap.add_argument("--n", type=int, default=16, help="paced burst size")
     ap.add_argument("--tight-n", type=int, default=6)
     ap.add_argument("--no-lcd", action="store_true",
@@ -330,7 +349,8 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     pb = None
-    if not args.no_lcd:
+    need_lcd = not args.no_lcd and args.plan != "smoke"
+    if need_lcd:
         from hil_harness import Playback
         pb = Playback(args.playback)
         if pb.n_stills < 2:
@@ -346,7 +366,7 @@ def main():
     sess = BurstSession(sb, sb.ser.write)
     run = Run(sess, pb, out_dir)
     try:
-        _, info = sess.expect({"info"}, timeout_s=30)
+        info = sess.wait_info(timeout_s=30)
         run.log("board up: %s (%dx%d, free %d)"
                 % (info.get("fw", "?"), info["w"], info["h"],
                    info["mem_free"]))
@@ -354,7 +374,9 @@ def main():
             json.dump({"args": vars(args), "board": info,
                        "t0": time.time()}, fh)
 
-        if args.no_lcd:
+        if args.plan == "smoke":
+            stage_smoke(run)
+        elif args.no_lcd:
             # real-object control: PWM-shaped sweep on whatever static
             # scene the camera is aimed at
             stage_pwm(run, None, "real")
@@ -369,12 +391,9 @@ def main():
             stage_bracket(run, has_lcd=True)
             stage_pwm(run, STILL_GRAY, "lcd")
 
-        sess.send(op="quit")
-        try:
-            sess.expect({"done"}, timeout_s=15)
-        except (RuntimeError, IOError):
-            pass                          # board already unwinding — fine
-        run.log("run complete; skips=%d" % sess.skips)
+        sess.quit()
+        run.log("run complete; skips=%d resends=%d"
+                % (sess.skips, sess.resends))
         print("\nscore it:  python3 pi/s28/s28_burst_stats.py --run %s"
               % out_dir)
     finally:

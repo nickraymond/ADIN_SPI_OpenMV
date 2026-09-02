@@ -64,22 +64,48 @@ def test_send_is_one_json_line():
     assert json.loads(sent[0]) == {"op": "burst", "n": 8, "mode": "tight"}
 
 
-def test_info_then_ok():
+def test_wait_info_consumes_boot():
     sess, _ = make_session([
-        b'#I {"fw": "test", "w": 640, "h": 400, "mem_free": 1}\n',
         b'stray non-hash output\n',
-        b'#OK {"op": "cfg", "w": 640, "h": 400, "mem_free": 1}\n'])
-    tag, obj = sess.next_event()
-    assert tag == "info" and sess.info["w"] == 640
-    tag, obj = sess.expect({"ok"})
-    assert obj["op"] == "cfg"
+        b'#I {"fw": "test", "w": 640, "h": 400, "mem_free": 1}\n'])
+    info = sess.wait_info()
+    assert info["w"] == 640 and sess.info["w"] == 640
 
 
-def test_frame_roundtrip():
+def test_command_collects_reply_until_ready():
+    # #RDY predates our send (board already parked) -> ignored; then the
+    # op's #OK; then the op-complete #RDY closes it.
+    sess, sent = make_session([
+        b'#RDY {}\n',
+        b'#OK {"op": "cfg", "w": 640, "h": 400, "mem_free": 1}\n',
+        b'#RDY {}\n'])
+    replies = sess.command(op="cfg", pixformat="RGB565")
+    assert replies == [("ok", {"op": "cfg", "w": 640, "h": 400,
+                               "mem_free": 1})]
+    assert json.loads(sent[0])["op"] == "cfg"
+
+
+def test_command_frame_roundtrip():
     data = bytes(range(256)) * 3
-    sess, _ = make_session(frame_lines(data))
-    tag, obj = sess.next_event()
-    assert tag == "frame" and obj["_data"] == data
+    lines = frame_lines(data) + [b'#RDY {}\n']
+    sess, _ = make_session(lines)
+    replies = sess.command(op="burst", n=1)
+    frames = [o for t, o in replies if t == "frame"]
+    assert len(frames) == 1 and frames[0]["_data"] == data
+
+
+def test_command_resends_on_lost_byte(monkeypatch):
+    # the E4 failure: first command byte lost. The board keeps
+    # heartbeating #W; the host must RESEND, then the op proceeds.
+    sess, sent = make_session([
+        b'#W {}\n', b'#W {}\n',            # parked, our byte never landed
+        b'#OK {"op": "cfg", "w": 640, "h": 400, "mem_free": 1}\n',
+        b'#RDY {}\n'])
+    sess.RESEND_GRACE = 0.0               # any heartbeat past send resends
+    replies = sess.command(op="cfg", pixformat="RGB565")
+    assert [t for t, _ in replies] == ["ok"]
+    assert sess.resends >= 1              # at least one resend fired
+    assert len(sent) >= 2                 # original + resend on the wire
 
 
 def test_bad_b64_length_skips_and_realigns():
@@ -87,8 +113,10 @@ def test_bad_b64_length_skips_and_realigns():
     lines = frame_lines(good, seq=0)
     lines[1] = lines[1][:-10]             # corrupt: shorter than announced
     lines += frame_lines(good, seq=1)
+    lines += [b'#RDY {}\n']
     sess, _ = make_session(lines)
-    frames = sess.collect_burst(2)
+    replies = sess.command(op="burst", n=2)
+    frames = [o for t, o in replies if t == "frame"]
     assert len(frames) == 1 and frames[0]["seq"] == 1
     assert sess.skips == 1
 
@@ -96,7 +124,7 @@ def test_bad_b64_length_skips_and_realigns():
 def test_board_error_raises_with_message():
     sess, _ = make_session([b'#E {"op": "burst", "err": "MemoryError"}\n'])
     try:
-        sess.expect({"frame"})
+        sess.command(op="burst", n=1)
         assert False, "should raise"
     except RuntimeError as e:
         assert "MemoryError" in str(e)
@@ -109,14 +137,29 @@ def test_end_mid_frame_reported():
     assert tag == "end" and obj["mid_frame"] == 0
 
 
-def test_done_and_table_tags():
+def test_command_end_raises():
+    sess, _ = make_session([b'#OK {"op": "cfg"}\n'])   # then EOF
+    try:
+        sess.command(op="cfg")
+        assert False, "should raise on stream end"
+    except RuntimeError as e:
+        assert "ended" in str(e)
+
+
+def test_expo_table_tags_collected():
     sess, _ = make_session([
         b'#T {"fps": 5, "cmd": 100000, "got": 99992}\n',
-        b'#DONE {}\n'])
-    tag, obj = sess.next_event()
-    assert tag == "table" and obj["got"] == 99992
-    tag, _ = sess.next_event()
-    assert tag == "done"
+        b'#T {"fps": 5, "cmd": 200000, "got": 199984}\n',
+        b'#RDY {}\n'])
+    replies = sess.command(op="expo_probe", fps=5, targets=[1, 2])
+    tables = [o for t, o in replies if t == "table"]
+    assert len(tables) == 2 and tables[0]["got"] == 99992
+
+
+def test_quit_tolerates_immediate_end():
+    sess, sent = make_session([b'#DONE {}\n'])
+    sess.quit()
+    assert json.loads(sent[0]) == {"op": "quit"}
 
 
 # ----------------------------------------------------------------- decode
