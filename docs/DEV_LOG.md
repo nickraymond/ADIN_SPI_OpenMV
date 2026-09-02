@@ -47,6 +47,33 @@ divide-by-ratio math).
 depth/debayer, ISP stages, memory arithmetic), then the bite-1 plan
 (locked-burst proof + exposure-range + LCD-PWM check) for Nick's gate.
 
+**SAME SESSION, LATER — bite 0 CLOSED + bite 1 nibble 2 DONE (21 host
+tests green, zero board contact):**
+- Bite 0's four unknowns all ANSWERED at the source (SPEC §Open
+  questions): max exposure ~1 s via integer-fps API (set_framerate
+  FIRST — the clamp reads current frame time); AWB = freezable stats
+  EMA applied at software debayer (a real lock; manual WB gains
+  ignored on this sensor); BAYER = 8-bit BGGR, linear; NO
+  frame-dependent ISP stages (static gamma-2.2/−0.2 LUT only — that
+  −51-count offset is a plausible unverified mechanism for S24's
+  dark-frame all-zeros). Route: bench = stream-and-stack on the Pi.
+- Bite 1 code shipped under `pi/s28/` (board script + testable session
+  core + collector + patch-card generator + stats pass; suite = 21).
+  Nick's bench note honoured: the camera moved off-center, so every
+  run STARTS with a fresh 9-marker calibration and patch regions go
+  through the run's own CamMap (find_markers fails loudly naming the
+  dark cell = the aim check). Design catches worth recording: calib
+  converges AE on the MARKER pattern, not black (black-converged lock
+  blooms the blobs); RGB565 byte order is proven against the card's
+  red/blue patches at score time, never assumed; collector refuses to
+  attach while the workbench runner is non-idle OR inside the settle
+  window.
+
+**Next (bench window):** deploy branch on nereus000, generate
+~/s28_media, playback + hil-lcd up, `--plan quick` smoke → full run →
+`s28_burst_stats.py` verdicts (lock HELD, expo table, PWM verdict) —
+then Nick's manual ladder + PR merge.
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT

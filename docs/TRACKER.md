@@ -2764,8 +2764,24 @@ actually applies is an open question (SPEC).
       frames — N×HD does not fit the ~4 MB heap); on-board mean
       accumulator (HD Bayer uint16 = 2.048 MB, fits) is the PRODUCTION
       shape, sized in bite 4 only if the numbers justify it.
-- [ ] **Bite 1 — locked-burst proof + exposure-range measurement (first
-      board window).** Converge AE/AWB → freeze exposure/gain/WB →
+- [~] **Bite 1 — locked-burst proof + exposure-range measurement —
+      CODE + 21 HOST TESTS DONE 2026-09-01 (nibble 2); bench
+      acceptance owed (first board window).** Shipped `pi/s28/`:
+      `s28_board_burst.py` (command-driven board script over stdin
+      JSON — cfg/conv/lock/manual/expo_probe/burst ops, raw frames as
+      one verified b64 line, E7/E4 wire precedents), `s28_session.py`
+      (testable core: parser + decode + verdicts, fake-board tested),
+      `s28_burst_capture.py` (host collector: workbench-idle+settle
+      preflight, ONE attach with the E4 retry, fresh per-run 9-marker
+      calibration — **Nick moved the bench, so patches are located
+      through the run's own CamMap, never assumed centered**; converge→
+      lock→burst matrix, expo table, EV rungs, PWM sweep; --no-lcd =
+      real-object control), `s28_patch_card.py` (playback media: 6-patch
+      card + uniform gray, ONE patch definition shared with stats),
+      `s28_burst_stats.py` (LOCK/NOISE/ORIENT/EXPO/BRACKET/FLICKER
+      verdicts → stats.json; RGB565 byte order PROVEN against the
+      red/blue patches, never assumed). *(original scope)* Converge
+      AE/AWB → freeze exposure/gain/WB →
       burst N=8/16 → **PROVE the lock** (per-frame register readback +
       per-frame mean/σ — "verify frames statistically identical" is the
       notes' load-bearing rule) → stream frames losslessly to the Pi.
