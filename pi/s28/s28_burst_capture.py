@@ -320,7 +320,11 @@ def stage_pwm(run, still, scene_name):
     run.converge()
     lk = run.lock()
     for exp in PWM_EXPOSURES:
-        run.manual(exp, fps=30, gain_db=lk["gain_db"])
+        # exposure ONLY, no framerate change: these are short (<=10 ms)
+        # and fit the native frame time, so we avoid the framerate re-init
+        # that wedges the board. The flicker check needs short exposures,
+        # not a specific fps.
+        run.manual(exp, gain_db=lk["gain_db"])
         run.burst("pwm_%s_e%05d" % (scene_name, exp), geom, 8)
 
 
@@ -410,9 +414,13 @@ def main():
                 stage_calib(run, args.label)
             matrix = FULL_MATRIX if args.plan == "full" else QUICK_MATRIX
             stage_bursts(run, matrix, args.n, args.tight_n)
-            stage_expo(run)
-            stage_bracket(run, has_lcd=True)
             stage_pwm(run, STILL_GRAY, "lcd")
+            # expo + bracket change the sensor FRAMERATE, which wedged
+            # the board on this build (measured 2026-09-02) — a bite-3
+            # investigation, not bite-1's stacking core. `full` opts in.
+            if args.plan == "full":
+                stage_expo(run)
+                stage_bracket(run, has_lcd=True)
 
         sess.quit()
         run.log("run complete; skips=%d resends=%d"
@@ -424,10 +432,28 @@ def main():
         raise
     finally:
         run.close()
-        try:
-            sb.stop()
-        except Exception:
-            pass
+        _stop_with_timeout(sb, 15)
+
+
+def _stop_with_timeout(sb, secs):
+    """sb.stop() can block forever writing to a wedged board (measured
+    2026-09-02: it left the process in uninterruptible D-state). Bound
+    it in its own thread so the collector always exits."""
+    import threading
+    t = threading.Thread(target=lambda: _safe_stop(sb), daemon=True)
+    t.start()
+    t.join(secs)
+    if t.is_alive():
+        print("WARN: board stop did not return in %ds — board likely "
+              "wedged; a physical replug or Pi reboot will clear it"
+              % secs)
+
+
+def _safe_stop(sb):
+    try:
+        sb.stop()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
