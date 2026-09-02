@@ -181,24 +181,45 @@ pair, USB carrying no video.
 ## Open questions (flag, don't guess)
 
 - **S28 capture-stacking unknowns (raised 2026-09-01 at sprint
-  planning; each is a measurement, not a docs lookup):**
-  (a) **PAG7936 true max exposure** — manual exposure clamps to
-  frame_time − margin (`pag7936.c:786` @ 7d4dbf7a), so the +2/+3 EV
-  shutter-only bracket needs `set_framerate` lowered first; the floor
-  framerate / max frame time is unmeasured. (b) **Where do AWB gains
-  apply on the AE3's RGB565 path?** `set_auto_whitebal` on this sensor
-  only toggles stats collection (no on-chip WB gains) — if WB is
-  applied per-frame somewhere downstream, a "locked-WB" burst may not
-  actually be locked; find the application point in the pipeline.
-  (c) **AE3 BAYER capture:** bit depth, delivered framerate, and where
-  debayer runs (board vs host). (d) **Frame-dependent ISP stages** —
-  any denoise/tonemap that varies frame-to-frame breaks stack math;
-  verify the AE3 pipeline is static under locked settings.
-  (e) **HIL LCD backlight PWM/refresh vs a burst** — does the screen
-  alias frame-to-frame across N captures? Measure before trusting any
-  LCD-scene stacking number (scene call 2026-09-01: LCD first, printed
-  reference card once the pipeline works). (f) **N6 sensor manual
-  exposure/gain/WB API** — unchecked; audit before bite 4's N6 rows.
+  planning). (a)–(d) ANSWERED same day at the desk (S28 bite 0, OpenMV
+  src @ 7d4dbf7a — source-verified, on-board confirmation rides bite 1):**
+  (a) **Max exposure is ~1 s via the API, ~2.1 s at the register.**
+  `frame_time = 1e6/framerate` µs into a 21-bit register (cap
+  2,097,151 µs); `set_framerate` takes integer fps, so 1 fps →
+  ~1 s frame time → max exposure ≈ 1 s − 80 µs margin
+  (`pag7936.c:142,164,645,786`). ORDER MATTERS: exposure clamps
+  against the CURRENT frame time — call `set_framerate` first, then
+  `set_auto_exposure(False, us)`. Granularity 8 µs. +2/+3 EV over any
+  plausible bench exposure fits with huge headroom.
+  (b) **AWB applies at software debayer on the HP, and disabling it is
+  a REAL lock.** The PAG7936 is raw-output; RGB565 is made by
+  `imlib_debayer_image_awb` with WB gains from a continuous-time EMA
+  over per-frame sensor RGB stats (`common/omv_csi.c:1171`;
+  `ports/alif/omv_csi.c:378-405`). `set_auto_whitebal(False)` stops
+  the EMA update → the frozen average is applied identically to every
+  subsequent frame. Note: manual rgb_gain_db args are IGNORED on this
+  sensor — the lock is freeze-what-converged, which is what S28 wants.
+  Wait for EMA convergence (τ = OMV_CSI_STATS_TAU_MS) before locking.
+  (c) **BAYER capture = 8-bit BGGR** (`CPI_DATA_MODE_BIT_8`,
+  `cfa_format = SUBFORMAT_ID_BGGR`); debayer is software on the HP —
+  requesting PIXFORMAT_BAYER skips debayer/WB/gamma entirely and is
+  the LINEAR domain the bracket math needs.
+  (d) **The AE3 has NO frame-dependent ISP stages.** Full pipeline:
+  on-chip sensor AE (lockable) → 8-bit Bayer via CPI DMA → optional
+  GPU crop → software debayer applying (freezable) WB gains + a
+  STATIC gamma LUT (gamma 2.2, brightness −0.2, contrast 1.0 — set
+  once at `ports/alif/omv_csi.c:143`). No denoise, no tonemap, no
+  per-frame adaptation. Stack math on RGB565 is safe once AE+AWB are
+  locked; linear math needs BAYER (or LUT inversion — lossy, prefer
+  Bayer). SIDE FINDING: the −0.2 brightness offset subtracts ~51
+  counts post-gamma — a plausible mechanism for the S24 dark-frame
+  "90.6% exactly-zero pixels" observation (not verified, noted).
+  **STILL OPEN:** (e) **HIL LCD backlight PWM/refresh vs a burst** —
+  does the screen alias frame-to-frame across N captures? Measure in
+  bite 1 before trusting any LCD-scene stacking number (scene call
+  2026-09-01: LCD first, printed reference card once the pipeline
+  works). (f) **N6 sensor manual exposure/gain/WB API** — unchecked;
+  audit before bite 4's N6 rows.
 - **AE3 HIL capture is optically soft — WHY is unverified (flagged
   2026-08-25, bite E2).** Measured: lap_var 233 vs the N6's 880 on the
   same screen content, and the AE3's view is heavily zoomed (screen

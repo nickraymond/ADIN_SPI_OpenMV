@@ -2749,13 +2749,21 @@ divide-by-exposure-ratio math), `Image.to_ndarray` + ulab (enabled) for
 uint16 accumulation (`img.add()` saturates at 8-bit — unusable). WB on
 this sensor is host-side stats with NO on-chip gains — where AWB
 actually applies is an open question (SPEC).
-- [ ] **Bite 0 — support audit (desk, zero board contact). ~70% done
-      2026-09-01** (the facts above). Remaining: where AWB gains apply
-      on the RGB565 path; Bayer bit depth + where debayer runs; any
-      frame-dependent ISP stages (denoise/tonemap) that would break
-      stack math; memory arithmetic for the chosen route (on-board
-      accumulate vs stream-and-stack on the Pi). *Exit:* facts in SPEC;
-      route chosen.
+- [x] **Bite 0 — support audit (desk, zero board contact). DONE
+      2026-09-01** (source-verified @ 7d4dbf7a; full facts in SPEC
+      §Open questions, all four unknowns ANSWERED): max exposure ~1 s
+      via the integer-fps API (set_framerate FIRST, then
+      set_auto_exposure — the clamp reads the current frame time);
+      AWB applies at software debayer and `set_auto_whitebal(False)`
+      freezes the stats EMA = a real lock (manual WB gains are ignored
+      on this sensor — lock is freeze-what-converged); BAYER = 8-bit
+      BGGR, skipping debayer/WB/gamma = the linear domain; NO
+      frame-dependent ISP stages (only a static gamma-2.2/−0.2 LUT at
+      debayer). **Route chosen: bench = stream-and-stack on the Pi**
+      (all merge modes available offline; median/sigma-clip need all N
+      frames — N×HD does not fit the ~4 MB heap); on-board mean
+      accumulator (HD Bayer uint16 = 2.048 MB, fits) is the PRODUCTION
+      shape, sized in bite 4 only if the numbers justify it.
 - [ ] **Bite 1 — locked-burst proof + exposure-range measurement (first
       board window).** Converge AE/AWB → freeze exposure/gain/WB →
       burst N=8/16 → **PROVE the lock** (per-frame register readback +
