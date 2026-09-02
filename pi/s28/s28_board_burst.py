@@ -64,6 +64,21 @@ def emit(tag, obj):
     print(tag + " " + json.dumps(obj))
 
 
+def snap(csi0, tries=4):
+    """snap(csi0) that self-heals the transient 'Frame capture has
+    timed out.' -- measured 2026-09-02: the first capture after a
+    framerate/mode change can time out, then succeed on a retry. A
+    persistent timeout still raises (a real fault, reported as #E)."""
+    for i in range(tries):
+        try:
+            return csi0.snapshot()
+        except RuntimeError as e:
+            if "timed out" in str(e) and i < tries - 1:
+                time.sleep_ms(60)
+                continue
+            raise
+
+
 def _drain_stdin():
     """Discard any buffered stdin (E4 duplicate-absorption): a resend
     that raced a slow op sits here and would otherwise be read as a
@@ -149,7 +164,7 @@ def op_cfg(csi0, cmd):
     if changed:
         # drain: let the current pipeline finish a frame before re-init
         emit("#D", {"op": "cfg", "step": "drain"})
-        csi0.snapshot()
+        snap(csi0)
         emit("#D", {"op": "cfg", "step": "pixformat"})
         csi0.pixformat(getattr(csi, pf))
         emit("#D", {"op": "cfg", "step": "framesize"})
@@ -161,8 +176,8 @@ def op_cfg(csi0, cmd):
         _cur_fps = fps
     emit("#D", {"op": "cfg", "step": "settle"})
     for _ in range(3):
-        csi0.snapshot()                  # settle the (possibly new) mode
-    img = csi0.snapshot()
+        snap(csi0)                  # settle the (possibly new) mode
+    img = snap(csi0)
     emit("#OK", {"op": "cfg", "w": img.width(), "h": img.height(),
                  "pixformat": pf, "changed": changed,
                  "mem_free": gc.mem_free()})
@@ -180,7 +195,7 @@ def op_conv(csi0, cmd):
     t0 = time.ticks_ms()
     last = -1000
     while time.ticks_diff(time.ticks_ms(), t0) < secs * 1000:
-        csi0.snapshot()
+        snap(csi0)
         t = time.ticks_diff(time.ticks_ms(), t0)
         if t - last >= 250:
             last = t
@@ -194,7 +209,7 @@ def op_conv(csi0, cmd):
 
 def _settle_and_lock_reply(csi0):
     for _ in range(2):
-        csi0.snapshot()                  # flush frames exposed pre-change
+        snap(csi0)                  # flush frames exposed pre-change
     m = meta_read(csi0)
     emit("#LOCK", m)
 
@@ -222,7 +237,7 @@ def op_expo_probe(csi0, cmd):
     csi0.framerate(cmd["fps"])
     for t in cmd["targets"]:
         csi0.auto_exposure(False, exposure_us=int(t))
-        csi0.snapshot()
+        snap(csi0)
         emit("#T", {"fps": cmd["fps"], "cmd": int(t),
                     "got": csi0.exposure_us()})
 
@@ -231,7 +246,7 @@ def op_burst(csi0, cmd):
     n = int(cmd.get("n", 8))
     mode = cmd.get("mode", "paced")
     if mode == "tight":
-        probe = csi0.snapshot()
+        probe = snap(csi0)
         size = len(probe.bytearray())
         gc.collect()
         need = n * size + SLACK
@@ -243,7 +258,7 @@ def op_burst(csi0, cmd):
         metas = []
         prev = time.ticks_ms()
         for k in range(n):
-            img = csi0.snapshot()
+            img = snap(csi0)
             now = time.ticks_ms()
             m = meta_read(csi0)
             m["seq"] = k
@@ -267,7 +282,7 @@ def op_burst(csi0, cmd):
     else:
         prev = time.ticks_ms()
         for k in range(n):
-            img = csi0.snapshot()
+            img = snap(csi0)
             now = time.ticks_ms()
             m = meta_read(csi0)
             m["seq"] = k

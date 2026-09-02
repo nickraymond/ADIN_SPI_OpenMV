@@ -140,13 +140,18 @@ class Run:
                              % (op, tag, [t for t, _ in replies]))
         return hits[0]
 
-    def cfg(self, pixformat, framesize, fps=30):
-        replies = self.sess.command(op="cfg", pixformat=pixformat,
-                                    framesize=framesize, fps=fps)
-        ok = self._one("ok", replies, "cfg")
-        self.log("cfg %s %s fps=%d -> %dx%d free=%d"
+    def cfg(self, pixformat, framesize, fps=None):
+        # fps left native by default: forcing a framerate re-inits the
+        # sensor timing and can time out the first capture (measured
+        # 2026-09-02). Only the expo/bracket ops, which NEED a specific
+        # rate, set it — and they set it board-side, not through cfg.
+        cmd = dict(op="cfg", pixformat=pixformat, framesize=framesize)
+        if fps is not None:
+            cmd["fps"] = fps
+        ok = self._one("ok", self.sess.command(**cmd), "cfg")
+        self.log("cfg %s %s fps=%s -> %dx%d free=%d changed=%s"
                  % (pixformat, framesize, fps, ok["w"], ok["h"],
-                    ok["mem_free"]))
+                    ok["mem_free"], ok.get("changed")))
         return ok
 
     def converge(self, secs=6):
@@ -224,7 +229,7 @@ def stage_calib(run, cam_label):
     exactly 2x). The fresh-per-run calibration IS the moved-bench answer.
     """
     from hil_harness import find_markers, solve_cam_map
-    geom = run.cfg("RGB565", "VGA", fps=30)
+    geom = run.cfg("RGB565", "VGA")
     # Converge + lock ON THE MARKER PATTERN, then shoot markers AND
     # black under the SAME lock — converging on black slams AE to max
     # exposure and blooms the marker blobs (centroid bias).
@@ -256,19 +261,19 @@ def stage_calib(run, cam_label):
 def stage_bursts(run, matrix, n, tight_n):
     lcd_show(run.pb, mode="step", still=STILL_CARD)
     for pf, fs in matrix:
-        geom = run.cfg(pf, fs, fps=30)
+        geom = run.cfg(pf, fs)
         run.converge()
         run.lock()
         run.burst("card_%s_%s" % (pf.lower(), fs.lower()), geom, n)
     if tight_n:
-        geom = run.cfg("BAYER", "VGA", fps=30)
+        geom = run.cfg("BAYER", "VGA")
         run.converge()
         run.lock()
         run.burst("card_bayer_vga_tight", geom, tight_n, mode="tight")
 
 
 def stage_expo(run):
-    run.cfg("BAYER", "VGA", fps=30)
+    run.cfg("BAYER", "VGA")
     rows = []
     for fps in EXPO_FPS:
         replies = run.sess.command(op="expo_probe", fps=fps,
@@ -284,7 +289,7 @@ def stage_expo(run):
 def stage_bracket(run, has_lcd):
     if has_lcd:
         lcd_show(run.pb, mode="step", still=STILL_CARD)
-    geom = run.cfg("BAYER", "VGA", fps=30)
+    geom = run.cfg("BAYER", "VGA")
     run.converge()
     lk = run.lock()
     base = max(lk["exp_us"], 200)
@@ -302,7 +307,7 @@ def stage_smoke(run):
     just prove attach + stdin round-trip + cfg + converge + lock + a
     small BAYER VGA burst land frames with settings HELD. The one-
     variable-at-a-time first rung before anything else is trusted."""
-    geom = run.cfg("BAYER", "VGA", fps=30)
+    geom = run.cfg("BAYER", "VGA")
     run.converge(4)
     run.lock()
     run.burst("smoke_bayer_vga", geom, 4)
@@ -311,7 +316,7 @@ def stage_smoke(run):
 def stage_pwm(run, still, scene_name):
     if still is not None:
         lcd_show(run.pb, mode="step", still=still)
-    geom = run.cfg("BAYER", "VGA", fps=30)
+    geom = run.cfg("BAYER", "VGA")
     run.converge()
     lk = run.lock()
     for exp in PWM_EXPOSURES:
