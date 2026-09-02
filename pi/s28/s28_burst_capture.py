@@ -437,16 +437,20 @@ def main():
 
 def _stop_with_timeout(sb, secs):
     """sb.stop() can block forever writing to a wedged board (measured
-    2026-09-02: it left the process in uninterruptible D-state). Bound
-    it in its own thread so the collector always exits."""
+    2026-09-02: it left the daemon thread in uninterruptible D-state,
+    which even blocks interpreter exit and resists SIGKILL). Bound it in
+    its own thread; if it does not return, os._exit so the collector
+    process always terminates — the work + results are already saved."""
     import threading
     t = threading.Thread(target=lambda: _safe_stop(sb), daemon=True)
     t.start()
     t.join(secs)
     if t.is_alive():
-        print("WARN: board stop did not return in %ds — board likely "
-              "wedged; a physical replug or Pi reboot will clear it"
-              % secs)
+        print("WARN: board stop did not return in %ds — board wedged; a "
+              "Pi reboot will clear it. Forcing exit." % secs)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(2)
 
 
 def _safe_stop(sb):

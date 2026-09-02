@@ -2787,10 +2787,24 @@ actually applies is an open question (SPEC).
       ends. Fix mirrors E4: board drains stdin → `#RDY` → `#W`
       heartbeat; host `command()` resends on `#W` past grace. Added
       `--plan smoke` (no LCD/calib/HD/gray first-contact). Suite 21→25.
-      **Board then WEDGED (bite-R raw-repl refusal — the timeout-killed
-      hung run left it mid-raw-repl; mpremote also hangs, so it's the
-      board not the code); /flash untouched. Bench acceptance OWED:
-      Nick replugs the AE3 → `--plan smoke`.** *(original scope)*
+      **RUN ON HARDWARE + VERIFIED 2026-09-02** (bench recovered via
+      `sudo reboot` between attempts — Nick's call; fresh USB enum
+      cleared the wedge). Four more bench-found bugs fixed (suite →27):
+      GRAYSCALE-HD calib hang (→ RGB565+host-gray), redundant-reinit +
+      framerate capture-timeouts (op_cfg mode-skip + #D breadcrumbs +
+      snap() retry + no forced fps), and wedged-board host hangs (SIGALRM
+      op watchdog + SIGTERM handler + bounded os._exit stop). MEASURED:
+      **lock HELD on every burst; 8-bit BAYER confirmed; tight cadence
+      20 ms/frame (~50 fps) vs ~60 ms paced; √N STACKING PROVEN — green
+      σ 0.626→0.436→0.296→0.187 at 1/2/4/8 frames (~4× at 16); LCD-PWM
+      question ANSWERED — the LCD ALIASES (9.5–75× the independent-pixel
+      floor, small magnitude), so the printed card avoids a real
+      effect.** OWED: patch-level SNR needs CALIBRATION → **Nick must
+      RE-AIM the AE3** (aim check correctly failed: TL marker peak 19<30,
+      the moved-bench). BITE-3 FINDING: a sensor **framerate change
+      wedges the board** → the expo table + shutter bracket are blocked
+      on it (deferred to bite 3; `--plan full` opts in). Artifacts
+      `~/s28_runs/{smoke2,quick6,quick7}`. *(original scope)*
       Converge
       AE/AWB → freeze exposure/gain/WB →
       burst N=8/16 → **PROVE the lock** (per-frame register readback +

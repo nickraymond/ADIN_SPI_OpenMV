@@ -106,6 +106,70 @@ replug) so bench acceptance still owed:**
 → then `--plan quick`/`full` on the LCD → `s28_burst_stats.py`. The
 playback server was left running on ~/s28_media; hil-lcd active.
 
+**SAME SESSION, LATER (2026-09-02) — bite 1 RUN ON HARDWARE + VERIFIED;
+core stacking premise measured. Bench recovered via `sudo reboot`
+(Nick's call — warm reboot's fresh USB enumeration cleared the bite-R
+wedge each time).**
+
+Ran the full ladder on the AE3, fixing four bugs the bench exposed
+(each pushed + re-tested; suite 21→27):
+1. **Lost-command-byte hang** (found vs E4): board entered its command
+   loop silently, so a lost first byte hung both ends. Adopted E4's
+   `#RDY` + `#W`-heartbeat + host-resend. resends=0 in the clean runs
+   (byte loss was intermittent; the recovery is there when it happens).
+2. **GRAYSCALE-HD calib hang**: `stage_calib` used GRAYSCALE HD, which
+   hangs the direct-csi path. Switched to RGB565 + host gray
+   (`rgb565_to_gray`), the proven hil_harness approach.
+3. **Redundant-reinit + framerate hangs**: a `cfg` to the current mode
+   re-inits the sensor and hangs; and `framerate()` change makes the
+   next capture raise 'Frame capture has timed out.' Fix: op_cfg skips
+   unchanged mode + emits `#D` breadcrumbs; `snap()` retries the
+   transient timeout; cfg no longer forces a framerate (native rate for
+   calib/bursts). **A framerate CHANGE (expo/bracket) still wedges the
+   board — deferred to bite 3.**
+4. **Wedged-board hangs the host**: SerialBoard.readline() blocks
+   forever on a silent board and sb.stop() blocks on a wedged one
+   (D-state, unkillable). Added a SIGALRM op watchdog, a SIGTERM
+   handler, and a bounded stop that os._exit's if the board won't
+   release — the collector always terminates.
+
+**MEASURED (all on locked frames, LCD scene, room light):**
+- **Lock HELD** on every burst (exp/gain/WB byte-identical across N):
+  BAYER-VGA, RGB565-VGA, BAYER-VGA-tight, and the 5 PWM exposures.
+- **8-bit BAYER confirmed** (256,000 B = 640×400×1); real image data.
+- **Tight vs paced cadence**: 20 ms/frame back-to-back (~50 fps native)
+  vs ~60 ms paced (BAYER) / ~160 ms (RGB565, bigger frames).
+- **√N STACKING PAYOFF (the sprint premise), green plane:** per-pixel
+  temporal σ 0.626 (1 frame) → 0.436 (2) → 0.296 (4) → 0.187 (8),
+  tracking σ1/√k; 16-frame average ≈ 4× noise reduction.
+- **LCD-PWM open question ANSWERED: the LCD ALIASES** at every exposure
+  (frame-mean σ 9.5–75× the independent-pixel expectation — backlight
+  modulates whole frames together), though absolute magnitude is small
+  (~0.1 count). Confirms the printed-card plan avoids a real effect.
+
+**OWED / NOT DONE:**
+- **Patch-level SNR + the √N-on-uniform-patches demo need CALIBRATION,
+  which needs Nick to RE-AIM the AE3** — the aim check correctly failed
+  ("marker not visible in cell TL, peak 19<30"); the camera isn't
+  framing the LCD's top-left marker (Nick's moved-bench point). This is
+  the one thing blocking the calibrated patch metrics.
+- **Bite-3 finding: a sensor FRAMERATE change wedges the board on this
+  build.** The exposure-range table + shutter bracket (which need long
+  frame times → lowered fps) are blocked on this. Needs its own
+  investigation (framerate re-init sequence / settle / firmware). The
+  bracket is bite 3 anyway.
+- Exposure readback quirk: converge reads 16584 µs, lock reads 8328 µs
+  (~2×) — noted, characterize in the expo work.
+- Artifacts: `~/s28_runs/{smoke2,quick6,quick7}` on nereus000. A stray
+  wedged stop-thread from quick6 lingers (harmless — port free); clears
+  on next reboot.
+
+**Next:** Nick re-aims the AE3 at the LCD (all 9 markers visible) →
+re-run `--plan quick` for the calibrated patch SNR; OR set up the
+printed reference card. Bite 2 (offline stack + compare tool) can start
+now — the locked bursts prove the input. Bite 3 owns the framerate
+wedge + the shutter bracket.
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
