@@ -170,6 +170,40 @@ printed reference card. Bite 2 (offline stack + compare tool) can start
 now — the locked bursts prove the input. Bite 3 owns the framerate
 wedge + the shutter bracket.
 
+**SAME SESSION, LATER (2026-09-02) — AE3 vs N6 image-quality
+investigation (Nick's side-quest): same sensor, ISP gap, and AE3 color
+shown RECOVERABLE with a CCM. Full facts in SPEC §Camera SENSOR and ISP.**
+- **Both boards run the SAME sensor** — PAG7936 (chip 0x7936), verified
+  live (`print(csi.CSI())`). Not a better N6 sensor. The gap is the
+  pipeline: N6 = STM32 DCMIPP hardware ISP; AE3 = software imlib_debayer,
+  no CCM.
+- **Brightness fix tested + REGRESSED.** Built/flashed the AE3 with gamma
+  brightness 0.0 (= the N6's value; patch `0006`, readback-verified).
+  Result: brighter but clipped highlights + LOWER saturation — the −0.2
+  is a deliberate AE-metering compensation, not a bug. Nick preferred the
+  brighter look by eye → AE3 stays on the 0.0 build.
+- **Confirmed we're current with OpenMV**: 43 commits behind master but
+  none touch ISP gamma/color tuning. New S28-relevant commit `fe679005`
+  (pag7936 N6 BAYER-capture fix).
+- **Reference-card analyzer built** (`bench/refcard/`, Nick's call — the
+  N6 is not ground truth): 36H11 AprilTag detect → homography →
+  per-patch ΔE76 vs the Reef Reference Card V1's true sRGB → fitted 3×4
+  CCM. 10 host tests; card spec from the V1 vector PDF. **Measured: AE3
+  ΔE 34.0, N6 44.8 (N6 raw inflated by its darker exposure); CCM takes
+  AE3 → 10.6, N6 → 9.0 (3× better, near parity).** The AE3's color IS
+  recoverable — the info is there, the debayer just never corrects it.
+  CCM-corrected AE3 image is visibly vivid. WB is fine on both.
+
+**Broke/surprised us:** the brightness "fix" regressing was the useful
+negative — it disproved the simple-setting hypothesis. Also: the AE3
+fell off the USB bus mid-session when Nick moved the rig (reseated,
+recovered).
+
+**Next:** Nick's final review of the analyzer + before/after. If we
+pursue AE3 color: fit a CCM under a known illuminant and bake it into the
+Alif debayer (a real firmware bite). Lens (new unit) = the separate
+sharpness lever. Back to S28: bite 2 (offline stack + compare tool).
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT

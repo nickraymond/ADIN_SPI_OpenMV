@@ -99,15 +99,36 @@ color, crushed shadows, softer) is NOT a sensor difference. Verified:
 
 **The Alif E3 has NO ISP hardware** (SPEC §S22 datasheet check — no JPEG/video
 codec either), so the AE3 does demosaic/AWB/gamma in crude software while the
-N6 has a dedicated hardware ISP. This caps AE3 color/detail regardless of
-settings. **Two factors ARE addressable:** (1) the AE3 bakes a **−0.2
-brightness** offset (≈ −51 counts) into its debayer gamma LUT that the N6 does
-not — a wrong/different setting that crushes shadows; fix = set it to `0.0f`
-(repo patch `firmware/openmv_patches/0006-alif-gamma-brightness-neutral.patch`,
-built 2026-09-02, HP sha `45edc48b…`, staged on the Pi at `~/fw/bright0/`).
-(2) the lens — the AE3 is measurably softer (matches the E2 optical-softness
-finding); a replacement AE3 unit is inbound to test a possibly scratched lens.
-Stacking (S28) reduces NOISE, not this ISP/color deficit.
+N6 has a dedicated hardware ISP. **Three factors, measured against the Nereus
+Reef Reference Card V1 as true ground truth (the N6 is NOT a reference — it has
+its own ISP color error):**
+
+1. **Brightness offset — tested, NOT a simple fix.** The AE3 bakes brightness
+   **−0.2** into its debayer gamma LUT vs the N6's **0.0**. Building/flashing
+   `0.0f` (patch `0006`, HP sha `45edc48b…`) over-corrected: it brightens but
+   CLIPS highlights (~5% pixels at 255) and *drops* saturation (0.39→0.23). The
+   −0.2 is a deliberate compensation for the AE3's raw-metering auto-exposure,
+   not a bug. Nick preferred the brighter look by eye; the AE3 currently runs
+   the `0.0` build (2026-09-02).
+2. **Color reproduction = the real deficit, and it is RECOVERABLE with a CCM.**
+   Measured mean ΔE76 vs the card (17 patches, ambient light): AE3 **34.0**,
+   N6 **44.8** (the N6's higher *raw* ΔE is exposure — its image is darker; the
+   confound the CCM removes). The AE3's software debayer applies NO
+   color-correction matrix, so saturated colors collapse toward gray (green
+   patch → near-white). **Fitting a 3×4 CCM from the card takes AE3 to ΔE
+   10.6 and N6 to 9.0 — a 3× improvement, near parity** — so the color
+   information IS present; the pipeline just never corrects it. Tool +
+   evidence: `bench/refcard/` (analyzer + `refcard_v1.json` + 10 host tests);
+   fitted CCMs and corrected images in the run artifacts. A firmware CCM in
+   `imlib_debayer` (or a post step) is the lever if AE3 color is wanted; it
+   must be fit under a known illuminant to generalize.
+3. **Lens/sharpness — separate.** The AE3 is measurably softer (lapvar 19 vs
+   N6 33; matches the E2 optical-softness finding); a replacement AE3 unit is
+   inbound to test a possibly scratched lens.
+
+**WB is NOT the problem:** both cameras' grayscale patches read essentially
+neutral on the card (AE3 G+1.4, N6 G+0.3). Stacking (S28) reduces NOISE, not
+any of the above.
 
 ### `find_blobs` with a threshold list (measured on the N6, 2026-08-20)
 
