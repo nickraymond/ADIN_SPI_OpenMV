@@ -83,6 +83,32 @@ stock `v5.0.0`. Free heap differs ~7.7× (N6 25,393,136 B vs AE3 3,281,488 B,
 both at VGA with yolov8n_192 loaded). Any cross-board comparison carries this
 in addition to the already-known model-binary confound — see S8 bite D.
 
+### Camera SENSOR and ISP: same sensor, different pipeline (verified live 2026-09-02, `print(csi.CSI())` on both)
+
+**Both boards run the SAME sensor — the PixArt PAG7936** (chip id `0x7936`,
+24 MHz clock, RAW8, BGGR). The AE3's image quality deficit vs the N6 (washed
+color, crushed shadows, softer) is NOT a sensor difference. Verified:
+
+| | AE3 (Alif E3) | N6 (STM32N6) |
+|---|---|---|
+| Sensor | PAG7936, i2c 0x40 | PAG7936, i2c 0x15 (identical part) |
+| Interface | parallel CPI, RAW8 (`CPI_DATA_MODE_BIT_8`) | MIPI CSI-2 800 Mbps, RAW8 (DT 0x2A) |
+| Demosaic/color | **software** `imlib_debayer_image_awb` — bilinear, AWB gains only, no CCM, no bad-pixel removal | **hardware ISP** — STM32 DCMIPP (`ports/stm32/stm_isp.c`): HW demosaic, bad-pixel removal, HW AWB, contrast |
+| Gamma LUT init | `imlib_update_gamma_table(`**`-0.2f`**`, 1.0, 2.2)` (`ports/alif/omv_csi.c` `alif_csi_isp_reset`) | `stm_isp_update_gamma_table(…,`**`0.0f`**`, 1.0, 2.2)` (`stm_csi_isp_reset`) |
+| Measured (LCD card) | lapvar 19, white p99 206 | lapvar 33 (1.7× sharper), white p99 232 |
+
+**The Alif E3 has NO ISP hardware** (SPEC §S22 datasheet check — no JPEG/video
+codec either), so the AE3 does demosaic/AWB/gamma in crude software while the
+N6 has a dedicated hardware ISP. This caps AE3 color/detail regardless of
+settings. **Two factors ARE addressable:** (1) the AE3 bakes a **−0.2
+brightness** offset (≈ −51 counts) into its debayer gamma LUT that the N6 does
+not — a wrong/different setting that crushes shadows; fix = set it to `0.0f`
+(repo patch `firmware/openmv_patches/0006-alif-gamma-brightness-neutral.patch`,
+built 2026-09-02, HP sha `45edc48b…`, staged on the Pi at `~/fw/bright0/`).
+(2) the lens — the AE3 is measurably softer (matches the E2 optical-softness
+finding); a replacement AE3 unit is inbound to test a possibly scratched lens.
+Stacking (S28) reduces NOISE, not this ISP/color deficit.
+
 ### `find_blobs` with a threshold list (measured on the N6, 2026-08-20)
 
 `b.code` is a **bitfield of threshold INDEX** — bit 0 for the first threshold
