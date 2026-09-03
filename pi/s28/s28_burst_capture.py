@@ -286,7 +286,12 @@ def stage_expo(run):
             fh.write(json.dumps(r) + "\n")
 
 
-def stage_bracket(run, has_lcd):
+def stage_bracket(run, has_lcd, n=8):
+    """S28 bite 3: a NORMAL frame then LONG frames at +2/+3 EV, shutter
+    ONLY (never gain — gain re-adds the noise the photons buy out), all
+    BAYER (the linear domain the red÷ratio merge needs). N frames per
+    rung so the merge can stack each first. The rung exposure rides each
+    frame's meta (exp_us), so the merge reads the true exposure ratio."""
     if has_lcd:
         lcd_show(run.pb, mode="step", still=STILL_CARD)
     geom = run.cfg("BAYER", "VGA")
@@ -295,10 +300,8 @@ def stage_bracket(run, has_lcd):
     base = max(lk["exp_us"], 200)
     for ev, mult in ((0, 1), (2, 4), (3, 8)):
         want = min(base * mult, 1500000)     # cap under the 2.1 s reg max
-        # shutter ONLY (no gain — gain re-adds the noise photons buy out);
-        # op_manual extends the frame time to fit via register writes.
         run.manual(want, gain_db=lk["gain_db"])
-        run.burst("bracket_ev%d" % ev, geom, 3)
+        run.burst("bracket_ev%d" % ev, geom, n)
 
 
 def stage_smoke(run):
@@ -425,7 +428,7 @@ def main():
         elif args.plan == "stack":
             stage_stack(run, args.n)
         elif args.plan == "bracket":
-            stage_bracket(run, has_lcd=False)
+            stage_bracket(run, has_lcd=False, n=min(args.n, 8))
         elif args.no_lcd:
             # real-object control: PWM-shaped sweep on whatever static
             # scene the camera is aimed at
