@@ -1,0 +1,35 @@
+# s28_stack_compare.toml -- S28 bite 2: one-click frame-stacking compare.
+#
+# Click -> the wrapper (pi/s28/s28_compare_run.py) serves a page on :8093
+# immediately (so the card goes LIVE), captures a locked BAYER burst of
+# whatever the AE3 is aimed at, runs the stacking merges, and writes the
+# report into that page: single vs mean/median/sigma-clip, the sqrt(N)
+# noise ladder, and a FLICKER CHECK that tells you whether the light was
+# steady enough to trust the result (ALIASED = a wobbling source stacking
+# cannot remove -> use a constant/DC light).
+#
+# AE3 only, BAYER only: the linear domain the merge math wants, and the
+# BAYER->RGB565 mode switch wedges the sensor on this build. Aim the AE3
+# at a STATIC scene under STEADY light. Stop = shut the server (the board
+# is released after the capture, not held while serving).
+
+name = "s28-stack-compare"
+title = "S28 frame-stacking compare"
+summary = "One click: capture a locked BAYER burst from the AE3 and show single vs mean/median/sigma-clip side by side, with the sqrt(N) noise ladder and a flicker check (is the light steady enough?). Aim the AE3 at a static scene under constant light. Report at :8093; artifacts under ~/s28_runs/. From sprint S28 bite 2."
+opens = ":8093"
+
+[params]
+frames = ["8", "16", "32"]
+
+[[boards]]
+label = "AE3"
+by_id = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+
+[run]
+argv = ["python3", "-u", "pi/s28/s28_compare_run.py",
+        "--serve-port", "8093"]
+cwd = "."
+stop_grace = 30
+
+[health]
+http = "http://127.0.0.1:8093/"
