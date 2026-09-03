@@ -1,7 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
+*Last updated: 2026-09-01 (**NEW SPRINT S28 — capture-side frame
+stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
+plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
+support audit run against OpenMV src @ `7d4dbf7a`: **no built-in
+stacking/HDR merge exists in imlib — but every primitive does**
+(manual exposure/gain lock + readback, `PIXFORMAT_BAYER` on the AE3's
+PAG7936, `to_ndarray` + ulab for uint16 accumulation; `img.add()`
+saturates at 8-bit — unusable). Constraint that shapes bite 3: manual
+exposure clamps to frame_time − margin, so +2/+3 EV brackets need
+`set_framerate` lowered first — true max exposure UNMEASURED. Scene
+call (Nick): start on the HIL LCD (PWM/refresh aliasing measured in
+bite 1 before trusting it), printed AprilTag/patch card once the
+pipeline works. Demo = a workbench compare card: single vs stacked vs
+bracketed side by side with the metrics table. Kickoff = PROMPTS §17.
+Previous:*
+*2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
 OWN LABELS, DESK-ONLY — RF-DETR (best-EMA e17) BEATS YOLOX-S IN THE
 DEPLOYMENT DOMAIN, on GT that structurally favors YOLOX-S:** HIL
 mAP50 0.876 vs 0.808 (186 reviewed stills / 4,966 boxes = the E10
@@ -2713,6 +2728,209 @@ retrained model to both boards and reads its scorecard — without Claude.
 **Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
 urchin HIL demo); S25 bite 3.
 
+
+### S28 — Capture-side frame stacking & bracketed exposure (AE3 first)  `[ ]`  *(NEW 2026-09-01 — Nick approved the plan + scene call. Design notes: `docs/stacking_kickoff_notes.md` (from the Nereus BM camera work — the red channel at 4–5 m depth measures 3.5–14% of full scale and nothing post-hoc recovers it below ~5%; the fix is capture-time photons + noise). Bandwidth unchanged — still one image shipped — and denoised frames compress SMALLER at equal q.)*
+**Goal:** a measured answer to "does multi-frame capture buy image
+quality worth shipping": **(A) same-exposure stacking** (lock AE/gain/WB,
+burst N, average/median before encode — √N noise + sub-LSB dither) and
+**(B) shutter-only bracket** (+2/+3 EV long frames, red-from-long
+channel merge), each A/B'd against a **single HD still on the same
+scene**, reviewed in a compare tool on the workbench. AE3 first (Nick);
+N6 rows once the method wins. The two experiments are run SEPARATELY —
+they answer different questions and compose later.
+**Support audit (2026-09-01, OpenMV src @ `7d4dbf7a` — the AE3 build's
+base rev): NO built-in stacking/HDR merge exists in imlib** — but all
+primitives do: `set_auto_exposure(False, us)` (CLAMPED to frame_time −
+margin, `pag7936.c:786` — long frames need `set_framerate` lowered
+first; true max UNMEASURED), `set_auto_gain(False, db)` + `get_gain_db`
+readback, `PIXFORMAT_BAYER` on the PAG7936 (linear domain — RGB565 is
+5-bit red + gamma-encoded, the wrong domain for the bracket's
+divide-by-exposure-ratio math), `Image.to_ndarray` + ulab (enabled) for
+uint16 accumulation (`img.add()` saturates at 8-bit — unusable). WB on
+this sensor is host-side stats with NO on-chip gains — where AWB
+actually applies is an open question (SPEC).
+- [x] **Bite 0 — support audit (desk, zero board contact). DONE
+      2026-09-01** (source-verified @ 7d4dbf7a; full facts in SPEC
+      §Open questions, all four unknowns ANSWERED): max exposure ~1 s
+      via the integer-fps API (set_framerate FIRST, then
+      set_auto_exposure — the clamp reads the current frame time);
+      AWB applies at software debayer and `set_auto_whitebal(False)`
+      freezes the stats EMA = a real lock (manual WB gains are ignored
+      on this sensor — lock is freeze-what-converged); BAYER = 8-bit
+      BGGR, skipping debayer/WB/gamma = the linear domain; NO
+      frame-dependent ISP stages (only a static gamma-2.2/−0.2 LUT at
+      debayer). **Route chosen: bench = stream-and-stack on the Pi**
+      (all merge modes available offline; median/sigma-clip need all N
+      frames — N×HD does not fit the ~4 MB heap); on-board mean
+      accumulator (HD Bayer uint16 = 2.048 MB, fits) is the PRODUCTION
+      shape, sized in bite 4 only if the numbers justify it.
+- [~] **Bite 1 — locked-burst proof + exposure-range measurement —
+      CODE + 21 HOST TESTS DONE 2026-09-01 (nibble 2); bench
+      acceptance owed (first board window).** Shipped `pi/s28/`:
+      `s28_board_burst.py` (command-driven board script over stdin
+      JSON — cfg/conv/lock/manual/expo_probe/burst ops, raw frames as
+      one verified b64 line, E7/E4 wire precedents), `s28_session.py`
+      (testable core: parser + decode + verdicts, fake-board tested),
+      `s28_burst_capture.py` (host collector: workbench-idle+settle
+      preflight, ONE attach with the E4 retry, fresh per-run 9-marker
+      calibration — **Nick moved the bench, so patches are located
+      through the run's own CamMap, never assumed centered**; converge→
+      lock→burst matrix, expo table, EV rungs, PWM sweep; --no-lcd =
+      real-object control), `s28_patch_card.py` (playback media: 6-patch
+      card + uniform gray, ONE patch definition shared with stats),
+      `s28_burst_stats.py` (LOCK/NOISE/ORIENT/EXPO/BRACKET/FLICKER
+      verdicts → stats.json; RGB565 byte order PROVEN against the
+      red/blue patches, never assumed).
+      **BENCH CONTACT 2026-09-02: first run exposed + FIXED a real
+      protocol bug** — the board entered its command loop silently, so a
+      lost first command byte (a measured E4 wire failure) hung both
+      ends. Fix mirrors E4: board drains stdin → `#RDY` → `#W`
+      heartbeat; host `command()` resends on `#W` past grace. Added
+      `--plan smoke` (no LCD/calib/HD/gray first-contact). Suite 21→25.
+      **RUN ON HARDWARE + VERIFIED 2026-09-02** (bench recovered via
+      `sudo reboot` between attempts — Nick's call; fresh USB enum
+      cleared the wedge). Four more bench-found bugs fixed (suite →27):
+      GRAYSCALE-HD calib hang (→ RGB565+host-gray), redundant-reinit +
+      framerate capture-timeouts (op_cfg mode-skip + #D breadcrumbs +
+      snap() retry + no forced fps), and wedged-board host hangs (SIGALRM
+      op watchdog + SIGTERM handler + bounded os._exit stop). MEASURED:
+      **lock HELD on every burst; 8-bit BAYER confirmed; tight cadence
+      20 ms/frame (~50 fps) vs ~60 ms paced; √N STACKING PROVEN — green
+      σ 0.626→0.436→0.296→0.187 at 1/2/4/8 frames (~4× at 16); LCD-PWM
+      question ANSWERED — the LCD ALIASES (9.5–75× the independent-pixel
+      floor, small magnitude), so the printed card avoids a real
+      effect.** OWED: patch-level SNR needs CALIBRATION → **Nick must
+      RE-AIM the AE3** (aim check correctly failed: TL marker peak 19<30,
+      the moved-bench). BITE-3 FINDING: a sensor **framerate change
+      wedges the board** → the expo table + shutter bracket are blocked
+      on it (deferred to bite 3; `--plan full` opts in). Artifacts
+      `~/s28_runs/{smoke2,quick6,quick7}`. *(original scope)*
+      Converge
+      AE/AWB → freeze exposure/gain/WB →
+      burst N=8/16 → **PROVE the lock** (per-frame register readback +
+      per-frame mean/σ — "verify frames statistically identical" is the
+      notes' load-bearing rule) → stream frames losslessly to the Pi.
+      Same window: max `exposure_us` at lowered framerate (bite 3's
+      feasibility gate), burst wall time, memory headroom, and the
+      **LCD-PWM/refresh check** — does the screen alias frame-to-frame
+      across a burst (measured, not assumed; the scene is the HIL LCD
+      until the printed card arrives). Lighting recorded per run (a
+      measured condition). *Exit:* burst on disk with provably frozen
+      settings + per-frame noise numbers. No stacking yet.
+- [~] **Bite 2 — offline stack + the compare tool — BUILT + CARD
+      DEMO'D 2026-09-02 (Claude ran it; Nick's review owed).** Shipped
+      `pi/s28/s28_stack.py` (mean/median/sigma-clip merges on raw 8-bit
+      BAYER + demosaic w/ a numpy fallback so it runs on a bare Pi) +
+      `s28_compare.py` (self-contained HTML: single vs merges w/ 3×
+      zoom crops, the **√N noise ladder**, JPEG size at equal q, and a
+      **flicker check**) + `--plan stack` capture + the one-click
+      workbench card **`s28-stack-compare`** (wrapper
+      `s28_compare_run.py`: serve→capture→report→serve, frames toggle
+      8/16/32). 48 host tests. **MEASURED (16-frame card burst): noise
+      falls √N — k=2 1.34× / k=4 1.95× / k=8 ~3×; mean == sigma-clip on
+      a static scene, median slightly less.** KEY FINDING: the **honest
+      metric is group-means temporal σ** (a spatial std on a "uniform"
+      patch hides the win behind fixed print/lighting texture — it read
+      only 1.4×). ALSO: the flicker check flags the room light —
+      **ALIASED 7.2× (bright) → 21.9× (dim)**: room LED/fluorescent
+      flicker is frame-to-frame light wobble stacking CANNOT remove, so
+      a **constant/DC light source is needed** for a clean measurement
+      (Nick setting one up; it doubles as the color-work illuminant).
+      Card demo'd on the bench: click→LIVE→capture→report on :8093→Stop
+      releases the ports. *Exit (owed): Nick reviews at the page under a
+      steady light + the RGB565 deployed-path burst (the BAYER→RGB565
+      switch wedges — captured per-pixformat in a fresh attach).*
+- [~] **Bite 3 — shutter bracket + channel-wise merge. BLOCKER FIXED
+      2026-09-03: the framerate wedge is SOLVED.** Root cause (proven on
+      the AE3): `csi.framerate()` → `set_framerate` → `omv_csi_abort` +
+      `configure()` (a full mode-register rewrite + capture abort) stops
+      the sensor streaming and wedges the board. **Fix: extend the
+      PAG7936 frame-time registers DIRECTLY** (`__write_reg`
+      0x004C–0x004E + SENSOR_UPDATE 0x00EB) — no abort, no reconfigure;
+      `set_auto_exposure` reads the live frame-time regs so a long
+      exposure then clamps to the extended time. No firmware rebuild
+      (`__write_reg` already exposed). Proven: exposure readback exact
+      (want=132672 got=132672), settled frame period scales (EV+0 ~21ms
+      / +2 ~71ms / +3 ~138ms) and returns down, ZERO wedge across 4
+      changes; then the INTEGRATED path verified — `--plan bracket`
+      (+0/+2/+3 EV shutter bracket) ran clean, bursts lock-HELD at
+      8328/33312/66624 µs, run complete. `set_frame_time` in
+      `s28_board_burst.py`; `op_manual`/`op_expo_probe` drop the fps
+      arg. **BRACKET + RED-MERGE TOOL BUILT + TESTED 2026-09-03:**
+      `--plan bracket` captures NORMAL + +2/+3 EV shutter-only BAYER
+      bursts (N/rung, exposures exact, no wedge); `s28_bracket.py` does
+      the channel-wise merge (green/blue from NORMAL, red from LONG ÷
+      exposure ratio) + a report: exposure table, red-SNR (bounded
+      √ratio…ratio), red signal fraction (the notes' metric — shows
+      recovery when normal is crushed to black), and CLIP detection.
+      4 bracket tests + the merge math verified in the read-noise limit;
+      suite 47. **Correctly handles every bench case:** normal-black
+      (dark room → red-recovery story) and long-red-CLIPPED (bench red
+      well-exposed at 113/255 → +2/+3 EV saturates → merge flagged
+      INVALID, not a real gain). **The real red-SNR win needs a
+      red-STARVED scene** (underwater, or a deliberately red-dim bench
+      target) where the long red stays unclipped — the field
+      validation, per the notes. *Remaining:* motion-blur check on long
+      frames (low-pass-red fallback); a red-starved demo scene; optional
+      workbench card (mirror `s28-stack-compare`). *(original scope:)*
+      NORMAL frame first, then +2/+3 EV via shutter ONLY (never gain —
+      gain adds back the noise the photons are buying out); red-from-long
+      merge in LINEAR domain; green/blue clipping in the long frame
+      expected and irrelevant; motion-blur check on the long frames.
+      *Exit:* red fraction/SNR vs exposure-ratio table (DONE in the
+      tool), demonstrated on a red-starved scene.
+- [ ] **Bite 4 — N6 rows + the decision.** Winning config repeated on
+      the N6 (its sensor's manual-control API gets its own mini-audit
+      first — unchecked); Nick picks A / B / A+B / neither; config
+      knobs (N, EV steps, merge mode) speced into the capture config,
+      never hard-coded.
+      Cycle-time + power cost per capture recorded (INA3221 CH1 = AE3;
+      N6 N/A until the CH3 shunt re-wire).
+
+  **On-board stacking (the production path — scoped 2026-09-03, Nick's
+  ask; today ALL merging is Pi-side offline from streamed frames).**
+  *Mechanism:* a running `uint16` accumulator — capture a frame → add
+  into a sum buffer → repeat N → divide → one denoised frame → encode →
+  ship. The board holds only the accumulator + the current frame, never
+  N frames; `uint16` covers N ≤ ~256 (255×N < 65535). **Mean only** is
+  the on-board mode — median/sigma-clip need all N frames resident, so
+  they stay Pi-side/field-post; mean still gives the full √N win.
+  *THE LIMITING FACTOR IS MEMORY (the AE3's ~4 MB free heap), and it
+  bites at HD:*
+  | domain | HD accumulator | AE3 (~4 MB) | N6 (~25 MB) |
+  |---|---|---|---|
+  | BAYER (1 plane) | 1280×800×2 = **2.0 MB** | ✅ fits (+1 MB frame) | ✅ (but N6 can't BAYER) |
+  | RGB (3 ch)      | 1280×800×3×2 = **6.1 MB** | ❌ does NOT fit | ✅ |
+  So **AE3 HD on-board stacking must be BAYER** (RGB accumulator busts
+  the heap); VGA fits either domain; the N6 has room but is RGB565-only
+  (its BAYER firmware bug). Compute is NOT the limiter (a ulab add on a
+  1 MP plane is tens of ms, well under the frame cadence).
+  *Timing — on-board is capture-cadence-limited, not USB-limited, so it
+  is FAR faster than the Pi path (which pays ~1 s/HD-frame of USB —
+  measured 2026-09-03):* estimate ~30–50 ms/frame bright → **8 vs 16
+  frames differ by < 1 s** on-board (~3 s incl. converge/lock), vs the
+  Pi path's ~13 s / ~20 s at HD. In low light / for the bracket the
+  clock becomes **exposure × N**, not transfer. *(All on-board numbers
+  are estimates — the accumulator is not built yet; the Pi-path numbers
+  are measured.)* *Verifiable:* a board-side `accumulate` op (ulab
+  uint16 sum, or a small C helper if ulab is too slow), N + framesize
+  knobs, one denoised frame out; wall-time + INA3221 mJ/capture next to
+  the Pi-path numbers, HD BAYER on the AE3.
+**Demo (Nick):** open the workbench, click the S28 compare card, and
+read one page where single vs stacked vs bracketed sit side by side
+with the metrics table — the production call is made from it.
+**Scene (Nick's call 2026-09-01):** START on the HIL LCD (rig already
+up); the printed AprilTag/gray+color-patch reference card comes once
+the pipeline works. Consequence: bite 1's LCD-PWM check is mandatory
+before any LCD-scene number is trusted, and bench-honesty stands
+regardless — the bench proves the SNR mechanics; the red-channel win is
+validated underwater (dive rig / field), not on a screen.
+**Needs:** bench windows on nereus000 (interleaves with S8's remaining
+E-bite reviews at Nick's call); HIL LCD rig; no new hardware.
+**Synergies, recorded not chased:** the dive-recorder rig (stacked
+stills are exactly its capture mode; ~3-week deadline), S21's
+evidence-JPEG path, and smaller files at equal quality for every
+transport downstream.
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22

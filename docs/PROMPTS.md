@@ -634,3 +634,34 @@ artifacts under ~/hil_runs/; milestone reports per CLAUDE.md; the
 existing single-board path stays working until the new path's
 acceptance passes (never strand the bench).
 ```
+
+## 17 — Ready to paste: S28 — frame stacking & bracketed exposure, bites 0+1 (written 2026-09-01, at sprint opening)
+
+```
+Continue sprint S28 (capture-side frame stacking & bracketed exposure —
+TRACKER entry + docs/stacking_kickoff_notes.md; support-audit facts are
+in the TRACKER entry and SPEC §Open questions, do not re-derive them).
+
+First, finish bite 0's remainder at the desk (zero board contact):
+where AWB gains apply on the AE3 RGB565 path (the PAG7936 has no
+on-chip WB gains — find the application point in the OpenMV pipeline at
+~/openmv-dev/openmv @ 7d4dbf7a), Bayer bit depth + where debayer runs,
+any frame-dependent ISP stages under locked settings, and the memory
+arithmetic for on-board accumulate vs stream-and-stack-on-the-Pi.
+Record the answers in SPEC.
+
+Then plan bite 1 (locked-burst proof on the AE3: converge → freeze
+exposure/gain/WB → burst N=8/16 → per-frame readback + mean/σ proving
+the lock → lossless frames to the Pi; plus max exposure_us at lowered
+framerate, burst wall time, memory headroom, and the LCD PWM/refresh
+aliasing check) and PRESENT THE PLAN FOR MY APPROVAL before touching
+the board.
+
+RULES: both boards by-id only; the workbench owns the ports (check
+:8088/api/runner + /api/preflight first); ae3-board-access before any
+mpremote against the AE3; 35 s settle after any stream stops; shielded
+USB cables only; lighting recorded per run; scene = the HIL LCD until
+the printed reference card exists — no LCD-scene stacking number is
+trusted before the PWM check. No code beyond throwaway probes until
+the bite-1 plan is approved.
+```

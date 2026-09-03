@@ -17,6 +17,286 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-01 — S28 OPENED — frame stacking & bracketed exposure: plan approved, support audit run at the desk
+
+**Branch:** `claude/hdr-stacking-sprint-plan-6590ad` (docs-only PR).
+Desk session, ZERO board contact.
+
+**Done:**
+- New sprint S28 added to TRACKER (Nick approved the 5-bite shape +
+  scene call): same-exposure stacking (A) + shutter-only bracket (B)
+  vs a single HD still, compare tool as a workbench card, AE3 first.
+  Kickoff design notes (from the Nereus BM camera red-channel work)
+  vendored at docs/stacking_kickoff_notes.md; kickoff prompt =
+  PROMPTS §17; unknowns flagged in SPEC §Open questions.
+- Support audit vs OpenMV src @ 7d4dbf7a (bite 0 ~70%): NO built-in
+  stacking/HDR merge in imlib; manual exposure/gain lock + readback
+  exist; exposure clamps to frame_time − margin → brackets need
+  set_framerate lowered (true max unmeasured); PIXFORMAT_BAYER
+  supported on the PAG7936; to_ndarray + ulab is the uint16
+  accumulator route (img.add() saturates — unusable); WB is host-side
+  stats, application point unknown.
+
+**Broke/surprised us:** nothing on hardware. Desk surprise: the AE3
+sensor supports raw Bayer capture, which makes "stack in the rawest
+domain" actually reachable — and it matters twice (RGB565 red is
+5-bit + gamma-encoded, the wrong domain for the bracket's
+divide-by-ratio math).
+
+**Next:** finish bite 0's remainder (AWB application point, Bayer bit
+depth/debayer, ISP stages, memory arithmetic), then the bite-1 plan
+(locked-burst proof + exposure-range + LCD-PWM check) for Nick's gate.
+
+**SAME SESSION, LATER — bite 0 CLOSED + bite 1 nibble 2 DONE (21 host
+tests green, zero board contact):**
+- Bite 0's four unknowns all ANSWERED at the source (SPEC §Open
+  questions): max exposure ~1 s via integer-fps API (set_framerate
+  FIRST — the clamp reads current frame time); AWB = freezable stats
+  EMA applied at software debayer (a real lock; manual WB gains
+  ignored on this sensor); BAYER = 8-bit BGGR, linear; NO
+  frame-dependent ISP stages (static gamma-2.2/−0.2 LUT only — that
+  −51-count offset is a plausible unverified mechanism for S24's
+  dark-frame all-zeros). Route: bench = stream-and-stack on the Pi.
+- Bite 1 code shipped under `pi/s28/` (board script + testable session
+  core + collector + patch-card generator + stats pass; suite = 21).
+  Nick's bench note honoured: the camera moved off-center, so every
+  run STARTS with a fresh 9-marker calibration and patch regions go
+  through the run's own CamMap (find_markers fails loudly naming the
+  dark cell = the aim check). Design catches worth recording: calib
+  converges AE on the MARKER pattern, not black (black-converged lock
+  blooms the blobs); RGB565 byte order is proven against the card's
+  red/blue patches at score time, never assumed; collector refuses to
+  attach while the workbench runner is non-idle OR inside the settle
+  window.
+
+**Next (bench window):** deploy branch on nereus000, generate
+~/s28_media, playback + hil-lcd up, `--plan quick` smoke → full run →
+`s28_burst_stats.py` verdicts (lock HELD, expo table, PWM verdict) —
+then Nick's manual ladder + PR merge.
+
+**SAME SESSION, LATER (2026-09-02) — first bench contact exposed a
+real protocol bug; FIXED at the desk; board wedged (needs Nick's
+replug) so bench acceptance still owed:**
+- Deployed the branch on nereus000, generated ~/s28_media, playback +
+  hil-lcd came up clean (LCD showed the S28 card). Ran `--plan quick`.
+- **The board attached and emitted #I, then the run HUNG on the first
+  command's reply (540 s to the timeout).** Root cause, found by
+  comparing against the E4 Conductor: **a first command byte can be
+  lost on this raw-REPL wire (measured E4), and my board entered its
+  command loop SILENTLY — no ready signal, no heartbeat — so a lost
+  byte hangs both ends forever.** E4 solved exactly this with a
+  #W-heartbeat + host resend; I had not reused it.
+- **FIX (mirrors E4, proven pattern):** the board now DRAINS stdin,
+  emits `#RDY` (ready), then heartbeats `#W` every 2 s while awaiting a
+  command; the host's new `command()` resends when it sees `#W` past a
+  grace window with no reply yet (the pre-poll drain makes a
+  resend-race duplicate harmless). Added `--plan smoke` (no LCD / no
+  calib / no HD / no GRAYSCALE — the true one-variable first contact).
+  Suite 21 → **25** (added lost-byte-recovery, ready-handshake,
+  stream-end, expo-collection, quit tests). Board + collector compile.
+- **BLOCKED: the AE3 is wedged in the bite-R raw-repl refusal** — the
+  `timeout`-killed hung run left it mid-raw-repl (SIGTERM skipped
+  sb.stop()); a clean `mpremote exec` also hangs, confirming it is the
+  board, not the code. On this Pi 5 that clears ONLY with a physical
+  replug (warm reset doesn't clear SRAM9; uhubctl doesn't cut VBUS).
+  /flash is UNTOUCHED (raw-REPL RAM script only — nothing written).
+  Recovery = Nick replugs the AE3's USB, then re-run `--plan smoke`.
+
+**Next:** Nick replugs AE3 → `--plan smoke` (core capture+lock, no LCD)
+→ then `--plan quick`/`full` on the LCD → `s28_burst_stats.py`. The
+playback server was left running on ~/s28_media; hil-lcd active.
+
+**SAME SESSION, LATER (2026-09-02) — bite 1 RUN ON HARDWARE + VERIFIED;
+core stacking premise measured. Bench recovered via `sudo reboot`
+(Nick's call — warm reboot's fresh USB enumeration cleared the bite-R
+wedge each time).**
+
+Ran the full ladder on the AE3, fixing four bugs the bench exposed
+(each pushed + re-tested; suite 21→27):
+1. **Lost-command-byte hang** (found vs E4): board entered its command
+   loop silently, so a lost first byte hung both ends. Adopted E4's
+   `#RDY` + `#W`-heartbeat + host-resend. resends=0 in the clean runs
+   (byte loss was intermittent; the recovery is there when it happens).
+2. **GRAYSCALE-HD calib hang**: `stage_calib` used GRAYSCALE HD, which
+   hangs the direct-csi path. Switched to RGB565 + host gray
+   (`rgb565_to_gray`), the proven hil_harness approach.
+3. **Redundant-reinit + framerate hangs**: a `cfg` to the current mode
+   re-inits the sensor and hangs; and `framerate()` change makes the
+   next capture raise 'Frame capture has timed out.' Fix: op_cfg skips
+   unchanged mode + emits `#D` breadcrumbs; `snap()` retries the
+   transient timeout; cfg no longer forces a framerate (native rate for
+   calib/bursts). **A framerate CHANGE (expo/bracket) still wedges the
+   board — deferred to bite 3.**
+4. **Wedged-board hangs the host**: SerialBoard.readline() blocks
+   forever on a silent board and sb.stop() blocks on a wedged one
+   (D-state, unkillable). Added a SIGALRM op watchdog, a SIGTERM
+   handler, and a bounded stop that os._exit's if the board won't
+   release — the collector always terminates.
+
+**MEASURED (all on locked frames, LCD scene, room light):**
+- **Lock HELD** on every burst (exp/gain/WB byte-identical across N):
+  BAYER-VGA, RGB565-VGA, BAYER-VGA-tight, and the 5 PWM exposures.
+- **8-bit BAYER confirmed** (256,000 B = 640×400×1); real image data.
+- **Tight vs paced cadence**: 20 ms/frame back-to-back (~50 fps native)
+  vs ~60 ms paced (BAYER) / ~160 ms (RGB565, bigger frames).
+- **√N STACKING PAYOFF (the sprint premise), green plane:** per-pixel
+  temporal σ 0.626 (1 frame) → 0.436 (2) → 0.296 (4) → 0.187 (8),
+  tracking σ1/√k; 16-frame average ≈ 4× noise reduction.
+- **LCD-PWM open question ANSWERED: the LCD ALIASES** at every exposure
+  (frame-mean σ 9.5–75× the independent-pixel expectation — backlight
+  modulates whole frames together), though absolute magnitude is small
+  (~0.1 count). Confirms the printed-card plan avoids a real effect.
+
+**OWED / NOT DONE:**
+- **Patch-level SNR + the √N-on-uniform-patches demo need CALIBRATION,
+  which needs Nick to RE-AIM the AE3** — the aim check correctly failed
+  ("marker not visible in cell TL, peak 19<30"); the camera isn't
+  framing the LCD's top-left marker (Nick's moved-bench point). This is
+  the one thing blocking the calibrated patch metrics.
+- **Bite-3 finding: a sensor FRAMERATE change wedges the board on this
+  build.** The exposure-range table + shutter bracket (which need long
+  frame times → lowered fps) are blocked on this. Needs its own
+  investigation (framerate re-init sequence / settle / firmware). The
+  bracket is bite 3 anyway.
+- Exposure readback quirk: converge reads 16584 µs, lock reads 8328 µs
+  (~2×) — noted, characterize in the expo work.
+- Artifacts: `~/s28_runs/{smoke2,quick6,quick7}` on nereus000. A stray
+  wedged stop-thread from quick6 lingers (harmless — port free); clears
+  on next reboot.
+
+**Next:** Nick re-aims the AE3 at the LCD (all 9 markers visible) →
+re-run `--plan quick` for the calibrated patch SNR; OR set up the
+printed reference card. Bite 2 (offline stack + compare tool) can start
+now — the locked bursts prove the input. Bite 3 owns the framerate
+wedge + the shutter bracket.
+
+**SAME SESSION, LATER (2026-09-02) — AE3 vs N6 image-quality
+investigation (Nick's side-quest): same sensor, ISP gap, and AE3 color
+shown RECOVERABLE with a CCM. Full facts in SPEC §Camera SENSOR and ISP.**
+- **Both boards run the SAME sensor** — PAG7936 (chip 0x7936), verified
+  live (`print(csi.CSI())`). Not a better N6 sensor. The gap is the
+  pipeline: N6 = STM32 DCMIPP hardware ISP; AE3 = software imlib_debayer,
+  no CCM.
+- **Brightness fix tested + REGRESSED.** Built/flashed the AE3 with gamma
+  brightness 0.0 (= the N6's value; patch `0006`, readback-verified).
+  Result: brighter but clipped highlights + LOWER saturation — the −0.2
+  is a deliberate AE-metering compensation, not a bug. Nick preferred the
+  brighter look by eye → AE3 stays on the 0.0 build.
+- **Confirmed we're current with OpenMV**: 43 commits behind master but
+  none touch ISP gamma/color tuning. New S28-relevant commit `fe679005`
+  (pag7936 N6 BAYER-capture fix).
+- **Reference-card analyzer built** (`bench/refcard/`, Nick's call — the
+  N6 is not ground truth): 36H11 AprilTag detect → homography →
+  per-patch ΔE76 vs the Reef Reference Card V1's true sRGB → fitted 3×4
+  CCM. 10 host tests; card spec from the V1 vector PDF. **Measured: AE3
+  ΔE 34.0, N6 44.8 (N6 raw inflated by its darker exposure); CCM takes
+  AE3 → 10.6, N6 → 9.0 (3× better, near parity).** The AE3's color IS
+  recoverable — the info is there, the debayer just never corrects it.
+  CCM-corrected AE3 image is visibly vivid. WB is fine on both.
+
+**Broke/surprised us:** the brightness "fix" regressing was the useful
+negative — it disproved the simple-setting hypothesis. Also: the AE3
+fell off the USB bus mid-session when Nick moved the rig (reseated,
+recovered).
+
+**Next:** Nick's final review of the analyzer + before/after. If we
+pursue AE3 color: fit a CCM under a known illuminant and bake it into the
+Alif debayer (a real firmware bite). Lens (new unit) = the separate
+sharpness lever. Back to S28: bite 2 (offline stack + compare tool).
+
+**SAME SESSION, LATER (2026-09-02) — AE3 reverted to stock; S28 bite 2
+(stacking compare tool + workbench card) BUILT + demo'd.**
+- Reverted the AE3 to stock (-0.2, rebuilt + reflashed, readback-verified)
+  — the 0.0 brightness experiment is fully off the board.
+- Built S28 bite 2: `pi/s28/s28_stack.py` (mean/median/sigma-clip on raw
+  8-bit BAYER + demosaic with a numpy fallback) + `s28_compare.py`
+  (self-contained HTML: panels + 3× zoom + √N noise ladder + JPEG size +
+  flicker check) + `--plan stack` capture + the one-click card
+  `s28-stack-compare` (wrapper serve→capture→report→serve). 48 host
+  tests. Card demo'd end-to-end on the bench (LIVE→report on :8093→Stop
+  releases ports).
+- MEASURED: noise falls √N (k=2 1.34× / k=4 1.95× / k=8 ~3×). The honest
+  metric is group-means temporal σ — a spatial std on a "uniform" patch
+  hides the win behind fixed print/lighting texture (read only 1.4×).
+- Flicker finding: the room light flickers — ALIASED 7.2× (bright) →
+  21.9× (dim). It's frame-to-frame light wobble stacking can't remove →
+  a constant/DC light source is needed for a clean measurement (Nick
+  setting one up; doubles as the color-work illuminant).
+
+**Broke/surprised us:** the BAYER→RGB565 mode switch wedges the sensor
+mid-capture (recurring re-init hazard) → stack capture is Bayer-only,
+RGB565 owed via a fresh attach. The AE3 hit its raw-repl refusal twice
+more (recovered by reboot). Tailscale SSH needed re-auth mid-session →
+used the LAN IP 192.168.1.163 side-door.
+
+**Next:** Nick reviews the compare card under a steady light; capture
+the RGB565 deployed-path burst; then bite 3 (HDR bracket) — blocked on
+the sensor-framerate-change wedge, which needs solving first.
+
+**SAME SESSION, LATER (2026-09-03) — the framerate wedge (bite-3
+blocker) is ROOT-CAUSED + FIXED on hardware.**
+- Root cause: `csi.framerate()` → `set_framerate` → `omv_csi_abort` +
+  `configure()` (full mode-register rewrite + capture abort). It stops
+  the sensor streaming and doesn't reliably restart → snapshot times
+  out (OMV_CSI_TIMEOUT_MS=3000) → wedge. So it's NOT the 3 s timeout
+  being too short for a 1 s frame; it's the abort/reconfigure.
+- Fix (no firmware rebuild — `csi.__read_reg`/`__write_reg` are exposed):
+  extend the PAG7936 frame-time registers DIRECTLY (0x004C–0x004E +
+  SENSOR_UPDATE 0x00EB), then set the exposure (its clamp reads the live
+  frame-time regs). Discard 1–2 buffered frames after the change.
+- Proven: probe on the AE3 — exposure readback EXACT (want=132672
+  got=132672), settled frame period scales (EV+0 ~21ms / +2 ~71ms / +3
+  ~138ms) AND returns down, zero wedge across 4 changes. Then the
+  INTEGRATED path: `--plan bracket` (+0/+2/+3 EV shutter bracket) ran
+  clean, bursts lock-HELD at 8328/33312/66624 µs, run complete.
+- `set_frame_time()` added to `s28_board_burst.py`; `op_manual` +
+  `op_expo_probe` drop the fps arg and use it; `--plan bracket` added.
+  SPEC §Open questions (a) rewritten. Suite 43.
+
+**SAME SESSION, LATER — bite 3 BRACKET + RED-MERGE BUILT + TESTED.**
+- `--plan bracket`: NORMAL + +2/+3 EV shutter-only BAYER bursts (N/rung),
+  exposures exact (8328/33312/66624 µs) via the wedge-free frame-time
+  path, run complete. The 3-frame settle fixed the stale readback
+  ("asked 33312 -> got 33312").
+- `s28_bracket.py`: channel-wise merge (green/blue from NORMAL, red from
+  LONG ÷ ratio) + report (exposure table, red-SNR bounded √ratio…ratio,
+  red signal fraction, CLIP detection). 4 bracket tests + merge math
+  verified in the read-noise limit; suite 47.
+- Behaves correctly on every bench case: dark → normal red BLACK →
+  bracket RECOVERS red (fraction metric); lit → normal red well-exposed
+  (113/255) → +2/+3 EV CLIPS the long red (72/76%) → merge flagged
+  INVALID (a clip artifact, not a real gain). **The real red-SNR win
+  needs a red-STARVED scene (underwater / red-dim bench) where the long
+  red stays unclipped** — the field validation per the notes.
+
+**SAME SESSION, LATER — lights on: two-board stacking demo'd + an
+RGB565 byte-order bug found & fixed.**
+- Nick lit the room; ran `s28-stack-compare` — BOTH boards (AE3 + N6)
+  captured 16 RGB565 frames, √N tracks on both (k8 ~3.6×). Flicker: N6
+  SAFE, AE3 ALIASED (same light; the AE3's lower noise floor exposes the
+  residual mains flicker the N6's higher noise masks — lights aren't
+  perfectly DC). N6 RGB565 is noisier than AE3 (more ISP processing).
+- **Nick spotted the report's colours were a brightness-following
+  rainbow.** Root cause: `s28_stack.rgb565_to_rgb` decoded big-endian,
+  but the boards emit RGB565 LOW BYTE FIRST (little-endian) — verified by
+  decoding a card frame both ways. One-line byteswap fixes it (card
+  renders true). The scrambled channel had also INFLATED the noise
+  (AE3 5.29→0.52, N6 14.27→1.47 on the true green); √N still tracks.
+  NOTE: this bug was ONLY in the raw-RGB565 stacking decoder — the ISP/
+  CCM colour work used JPEG frames (imaging-lib decoded, correct), so
+  ΔE 34→10.6 etc. STAND.
+
+**Next:** a red-starved demo scene (or field) to show the real red win;
+motion-blur check on long frames; optional bracket workbench card. Bite 2
+still owes Nick's steady-light review + the RGB565 deployed-path burst.
+Bite 4 = N6 rows + Nick's A/B/A+B decision. **Open design question Nick
+raised: on-board stacking** — today ALL merging is on the Pi (offline
+from streamed frames); the production path is a board-side running-sum
+accumulator (mean is easy via ulab/C; median/sigma-clip need all N
+frames so mean is the on-board mode). Sized in bite 4 per the tracker.
+
+---
+
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
 
 **Branch:** `claude/labeler-eval-yolox-rfdetr-e2b746` (PR open). Desk
