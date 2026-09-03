@@ -269,10 +269,31 @@ blocker) is ROOT-CAUSED + FIXED on hardware.**
   needs a red-STARVED scene (underwater / red-dim bench) where the long
   red stays unclipped** — the field validation per the notes.
 
+**SAME SESSION, LATER — lights on: two-board stacking demo'd + an
+RGB565 byte-order bug found & fixed.**
+- Nick lit the room; ran `s28-stack-compare` — BOTH boards (AE3 + N6)
+  captured 16 RGB565 frames, √N tracks on both (k8 ~3.6×). Flicker: N6
+  SAFE, AE3 ALIASED (same light; the AE3's lower noise floor exposes the
+  residual mains flicker the N6's higher noise masks — lights aren't
+  perfectly DC). N6 RGB565 is noisier than AE3 (more ISP processing).
+- **Nick spotted the report's colours were a brightness-following
+  rainbow.** Root cause: `s28_stack.rgb565_to_rgb` decoded big-endian,
+  but the boards emit RGB565 LOW BYTE FIRST (little-endian) — verified by
+  decoding a card frame both ways. One-line byteswap fixes it (card
+  renders true). The scrambled channel had also INFLATED the noise
+  (AE3 5.29→0.52, N6 14.27→1.47 on the true green); √N still tracks.
+  NOTE: this bug was ONLY in the raw-RGB565 stacking decoder — the ISP/
+  CCM colour work used JPEG frames (imaging-lib decoded, correct), so
+  ΔE 34→10.6 etc. STAND.
+
 **Next:** a red-starved demo scene (or field) to show the real red win;
 motion-blur check on long frames; optional bracket workbench card. Bite 2
 still owes Nick's steady-light review + the RGB565 deployed-path burst.
-Bite 4 = N6 rows + Nick's A/B/A+B decision.
+Bite 4 = N6 rows + Nick's A/B/A+B decision. **Open design question Nick
+raised: on-board stacking** — today ALL merging is on the Pi (offline
+from streamed frames); the production path is a board-side running-sum
+accumulator (mean is easy via ulab/C; median/sigma-clip need all N
+frames so mean is the on-board mode). Sized in bite 4 per the tracker.
 
 ---
 
