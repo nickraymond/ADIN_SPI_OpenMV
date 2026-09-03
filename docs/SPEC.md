@@ -230,14 +230,23 @@ pair, USB carrying no video.
 - **S28 capture-stacking unknowns (raised 2026-09-01 at sprint
   planning). (a)–(d) ANSWERED same day at the desk (S28 bite 0, OpenMV
   src @ 7d4dbf7a — source-verified, on-board confirmation rides bite 1):**
-  (a) **Max exposure is ~1 s via the API, ~2.1 s at the register.**
-  `frame_time = 1e6/framerate` µs into a 21-bit register (cap
-  2,097,151 µs); `set_framerate` takes integer fps, so 1 fps →
-  ~1 s frame time → max exposure ≈ 1 s − 80 µs margin
-  (`pag7936.c:142,164,645,786`). ORDER MATTERS: exposure clamps
-  against the CURRENT frame time — call `set_framerate` first, then
-  `set_auto_exposure(False, us)`. Granularity 8 µs. +2/+3 EV over any
-  plausible bench exposure fits with huge headroom.
+  (a) **Long exposure: extend the frame-time REGISTERS directly, do NOT
+  use `csi.framerate()`** — max ~2.1 s (21-bit frame-time reg, cap
+  2,097,151 µs; frame_time in µs). **`csi.framerate()` WEDGES the AE3**
+  (bite-3 finding, 2026-09-03): it calls `set_framerate` →
+  `omv_csi_abort` + `configure()`, a full mode-register rewrite +
+  capture abort that stops the sensor streaming and does not reliably
+  restart → `Frame capture has timed out`. **Wedge-free fix, proven on
+  hardware, no firmware rebuild:** write the PAG7936 frame-time regs
+  directly via `csi.__write_reg` — 0x004E `(read&0xE0)|((ft>>16)&0x1F)`,
+  0x004D `(ft>>8)&0xFF`, 0x004C `ft&0xFF`, then commit 0x00EB←0x80
+  (SENSOR_UPDATE). `set_auto_exposure` reads the LIVE frame-time regs, so
+  extend the frame time first, then set the exposure (it clamps to
+  frame_time − 80 µs). Discard 1–2 buffered frames after the change (the
+  first snapshot is stale). Granularity 8 µs. Implemented as
+  `set_frame_time()` in `pi/s28/s28_board_burst.py`; proven exposures
+  16.6/66/133 ms with settled frame period scaling exactly and no wedge
+  up or down.
   (b) **AWB applies at software debayer on the HP, and disabling it is
   a REAL lock.** The PAG7936 is raw-output; RGB565 is made by
   `imlib_debayer_image_awb` with WB gains from a continuous-time EMA

@@ -2840,7 +2840,23 @@ actually applies is an open question (SPEC).
       releases the ports. *Exit (owed): Nick reviews at the page under a
       steady light + the RGB565 deployed-path burst (the BAYER→RGB565
       switch wedges — captured per-pixformat in a fresh attach).*
-- [ ] **Bite 3 — shutter bracket + channel-wise merge.** NORMAL frame
+- [~] **Bite 3 — shutter bracket + channel-wise merge. BLOCKER FIXED
+      2026-09-03: the framerate wedge is SOLVED.** Root cause (proven on
+      the AE3): `csi.framerate()` → `set_framerate` → `omv_csi_abort` +
+      `configure()` (a full mode-register rewrite + capture abort) stops
+      the sensor streaming and wedges the board. **Fix: extend the
+      PAG7936 frame-time registers DIRECTLY** (`__write_reg`
+      0x004C–0x004E + SENSOR_UPDATE 0x00EB) — no abort, no reconfigure;
+      `set_auto_exposure` reads the live frame-time regs so a long
+      exposure then clamps to the extended time. No firmware rebuild
+      (`__write_reg` already exposed). Proven: exposure readback exact
+      (want=132672 got=132672), settled frame period scales (EV+0 ~21ms
+      / +2 ~71ms / +3 ~138ms) and returns down, ZERO wedge across 4
+      changes; then the INTEGRATED path verified — `--plan bracket`
+      (+0/+2/+3 EV shutter bracket) ran clean, bursts lock-HELD at
+      8328/33312/66624 µs, run complete. `set_frame_time` in
+      `s28_board_burst.py`; `op_manual`/`op_expo_probe` drop the fps
+      arg. *Remaining (the bite proper):* NORMAL frame
       first, then +2/+3 EV via shutter ONLY (never gain — gain adds
       back the noise the photons are buying out); red-from-long merge
       in LINEAR domain (Bayer if bites 0/1 confirm it; else

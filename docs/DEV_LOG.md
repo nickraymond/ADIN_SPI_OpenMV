@@ -233,6 +233,30 @@ used the LAN IP 192.168.1.163 side-door.
 the RGB565 deployed-path burst; then bite 3 (HDR bracket) — blocked on
 the sensor-framerate-change wedge, which needs solving first.
 
+**SAME SESSION, LATER (2026-09-03) — the framerate wedge (bite-3
+blocker) is ROOT-CAUSED + FIXED on hardware.**
+- Root cause: `csi.framerate()` → `set_framerate` → `omv_csi_abort` +
+  `configure()` (full mode-register rewrite + capture abort). It stops
+  the sensor streaming and doesn't reliably restart → snapshot times
+  out (OMV_CSI_TIMEOUT_MS=3000) → wedge. So it's NOT the 3 s timeout
+  being too short for a 1 s frame; it's the abort/reconfigure.
+- Fix (no firmware rebuild — `csi.__read_reg`/`__write_reg` are exposed):
+  extend the PAG7936 frame-time registers DIRECTLY (0x004C–0x004E +
+  SENSOR_UPDATE 0x00EB), then set the exposure (its clamp reads the live
+  frame-time regs). Discard 1–2 buffered frames after the change.
+- Proven: probe on the AE3 — exposure readback EXACT (want=132672
+  got=132672), settled frame period scales (EV+0 ~21ms / +2 ~71ms / +3
+  ~138ms) AND returns down, zero wedge across 4 changes. Then the
+  INTEGRATED path: `--plan bracket` (+0/+2/+3 EV shutter bracket) ran
+  clean, bursts lock-HELD at 8328/33312/66624 µs, run complete.
+- `set_frame_time()` added to `s28_board_burst.py`; `op_manual` +
+  `op_expo_probe` drop the fps arg and use it; `--plan bracket` added.
+  SPEC §Open questions (a) rewritten. Suite 43.
+
+**Next:** Bite 3 proper (NORMAL + long frames → red-from-long channel
+merge → red SNR-vs-exposure table in the compare tool). Bite 2 still
+owes Nick's steady-light review + the RGB565 deployed-path burst.
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT

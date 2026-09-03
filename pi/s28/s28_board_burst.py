@@ -233,7 +233,10 @@ def op_conv(csi0, cmd):
 
 
 def _settle_and_lock_reply(csi0):
-    for _ in range(2):
+    # 3 flushes: a big exposure jump (bite-3 bracket) can leave TWO
+    # pre-change frames buffered before the new-exposure frame arrives,
+    # so 2 flushes occasionally reported the stale value. 3 settles it.
+    for _ in range(3):
         snap(csi0)                  # flush frames exposed pre-change
     m = meta_read(csi0)
     emit("#LOCK", m)
