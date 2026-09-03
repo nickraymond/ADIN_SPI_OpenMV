@@ -32,9 +32,20 @@ from PIL import Image
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-from s28_stack import (demosaic, jpeg_size, load_burst, merge_mean,  # noqa
-                       merge_median, merge_sigma_clip, noise_ladder,
-                       temporal_sigma)
+from s28_stack import (_green_plane, demosaic, jpeg_size,          # noqa
+                       load_burst, merge_mean, merge_median,
+                       merge_sigma_clip, noise_ladder, temporal_sigma)
+from s28_session import flicker_verdict                            # noqa
+
+
+def burst_flicker(stack):
+    """Is the burst clean sensor noise (stackable) or flicker-contaminated
+    (a light source wobbling frame-to-frame — stacking can't remove it)?
+    Green plane; frame-mean sigma vs the independent-pixel expectation."""
+    gp = np.stack([_green_plane(f) for f in stack])
+    means = [float(f.mean()) for f in gp]
+    sig_t = temporal_sigma(stack)
+    return flicker_verdict(means, sig_t, gp[0].size)
 
 MERGE_FNS = {"mean": merge_mean, "median": merge_median,
              "sigma_clip": merge_sigma_clip}
@@ -119,6 +130,10 @@ def main():
                       for mk in order)
     sizehead = "".join("<th>%s</th>" % mk for mk in order)
 
+    fv, fdet = burst_flicker(stack)
+    flick_str = fv + (" (%.0fx over noise floor)" % fdet["ratio"]
+                      if "ratio" in fdet else "")
+
     html = """<!doctype html><meta charset=utf-8><title>S28 stacking compare</title>
 <style>body{{font:13px system-ui;margin:16px;background:#111;color:#eee}}
 h2{{margin:0 0 4px}} .sub{{color:#999;margin-bottom:12px;max-width:900px}}
@@ -133,8 +148,9 @@ td:first-child,th:first-child{{text-align:left}}
 .r{{color:#5c8;font-size:11px}} .ideal td{{color:#89f}}</style>
 <h2>S28 frame-stacking compare</h2>
 <div class=sub>{scene} &middot; {n} locked BAYER frames, VGA &middot;
-single-frame temporal noise (per-pixel &sigma;): <b>{tsig:.2f} counts</b>.
-Zoom crops are 3&times; nearest-neighbour so the grain is visible.</div>
+single-frame temporal noise (per-pixel &sigma;): <b>{tsig:.2f} counts</b>
+&middot; flicker check: <b>{flick}</b>. Zoom crops are 3&times;
+nearest-neighbour so the grain is visible.</div>
 <div class=row>{panels}</div>
 
 <h3>Noise ladder &mdash; temporal &sigma; (green plane) of a k-frame merge</h3>
@@ -153,18 +169,24 @@ uncorrected (the AE3 needs a CCM &mdash; a separate finding); this tool
 measures NOISE, which is exactly what stacking buys.</p>
 """.format(scene=scene, n=n, tsig=temporal_sigma(stack), panels=pan_html,
            head=head, lad=lad_rows, ideal=ideal, sizehead=sizehead,
-           sizerow=sizerow)
+           sizerow=sizerow, flick=flick_str)
 
     out = args.out or os.path.join(run, "compare.html")
     open(out, "w").write(html)
     json.dump({"scene": scene, "n": n,
                "temporal_sigma": temporal_sigma(stack),
+               "flicker": {"verdict": fv, **fdet},
                "ladders": ladders, "jpeg_bytes": sizes},
               open(os.path.splitext(out)[0] + ".json", "w"), indent=1)
 
     print("== S28 stacking compare: %s (%d frames) ==" % (args.stage, n))
     print("  single-frame temporal noise: %.2f counts"
           % temporal_sigma(stack))
+    print("  flicker check: %s  %s" % (fv, fdet))
+    if fv == "ALIASED":
+        print("    ^ the light is wobbling frame-to-frame (flicker or a"
+              " changing source) — stacking CANNOT remove this; use a"
+              " constant/DC light or a longer exposure to average it out.")
     print("  noise ladder (green-plane temporal sigma, x = vs k=1):")
     print("    %-11s %s" % ("k=", "  ".join("%6d" % k for k in ks)))
     for m in ("mean", "sigma_clip", "median"):

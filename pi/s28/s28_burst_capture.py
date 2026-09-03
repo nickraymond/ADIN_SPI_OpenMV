@@ -313,13 +313,15 @@ def stage_smoke(run):
     run.burst("smoke_bayer_vga", geom, 4)
 
 
-def stage_stack(run, n):
+def stage_stack(run, n, pixformats=("BAYER",)):
     """Locked bursts of the CURRENT scene (no LCD — a physical reference
-    card or any static scene) for the S28 stacking compare tool: BAYER
-    (the linear domain the merge math wants) and RGB565 (the deployed
-    path), VGA, N frames each under one lock. The single-frame control is
-    just frame 0 of each burst."""
-    for pf in ("BAYER", "RGB565"):
+    card or any static scene) for the S28 stacking compare tool. BAYER
+    (the linear domain the merge math wants) by default; RGB565 (the
+    deployed path) is opt-in because the BAYER->RGB565 mode switch can
+    wedge the sensor on this build (the recurring re-init hazard) — a
+    fresh attach per pixformat avoids it. N frames under one lock; the
+    single-frame control is frame 0."""
+    for pf in pixformats:
         geom = run.cfg(pf, "VGA")
         run.converge(6)
         run.lock()
