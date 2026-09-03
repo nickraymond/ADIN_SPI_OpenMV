@@ -110,8 +110,17 @@ def _redux(base, v):
 
 def board_section(b):
     base = b["ladders"]["mean"][1]
-    flick = b["flicker"] + (" (%.0fx over floor)" % b["flicker_detail"]["ratio"]
-                            if "ratio" in b["flicker_detail"] else "")
+    if base <= 0.02:                          # essentially no signal/noise
+        status = ("<span class=warn>scene too dark for this board — "
+                  "near-black frames, nothing to stack (raise the light)"
+                  "</span>")
+    else:
+        status = "<span class=%s>flicker: %s</span>" % (
+            "ok" if b["flicker"] == "SAFE" else "warn",
+            b["flicker"] + (" (%.0fx over floor)"
+                            % b["flicker_detail"]["ratio"]
+                            if "ratio" in b["flicker_detail"] else ""))
+    flick = status
     pans = "".join(
         "<div class=p><h4>%s</h4><img src='%s'><div class=z><img src='%s'>"
         "</div><div class=cap>%.1f KB</div></div>"
@@ -128,16 +137,14 @@ def board_section(b):
     shead = "".join("<th>%s</th>" % mk for mk in b["order"])
     srow = "".join("<td>%.1f KB</td>" % (b["sizes"][mk] / 1024)
                    for mk in b["order"])
-    flag = "ok" if b["flicker"] == "SAFE" else "warn"
     return """<div class=board><h3>{label} &middot; {pf} &middot; {n} frames
-&middot; single-frame &sigma; {tsig:.2f} &middot;
-<span class={flag}>flicker: {flick}</span></h3>
+&middot; single-frame &sigma; {tsig:.2f} &middot; {flick}</h3>
 <div class=row>{pans}</div>
 <table><tr><th>merge</th>{head}</tr>{lad}
 <tr class=ideal><td>&radic;N ideal</td>{ideal}</tr></table>
 <table><tr>{shead}</tr><tr>{srow}</tr></table></div>""".format(
         label=b["label"], pf=b["pixformat"], n=b["n"],
-        tsig=b["temporal_sigma"], flag=flag, flick=flick, pans=pans,
+        tsig=b["temporal_sigma"], flick=flick, pans=pans,
         head=head, lad=lad, ideal=ideal, shead=shead, srow=srow)
 
 
