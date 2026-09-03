@@ -2883,10 +2883,39 @@ actually applies is an open question (SPEC).
       the N6 (its sensor's manual-control API gets its own mini-audit
       first — unchecked); Nick picks A / B / A+B / neither; config
       knobs (N, EV steps, merge mode) speced into the capture config,
-      never hard-coded; the on-board accumulator (ulab uint16 vs C
-      helper) sized as a follow-on ONLY if the numbers justify it.
+      never hard-coded.
       Cycle-time + power cost per capture recorded (INA3221 CH1 = AE3;
       N6 N/A until the CH3 shunt re-wire).
+
+  **On-board stacking (the production path — scoped 2026-09-03, Nick's
+  ask; today ALL merging is Pi-side offline from streamed frames).**
+  *Mechanism:* a running `uint16` accumulator — capture a frame → add
+  into a sum buffer → repeat N → divide → one denoised frame → encode →
+  ship. The board holds only the accumulator + the current frame, never
+  N frames; `uint16` covers N ≤ ~256 (255×N < 65535). **Mean only** is
+  the on-board mode — median/sigma-clip need all N frames resident, so
+  they stay Pi-side/field-post; mean still gives the full √N win.
+  *THE LIMITING FACTOR IS MEMORY (the AE3's ~4 MB free heap), and it
+  bites at HD:*
+  | domain | HD accumulator | AE3 (~4 MB) | N6 (~25 MB) |
+  |---|---|---|---|
+  | BAYER (1 plane) | 1280×800×2 = **2.0 MB** | ✅ fits (+1 MB frame) | ✅ (but N6 can't BAYER) |
+  | RGB (3 ch)      | 1280×800×3×2 = **6.1 MB** | ❌ does NOT fit | ✅ |
+  So **AE3 HD on-board stacking must be BAYER** (RGB accumulator busts
+  the heap); VGA fits either domain; the N6 has room but is RGB565-only
+  (its BAYER firmware bug). Compute is NOT the limiter (a ulab add on a
+  1 MP plane is tens of ms, well under the frame cadence).
+  *Timing — on-board is capture-cadence-limited, not USB-limited, so it
+  is FAR faster than the Pi path (which pays ~1 s/HD-frame of USB —
+  measured 2026-09-03):* estimate ~30–50 ms/frame bright → **8 vs 16
+  frames differ by < 1 s** on-board (~3 s incl. converge/lock), vs the
+  Pi path's ~13 s / ~20 s at HD. In low light / for the bracket the
+  clock becomes **exposure × N**, not transfer. *(All on-board numbers
+  are estimates — the accumulator is not built yet; the Pi-path numbers
+  are measured.)* *Verifiable:* a board-side `accumulate` op (ulab
+  uint16 sum, or a small C helper if ulab is too slow), N + framesize
+  knobs, one denoised frame out; wall-time + INA3221 mJ/capture next to
+  the Pi-path numbers, HD BAYER on the AE3.
 **Demo (Nick):** open the workbench, click the S28 compare card, and
 read one page where single vs stacked vs bracketed sit side by side
 with the metrics table — the production call is made from it.
