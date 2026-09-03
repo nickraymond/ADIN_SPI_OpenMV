@@ -119,6 +119,7 @@ def analyze(run_dir):
         sig = norm["red_mean"]
         n_norm = norm["red_noise"] or 1e-9
         n_merged = (lng["red_noise"] / ratio) or 1e-9
+        merged_red_mean = float(R.mean())
         merges[ev] = {
             "ratio": ratio,
             "red_clip_long": lng["red_clip"],
@@ -128,6 +129,11 @@ def analyze(run_dir):
             "snr_merged": sig / n_merged,
             "improvement": (n_norm / n_merged),
             "sqrtN": ratio ** 0.5,
+            # red signal FRACTION (notes' metric): median red / full scale.
+            # Shows red RECOVERY when the normal frame is crushed to black.
+            "red_frac_normal": sig / 255.0,
+            "red_frac_merged": merged_red_mean / 255.0,
+            "normal_is_black": sig < 2.0,
             "rgb": planes_to_rgb(R, G, B),
         }
     return {"rungs": rungs, "norm": norm, "merges": merges}
@@ -149,11 +155,19 @@ def render(res, out, run_dir):
     for ev in sorted(merges):
         m = merges[ev]
         warn = " ⚠ long red CLIPPED" if m["red_clip_long"] > 0.02 else ""
+        if m["normal_is_black"]:
+            warn = (" ⚠ normal red is black — bracket RECOVERS red "
+                    "(fraction %.1f%% → %.1f%%)"
+                    % (100 * m["red_frac_normal"],
+                       100 * m["red_frac_merged"])) + warn
+            imp = "—"
+        else:
+            imp = "%.2f×" % m["improvement"]
         snr_rows += (
             "<tr><td>EV+%d (%.0f×)</td><td>%.3f</td><td>%.3f</td>"
-            "<td class=g>%.2f×</td><td>%.2f× … %.2f×</td><td>%s</td></tr>"
+            "<td class=g>%s</td><td>%.2f× … %.2f×</td><td>%s</td></tr>"
             % (ev, m["ratio"], m["red_noise_normal"], m["red_noise_merged"],
-               m["improvement"], m["sqrtN"], m["ratio"], warn))
+               imp, m["sqrtN"], m["ratio"], warn))
     # visuals: normal vs red-merged (best available long rung)
     best = max(merges) if merges else None
     norm_rgb = gray_world(planes_to_rgb(*bayer_planes(norm["mean"])))
@@ -220,12 +234,20 @@ def main():
              res["norm"]["red_noise"]))
     for ev in sorted(res["merges"]):
         m = res["merges"][ev]
-        print("  EV+%d (%.0f×): red σ %.3f -> %.3f  improvement %.2f× "
-              "(√ratio %.2f, ratio %.2f)%s"
-              % (ev, m["ratio"], m["red_noise_normal"],
-                 m["red_noise_merged"], m["improvement"], m["sqrtN"],
-                 m["ratio"],
-                 "  CLIPPED" if m["red_clip_long"] > 0.02 else ""))
+        if m["normal_is_black"]:
+            print("  EV+%d (%.0f×): normal red is BLACK — bracket recovers"
+                  " red fraction %.1f%% -> %.1f%%%s"
+                  % (ev, m["ratio"], 100 * m["red_frac_normal"],
+                     100 * m["red_frac_merged"],
+                     "  (long red CLIPPED)" if m["red_clip_long"] > 0.02
+                     else ""))
+        else:
+            print("  EV+%d (%.0f×): red σ %.3f -> %.3f  improvement %.2f× "
+                  "(√ratio %.2f, ratio %.2f)%s"
+                  % (ev, m["ratio"], m["red_noise_normal"],
+                     m["red_noise_merged"], m["improvement"], m["sqrtN"],
+                     m["ratio"],
+                     "  CLIPPED" if m["red_clip_long"] > 0.02 else ""))
     print("wrote %s" % out)
 
 
