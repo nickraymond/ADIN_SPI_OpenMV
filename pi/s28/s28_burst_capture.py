@@ -273,14 +273,14 @@ def stage_bursts(run, matrix, n, tight_n):
 
 
 def stage_expo(run):
+    # Sweep exposure targets directly — the board extends the frame time
+    # per target via register writes (no fps, no framerate wedge).
     run.cfg("BAYER", "VGA")
-    rows = []
-    for fps in EXPO_FPS:
-        replies = run.sess.command(op="expo_probe", fps=fps,
-                                   targets=EXPO_TARGETS, timeout_s=60)
-        rows += [obj for t, obj in replies if t == "table"]
-        run.log("expo fps=%d: max readback %d us"
-                % (fps, max(r["got"] for r in rows if r["fps"] == fps)))
+    replies = run.sess.command(op="expo_probe", targets=EXPO_TARGETS,
+                               timeout_s=120)
+    rows = [obj for t, obj in replies if t == "table"]
+    run.log("expo: commanded vs readback -> %s"
+            % ", ".join("%d->%d" % (r["cmd"], r["got"]) for r in rows))
     with open(os.path.join(run.out, "expo_rows.jsonl"), "w") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
@@ -294,11 +294,10 @@ def stage_bracket(run, has_lcd):
     lk = run.lock()
     base = max(lk["exp_us"], 200)
     for ev, mult in ((0, 1), (2, 4), (3, 8)):
-        want = base * mult
-        # frame time must exceed exposure + margin (bite-0 clamp);
-        # integer fps floor, and never faster than the sensor allows
-        fps = max(1, min(30, int(1e6 // (want + 5000))))
-        run.manual(want, fps=fps, gain_db=lk["gain_db"])
+        want = min(base * mult, 1500000)     # cap under the 2.1 s reg max
+        # shutter ONLY (no gain — gain re-adds the noise photons buy out);
+        # op_manual extends the frame time to fit via register writes.
+        run.manual(want, gain_db=lk["gain_db"])
         run.burst("bracket_ev%d" % ev, geom, 3)
 
 
@@ -355,12 +354,13 @@ def main():
                     help="board label for calib_<label>.json")
     ap.add_argument("--playback", default="http://127.0.0.1:8091")
     ap.add_argument("--out", required=True, help="run dir (created)")
-    ap.add_argument("--plan", choices=("smoke", "stack", "full", "quick",
-                                       "pwm"),
+    ap.add_argument("--plan", choices=("smoke", "stack", "bracket", "full",
+                                       "quick", "pwm"),
                     default="full",
-                    help="smoke = no LCD/calib/HD/gray first-contact; "
-                         "stack = no-LCD locked BAYER+RGB565 bursts of the "
-                         "current scene for the stacking compare tool")
+                    help="smoke = first-contact; stack = no-LCD locked "
+                         "bursts for the compare tool; bracket = no-LCD "
+                         "+0/+2/+3 EV shutter bracket (bite 3, verifies "
+                         "the wedge-free long-exposure path)")
     ap.add_argument("--n", type=int, default=16, help="paced burst size")
     ap.add_argument("--tight-n", type=int, default=6)
     ap.add_argument("--no-lcd", action="store_true",
@@ -382,7 +382,8 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     pb = None
-    need_lcd = not args.no_lcd and args.plan not in ("smoke", "stack")
+    need_lcd = not args.no_lcd and args.plan not in ("smoke", "stack",
+                                                     "bracket")
     if need_lcd:
         from hil_harness import Playback
         pb = Playback(args.playback)
@@ -423,6 +424,8 @@ def main():
             stage_smoke(run)
         elif args.plan == "stack":
             stage_stack(run, args.n)
+        elif args.plan == "bracket":
+            stage_bracket(run, has_lcd=False)
         elif args.no_lcd:
             # real-object control: PWM-shaped sweep on whatever static
             # scene the camera is aimed at

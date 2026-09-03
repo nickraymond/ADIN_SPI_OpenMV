@@ -64,6 +64,31 @@ def emit(tag, obj):
     print(tag + " " + json.dumps(obj))
 
 
+# PAG7936 frame-time registers (µs) + the sensor-update commit. Writing
+# these DIRECTLY extends the frame time WITHOUT csi.framerate() — which
+# does a full mode-register rewrite + capture abort that wedges the AE3
+# (bite 3 finding, 2026-09-03: root-caused to set_framerate's
+# omv_csi_abort + configure; proven fix, exposure readback exact, frame
+# period scales, no wedge up or down). The exposure clamp
+# (set_auto_exposure) reads the LIVE frame-time regs, so extending the
+# frame time first lets a long exposure through. Slack keeps exp under
+# frame_time - the sensor's 80 µs margin.
+_FT_H, _FT_M, _FT_L = 0x004E, 0x004D, 0x004C
+_SENSOR_UPDATE, _SU_FLAG = 0x00EB, 0x80
+FT_SLACK = 5000            # µs of headroom above the exposure
+
+
+def set_frame_time(csi0, ft_us):
+    """Extend/shrink the sensor frame time (µs) via direct register
+    writes — the wedge-free replacement for csi.framerate()."""
+    ft_us = min(max(int(ft_us), 200), 2000000)     # 21-bit reg, ~2.1 s
+    h = csi0.__read_reg(_FT_H)
+    csi0.__write_reg(_FT_H, (h & 0xE0) | ((ft_us >> 16) & 0x1F))
+    csi0.__write_reg(_FT_M, (ft_us >> 8) & 0xFF)
+    csi0.__write_reg(_FT_L, ft_us & 0xFF)
+    csi0.__write_reg(_SENSOR_UPDATE, _SU_FLAG)
+
+
 def snap(csi0, tries=4):
     """snap(csi0) that self-heals the transient 'Frame capture has
     timed out.' -- measured 2026-09-02: the first capture after a
@@ -224,22 +249,31 @@ def op_lock(csi0, cmd):
 
 
 def op_manual(csi0, cmd):
-    if "fps" in cmd:                     # ORDER MATTERS -- bite-0 fact
-        csi0.framerate(cmd["fps"])
+    # Extend the frame time to fit the exposure via DIRECT register
+    # writes (set_frame_time) — the wedge-free replacement for
+    # csi.framerate(). Any exposure up to ~2 s is reachable this way, so
+    # no fps arg is needed; the frame time adapts up AND down.
+    exp = int(cmd["exposure_us"])
+    set_frame_time(csi0, exp + FT_SLACK)
     if "gain_db" in cmd:
         csi0.auto_gain(False, gain_db=cmd["gain_db"])
-    csi0.auto_exposure(False, exposure_us=int(cmd["exposure_us"]))
+    csi0.auto_exposure(False, exposure_us=exp)
     csi0.auto_whitebal(False)
     _settle_and_lock_reply(csi0)
 
 
 def op_expo_probe(csi0, cmd):
-    csi0.framerate(cmd["fps"])
+    # Sweep exposure targets, each with the frame time extended to fit
+    # (direct register writes — no csi.framerate, no wedge). Two snaps
+    # per target: the first flushes the buffered (stale) frame, the
+    # second is settled at the new exposure.
     for t in cmd["targets"]:
-        csi0.auto_exposure(False, exposure_us=int(t))
+        t = int(t)
+        set_frame_time(csi0, t + FT_SLACK)
+        csi0.auto_exposure(False, exposure_us=t)
         snap(csi0)
-        emit("#T", {"fps": cmd["fps"], "cmd": int(t),
-                    "got": csi0.exposure_us()})
+        snap(csi0)
+        emit("#T", {"cmd": t, "got": csi0.exposure_us()})
 
 
 def op_burst(csi0, cmd):
