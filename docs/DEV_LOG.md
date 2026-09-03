@@ -253,9 +253,26 @@ blocker) is ROOT-CAUSED + FIXED on hardware.**
   `op_expo_probe` drop the fps arg and use it; `--plan bracket` added.
   SPEC §Open questions (a) rewritten. Suite 43.
 
-**Next:** Bite 3 proper (NORMAL + long frames → red-from-long channel
-merge → red SNR-vs-exposure table in the compare tool). Bite 2 still
-owes Nick's steady-light review + the RGB565 deployed-path burst.
+**SAME SESSION, LATER — bite 3 BRACKET + RED-MERGE BUILT + TESTED.**
+- `--plan bracket`: NORMAL + +2/+3 EV shutter-only BAYER bursts (N/rung),
+  exposures exact (8328/33312/66624 µs) via the wedge-free frame-time
+  path, run complete. The 3-frame settle fixed the stale readback
+  ("asked 33312 -> got 33312").
+- `s28_bracket.py`: channel-wise merge (green/blue from NORMAL, red from
+  LONG ÷ ratio) + report (exposure table, red-SNR bounded √ratio…ratio,
+  red signal fraction, CLIP detection). 4 bracket tests + merge math
+  verified in the read-noise limit; suite 47.
+- Behaves correctly on every bench case: dark → normal red BLACK →
+  bracket RECOVERS red (fraction metric); lit → normal red well-exposed
+  (113/255) → +2/+3 EV CLIPS the long red (72/76%) → merge flagged
+  INVALID (a clip artifact, not a real gain). **The real red-SNR win
+  needs a red-STARVED scene (underwater / red-dim bench) where the long
+  red stays unclipped** — the field validation per the notes.
+
+**Next:** a red-starved demo scene (or field) to show the real red win;
+motion-blur check on long frames; optional bracket workbench card. Bite 2
+still owes Nick's steady-light review + the RGB565 deployed-path burst.
+Bite 4 = N6 rows + Nick's A/B/A+B decision.
 
 ---
 

@@ -2856,15 +2856,29 @@ actually applies is an open question (SPEC).
       (+0/+2/+3 EV shutter bracket) ran clean, bursts lock-HELD at
       8328/33312/66624 µs, run complete. `set_frame_time` in
       `s28_board_burst.py`; `op_manual`/`op_expo_probe` drop the fps
-      arg. *Remaining (the bite proper):* NORMAL frame
-      first, then +2/+3 EV via shutter ONLY (never gain — gain adds
-      back the noise the photons are buying out); red-from-long merge
-      in LINEAR domain (Bayer if bites 0/1 confirm it; else
-      gamma-characterized), green/blue clipping in the long frame
-      expected and irrelevant; motion-blur check on the long frames
-      (fallback per the notes: low-pass the long-frame red). *Exit:*
-      red fraction/SNR vs exposure-ratio table in the same tool, next
-      to the stack rows.
+      arg. **BRACKET + RED-MERGE TOOL BUILT + TESTED 2026-09-03:**
+      `--plan bracket` captures NORMAL + +2/+3 EV shutter-only BAYER
+      bursts (N/rung, exposures exact, no wedge); `s28_bracket.py` does
+      the channel-wise merge (green/blue from NORMAL, red from LONG ÷
+      exposure ratio) + a report: exposure table, red-SNR (bounded
+      √ratio…ratio), red signal fraction (the notes' metric — shows
+      recovery when normal is crushed to black), and CLIP detection.
+      4 bracket tests + the merge math verified in the read-noise limit;
+      suite 47. **Correctly handles every bench case:** normal-black
+      (dark room → red-recovery story) and long-red-CLIPPED (bench red
+      well-exposed at 113/255 → +2/+3 EV saturates → merge flagged
+      INVALID, not a real gain). **The real red-SNR win needs a
+      red-STARVED scene** (underwater, or a deliberately red-dim bench
+      target) where the long red stays unclipped — the field
+      validation, per the notes. *Remaining:* motion-blur check on long
+      frames (low-pass-red fallback); a red-starved demo scene; optional
+      workbench card (mirror `s28-stack-compare`). *(original scope:)*
+      NORMAL frame first, then +2/+3 EV via shutter ONLY (never gain —
+      gain adds back the noise the photons are buying out); red-from-long
+      merge in LINEAR domain; green/blue clipping in the long frame
+      expected and irrelevant; motion-blur check on the long frames.
+      *Exit:* red fraction/SNR vs exposure-ratio table (DONE in the
+      tool), demonstrated on a red-starved scene.
 - [ ] **Bite 4 — N6 rows + the decision.** Winning config repeated on
       the N6 (its sensor's manual-control API gets its own mini-audit
       first — unchecked); Nick picks A / B / A+B / neither; config
