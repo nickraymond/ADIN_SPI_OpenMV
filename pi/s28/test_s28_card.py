@@ -17,8 +17,11 @@ sys.path.insert(0, os.path.join(_ROOT, "pi", "workbench"))
 
 RECIPE = os.path.join(_ROOT, "pi", "workbench", "recipes",
                       "s28_stack_compare.toml")
-# SPEC §Board identity on nereus000 — the AE3's by-id (the "OpenMV Camera")
-AE3_BY_ID = ("usb-OpenMV_OpenMV_Camera_0829c14000000000-if00")
+# SPEC §Board identity on nereus000 (the names are backwards from the
+# guess: the "Pyboard" IS the N6).
+AE3_BY_ID = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+N6_BY_ID = ("usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_"
+            "020023000450433547373200-if00")
 
 
 def test_recipe_validates_clean():
@@ -31,11 +34,10 @@ def test_recipe_validates_clean():
     assert recipe["health"]["http"].endswith(":8093/")
 
 
-def test_recipe_board_is_the_ae3():
+def test_recipe_boards_are_ae3_and_n6():
     obj = tomllib.load(open(RECIPE, "rb"))
-    boards = obj["boards"]
-    assert len(boards) == 1 and boards[0]["label"] == "AE3"
-    assert boards[0]["by_id"] == AE3_BY_ID    # must not drift from SPEC
+    byid = {b["label"]: b["by_id"] for b in obj["boards"]}
+    assert byid == {"AE3": AE3_BY_ID, "N6": N6_BY_ID}   # pinned to SPEC
 
 
 def test_recipe_frames_param_is_enum():

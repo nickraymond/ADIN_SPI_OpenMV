@@ -73,14 +73,25 @@ def serve(serve_dir, port, stop_evt):
     httpd.shutdown()
 
 
+BY_ID = "/dev/serial/by-id/"
+DEFAULT_BOARDS = [
+    ("AE3", BY_ID + "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"),
+    ("N6", BY_ID + "usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_"
+     "Mode_020023000450433547373200-if00"),
+]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--port", default="/dev/serial/by-id/"
-                    "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00")
+    ap.add_argument("--board", action="append", default=[],
+                    help="LABEL=port (repeatable); default AE3 + N6")
     ap.add_argument("--serve-port", type=int, default=8093)
     ap.add_argument("--out-root", default=os.path.expanduser("~/s28_runs"))
     ap.add_argument("--frames", default="16")     # workbench [params] enum
     args = ap.parse_args()
+
+    boards = ([tuple(b.split("=", 1)) for b in args.board]
+              if args.board else DEFAULT_BOARDS)
 
     serve_dir = os.path.join(os.path.expanduser(args.out_root),
                              "compare_live")
@@ -102,34 +113,54 @@ def main():
     print("serving S28 compare on :%d" % args.serve_port, flush=True)
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(os.path.expanduser(args.out_root),
-                           "compare_%s" % stamp)
+    stage = "stack_rgb565_vga"
     rc = 0
-    try:
+    captured, failed = [], []
+    for label, port in boards:
+        bdir = os.path.join(os.path.expanduser(args.out_root),
+                            "compare_%s_%s" % (stamp, label))
+        print("capturing %s…" % label, flush=True)
         cap = subprocess.run(
             [sys.executable, "-u", "pi/s28/s28_burst_capture.py",
-             "--port", args.port, "--out", run_dir, "--plan", "stack",
+             "--port", port, "--out", bdir, "--plan", "stack",
              "--n", str(int(args.frames)), "--workbench", "none",
-             "--scene", "workbench card, %s" % stamp],
+             "--scene", "%s workbench card %s" % (label, stamp)],
             cwd=_ROOT, capture_output=True, text=True, timeout=240)
-        if cap.returncode != 0 or not os.path.isdir(
-                os.path.join(run_dir, "frames", "stack_bayer_vga")):
-            raise RuntimeError("burst capture failed (rc=%d)\n%s"
-                               % (cap.returncode, cap.stderr[-1500:]))
+        if cap.returncode == 0 and os.path.isdir(
+                os.path.join(bdir, "frames", stage)):
+            captured.append((label, bdir))
+        else:
+            failed.append("%s: rc=%d %s" % (label, cap.returncode,
+                                            (cap.stderr or "")[-400:]))
+            print("  %s capture FAILED" % label, file=sys.stderr,
+                  flush=True)
+
+    if captured:
+        cargs = []
+        for label, bdir in captured:
+            cargs += ["--board", "%s=%s" % (label, bdir)]
         comp = subprocess.run(
-            [sys.executable, "-u", "pi/s28/s28_compare.py",
-             "--run", run_dir, "--stage", "stack_bayer_vga",
-             "--out", index],
-            cwd=_ROOT, capture_output=True, text=True, timeout=120)
+            [sys.executable, "-u", "pi/s28/s28_compare.py", *cargs,
+             "--stage", stage, "--out", index],
+            cwd=_ROOT, capture_output=True, text=True, timeout=180)
         if comp.returncode != 0 or not os.path.isfile(index):
-            raise RuntimeError("compare failed (rc=%d)\n%s"
-                               % (comp.returncode, comp.stderr[-1500:]))
-        print(comp.stdout, flush=True)
-        print("report ready at :%d" % args.serve_port, flush=True)
-    except Exception as e:
-        open(index, "w").write(error_page(str(e)))
-        print("CAPTURE/COMPARE FAILED: %s" % e, file=sys.stderr,
-              flush=True)
+            open(index, "w").write(error_page(
+                "compare failed (rc=%d)\n%s" % (comp.returncode,
+                                                comp.stderr[-1500:])))
+            rc = 1
+        else:
+            print(comp.stdout, flush=True)
+            if failed:                     # partial success — note it
+                with open(index, "a") as fh:
+                    fh.write("<p style='color:#fb6;font:13px system-ui;"
+                             "margin:16px'>Note: %s did not capture "
+                             "(shown boards only).</p>"
+                             % ", ".join(f.split(":")[0] for f in failed))
+            print("report ready at :%d" % args.serve_port, flush=True)
+    else:
+        open(index, "w").write(error_page(
+            "no board captured a burst:\n" + "\n".join(failed)))
+        print("ALL CAPTURES FAILED", file=sys.stderr, flush=True)
         rc = 1
 
     # serve until Stop

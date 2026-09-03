@@ -1,9 +1,11 @@
 """S28 bite 2 — offline frame-stacking core (the testable math).
 
-Merges a locked BAYER burst (8-bit, linear — the domain the notes call
-for) into a single denoised frame, three ways, and measures the noise it
-removed. Pure numpy + PIL; no board, no OpenCV in the core (demosaic uses
-OpenCV only when producing a viewable image).
+Merges a locked burst into a denoised frame three ways and measures the
+noise it removed. Format-aware: a BAYER burst (8-bit raw, the AE3's
+linear domain) or an RGB565 burst (the deployed path, and the ONLY
+common format across both boards — the N6's stock firmware can't emit
+BAYER). Pure numpy + PIL; OpenCV only for the BAYER demosaic when
+present (numpy fallback otherwise).
 
 Merge modes (the S28 kickoff's three):
   mean          average of N frames — best SNR (temporal noise / sqrt N),
@@ -15,14 +17,26 @@ Merge modes (the S28 kickoff's three):
   sigma_clip    per-pixel: drop frames > kappa*sigma from the mean, then
                 mean the rest — the best-of-both the notes recommend.
 
-Noise is measured as the SPATIAL std on a flat patch (a uniform region is
-pure noise), single vs merged — the honest, directly-visible number.
+Noise is measured the group-means way (see noise_ladder): fixed scene
+structure cancels, leaving pure temporal noise — the ~sqrt(N) win.
 """
 import numpy as np
 
 
+def rgb565_to_rgb(buf, w, h):
+    """RGB565 bytes -> (h,w,3) uint8. Big-endian byte order (verified on
+    the AE3 card patches; both boards emit the same order)."""
+    a = np.frombuffer(buf, np.uint8).reshape(h, w, 2)
+    v = (a[:, :, 0].astype(np.uint16) << 8) | a[:, :, 1]
+    r = ((v >> 11) & 0x1F).astype(np.uint8) << 3
+    g = ((v >> 5) & 0x3F).astype(np.uint8) << 2
+    b = (v & 0x1F).astype(np.uint8) << 3
+    return np.stack([r, g, b], axis=-1)
+
+
 def load_burst(run_dir, stage):
-    """-> (N,H,W) uint8 raw-BAYER stack + the meta rows, in seq order."""
+    """-> (stack, rows, pixformat) in seq order. stack is (N,H,W) uint8
+    for BAYER, or (N,H,W,3) uint8 for RGB565 (decoded here)."""
     import json
     import os
     rows = []
@@ -32,11 +46,16 @@ def load_burst(run_dir, stage):
             if r["stage"] == stage:
                 rows.append(r)
     rows.sort(key=lambda r: r["seq"])
+    pf = rows[0].get("pixformat", "BAYER")
     frames = []
     for r in rows:
         buf = open(os.path.join(run_dir, r["file"]), "rb").read()
-        frames.append(np.frombuffer(buf, np.uint8).reshape(r["h"], r["w"]))
-    return np.stack(frames), rows
+        if pf == "RGB565":
+            frames.append(rgb565_to_rgb(buf, r["w"], r["h"]))
+        else:
+            frames.append(np.frombuffer(buf, np.uint8).reshape(
+                r["h"], r["w"]))
+    return np.stack(frames), rows, pf
 
 
 def merge_mean(stack, k=None):
@@ -70,16 +89,23 @@ def temporal_sigma(stack, k=None):
     return float(s.std(axis=0, ddof=1).mean()) if len(s) > 1 else 0.0
 
 
-def _green_plane(bayer):
-    """BGGR green sites -> (H/2,W/2) float."""
-    return (bayer[0::2, 1::2].astype(np.float64)
-            + bayer[1::2, 0::2].astype(np.float64)) / 2.0
+def green_plane(frame, pixformat="BAYER"):
+    """The green channel — where noise is measured. BAYER: mean of the two
+    BGGR green sites (H/2,W/2). RGB565: the G channel (H,W)."""
+    if pixformat == "RGB565" or frame.ndim == 3:
+        return frame[..., 1].astype(np.float64)
+    return (frame[0::2, 1::2].astype(np.float64)
+            + frame[1::2, 0::2].astype(np.float64)) / 2.0
 
 
-def noise_ladder(stack, merge_fn, ks=(1, 2, 4, 8)):
+# back-compat alias (older callers)
+_green_plane = green_plane
+
+
+def noise_ladder(stack, merge_fn, pixformat="BAYER", ks=(1, 2, 4, 8)):
     """TEMPORAL noise of a k-frame merge, measured honestly: split the
     burst into disjoint groups of k, merge each, and take the per-pixel
-    std ACROSS the group-merges (green plane, whole frame). FIXED scene
+    std ACROSS the group-merges (green channel, whole frame). FIXED scene
     structure is identical in every group and cancels, leaving pure
     temporal noise — so this shows the true ~sqrt(N) fall that a spatial
     std on a 'uniform' patch hides behind print/lighting texture.
@@ -90,10 +116,18 @@ def noise_ladder(stack, merge_fn, ks=(1, 2, 4, 8)):
         ng = N // k
         if ng < 2:
             continue
-        groups = np.stack([_green_plane(merge_fn(stack[i * k:(i + 1) * k]))
-                           for i in range(ng)])
+        groups = np.stack([green_plane(merge_fn(stack[i * k:(i + 1) * k]),
+                                       pixformat) for i in range(ng)])
         out[k] = float(groups.std(axis=0, ddof=1).mean())
     return out
+
+
+def to_view(frame, pixformat="BAYER"):
+    """A merged frame -> viewable RGB uint8. RGB565 is already RGB; BAYER
+    is demosaiced."""
+    if pixformat == "RGB565" or frame.ndim == 3:
+        return frame
+    return demosaic(frame)
 
 
 def demosaic(bayer, pattern="BGGR"):

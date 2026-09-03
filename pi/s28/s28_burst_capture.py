@@ -313,14 +313,15 @@ def stage_smoke(run):
     run.burst("smoke_bayer_vga", geom, 4)
 
 
-def stage_stack(run, n, pixformats=("BAYER",)):
+def stage_stack(run, n, pixformats=("RGB565",)):
     """Locked bursts of the CURRENT scene (no LCD — a physical reference
-    card or any static scene) for the S28 stacking compare tool. BAYER
-    (the linear domain the merge math wants) by default; RGB565 (the
-    deployed path) is opt-in because the BAYER->RGB565 mode switch can
-    wedge the sensor on this build (the recurring re-init hazard) — a
-    fresh attach per pixformat avoids it. N frames under one lock; the
-    single-frame control is frame 0."""
+    card or any static scene) for the S28 stacking compare tool. RGB565
+    by default: the deployed path AND the only format both boards share
+    (the N6's stock firmware can't emit BAYER). RGB565 is also the AE3's
+    boot mode, so this cfg is a no-op and never triggers the mode-switch
+    wedge. BAYER (the AE3's raw linear domain) is opt-in, AE3-only, and
+    must be a FRESH attach (BAYER<-RGB565 switching wedges the sensor).
+    N frames under one lock; the single-frame control is frame 0."""
     for pf in pixformats:
         geom = run.cfg(pf, "VGA")
         run.converge(6)

@@ -8,8 +8,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from s28_stack import (merge_mean, merge_median, merge_sigma_clip,  # noqa
-                       noise_ladder, temporal_sigma)
+from s28_stack import (green_plane, merge_mean, merge_median,  # noqa
+                       merge_sigma_clip, noise_ladder, rgb565_to_rgb,
+                       temporal_sigma, to_view)
 
 
 def test_mean_of_constant_stack():
@@ -45,7 +46,7 @@ def test_noise_ladder_tracks_sqrt_n():
     scene = 120.0
     frames = np.clip(scene + rng.normal(0, 4.0, size=(16, H, W)),
                      0, 255).astype(np.uint8)
-    lad = noise_ladder(frames, merge_mean, ks=(1, 2, 4))
+    lad = noise_ladder(frames, merge_mean, "BAYER", ks=(1, 2, 4))
     # k=2 ~ /sqrt2, k=4 ~ /2 relative to k=1
     assert 1.25 < lad[1] / lad[2] < 1.6
     assert 1.7 < lad[1] / lad[4] < 2.4
@@ -58,9 +59,29 @@ def test_noise_ladder_cancels_fixed_structure():
     grad = np.tile(np.linspace(0, 200, 64), (64, 1))
     frames = np.clip(grad + rng.normal(0, 2.0, size=(16, 64, 64)),
                      0, 255).astype(np.uint8)
-    lad = noise_ladder(frames, merge_mean, ks=(1,))
+    lad = noise_ladder(frames, merge_mean, "BAYER", ks=(1,))
     assert lad[1] < 4.0                        # ~ the 2.0 temporal noise,
     #                                            NOT the 0..200 gradient
+
+
+def test_rgb565_decode_and_rgb_path():
+    # a pure-red RGB565 pixel decodes red; green_plane/to_view handle RGB.
+    buf = bytes([0xF8, 0x00]) * 16             # 4x4 pure red
+    rgb = rgb565_to_rgb(buf, 4, 4)
+    assert rgb[0, 0].tolist() == [248, 0, 0]
+    stack = np.stack([rgb, rgb])               # (2,4,4,3)
+    assert np.all(green_plane(stack[0], "RGB565") == 0)   # G channel
+    assert to_view(stack[0], "RGB565").shape == (4, 4, 3)
+
+
+def test_noise_ladder_rgb_channel():
+    rng = np.random.default_rng(3)
+    base = np.zeros((16, 32, 32, 3))
+    base[..., 1] = 120                          # flat green scene
+    frames = np.clip(base + rng.normal(0, 4.0, size=base.shape),
+                     0, 255).astype(np.uint8)
+    lad = noise_ladder(frames, merge_mean, "RGB565", ks=(1, 2, 4))
+    assert 1.25 < lad[1] / lad[2] < 1.6         # sqrt(2) on the G channel
 
 
 def test_temporal_sigma_matches_input_noise():
