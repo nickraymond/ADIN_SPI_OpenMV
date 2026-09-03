@@ -95,3 +95,11 @@ def test_compare_script_valid_and_runs_help():
     src = open(os.path.join(os.path.dirname(__file__),
                             "s28_compare.py")).read()
     compile(src, "s28_compare.py", "exec")
+
+
+def test_redux_handles_zero_noise():
+    # a flat/quantized channel has base==0 -> no crash, shows a dash
+    import s28_compare as c
+    assert c._redux(0.0, 0.0) == "—"       # nothing to reduce
+    assert c._redux(0.8, 0.4) == "2.00x"
+    assert c._redux(0.8, 0.0) == "∞"

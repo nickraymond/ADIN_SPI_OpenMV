@@ -100,6 +100,14 @@ def analyze_board(label, run_dir, stage):
             "panels": panels}
 
 
+def _redux(base, v):
+    """Reduction factor as a string; '—' when there is no noise to reduce
+    (base==0: a flat/quantized channel — stacking has nothing to do)."""
+    if base <= 0:
+        return "—"
+    return "%.2fx" % (base / v) if v > 0 else "∞"
+
+
 def board_section(b):
     base = b["ladders"]["mean"][1]
     flick = b["flicker"] + (" (%.0fx over floor)" % b["flicker_detail"]["ratio"]
@@ -111,8 +119,9 @@ def board_section(b):
     head = "".join("<th>k=%d</th>" % k for k in b["ks"])
     lad = ""
     for m in ("mean", "sigma_clip", "median"):
-        cells = "".join("<td>%.3f<br><span class=r>%.2fx</span></td>"
-                        % (b["ladders"][m][k], base / b["ladders"][m][k])
+        cells = "".join("<td>%.3f<br><span class=r>%s</span></td>"
+                        % (b["ladders"][m][k], _redux(base,
+                                                      b["ladders"][m][k]))
                         for k in b["ks"])
         lad += "<tr><td>%s</td>%s</tr>" % (m, cells)
     ideal = "".join("<td>%.2fx</td>" % (k ** 0.5) for k in b["ks"])
@@ -211,7 +220,7 @@ def main():
               % (b["label"], b["pixformat"], b["n"], b["temporal_sigma"],
                  b["flicker"]))
         print("       mean redux: %s" % "  ".join(
-            "k%d %.2fx" % (k, base / b["ladders"]["mean"][k])
+            "k%d %s" % (k, _redux(base, b["ladders"]["mean"][k]))
             for k in b["ks"]))
     print("wrote %s" % os.path.expanduser(args.out))
 
