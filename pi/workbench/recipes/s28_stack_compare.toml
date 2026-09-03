@@ -21,6 +21,7 @@ opens = ":8093"
 
 [params]
 frames = ["8", "16", "32"]
+framesize = ["VGA", "HD"]
 
 [[boards]]
 label = "AE3"

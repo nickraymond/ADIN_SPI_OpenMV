@@ -315,7 +315,7 @@ def stage_smoke(run):
     run.burst("smoke_bayer_vga", geom, 4)
 
 
-def stage_stack(run, n, pixformats=("RGB565",)):
+def stage_stack(run, n, pixformats=("RGB565",), framesize="VGA"):
     """Locked bursts of the CURRENT scene (no LCD — a physical reference
     card or any static scene) for the S28 stacking compare tool. RGB565
     by default: the deployed path AND the only format both boards share
@@ -323,12 +323,16 @@ def stage_stack(run, n, pixformats=("RGB565",)):
     boot mode, so this cfg is a no-op and never triggers the mode-switch
     wedge. BAYER (the AE3's raw linear domain) is opt-in, AE3-only, and
     must be a FRESH attach (BAYER<-RGB565 switching wedges the sensor).
-    N frames under one lock; the single-frame control is frame 0."""
+    framesize VGA (640×400) or HD (AE3 1280×800 / N6 1280×720) — HD is
+    ~4× the pixels + bytes, so paced streaming only (a tight in-heap
+    burst of N HD frames would not fit). N frames under one lock; the
+    single-frame control is frame 0."""
     for pf in pixformats:
-        geom = run.cfg(pf, "VGA")
+        geom = run.cfg(pf, framesize)
         run.converge(6)
         run.lock()
-        run.burst("stack_%s_vga" % pf.lower(), geom, n)
+        run.burst("stack_%s_%s" % (pf.lower(), framesize.lower()),
+                  geom, n)
 
 
 def stage_pwm(run, still, scene_name):
@@ -365,6 +369,9 @@ def main():
                          "+0/+2/+3 EV shutter bracket (bite 3, verifies "
                          "the wedge-free long-exposure path)")
     ap.add_argument("--n", type=int, default=16, help="paced burst size")
+    ap.add_argument("--framesize", choices=("VGA", "HD"), default="VGA",
+                    help="stack plan: VGA (640×400) or HD (AE3 1280×800 /"
+                         " N6 1280×720)")
     ap.add_argument("--tight-n", type=int, default=6)
     ap.add_argument("--no-lcd", action="store_true",
                     help="scene is NOT the LCD (real-object control run):"
@@ -426,7 +433,7 @@ def main():
         if args.plan == "smoke":
             stage_smoke(run)
         elif args.plan == "stack":
-            stage_stack(run, args.n)
+            stage_stack(run, args.n, framesize=args.framesize)
         elif args.plan == "bracket":
             stage_bracket(run, has_lcd=False, n=min(args.n, 8))
         elif args.no_lcd:

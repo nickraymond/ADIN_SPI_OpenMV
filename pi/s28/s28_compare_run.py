@@ -88,6 +88,7 @@ def main():
     ap.add_argument("--serve-port", type=int, default=8093)
     ap.add_argument("--out-root", default=os.path.expanduser("~/s28_runs"))
     ap.add_argument("--frames", default="16")     # workbench [params] enum
+    ap.add_argument("--framesize", default="VGA")  # VGA | HD
     args = ap.parse_args()
 
     boards = ([tuple(b.split("=", 1)) for b in args.board]
@@ -113,19 +114,23 @@ def main():
     print("serving S28 compare on :%d" % args.serve_port, flush=True)
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    stage = "stack_rgb565_vga"
+    fs = args.framesize if args.framesize in ("VGA", "HD") else "VGA"
+    stage = "stack_rgb565_%s" % fs.lower()
+    # HD frames are ~4x the bytes -> streaming is slower; give more time.
+    cap_timeout = 420 if fs == "HD" else 240
     rc = 0
     captured, failed = [], []
     for label, port in boards:
         bdir = os.path.join(os.path.expanduser(args.out_root),
                             "compare_%s_%s" % (stamp, label))
-        print("capturing %s…" % label, flush=True)
+        print("capturing %s (%s)…" % (label, fs), flush=True)
         cap = subprocess.run(
             [sys.executable, "-u", "pi/s28/s28_burst_capture.py",
              "--port", port, "--out", bdir, "--plan", "stack",
-             "--n", str(int(args.frames)), "--workbench", "none",
-             "--scene", "%s workbench card %s" % (label, stamp)],
-            cwd=_ROOT, capture_output=True, text=True, timeout=240)
+             "--n", str(int(args.frames)), "--framesize", fs,
+             "--workbench", "none",
+             "--scene", "%s workbench card %s %s" % (label, fs, stamp)],
+            cwd=_ROOT, capture_output=True, text=True, timeout=cap_timeout)
         if cap.returncode == 0 and os.path.isdir(
                 os.path.join(bdir, "frames", stage)):
             captured.append((label, bdir))
