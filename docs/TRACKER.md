@@ -2817,16 +2817,29 @@ actually applies is an open question (SPEC).
       until the printed card arrives). Lighting recorded per run (a
       measured condition). *Exit:* burst on disk with provably frozen
       settings + per-frame noise numbers. No stacking yet.
-- [ ] **Bite 2 — offline stack + the compare tool (the sprint's
-      deliverable for Nick).** Mean / median / sigma-clipped merges on
-      the Pi from bite-1 bursts; control = single HD still, same scene,
-      same minute, per board. Tool = a workbench card producing a
-      static HTML report (the `hil_report`/gallery pattern — REUSE, not
-      a new web app): side-by-side panels (single · N=8 · N=16 · per
-      merge mode), zoom, and the metrics table — patch SNR, red
-      fraction, per-channel σ, **file size at equal encoder quality**.
-      *Exit:* √N SNR demonstrated (or the leak explained — an AE lock
-      or ISP stage that drifts); Nick reviews at the page.
+- [~] **Bite 2 — offline stack + the compare tool — BUILT + CARD
+      DEMO'D 2026-09-02 (Claude ran it; Nick's review owed).** Shipped
+      `pi/s28/s28_stack.py` (mean/median/sigma-clip merges on raw 8-bit
+      BAYER + demosaic w/ a numpy fallback so it runs on a bare Pi) +
+      `s28_compare.py` (self-contained HTML: single vs merges w/ 3×
+      zoom crops, the **√N noise ladder**, JPEG size at equal q, and a
+      **flicker check**) + `--plan stack` capture + the one-click
+      workbench card **`s28-stack-compare`** (wrapper
+      `s28_compare_run.py`: serve→capture→report→serve, frames toggle
+      8/16/32). 48 host tests. **MEASURED (16-frame card burst): noise
+      falls √N — k=2 1.34× / k=4 1.95× / k=8 ~3×; mean == sigma-clip on
+      a static scene, median slightly less.** KEY FINDING: the **honest
+      metric is group-means temporal σ** (a spatial std on a "uniform"
+      patch hides the win behind fixed print/lighting texture — it read
+      only 1.4×). ALSO: the flicker check flags the room light —
+      **ALIASED 7.2× (bright) → 21.9× (dim)**: room LED/fluorescent
+      flicker is frame-to-frame light wobble stacking CANNOT remove, so
+      a **constant/DC light source is needed** for a clean measurement
+      (Nick setting one up; it doubles as the color-work illuminant).
+      Card demo'd on the bench: click→LIVE→capture→report on :8093→Stop
+      releases the ports. *Exit (owed): Nick reviews at the page under a
+      steady light + the RGB565 deployed-path burst (the BAYER→RGB565
+      switch wedges — captured per-pixformat in a fresh attach).*
 - [ ] **Bite 3 — shutter bracket + channel-wise merge.** NORMAL frame
       first, then +2/+3 EV via shutter ONLY (never gain — gain adds
       back the noise the photons are buying out); red-from-long merge

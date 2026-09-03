@@ -204,6 +204,35 @@ pursue AE3 color: fit a CCM under a known illuminant and bake it into the
 Alif debayer (a real firmware bite). Lens (new unit) = the separate
 sharpness lever. Back to S28: bite 2 (offline stack + compare tool).
 
+**SAME SESSION, LATER (2026-09-02) — AE3 reverted to stock; S28 bite 2
+(stacking compare tool + workbench card) BUILT + demo'd.**
+- Reverted the AE3 to stock (-0.2, rebuilt + reflashed, readback-verified)
+  — the 0.0 brightness experiment is fully off the board.
+- Built S28 bite 2: `pi/s28/s28_stack.py` (mean/median/sigma-clip on raw
+  8-bit BAYER + demosaic with a numpy fallback) + `s28_compare.py`
+  (self-contained HTML: panels + 3× zoom + √N noise ladder + JPEG size +
+  flicker check) + `--plan stack` capture + the one-click card
+  `s28-stack-compare` (wrapper serve→capture→report→serve). 48 host
+  tests. Card demo'd end-to-end on the bench (LIVE→report on :8093→Stop
+  releases ports).
+- MEASURED: noise falls √N (k=2 1.34× / k=4 1.95× / k=8 ~3×). The honest
+  metric is group-means temporal σ — a spatial std on a "uniform" patch
+  hides the win behind fixed print/lighting texture (read only 1.4×).
+- Flicker finding: the room light flickers — ALIASED 7.2× (bright) →
+  21.9× (dim). It's frame-to-frame light wobble stacking can't remove →
+  a constant/DC light source is needed for a clean measurement (Nick
+  setting one up; doubles as the color-work illuminant).
+
+**Broke/surprised us:** the BAYER→RGB565 mode switch wedges the sensor
+mid-capture (recurring re-init hazard) → stack capture is Bayer-only,
+RGB565 owed via a fresh attach. The AE3 hit its raw-repl refusal twice
+more (recovered by reboot). Tailscale SSH needed re-auth mid-session →
+used the LAN IP 192.168.1.163 side-door.
+
+**Next:** Nick reviews the compare card under a steady light; capture
+the RGB565 deployed-path burst; then bite 3 (HDR bracket) — blocked on
+the sensor-framerate-change wedge, which needs solving first.
+
 ---
 
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
