@@ -313,6 +313,19 @@ def stage_smoke(run):
     run.burst("smoke_bayer_vga", geom, 4)
 
 
+def stage_stack(run, n):
+    """Locked bursts of the CURRENT scene (no LCD — a physical reference
+    card or any static scene) for the S28 stacking compare tool: BAYER
+    (the linear domain the merge math wants) and RGB565 (the deployed
+    path), VGA, N frames each under one lock. The single-frame control is
+    just frame 0 of each burst."""
+    for pf in ("BAYER", "RGB565"):
+        geom = run.cfg(pf, "VGA")
+        run.converge(6)
+        run.lock()
+        run.burst("stack_%s_vga" % pf.lower(), geom, n)
+
+
 def stage_pwm(run, still, scene_name):
     if still is not None:
         lcd_show(run.pb, mode="step", still=still)
@@ -339,10 +352,12 @@ def main():
                     help="board label for calib_<label>.json")
     ap.add_argument("--playback", default="http://127.0.0.1:8091")
     ap.add_argument("--out", required=True, help="run dir (created)")
-    ap.add_argument("--plan", choices=("smoke", "full", "quick", "pwm"),
+    ap.add_argument("--plan", choices=("smoke", "stack", "full", "quick",
+                                       "pwm"),
                     default="full",
-                    help="smoke = no LCD/calib/HD/gray, just prove the "
-                         "core capture+lock path first")
+                    help="smoke = no LCD/calib/HD/gray first-contact; "
+                         "stack = no-LCD locked BAYER+RGB565 bursts of the "
+                         "current scene for the stacking compare tool")
     ap.add_argument("--n", type=int, default=16, help="paced burst size")
     ap.add_argument("--tight-n", type=int, default=6)
     ap.add_argument("--no-lcd", action="store_true",
@@ -364,7 +379,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     pb = None
-    need_lcd = not args.no_lcd and args.plan != "smoke"
+    need_lcd = not args.no_lcd and args.plan not in ("smoke", "stack")
     if need_lcd:
         from hil_harness import Playback
         pb = Playback(args.playback)
@@ -403,6 +418,8 @@ def main():
 
         if args.plan == "smoke":
             stage_smoke(run)
+        elif args.plan == "stack":
+            stage_stack(run, args.n)
         elif args.no_lcd:
             # real-object control: PWM-shaped sweep on whatever static
             # scene the camera is aimed at
