@@ -24,10 +24,12 @@ import numpy as np
 
 
 def rgb565_to_rgb(buf, w, h):
-    """RGB565 bytes -> (h,w,3) uint8. Big-endian byte order (verified on
-    the AE3 card patches; both boards emit the same order)."""
+    """RGB565 bytes -> (h,w,3) uint8. LITTLE-endian byte order — the AE3
+    and N6 both emit the low byte first; verified 2026-09-03 by decoding
+    a reference-card frame both ways (big-endian gave brightness-following
+    rainbow colours; little-endian renders the card true)."""
     a = np.frombuffer(buf, np.uint8).reshape(h, w, 2)
-    v = (a[:, :, 0].astype(np.uint16) << 8) | a[:, :, 1]
+    v = (a[:, :, 1].astype(np.uint16) << 8) | a[:, :, 0]
     r = ((v >> 11) & 0x1F).astype(np.uint8) << 3
     g = ((v >> 5) & 0x3F).astype(np.uint8) << 2
     b = (v & 0x1F).astype(np.uint8) << 3

@@ -65,10 +65,13 @@ def test_noise_ladder_cancels_fixed_structure():
 
 
 def test_rgb565_decode_and_rgb_path():
-    # a pure-red RGB565 pixel decodes red; green_plane/to_view handle RGB.
-    buf = bytes([0xF8, 0x00]) * 16             # 4x4 pure red
+    # LITTLE-endian: pure red 0xF800 -> low byte first = [0x00, 0xF8].
+    buf = bytes([0x00, 0xF8]) * 16             # 4x4 pure red
     rgb = rgb565_to_rgb(buf, 4, 4)
     assert rgb[0, 0].tolist() == [248, 0, 0]
+    # pure blue 0x001F -> [0x1F, 0x00]
+    b = rgb565_to_rgb(bytes([0x1F, 0x00]) * 16, 4, 4)
+    assert b[0, 0].tolist() == [0, 0, 248]
     stack = np.stack([rgb, rgb])               # (2,4,4,3)
     assert np.all(green_plane(stack[0], "RGB565") == 0)   # G channel
     assert to_view(stack[0], "RGB565").shape == (4, 4, 3)
