@@ -155,7 +155,9 @@ def render(res, out, run_dir):
     for ev in sorted(merges):
         m = merges[ev]
         warn = " ⚠ long red CLIPPED" if m["red_clip_long"] > 0.02 else ""
-        if m["normal_is_black"]:
+        if m["red_clip_long"] > 0.02:
+            imp = "invalid"            # clipped long red -> fake low noise
+        elif m["normal_is_black"]:
             warn = (" ⚠ normal red is black — bracket RECOVERS red "
                     "(fraction %.1f%% → %.1f%%)"
                     % (100 * m["red_frac_normal"],
@@ -234,7 +236,13 @@ def main():
              res["norm"]["red_noise"]))
     for ev in sorted(res["merges"]):
         m = res["merges"][ev]
-        if m["normal_is_black"]:
+        if m["red_clip_long"] > 0.02:
+            print("  EV+%d (%.0f×): long red CLIPPED (%.0f%%) — merge "
+                  "INVALID here (red not starved). σ %.3f->%.3f is a "
+                  "clip artifact, not a real gain."
+                  % (ev, m["ratio"], 100 * m["red_clip_long"],
+                     m["red_noise_normal"], m["red_noise_merged"]))
+        elif m["normal_is_black"]:
             print("  EV+%d (%.0f×): normal red is BLACK — bracket recovers"
                   " red fraction %.1f%% -> %.1f%%%s"
                   % (ev, m["ratio"], 100 * m["red_frac_normal"],
