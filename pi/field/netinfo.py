@@ -96,7 +96,25 @@ def default_iface(route_text):
     return m.group(1) if m else None
 
 
+#: `iw` and `ip` live in /sbin and /usr/sbin, which are NOT on a normal
+#: user's PATH on Debian -- measured on nereus002, where a bare "iw" call
+#: returned "command not found" while /sbin/iw worked fine. A viewer running
+#: as `pi` would therefore have reported "unknown" signal forever and looked
+#: like a missing radio. Resolve the absolute path instead of trusting PATH.
+_SBIN = ("/sbin", "/usr/sbin", "/bin", "/usr/bin")
+
+
+def _which(name):
+    import os
+    for d in _SBIN:
+        cand = os.path.join(d, name)
+        if os.access(cand, os.X_OK):
+            return cand
+    return name          # last resort: let PATH try
+
+
 def _run(argv, timeout=3):
+    argv = [_which(argv[0])] + list(argv[1:])
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         return r.stdout

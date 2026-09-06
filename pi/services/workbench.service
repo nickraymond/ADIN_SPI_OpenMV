@@ -1,4 +1,4 @@
-# workbench.service — S25 machine-vision workbench menu on nereus000.
+# workbench.service — S25 machine-vision workbench menu (any rig).
 #
 # Serves the recipe menu + preflight panel on :8088. Bite 1 scope: it lists
 # recipes and reports passive hardware state — it opens NO serial port and
@@ -22,7 +22,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
 SyslogIdentifier=workbench
-ExecStart=/usr/bin/python3 /home/pi/ADIN_SPI_OpenMV/pi/workbench/workbench.py
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/workbench/run_workbench.sh
 
 Restart=on-failure
 RestartSec=3

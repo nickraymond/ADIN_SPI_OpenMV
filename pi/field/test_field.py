@@ -792,5 +792,34 @@ class TestMonoOption(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(extra[extra.index("--colour") + 1], "mono")
 
+
+class TestNetInfoResolvesSbinTools(unittest.TestCase):
+    """`iw` is in /sbin, which is not on the pi user's PATH (measured)."""
+
+    def test_which_finds_a_real_sbin_tool_or_falls_back(self):
+        got = netinfo._which("iw")
+        self.assertTrue(got.endswith("iw"))
+
+    def test_unknown_tool_falls_back_to_bare_name(self):
+        self.assertEqual(netinfo._which("definitely-not-a-tool-xyz"),
+                         "definitely-not-a-tool-xyz")
+
+    def test_run_rewrites_argv0(self):
+        seen = {}
+
+        def fake(argv, capture_output, text, timeout):
+            seen["argv"] = argv
+            class R: stdout = "ok"
+            return R()
+        import subprocess as sp
+        real = sp.run
+        sp.run = fake
+        try:
+            netinfo._run(["iw", "dev", "wlan0", "link"])
+        finally:
+            sp.run = real
+        self.assertTrue(seen["argv"][0].endswith("iw"))
+        self.assertEqual(seen["argv"][1:], ["dev", "wlan0", "link"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
