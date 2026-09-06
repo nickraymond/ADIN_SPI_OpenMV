@@ -119,6 +119,13 @@ def label_matches(expect, running_id):
     bare sha10 -- same rev, different formats)."""
     if not expect or not running_id:
         return False
+    # Strip the field separator fetch_firmware.sh carries into MANIFEST's
+    # openmv_sha ("v5.0.1;") -- sys.version reports the bare id ("v5.0.1"),
+    # so the raw compare failed a GOOD flash on a trailing semicolon and
+    # reported FAIL on a board whose bytes had already verified by readback.
+    # Measured 2026-09-06 flashing v5.0.1 onto nereus002's AE3.
+    expect = expect.strip().rstrip(";")
+    running_id = running_id.strip().rstrip(";")
     return expect == running_id or expect in running_id
 
 
