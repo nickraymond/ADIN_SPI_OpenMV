@@ -15,6 +15,7 @@ import http.server
 import os
 import socketserver
 import sys
+import threading
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +25,22 @@ sys.path.insert(0, os.path.join(_ROOT, "pi", "s28"))
 
 import composite                                        # noqa: E402
 import discover as discovery                            # noqa: E402
+
+
+def _write_progress(path, args, state):
+    """A holding page so the card can go LIVE while capture runs."""
+    body = ("FAILED" in state) and '<p class="bad">%s</p>' % state or (
+        '<p>Capturing <b>%d</b> frames per camera at %s, merge=<b>%s</b>&hellip;'
+        '</p><p class="sub">On a Pi Zero 2 W this takes a few minutes at HD. '
+        'The page refreshes itself.</p>' % (args.n, args.framesize, args.merge))
+    with open(path, "w") as fh:
+        fh.write("""<!doctype html><meta charset="utf-8">
+<meta http-equiv="refresh" content="10">
+<title>Composite &mdash; %s</title><style>
+body{background:#111;color:#ddd;font:13px/1.6 ui-monospace,Menlo,monospace;padding:16px}
+b{color:#8fd0ff}.sub{color:#8a949e}.bad{color:#ef8a8a}
+</style><h1 style="font-size:15px;color:#fff">Composite &mdash; %s</h1>%s"""
+                 % (args.mode, args.mode, body))
 
 
 def build_report(results, mode, out_html):
@@ -143,25 +160,50 @@ def main(argv=None):
     print("composite: mode=%s N=%d -> %s" % (args.mode, args.n, run_dir),
           flush=True)
 
-    if args.mode == "bracket":
-        print("BRACKET mode is not implemented yet -- see the card notes.",
-              flush=True)
-        results = [{"label": "all", "error":
-                    "bracket mode not implemented yet"}]
-    else:
-        results = run_stack(args, run_dir)
+    def capture():
+        if args.mode == "bracket":
+            print("BRACKET mode is not implemented yet -- see the card notes.",
+                  flush=True)
+            return [{"label": "all",
+                     "error": "bracket mode not implemented yet"}]
+        return run_stack(args, run_dir)
 
-    for r in results:
-        print("  %-7s %s" % (r["label"], r.get("error") or
-                             "N=%d ladder=%s" % (r["n"], r["ladder"])),
-              flush=True)
-
-    html = build_report(results, args.mode, os.path.join(run_dir, "index.html"))
-    print("report: %s" % html, flush=True)
     if args.once:
+        results = capture()
+        for r in results:
+            print("  %-7s %s" % (r["label"], r.get("error") or
+                                 "N=%d ladder=%s" % (r["n"], r["ladder"])),
+                  flush=True)
+        build_report(results, args.mode, os.path.join(run_dir, "index.html"))
         return 0
 
+    # SERVE FIRST, capture second. Capture + merge on a Pi Zero 2 W takes
+    # minutes at HD, and the workbench health-gates LIVE on this page
+    # answering within 60 s -- so a capture-then-serve order gets SIGINT'd
+    # mid-merge and the card reports a failure that never happened.
+    # (S28's compare card learned the same lesson: serve -> capture ->
+    # report -> serve.)
+    index = os.path.join(run_dir, "index.html")
+    _write_progress(index, args, "starting")
     os.chdir(run_dir)
+
+    def worker():
+        try:
+            results = capture()
+            for r in results:
+                print("  %-7s %s" % (r["label"], r.get("error") or
+                                     "N=%d ladder=%s" % (r["n"], r["ladder"])),
+                      flush=True)
+            build_report(results, args.mode, index)
+            print("report ready", flush=True)
+        except Exception as exc:                        # noqa: BLE001
+            # A failed capture must SAY so on the page; a stale "capturing"
+            # forever is the frozen-stream failure in another costume.
+            _write_progress(index, args, "FAILED: %s" % exc)
+            print("composite FAILED: %s" % exc, flush=True)
+
+    threading.Thread(target=worker, daemon=True).start()
+
     handler = http.server.SimpleHTTPRequestHandler
 
     class S(socketserver.ThreadingTCPServer):
