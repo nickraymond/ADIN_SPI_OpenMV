@@ -136,12 +136,28 @@ class SourceView:
         self.latest = Latest()
         self.stats = StreamStats()
         self.state = {"alive": True, "quit": False, "board": None}
+        #: What was ASKED of this camera (framesize, fps, and for the CSI its
+        #: pixel size). Reported beside what it actually delivers, because
+        #: "15 fps" as a setting and 3.6 fps as a measurement are the whole
+        #: point of a camera-comparison tool -- showing only one of them
+        #: turns a hardware limit into a mystery.
+        self.want = {}
 
     def snapshot(self):
         s = self.stats.snapshot()
         s["label"] = self.label
         s["kind"] = self.kind
         s["target"] = self.target or "(auto)"
+        want = self.want or {}
+        s["set_fps"] = want.get("fps")
+        s["framesize"] = want.get("framesize")
+        # Resolution SET: for a board the sensor decides the letterbox, so the
+        # authoritative number is the one it reported in its #I banner; only
+        # fall back to what we asked for when it has not answered yet.
+        info = self.stats.info_fields or {}
+        w = info.get("w") or want.get("w")
+        h = info.get("h") or want.get("h")
+        s["res"] = ("%dx%d" % (w, h)) if w and h else None
         return s
 
 

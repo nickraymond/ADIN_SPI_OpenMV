@@ -14,6 +14,7 @@ name = "field-streams"
 title = "Field rig — three camera streams"
 summary = "Live video from all three cameras side by side: IMX708, AE3 and N6, VGA class at 15 fps. Boards are found by asking them their role, so swapping in a new AE3 or N6 needs no edit here. From sprint S29 bite 1."
 opens = ":8090"
+thumbnail = "thumbs/field_streams.jpg"
 
 [[boards]]
 label = "AE3"
@@ -23,11 +24,28 @@ role = "AE3"
 label = "N6"
 role = "N6"
 
+# Card toggles (S8 E6 mechanism): each key becomes --<key> <value> on the
+# child's argv, values are enum-validated server-side, first entry is the
+# default. framesize drives ALL THREE cameras -- the boards letterbox to
+# their own sizes (AE3 1280x800 / N6 1280x720 at HD) and the IMX is matched
+# to the N6's rectangle so the panels frame the same scene.
+#
+# Expect the AE3 to fall well short of 15 fps at HD -- its measured
+# streaming ceiling is ~3.6 fps HD (S23). The page shows set-vs-actual
+# precisely so that reads as the hardware difference it is.
+[params]
+framesize = ["VGA", "HD"]
+fps = ["15", "10", "5", "30"]
+quality = ["50", "75", "90"]
+# mono answers "what is the AE3 actually capable of at HD" -- no hardware
+# JPEG on that SoC, so colour costs a convert plus 3x the DCT work.
+# Affects the two OpenMV boards only; the IMX708 stays colour.
+colour = ["color", "mono"]
+
 [run]
 argv = [
   "bash", "pi/field/run_field_stream.sh",
   "--bind", "0.0.0.0", "--http-port", "8090",
-  "--framesize", "VGA", "--fps", "15", "--quality", "50",
 ]
 cwd = "."
 

@@ -39,6 +39,7 @@ from n6_stream_host import (build_board_script_text, reader_loop,  # noqa: E402
                             supervise, QuietServer)
 import discover as discovery                                       # noqa: E402
 from sources import SourceView, supervise_csi                      # noqa: E402
+import netinfo                                                     # noqa: E402
 
 #: Left-to-right panel order, fixed by Nick: IMX708 first, N6 on the far right.
 LAYOUT = ("IMX", "AE3", "N6")
@@ -47,7 +48,22 @@ LAYOUT = ("IMX", "AE3", "N6")
 #: (measured: QVGA = 320x200, VGA = 640x400, HD = 1280x800), so "VGA" is 640x400
 #: on the boards and a true 640x480 on the IMX708. They are not the same
 #: rectangle and the page does not pretend otherwise.
-CSI_SIZE = (640, 480)
+#: What each framesize means per camera. The three sensors are NOT the same
+#: rectangle and the page must not pretend otherwise:
+#:   AE3  letterboxes 16:10  -> VGA 640x400,  HD 1280x800
+#:   N6   letterboxes 16:10 at VGA, 16:9 at HD -> 640x400, 1280x720
+#:   IMX708 is free to pick anything from a 4608x2592 sensor
+#: The IMX is matched to the N6's rectangle rather than given its own, so the
+#: three panels frame roughly the same scene -- Nick's "keep the relative ROI
+#: the same as it makes sense". It is NOT dumbed down to the AE3: the IMX and
+#: N6 run their real resolution and the AE3 lands where its hardware lands.
+CSI_SIZES = {"VGA": (640, 480), "HD": (1280, 720)}
+CSI_SIZE = CSI_SIZES["VGA"]
+
+#: The AE3 cannot hold 15 fps at HD -- its measured streaming ceiling is
+#: ~3.6 fps HD mono (S23 GOLD). That is not a bug to hide; it is the
+#: performance difference this tool exists to show, so the page reports
+#: SET fps beside ACTUAL fps and lets the gap speak.
 
 #: Upper bound for the board script's run length, in seconds.
 #:
@@ -65,7 +81,7 @@ CSI_SIZE = (640, 480)
 MAX_STREAM_SECONDS = 259200
 
 
-def board_cfg(framesize, quality, pace_ms):
+def board_cfg(framesize, quality, pace_ms, pixfmt="RGB565"):
     """Config for a plain video stream: no model, no blobs, no overlay.
 
     This is the same shape the proven ``hil-aiming`` recipe uses
@@ -76,6 +92,7 @@ def board_cfg(framesize, quality, pace_ms):
         "framesize": framesize,
         "quality": quality,
         "pace_ms": pace_ms,
+        "pixfmt": pixfmt,
         "max_seconds": MAX_STREAM_SECONDS,
         "max_frames": 0,
         "detect": False,
@@ -92,7 +109,7 @@ def board_cfg(framesize, quality, pace_ms):
     }
 
 
-def build_views(found, csi_camera=0):
+def build_views(found, csi_camera=0, want=None):
     """One SourceView per camera present, in LAYOUT order.
 
     A missing camera still gets a panel, showing WHY it is missing. Dropping
@@ -102,10 +119,14 @@ def build_views(found, csi_camera=0):
     views = []
     for role in LAYOUT:
         if role == "IMX":
-            views.append(SourceView("IMX708", "csi", "camera %d" % csi_camera))
+            v = SourceView("IMX708", "csi", "camera %d" % csi_camera)
+            v.want = dict(want or {}, w=(want or {}).get("csi_w"),
+                          h=(want or {}).get("csi_h"))
+            views.append(v)
         else:
             info = found.get(role)
             view = SourceView(role, "serial", info["port"] if info else "")
+            view.want = dict(want or {})
             if info:
                 view.stats.board = info.get("machine", "")
             else:
@@ -116,51 +137,125 @@ def build_views(found, csi_camera=0):
 
 
 def page(views):
-    """Side-by-side page, one panel per camera, in LAYOUT order."""
+    """Three panels, click one to fill the window.
+
+    Layout notes, all from Nick's review of the first cut (2026-09-06):
+    the per-camera detail was a wall of changing text that was hard to read,
+    so it is a fixed-row TABLE now -- the rows never move, only the numbers.
+    The "target" line is gone (it was a device path nobody reads mid-test),
+    and SET is shown beside ACTUAL for both resolution and frame rate,
+    because the gap between them is the measurement.
+    """
     panels = "\n".join(
-        '<div class="p"><h2>%s</h2><div class="ban" id="b%d"></div>'
+        '<figure class="p" id="p%d" onclick="focusPanel(%d)" '
+        'title="click to enlarge">'
+        '<figcaption>%s<span class="hint">click to enlarge</span></figcaption>'
+        '<div class="ban" id="b%d"></div>'
         '<img src="/s/%d/stream" alt="%s"/>'
-        '<pre id="s%d">connecting&hellip;</pre></div>'
-        % (v.label, i, i, v.label, i) for i, v in enumerate(views))
+        '<table class="st"><tbody>'
+        '<tr><th>resolution</th><td id="r%d">&mdash;</td></tr>'
+        '<tr><th>frame rate</th><td id="f%d">&mdash;</td></tr>'
+        '<tr><th>stream rate</th><td id="m%d">&mdash;</td></tr>'
+        '<tr><th>status</th><td id="s%d" class="stat">&mdash;</td></tr>'
+        '</tbody></table></figure>'
+        % (i, i, v.label, i, i, v.label, i, i, i, i)
+        for i, v in enumerate(views))
     return """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Field rig &mdash; three cameras</title><style>
- body{background:#111;color:#ddd;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;margin:0;padding:12px}
- h1{font-size:15px;margin:0 0 10px;color:#fff;font-weight:600}
+ :root{--bg:#111;--card:#181818;--line:#2a2a2a;--fg:#ddd;--mut:#8a949e;--acc:#8fd0ff}
+ body{background:var(--bg);color:var(--fg);margin:0;padding:12px;
+      font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+ header{display:flex;justify-content:space-between;align-items:flex-start;
+        gap:12px;margin:0 0 10px}
+ h1{font-size:15px;margin:0;color:#fff;font-weight:600}
+ #net{text-align:right;font-size:12px;color:var(--mut);white-space:nowrap}
+ #net b{font-weight:600}
+ .excellent{color:#7fd48a}.good{color:#7fd48a}.weak{color:#e6c15a}
+ .poor{color:#ef8a8a}.unknown{color:var(--mut)}.wired{color:#7fd48a}
  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
- .p{flex:1 1 320px;min-width:300px;background:#181818;border:1px solid #2a2a2a;border-radius:6px;padding:8px}
- h2{font-size:13px;margin:0 0 6px;color:#8fd0ff}
+ .p{flex:1 1 320px;min-width:290px;margin:0;background:var(--card);
+    border:1px solid var(--line);border-radius:6px;padding:8px;cursor:zoom-in}
+ figcaption{font-size:13px;color:var(--acc);margin:0 0 6px;
+            display:flex;justify-content:space-between;align-items:baseline}
+ .hint{color:var(--mut);font-size:11px;font-weight:400}
  img{width:100%;display:block;background:#000;border-radius:3px}
- pre{margin:6px 0 0;white-space:pre-wrap;color:#aaa;font-size:12px}
+ table.st{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px}
+ table.st th{text-align:left;font-weight:400;color:var(--mut);
+             padding:1px 8px 1px 0;white-space:nowrap;width:5.8em}
+ table.st td{padding:1px 0;color:var(--fg)}
+ td.stat{color:var(--mut)}
  .ban{display:none;margin:0 0 6px;padding:4px 6px;border-radius:3px;
       background:#5c1a1a;color:#ffdede;font-weight:600}
  .ban.on{display:block}
+ .lag{color:#e6c15a}
+ /* Fullscreen: the clicked panel fills the window, the others are hidden.
+    Kept as a class on <body> so one Escape handler undoes it. */
+ body.zoom .p{display:none}
+ body.zoom .p.big{display:block;flex:1 1 100%;cursor:zoom-out}
+ body.zoom .p.big img{max-height:78vh;object-fit:contain}
 </style></head><body>
-<h1>Field rig &mdash; IMX708 &middot; AE3 &middot; N6</h1>
+<header>
+  <h1>Field rig &mdash; IMX708 &middot; AE3 &middot; N6</h1>
+  <div id="net">link &hellip;</div>
+</header>
 <div class="row">__PANELS__</div>
 <script>
-// Liveness is polled and DISPLAYED. The <img> keeps showing the last frame
-// when a camera dies, so the banner is the only thing that can tell the
-// difference between a live still scene and a dead stream.
+let zoomed = null;
+function focusPanel(i){
+  const el = document.getElementById('p'+i);
+  if (zoomed === i){ unzoom(); return; }
+  document.querySelectorAll('.p').forEach(p => p.classList.remove('big'));
+  el.classList.add('big'); document.body.classList.add('zoom'); zoomed = i;
+}
+function unzoom(){
+  document.body.classList.remove('zoom');
+  document.querySelectorAll('.p').forEach(p => p.classList.remove('big'));
+  zoomed = null;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') unzoom(); });
+
+const fmt = (v, s) => (v === null || v === undefined) ? '\u2014' : v + (s||'');
+
 async function tick(){
   try{
     const rows = await (await fetch('/api/sources')).json();
     rows.forEach((j,i)=>{
-      const s=document.getElementById('s'+i), b=document.getElementById('b'+i);
-      if(!s) return;
-      s.textContent =
-        'status  '+j.status+'\\n'+
-        'fps     '+j.fps+'   '+j.mbps+' Mbps   '+j.kb_frame+' kB/frame\\n'+
-        'frames  '+j.frames+'   reconnects '+j.reconnects+'   resyncs '+j.resyncs+'\\n'+
-        'target  '+j.target+
-        (j.board? '\\nboard   '+j.board : '')+
-        (j.junk && j.junk.length? '\\nlast    '+j.junk[j.junk.length-1] : '');
+      const R=document.getElementById('r'+i), F=document.getElementById('f'+i),
+            M=document.getElementById('m'+i), S=document.getElementById('s'+i),
+            b=document.getElementById('b'+i);
+      if(!R) return;
+      R.textContent = fmt(j.res) + (j.framesize? '  ('+j.framesize+')' : '');
+      // SET beside ACTUAL. A camera that cannot hold the requested rate is
+      // reporting a hardware limit, not failing -- so the gap is shown
+      // plainly rather than hidden behind one number.
+      const set = j.set_fps, act = j.fps;
+      const slow = (set && act && act < set * 0.8);
+      F.innerHTML = fmt(act) + ' actual <span class="' + (slow?'lag':'') +
+                    '">/ ' + fmt(set) + ' set</span>';
+      M.textContent = fmt(j.mbps,' Mb/s') + '   ' + fmt(j.kb_frame,' kB/frame');
+      S.textContent = j.status;
       const stale = (j.stale_s===null||j.stale_s===undefined)||j.stale_s>3;
       b.className = 'ban'+(stale?' on':'');
       b.textContent = (j.stale_s===null||j.stale_s===undefined)
-        ? 'NOT LIVE \\u2014 no frame yet'
-        : 'NOT LIVE \\u2014 last frame '+j.stale_s+'s ago';
+        ? 'NOT LIVE \u2014 no frame yet'
+        : 'NOT LIVE \u2014 last frame '+j.stale_s+'s ago';
     });
+  }catch(e){}
+  try{
+    const n = await (await fetch('/api/net')).json();
+    const el = document.getElementById('net');
+    // The link is shown because a weak one makes every camera look bad --
+    // but note the fps above is counted ON THE PI, so a bad link stutters
+    // the picture without moving those numbers.
+    if (n.wired){
+      el.innerHTML = 'link <b class="wired">'+n.iface+' wired</b>';
+    } else {
+      el.innerHTML = 'link <b>'+n.iface+'</b> '+(n.ssid? '&middot; '+n.ssid : '')+
+        ' &middot; <b class="'+n.grade+'">'+fmt(n.signal_dbm,' dBm')+
+        ' '+n.grade+'</b>'+
+        (n.tx_bitrate_mbps? ' &middot; '+n.tx_bitrate_mbps+' Mb/s tx' : '');
+    }
   }catch(e){}
 }
 setInterval(tick,1000); tick();
@@ -188,6 +283,10 @@ def make_handler(views):
                 return
             if path == "/api/sources":
                 self._body(json.dumps([v.snapshot() for v in views]).encode(),
+                           "application/json")
+                return
+            if path == "/api/net":
+                self._body(json.dumps(netinfo.net_status()).encode(),
                            "application/json")
                 return
             if path == "/healthz":
@@ -294,9 +393,16 @@ def parse_args(argv=None):
                     help="OpenMV capture size (VGA = 640x400 letterboxed)")
     ap.add_argument("--fps", type=float, default=15.0)
     ap.add_argument("--quality", type=int, default=50)
-    ap.add_argument("--csi-width", type=int, default=CSI_SIZE[0])
-    ap.add_argument("--csi-height", type=int, default=CSI_SIZE[1])
+    ap.add_argument("--csi-width", type=int, default=0,
+                    help="override the CSI width (0 = follow --framesize)")
+    ap.add_argument("--csi-height", type=int, default=0,
+                    help="override the CSI height (0 = follow --framesize)")
     ap.add_argument("--csi-camera", type=int, default=0)
+    ap.add_argument("--colour", default="color", choices=("color", "mono"),
+                    help="board pixel format. mono (GRAYSCALE) exists to "
+                         "measure the AE3's real HD ceiling -- this SoC has "
+                         "no hardware JPEG, so colour costs a convert plus "
+                         "3x the DCT work")
     ap.add_argument("--attach-settle", type=float, default=REFUSAL_SETTLE_S,
                     help="seconds of port silence before retrying a board "
                          "that refused the raw REPL (default: %(default)s)")
@@ -308,14 +414,22 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
     pace_ms = int(1000.0 / args.fps) if args.fps > 0 else 0
+    csi_w, csi_h = CSI_SIZES.get(args.framesize.upper(), CSI_SIZE)
+    if args.csi_width:
+        csi_w = args.csi_width
+    if args.csi_height:
+        csi_h = args.csi_height
 
     found, problems = discover_boards(args.attach_settle)
 
-    views = build_views(found, args.csi_camera)
+    views = build_views(found, args.csi_camera,
+                        want={"fps": args.fps, "framesize": args.framesize,
+                              "csi_w": csi_w, "csi_h": csi_h})
     if args.no_csi:
         views = [v for v in views if v.kind != "csi"]
 
-    cfg = board_cfg(args.framesize, args.quality, pace_ms)
+    cfg = board_cfg(args.framesize, args.quality, pace_ms,
+                    "GRAYSCALE" if args.colour == "mono" else "RGB565")
     script_text = build_board_script_text(cfg)
 
     threads = []
@@ -323,7 +437,7 @@ def main(argv=None):
         if view.kind == "csi":
             t = threading.Thread(
                 target=supervise_csi, daemon=True,
-                args=(view, args.csi_width, args.csi_height, args.fps,
+                args=(view, csi_w, csi_h, args.fps,
                       args.quality, args.csi_camera))
         elif view.target:
             t = threading.Thread(

@@ -389,6 +389,37 @@ def board_preflight(by_id, dev_dir=BY_ID_DIR, proc="/proc"):
             "tty": real, "holders": holders}
 
 
+def board_key(b):
+    """The one identity a board is tracked by, whichever way it is named.
+
+    by_id boards key on their path; role boards key on "role:<ROLE>". Both
+    sides of every comparison must use THIS function -- mixing raw
+    ``b["by_id"]`` (None for a role board) with preflight's "role:AE3" is
+    what made the settle window silently skippable.
+    """
+    return b.get("by_id") or ("role:%s" % (b.get("role") or "?"))
+
+
+def keys_overlap(a, b):
+    """Do two sets of board keys refer to any common physical board?
+
+    Deliberately CONSERVATIVE. A role key ("role:AE3") and a by_id key name
+    the same two chips on this rig, but nothing in the strings says so, and
+    resolving it would mean opening a serial port -- which preflight must
+    never do (D45). So any role key on either side counts as a match.
+
+    The asymmetry of the risk decides it: a false match costs 35 s of
+    waiting; a missed match skips the settle window on a real board, and the
+    quick stop->start it allows is exactly what wedged the AE3 into the
+    power-cycle-only refusal that cost this sprint a session.
+    """
+    if not a or not b:
+        return False
+    if any(k.startswith("role:") for k in a | b):
+        return True
+    return bool(a & b)
+
+
 def role_preflight(role, dev_dir=BY_ID_DIR, proc="/proc"):
     """Passive state for a ROLE-named board, without opening any port.
 
@@ -441,7 +472,7 @@ def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
     boards, units = {}, []
     for r in recipes:
         for b in r["boards"]:
-            key = b["by_id"] or ("role:%s" % b.get("role", ""))
+            key = board_key(b)
             if key not in boards:
                 if b["by_id"]:
                     entry = board_preflight(b["by_id"], dev_dir, proc)
@@ -659,9 +690,9 @@ class Runner:
             if not recipe.get("run"):
                 raise StartRefused("recipe '%s' has no [run] block"
                                    % recipe["name"])
-            needed = {b["by_id"] for b in recipe["boards"]}
+            needed = {board_key(b) for b in recipe["boards"]}
             remaining = self.settle_until - time.monotonic()
-            if remaining > 0 and needed & self.settle_boards:
+            if remaining > 0 and keys_overlap(needed, self.settle_boards):
                 raise StartRefused(
                     "the boards are settling after the last stop -- the AE3 "
                     "needs ~%.0f s of silence before a reattach or it wedges. "
@@ -814,7 +845,7 @@ class Runner:
     def _arm_settle(self):
         """Called (under the lock) whenever the demo releases its boards."""
         if self.recipe:
-            self.settle_boards = {b["by_id"]
+            self.settle_boards = {board_key(b)
                                   for b in self.recipe.get("boards", [])}
             self.settle_until = time.monotonic() + self.SETTLE
 
