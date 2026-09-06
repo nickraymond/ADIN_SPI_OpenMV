@@ -1,0 +1,35 @@
+# field_streams.toml -- S29 bite 1/2: the field rig's first card.
+#
+# Three live camera streams side by side (IMX708 | AE3 | N6) at VGA class,
+# 15 fps. No models, no blobs, no overlay -- this is the "what are the
+# cameras actually seeing" view, and like hil-aiming it must run on ANY
+# rig state, so it declares no models and pins no firmware.
+#
+# Boards are named by ROLE, not by_id: this rig's AE3 and N6 get swapped
+# for new boards, and a by_id names the chip, so a swap would otherwise
+# mean editing this file. The role is resolved by ASKING each board at run
+# time (pi/field/discover.py) -- never in preflight, which opens no ports.
+
+name = "field-streams"
+title = "Field rig — three camera streams"
+summary = "Live video from all three cameras side by side: IMX708, AE3 and N6, VGA class at 15 fps. Boards are found by asking them their role, so swapping in a new AE3 or N6 needs no edit here. From sprint S29 bite 1."
+opens = ":8090"
+
+[[boards]]
+label = "AE3"
+role = "AE3"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+[run]
+argv = [
+  "python3", "-u", "pi/field/field_stream.py",
+  "--bind", "0.0.0.0", "--http-port", "8090",
+  "--framesize", "VGA", "--fps", "15", "--quality", "50",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8090/healthz"

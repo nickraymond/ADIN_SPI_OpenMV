@@ -34,6 +34,7 @@ Unit: pi/services/workbench.service         # enabled at boot -- the point
 """
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -67,7 +68,7 @@ DISK_MIN_FREE_MB = 500
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
             "boards", "run", "health", "guide", "params"}
-BOARD_KEYS = {"label", "by_id", "firmware", "models"}
+BOARD_KEYS = {"label", "by_id", "role", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd", "stop_grace"}
 STOP_GRACE_MAX = 120
@@ -109,7 +110,19 @@ def _validate_board(b, i, errs):
         return None
     _unknown(b, BOARD_KEYS, where, errs)
     label = _str(b, "label", where, errs, required=True)
-    by_id = _str(b, "by_id", where, errs, required=True)
+    # A board is named EITHER by its by_id path (a specific chip) or by its
+    # ROLE (whatever board answers "AE3"). Role exists because the field rig's
+    # boards get swapped: a by_id names the chip, so every recipe would need
+    # editing on swap day. Roles are resolved by ASKING the board at RUN time,
+    # never here -- preflight opens no serial port (D45) and cannot know which
+    # port is which without one.
+    by_id = _str(b, "by_id", where, errs)
+    role = _str(b, "role", where, errs)
+    if by_id and role:
+        errs.append("%s: give by_id or role, not both" % where)
+    if not by_id and not role:
+        errs.append("%s: needs by_id (a specific board) or role "
+                    "(whatever board answers, e.g. \"AE3\")" % where)
     if by_id and "/" in by_id:
         errs.append("%s: by_id is a name under %s, not a path"
                     % (where, BY_ID_DIR))
@@ -140,8 +153,8 @@ def _validate_board(b, i, errs):
                         % mw)
         out_models.append({"name": name, "path": path, "sha256": sha,
                            "src": src})
-    return {"label": label, "by_id": by_id, "firmware": firmware,
-            "models": out_models}
+    return {"label": label, "by_id": by_id, "role": role,
+            "firmware": firmware, "models": out_models}
 
 
 def validate_recipe(obj, source):
@@ -376,6 +389,35 @@ def board_preflight(by_id, dev_dir=BY_ID_DIR, proc="/proc"):
             "tty": real, "holders": holders}
 
 
+def role_preflight(role, dev_dir=BY_ID_DIR, proc="/proc"):
+    """Passive state for a ROLE-named board, without opening any port.
+
+    This deliberately does NOT say "the AE3 is ready" -- it cannot, because
+    knowing which port is the AE3 means asking the board, and preflight is
+    forbidden from opening a serial port (D45; the lock, not the panel, is the
+    correctness mechanism). Claiming a per-role verdict here would be
+    inventing a hardware fact. What it CAN say honestly is how many candidate
+    ports exist and whether anything is holding them.
+    """
+    ports = sorted(glob.glob(os.path.join(dev_dir, "*-if00")))
+    free, holders = [], []
+    for link in ports:
+        real = os.path.realpath(link)
+        held = scan_port_holders(real, proc)
+        if held:
+            holders.extend(held)
+        else:
+            free.append(real)
+    if not ports:
+        state = "waiting"
+    elif not free:
+        state = "held"
+    else:
+        state = "ready"
+    return {"by_id": "role:%s" % role, "role": role, "state": state,
+            "tty": None, "candidates": len(ports), "holders": holders}
+
+
 def _systemctl_state(unit):
     try:
         out = subprocess.run(
@@ -399,10 +441,14 @@ def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
     boards, units = {}, []
     for r in recipes:
         for b in r["boards"]:
-            if b["by_id"] not in boards:
-                entry = board_preflight(b["by_id"], dev_dir, proc)
+            key = b["by_id"] or ("role:%s" % b.get("role", ""))
+            if key not in boards:
+                if b["by_id"]:
+                    entry = board_preflight(b["by_id"], dev_dir, proc)
+                else:
+                    entry = role_preflight(b["role"], dev_dir, proc)
                 entry["label"] = b["label"]
-                boards[b["by_id"]] = entry
+                boards[key] = entry
         for u in r.get("services") or []:
             if u not in units:
                 units.append(u)
