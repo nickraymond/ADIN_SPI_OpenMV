@@ -25,7 +25,7 @@ role = "N6"
 
 [run]
 argv = [
-  "python3", "-u", "pi/field/field_stream.py",
+  "bash", "pi/field/run_field_stream.sh",
   "--bind", "0.0.0.0", "--http-port", "8090",
   "--framesize", "VGA", "--fps", "15", "--quality", "50",
 ]

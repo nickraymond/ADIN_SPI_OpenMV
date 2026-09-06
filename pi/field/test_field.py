@@ -348,7 +348,21 @@ class TestShippedFieldRecipeLoads(unittest.TestCase):
         rec, errs = workbench.validate_recipe(obj, "field_streams.toml")
         self.assertEqual(errs, [])
         self.assertEqual({b["role"] for b in rec["boards"]}, {"AE3", "N6"})
-        self.assertIn("field_stream.py", " ".join(rec["run"]["argv"]))
+        self.assertIn("run_field_stream.sh", " ".join(rec["run"]["argv"]))
+
+    def test_launcher_is_executable_and_has_no_host_specific_path(self):
+        sh = os.path.join(_ROOT, "pi", "field", "run_field_stream.sh")
+        self.assertTrue(os.access(sh, os.X_OK), "wrapper must be executable")
+        body = open(sh).read()
+        # A repo file the other rigs also read must not hardcode this rig's
+        # home directory; $HOME is resolved at run time instead. Comments may
+        # mention the path (they explain why it is avoided), so only the
+        # executable lines are checked.
+        code = "\n".join(l for l in body.splitlines()
+                          if not l.lstrip().startswith("#"))
+        self.assertNotIn("/home/pi", code)
+        self.assertIn("$HOME/mpv/bin/python", body)
+        self.assertIn("FIELD_PYTHON", body)
 
 
 class TestMaxSecondsFitsMicropythonTicks(unittest.TestCase):
