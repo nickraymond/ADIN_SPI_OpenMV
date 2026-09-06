@@ -49,6 +49,21 @@ LAYOUT = ("IMX", "AE3", "N6")
 #: rectangle and the page does not pretend otherwise.
 CSI_SIZE = (640, 480)
 
+#: Upper bound for the board script's run length, in seconds.
+#:
+#: MEASURED THE HARD WAY 2026-09-06: passing 1e9 crashed BOTH boards with
+#: ``OverflowError: overflow converting long int to machine word`` inside
+#: ``time.ticks_add(time.ticks_ms(), int(MAX_SECONDS * 1000))``. MicroPython's
+#: ticks arithmetic takes a delta within +/- ticks_period/2 -- 2**29 ms
+#: (~6.2 days) on these ports -- and 1e9 s is 1e12 ms, far outside it.
+#:
+#: This cannot simply be "forever": ``#D`` (bounded run complete) makes the
+#: supervisor set quit and return PERMANENTLY, so whatever we pick is a real
+#: stream lifetime, not a formality. 3 days sits at roughly half the ticks
+#: limit -- long enough that no bench or field session reaches it, with
+#: enough margin that a port with a smaller ticks_period is still safe.
+MAX_STREAM_SECONDS = 259200
+
 
 def board_cfg(framesize, quality, pace_ms):
     """Config for a plain video stream: no model, no blobs, no overlay.
@@ -61,7 +76,7 @@ def board_cfg(framesize, quality, pace_ms):
         "framesize": framesize,
         "quality": quality,
         "pace_ms": pace_ms,
-        "max_seconds": 10 ** 9,     # the supervisor owns the lifetime
+        "max_seconds": MAX_STREAM_SECONDS,
         "max_frames": 0,
         "detect": False,
         "blobs": False,

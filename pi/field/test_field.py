@@ -350,5 +350,32 @@ class TestShippedFieldRecipeLoads(unittest.TestCase):
         self.assertEqual({b["role"] for b in rec["boards"]}, {"AE3", "N6"})
         self.assertIn("field_stream.py", " ".join(rec["run"]["argv"]))
 
+
+class TestMaxSecondsFitsMicropythonTicks(unittest.TestCase):
+    """Regression for a bug that only hardware could show.
+
+    max_seconds=1e9 crashed both boards with OverflowError inside
+    time.ticks_add(). MicroPython's ticks delta must fit +/- 2**29 ms.
+    """
+
+    TICKS_HALF_PERIOD_MS = 2 ** 29
+
+    def test_cap_is_within_ticks_range(self):
+        ms = field_stream.MAX_STREAM_SECONDS * 1000
+        self.assertLess(ms, self.TICKS_HALF_PERIOD_MS)
+
+    def test_cap_keeps_real_margin(self):
+        # Not merely under the limit -- comfortably under it, so a port with
+        # a smaller ticks_period does not rediscover this at 2 a.m.
+        ms = field_stream.MAX_STREAM_SECONDS * 1000
+        self.assertLess(ms, self.TICKS_HALF_PERIOD_MS / 2)
+
+    def test_board_cfg_uses_the_cap(self):
+        self.assertEqual(field_stream.board_cfg("VGA", 50, 66)["max_seconds"],
+                         field_stream.MAX_STREAM_SECONDS)
+
+    def test_cap_is_long_enough_to_not_bite_a_session(self):
+        self.assertGreaterEqual(field_stream.MAX_STREAM_SECONDS, 24 * 3600)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
