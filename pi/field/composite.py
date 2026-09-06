@@ -162,28 +162,34 @@ def ev_to_shutter(base_us, ev):
 #: script reports the exposure/gain it actually settled on, per frame, and
 #: the host records them -- a burst whose settings moved is not a stack.
 BOARD_BURST = '''
-import csi, image, time, ubinascii, gc, sensor
-csi0 = csi.CSI()
-csi0.reset()
-csi0.pixformat(csi.RGB565)
-csi0.framesize(csi.%(SIZE)s)
-csi0.skip_frames(time=2000)
+import sensor, image, time, ubinascii, gc
+sensor.reset()
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.%(SIZE)s)
+sensor.skip_frames(time=2000)
+# FREEZE the pipeline. Without this every frame in the burst has a different
+# exposure and averaging them is meaningless -- S28's load-bearing rule was
+# "prove the lock", not "assume it". Each is guarded because the three
+# sensors do not expose an identical control surface.
 try:
-    csi0.auto_exposure(False, exposure_us=%(EXP)d) if %(EXP)d > 0 else csi0.auto_exposure(False)
+    if %(EXP)d > 0:
+        sensor.set_auto_exposure(False, exposure_us=%(EXP)d)
+    else:
+        sensor.set_auto_exposure(False)
 except Exception as e:
     print("#W lock_exposure", e)
 try:
-    csi0.auto_gain(False)
+    sensor.set_auto_gain(False)
 except Exception as e:
     print("#W lock_gain", e)
 try:
-    csi0.auto_whitebal(False)
+    sensor.set_auto_whitebal(False)
 except Exception as e:
     print("#W lock_wb", e)
 time.sleep_ms(300)
-print("#L {"exp": %%d}" %% (0,))
+print("#L locked")
 for i in range(%(N)d):
-    img = csi0.snapshot()
+    img = sensor.snapshot()
     j = img.to_jpeg(quality=%(Q)d)
     b = ubinascii.b2a_base64(j.bytearray()).decode().strip()
     print("#F %%d %%d" %% (i, len(b)))
