@@ -120,13 +120,14 @@ def run_stack(args, out_dir):
             results.append({"label": label,
                             "error": "only %d frame(s) captured" % len(paths)})
             continue
-        frames = [composite.decode_jpeg(open(p, "rb").read()) for p in paths]
-        merged = composite.stack_frames(frames, args.merge)
+        # Stream from disk: never hold N full-res frames in RAM at once.
+        merged = composite.stack_paths(paths, args.merge)
         comp_path = os.path.join(out_dir, "%s_composite.jpg" % label)
         _save(merged, comp_path)
-        results.append({"label": label, "n": len(frames), "single": paths[0],
+        del merged
+        results.append({"label": label, "n": len(paths), "single": paths[0],
                         "composite": comp_path,
-                        "ladder": composite.noise_ladder(frames, args.merge),
+                        "ladder": composite.noise_ladder_paths(paths),
                         "note": note})
     return results
 

@@ -57,42 +57,62 @@ def decode_jpeg(data):
     return arr
 
 
-def stack_frames(frames, mode="mean"):
-    """Merge a list of same-shape arrays using S28's proven merge functions."""
+#: Longest edge used for the NOISE metric. Full-res analysis is what killed
+#: this: 8 HD frames as float32 is ~98 MB, np.stack copies it again, and the
+#: OOM killer took the process (rc=-9) on a 415 MB Pi Zero 2 W. S28 reached
+#: the same conclusion from the other side -- "median/sigma-clip need all N
+#: frames resident; N x HD does not fit". Noise is a statistic, so it is
+#: measured on a downscale; the COMPOSITE itself stays full resolution.
+ANALYSIS_MAX_EDGE = 480
+
+
+def _small(np, arr):
+    """Cheap integer-stride downscale for the noise statistic."""
+    h = arr.shape[0]
+    step = max(1, int(round(max(arr.shape[0], arr.shape[1])
+                            / float(ANALYSIS_MAX_EDGE))))
+    return arr[::step, ::step]
+
+
+def stack_paths(paths, mode="mean"):
+    """Merge frames from DISK, holding at most one at a time for mean.
+
+    mean uses a running accumulator -- O(1) in N -- which is the same shape
+    S28 scoped for the on-board production path (a uint16 sum buffer, never
+    N frames resident). median/sigma genuinely need every frame, so they
+    load a DOWNSCALED stack and are documented as analysis-only.
+    """
     np = _np()
+    if mode == "mean":
+        acc = None
+        for p in paths:
+            f = decode_jpeg(open(p, "rb").read()).astype(np.float32)
+            acc = f if acc is None else acc + f
+            del f
+        return acc / len(paths)
     import s28_stack
-    stack = np.stack(frames, axis=0)
-    fn = {"mean": s28_stack.merge_mean,
-          "median": s28_stack.merge_median,
+    stack = np.stack([_small(np, decode_jpeg(open(p, "rb").read()))
+                      for p in paths], axis=0)
+    fn = {"median": s28_stack.merge_median,
           "sigma": s28_stack.merge_sigma_clip}[mode]
     return fn(stack)
 
 
-def noise_of(frames):
-    """Temporal sigma across the burst -- the honest noise metric.
+def noise_ladder_paths(paths):
+    """Temporal sigma at 1, 2, 4... frames -- the sqrt(N) curve, measured.
 
-    S28's key finding, kept: a SPATIAL std on a 'uniform' patch hides the win
-    behind fixed scene texture (it read only 1.4x when the real gain was 3x).
-    Temporal sigma per pixel, then averaged, measures what stacking removes.
+    Temporal, never spatial: S28 found a spatial std on a "uniform" patch
+    hides the win behind fixed scene texture (it read 1.4x when the real
+    gain was 3x). Runs on the downscale so it cannot OOM.
     """
     np = _np()
-    stack = np.stack(frames, axis=0)
-    return float(np.mean(np.std(stack, axis=0)))
-
-
-def noise_ladder(frames, mode="mean"):
-    """sigma at 1, 2, 4, 8... frames -- the sqrt(N) curve, measured."""
-    np = _np()
-    out = []
-    n = len(frames)
-    k = 1
+    smalls = [_small(np, decode_jpeg(open(p, "rb").read())) for p in paths]
+    out, n, k = [], len(smalls), 1
     while k <= n:
-        merged = [stack_frames(frames[i:i + k], mode)
+        groups = [np.mean(np.stack(smalls[i:i + k], 0), axis=0)
                   for i in range(0, n - k + 1, k)]
-        if len(merged) >= 2:
-            out.append((k, float(np.mean(np.std(np.stack(merged, 0), axis=0)))))
-        elif k == 1:
-            out.append((k, noise_of(frames)))
+        if len(groups) >= 2:
+            out.append((k, float(np.mean(np.std(np.stack(groups, 0), axis=0)))))
         k *= 2
     return out
 
