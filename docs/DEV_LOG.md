@@ -297,6 +297,50 @@ frames so mean is the on-board mode). Sized in bite 4 per the tracker.
 
 ---
 
+## 2026-09-06 — S29 (nereus002 field rig) — three streams demo'd; wifi + power root-caused; reboot replaced with a real power cycle
+
+**Branch:** `sprint/29-fieldunit` (from the S28 stacking branch)
+
+**Done:**
+- Rig identified end to end: Pi Zero 2 W / trixie / aarch64, IMX708 **wide
+  with autofocus** (`imx708_wide`, 4608x2592), AE3 on the S18 patched build,
+  N6 stock. **The two boards are nereus000's, physically moved** — proven by
+  the N6's chip UID reversing into its by-id serial. nereus000 has no cameras.
+- Bite 1+2: three-stream viewer (IMX708 | AE3 | N6), boards found by ASKING
+  their role, workbench `role` schema, card toggles (framesize/fps/quality/
+  colour), click-to-fullscreen, stats table, link meter. Demo passed: 15.0 /
+  14.9 / 14.9 fps, 7.88 Mbps, load 1.41, 48.3 °C.
+- Bite 3: **wifi `power_save` was ON** — rx negotiated to 1.0 Mb/s vs tx 72.2,
+  AP ages out the association, Pi up with no network (3× in one session).
+  Repo-carried unit, enabled at boot. **`VIN` read 47 mV** — charger was not
+  on the Pi+ input; rig ran off the cell at ~3.5 W and died repeatedly.
+- Bite 4: `pi/field/lifepo4.py` **vendored** from nereus-vision-dev; wake is
+  verified BEFORE shutdown, cycle refused on a flat battery with no charger.
+  First cycle: back in 48 s, uptime 0, **both boards enumerated**.
+- 105 field tests + 94 workbench tests green. Workbench installed as an
+  enabled-at-boot service.
+
+**Broke/surprised us:**
+- **Three bugs only hardware could find**: `max_seconds=1e9` overflowed
+  MicroPython's `ticks_add` and crashed BOTH boards; discovery + supervisor
+  double-attach produced `could not enter raw repl`; `/sbin` is not on the
+  pi user's PATH so a bare `iw` call silently reported no radio.
+- **Four defects found by DRIVING the page, not by tests** — including a real
+  safety regression: role and by_id key sets never intersected, so the 35 s
+  settle window was skippable across recipe types.
+- I rebooted the Pi to clear an AE3 wedge and it did not come back. I blamed
+  `SHDN_DELAY`; the register read (96, ~12 s — Nick had already raised it)
+  says the flat battery was the likelier cause. **Confident diagnosis without
+  the measurement that was available.**
+- The AE3 has twice fallen off the USB bus entirely, not merely refused the
+  REPL. Cause unknown — bite 5.
+
+**Next:** finish bite 4's 5-cycle acceptance, then bite 5 (AE3 bus stability)
+before any new features — Nick's ordering: stable bench, then cameras, then
+features.
+
+---
+
 ## 2026-08-27 — S8 bite E12 (labeler bake-off on Nick's labels) — RF-DETR beats YOLOX-S in the deployment domain despite YOLOX-anchored GT
 
 **Branch:** `claude/labeler-eval-yolox-rfdetr-e2b746` (PR open). Desk

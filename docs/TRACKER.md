@@ -1,7 +1,27 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-01 (**NEW SPRINT S28 — capture-side frame
+*Last updated: 2026-09-06 (**NEW SPRINT S29 — nereus002 FIELD RIG: bites
+1-3 DONE, bite 4 (power-cycle reboot) in acceptance.** Pi Zero 2 W +
+IMX708-wide + AE3 + N6 on a LiFePO4wered/Pi+. **Demo PASSED: one card,
+three live streams — IMX708 15.0 / AE3 14.9 / N6 14.9 fps, 7.88 Mbps,
+load 1.41 on 4 cores.** Boards are found by ASKING them their role, never
+by USB serial, because this rig's boards get swapped AND because **the AE3
+and N6 here are nereus000's physical boards, moved** (proven via the N6's
+chip UID) — **nereus000 now has no cameras.** Two bench faults root-caused:
+**wifi `power_save` was ON** (radio dozes, rx negotiated to 1.0 Mb/s, AP
+ages out the association, Pi sits up with no network — seen 3× in one
+session; a REPEAT of nereus000's 2026-08-25 fix, now repo-carried and
+enabled at boot) and **`VIN` read 47 mV** (charger not on the Pi+ input, so
+the rig ran off the cell and died repeatedly; resolved physically).
+**`systemctl reboot` is BANNED on this rig** — it becomes a power-off, and
+it cannot cut USB VBUS, which is the AE3's only cure; use
+`pi/field/power_cycle.py`, whose LiFePO4wered logic is VENDORED from Nick's
+nereus-vision-dev (copied, not imported — that deployed project is
+untouched). Four defects were found by DRIVING the page rather than by
+tests, one of them a real safety regression (the settle window was
+skippable across recipe types). Previous:*
+*2026-09-01 (**NEW SPRINT S28 — capture-side frame
 stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
 plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
 support audit run against OpenMV src @ `7d4dbf7a`: **no built-in
@@ -2931,6 +2951,99 @@ E-bite reviews at Nick's call); HIL LCD rig; no new hardware.
 stills are exactly its capture mode; ~3-week deadline), S21's
 evidence-JPEG path, and smaller files at equal quality for every
 transport downstream.
+
+### S29 — nereus002 field rig (FieldUnit)  `[~]`  ← **RUNNING (Nick 2026-09-06)**
+*Branch `sprint/29-fieldunit`, cut from the S28 stacking branch so the field
+rig inherits that work. Hardware: **Raspberry Pi Zero 2 W**, Debian 13
+trixie, IMX708 (wide, autofocus) on CSI + the AE3 and N6 on USB through an
+unpowered Terminus hub, powered by a **LiFePO4wered/Pi+** with an 18650 cell.*
+
+**Goal:** a field-deployable camera rig that records stills and video from
+all three cameras with correct UTC timestamps, reviewable from a phone with
+no computer present. Nick's ordered priorities: **(1) a stable bench —
+wifi + power, (2) cameras online and stable, (3) new features.**
+
+**THE BOARDS MOVED. nereus000 HAS NO CAMERAS.** The AE3 and N6 on this rig
+are nereus000's physical boards, relocated — proven, not inferred: the N6's
+by-id serial is its STM32 chip UID and reverses byte-for-byte into the
+`board_id` the chip reports, matching SPEC's nereus000 entry exactly, and
+its `/flash` still carries the bench artifacts. Consequence: **both hosts'
+configs name the same two strings**, so by-id can no longer identify a rig.
+
+- [x] **Bite 1 — three-stream viewer + role-named boards.** Boards are found
+      by ASKING them (`omv.board_type()` → "AE3"/"N6"), never by USB serial,
+      because this rig's boards get swapped and by-id names the chip. No
+      cache: a cached role→port map is stale in exactly the swap scenario it
+      would exist for. `pi/field/{discover,sources,field_stream}.py`; the
+      measured half of the S8 viewer (SerialBoard, supervise, the
+      (2,5,10,20,30)s backoff) is IMPORTED, not copied. Workbench schema
+      grew `role` as an alternative to `by_id`, resolved at RUN time — never
+      in preflight, which opens no serial port (D45).
+      **DEMO PASSED 2026-09-06:** card → LIVE → link → three streams,
+      IMX708 15.0 / AE3 14.9 / N6 14.9 fps, 7.88 Mbps combined, load 1.41
+      on 4 cores, 48.3 °C. Three bugs were found only by running on
+      hardware: a `ticks_add` overflow that crashed BOTH boards, the
+      discovery/supervisor double-attach, and the PEP 668 interpreter gap.
+- [x] **Bite 2 — review fixes + card controls.** Four defects found by
+      DRIVING the page, not by tests: the settle window was silently
+      skippable across recipe types (safety — role and by_id key sets never
+      intersected, so a quick stop→start could wedge the AE3); role cards
+      read "not enumerated" while streaming; the page named nereus000 while
+      served from nereus002; no thumbnail. Added: click-to-fullscreen, a
+      fixed-row stats table (resolution, fps SET vs ACTUAL, stream rate),
+      a link meter, and framesize/fps/quality/colour as card toggles.
+      **A runnable recipe without a thumbnail now FAILS A TEST** (Nick's
+      rule) — four pre-existing recipes are a NAMED legacy list.
+- [x] **Bite 3 — bench stability: wifi and power. BOTH ROOT-CAUSED.**
+      *WiFi:* `power_save` was **on** — the radio dozes and negotiates the
+      floor rate (measured rx 1.0 Mb/s against tx 72.2), the AP ages out the
+      association, and the Pi sits **up with no network**. Seen three times
+      in one session. Fixed by `pi/services/wifi-powersave-off.service`,
+      repo-carried and enabled at boot. **This bench already paid for this
+      once** (nereus000, 2026-08-25). Nick's field units never hit it because
+      they run LTE with wlan0 as an **AP**, and AP mode does not sleep.
+      *Power:* `VIN` read **47 mV** — the charger was not on the Pi+ input,
+      so the rig ran off the cell (~3.5 W, under 2 h) and died repeatedly.
+      Resolved physically; VIN 4967 mV / VBAT 3407 mV confirmed charging.
+- [~] **Bite 4 — power-cycle reboot (the AE3's only remote cure).**
+      `systemctl reboot` is wrong here twice over: the Pi+ cuts power
+      SHDN_DELAY after UART TX drops and a Zero 2 W can miss that window
+      (a reboot becomes a power-off needing a physical button — measured),
+      and it does not cut USB VBUS, so it cannot clear either AE3 failure
+      state whose documented cure is a power cycle. `pi/field/lifepo4.py`
+      is **VENDORED** from Nick's `nereus-vision-dev`
+      (`system_agent/lifepo4wered_controller.py`) — copied, not imported,
+      so that deployed project is neither modified nor depended on. The
+      wake is programmed and VERIFIED before anything shuts down, and a
+      cycle is REFUSED on a flat battery with no charger.
+      *Exit:* 5 consecutive cycles, each returning with both boards.
+
+- [ ] **Bite 5 — cameras online and stable (priority 2).** The AE3 has twice
+      fallen off the USB bus entirely (`lsusb` lost it, not just a REPL
+      refusal). With bite 4 in hand the recovery is automatable; what is NOT
+      known is the CAUSE. Suspect list, unranked and unmeasured: rail sag on
+      battery at ~740 mA, the unpowered hub, cable quality (the shielded-cable
+      rule already cost this bench a week), enumeration order.
+- [ ] **Bite 6 — stills + video capture with UTC filenames** and the folder
+      structure, per the original ask.
+- [ ] **Bite 7 — wlan0 AP mode for field access (the polish step, LAST).**
+      Nick 2026-09-06: "we will get to setting up the AP as the last step,
+      for now more important to keep the Pi on my local wifi for active
+      development." Recipe already written and field-proven in
+      `nereus-vision-dev/device/docs/nereus_wlan0_ap_setup.md`: NetworkManager
+      AP on 10.42.0.1, phone connects, no internet needed. **Trade-off to
+      settle first: a rig in AP mode is no longer a wifi client, so Tailscale
+      access is lost** — this likely wants AP as a second interface, or a
+      toggle, not a replacement.
+
+**Demo (Nick):** open `http://nereus002:8088/`, click **Field rig — three
+camera streams**, then the link → three live streams side by side.
+**Standing facts for this rig:** boards by ROLE not by-id · never
+`systemctl reboot` (use `pi/field/power_cycle.py`) · mpremote lives in
+`~/mpv` (PEP 668) so launchers pick an interpreter · `iw`/`ip` are in
+/sbin, not on the pi user's PATH.
+
+---
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
