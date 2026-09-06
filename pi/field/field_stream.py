@@ -240,6 +240,52 @@ def make_handler(views):
     return Handler
 
 
+#: Seconds of TOTAL port silence before re-attaching a board that just
+#: refused. The ae3-board-access rule is 60 s and longer than the 30 s
+#: quiet-exit, because the clock restarts on any contact -- so this wait is
+#: only useful if nothing touches the port during it.
+REFUSAL_SETTLE_S = 60.0
+
+
+def discover_boards(settle_s=REFUSAL_SETTLE_S, sleep=time.sleep,
+                    discover=None):
+    """Find boards by role, with ONE retry after a raw-REPL refusal.
+
+    Two facts collide at start-up. Discovery has to attach to identify a
+    board, and then the stream supervisor attaches again moments later --
+    and repeated raw-REPL attaches are precisely how the AE3 gets wedged
+    (roughly 4-6 after a teardown and it refuses below the Python level,
+    curable only by a power cycle). Measured here 2026-09-06: a start
+    immediately after a board crash produced
+    ``could not enter raw repl`` and the AE3 dropped out of the run.
+
+    So: one pass; and if a role is missing *because a port refused* rather
+    than because it is absent, wait out the full silence and try ONCE more.
+    Never a loop -- polling resets the very quiet-exit timer being waited on,
+    which is how a previous session hung forever.
+    """
+    discover = discover or discovery.discover
+    print("discovering boards (asking each one its role)...", flush=True)
+    found, problems = discover()
+    missing = discovery.require(found)
+    # "no answer" is a refusal (board present, port busy/grumpy); an absent
+    # device never gets probed at all, so it produces no problem line.
+    if missing and problems:
+        print("  refusal on first pass; %gs of TOTAL silence, then ONE retry"
+              % settle_s, flush=True)
+        for problem in problems:
+            print("  ! %s" % problem, flush=True)
+        sleep(settle_s)
+        found, problems = discover()
+    for role in discovery.ROLES:
+        info = found.get(role)
+        print("  %-4s %s" % (role, info["port"] if info else "MISSING"),
+              flush=True)
+    for problem in problems:
+        print("  ! %s" % problem, flush=True)
+    return found, problems
+
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bind", default="0.0.0.0")
@@ -251,6 +297,9 @@ def parse_args(argv=None):
     ap.add_argument("--csi-width", type=int, default=CSI_SIZE[0])
     ap.add_argument("--csi-height", type=int, default=CSI_SIZE[1])
     ap.add_argument("--csi-camera", type=int, default=0)
+    ap.add_argument("--attach-settle", type=float, default=REFUSAL_SETTLE_S,
+                    help="seconds of port silence before retrying a board "
+                         "that refused the raw REPL (default: %(default)s)")
     ap.add_argument("--no-csi", action="store_true",
                     help="serial boards only (for a rig with no CSI camera)")
     return ap.parse_args(argv)
@@ -260,13 +309,7 @@ def main(argv=None):
     args = parse_args(argv)
     pace_ms = int(1000.0 / args.fps) if args.fps > 0 else 0
 
-    print("discovering boards (asking each one its role)...", flush=True)
-    found, problems = discovery.discover()
-    for role in ("AE3", "N6"):
-        info = found.get(role)
-        print("  %-4s %s" % (role, info["port"] if info else "MISSING"), flush=True)
-    for problem in problems:
-        print("  ! %s" % problem, flush=True)
+    found, problems = discover_boards(args.attach_settle)
 
     views = build_views(found, args.csi_camera)
     if args.no_csi:

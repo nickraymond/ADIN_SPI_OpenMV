@@ -377,5 +377,58 @@ class TestMaxSecondsFitsMicropythonTicks(unittest.TestCase):
     def test_cap_is_long_enough_to_not_bite_a_session(self):
         self.assertGreaterEqual(field_stream.MAX_STREAM_SECONDS, 24 * 3600)
 
+
+class TestDiscoverRetryOnRefusal(unittest.TestCase):
+    """A refused port gets exactly ONE retry after real silence."""
+
+    def test_retries_once_after_refusal_and_recovers(self):
+        calls = []
+        slept = []
+
+        def fake():
+            calls.append(1)
+            if len(calls) == 1:
+                return ({"N6": {"port": "/dev/n"}},
+                        ["/dev/a: could not enter raw repl"])
+            return ({"N6": {"port": "/dev/n"}, "AE3": {"port": "/dev/a"}}, [])
+
+        found, problems = field_stream.discover_boards(
+            settle_s=60.0, sleep=slept.append, discover=fake)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(slept, [60.0])
+        self.assertIn("AE3", found)
+
+    def test_no_retry_when_all_roles_found(self):
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return ({"AE3": {"port": "/dev/a"}, "N6": {"port": "/dev/n"}}, [])
+
+        field_stream.discover_boards(sleep=lambda s: None, discover=fake)
+        self.assertEqual(len(calls), 1)
+
+    def test_no_retry_when_board_is_simply_absent(self):
+        # An absent device is never probed, so it yields no problem line --
+        # waiting 60 s for a board that is unplugged is pure delay.
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return ({"N6": {"port": "/dev/n"}}, [])
+
+        field_stream.discover_boards(sleep=lambda s: None, discover=fake)
+        self.assertEqual(len(calls), 1)
+
+    def test_retry_happens_at_most_once(self):
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return ({}, ["/dev/a: could not enter raw repl"])
+
+        field_stream.discover_boards(sleep=lambda s: None, discover=fake)
+        self.assertEqual(len(calls), 2)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
