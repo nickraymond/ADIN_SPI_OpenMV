@@ -952,5 +952,30 @@ class TestPowerCyclePreflight(unittest.TestCase):
         # window can land before power actually drops and be missed.
         self.assertGreater(power_cycle.MIN_WAKE_SEC, 12)
 
+
+class TestPerCameraFpsCeiling(unittest.TestCase):
+    """Nick 2026-09-06: IMX max 30, N6 max 15, keep the CPU cool."""
+
+    def test_imx_capped_at_30(self):
+        self.assertEqual(field_stream.capped_fps("IMX708", 60.0), 30.0)
+
+    def test_n6_capped_at_15(self):
+        self.assertEqual(field_stream.capped_fps("N6", 60.0), 15.0)
+
+    def test_ae3_uncapped(self):
+        # It cannot reach any cap (2.6 fps HD colour, 5.3 mono) -- capping
+        # would only mislead.
+        self.assertEqual(field_stream.capped_fps("AE3", 60.0), 60.0)
+
+    def test_request_below_the_cap_is_untouched(self):
+        self.assertEqual(field_stream.capped_fps("IMX708", 10.0), 10.0)
+        self.assertEqual(field_stream.capped_fps("N6", 5.0), 5.0)
+
+    def test_unpaced_request_passes_through(self):
+        self.assertEqual(field_stream.capped_fps("N6", 0), 0)
+
+    def test_unknown_label_is_uncapped(self):
+        self.assertEqual(field_stream.capped_fps("SOMETHING", 99.0), 99.0)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

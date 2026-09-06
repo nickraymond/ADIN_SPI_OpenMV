@@ -80,6 +80,28 @@ CSI_SIZE = CSI_SIZES["VGA"]
 #: enough margin that a port with a smaller ticks_period is still safe.
 MAX_STREAM_SECONDS = 259200
 
+#: Per-camera frame-rate CEILINGS (Nick, 2026-09-06: "set the max fps for
+#: IMX at 30, N6 at 15. Keep that cpu cool!").
+#:
+#: These are not the hardware limits -- measured unpaced at HD, the IMX708
+#: reached 57 fps (42.95 Mb/s) and the N6 16.1 fps mono. The rig ran at
+#: 948 mA and 63.4 degC doing it, on a Pi Zero 2 W in an enclosure with no
+#: convection. So the cap is a THERMAL and power budget, not a capability
+#: statement, and the page still reports SET vs ACTUAL so the difference
+#: stays visible rather than looking like a limitation.
+#:
+#: The AE3 is uncapped because it cannot reach any of these: 2.6 fps at HD
+#: colour, 5.3 mono. Capping it would only mislead.
+FPS_CEILING = {"IMX708": 30.0, "N6": 15.0, "AE3": None}
+
+
+def capped_fps(label, requested, ceiling=None):
+    """The rate this camera may actually run at."""
+    cap = (ceiling or FPS_CEILING).get(label)
+    if cap is None or requested <= 0:
+        return requested
+    return min(requested, cap)
+
 
 def board_cfg(framesize, quality, pace_ms, pixfmt="RGB565"):
     """Config for a plain video stream: no model, no blobs, no overlay.
@@ -428,22 +450,32 @@ def main(argv=None):
     if args.no_csi:
         views = [v for v in views if v.kind != "csi"]
 
-    cfg = board_cfg(args.framesize, args.quality, pace_ms,
-                    "GRAYSCALE" if args.colour == "mono" else "RGB565")
-    script_text = build_board_script_text(cfg)
+    pixfmt = "GRAYSCALE" if args.colour == "mono" else "RGB565"
+
+    def script_for(label):
+        """Each board gets its OWN pace: the caps differ per camera."""
+        f = capped_fps(label, args.fps)
+        ms = int(1000.0 / f) if f > 0 else 0
+        return build_board_script_text(board_cfg(args.framesize, args.quality,
+                                                 ms, pixfmt))
 
     threads = []
     for view in views:
+        vfps = capped_fps(view.label, args.fps)
+        if vfps != args.fps:
+            print("  %s capped to %g fps (thermal budget)"
+                  % (view.label, vfps), flush=True)
+        view.want["fps"] = vfps
         if view.kind == "csi":
             t = threading.Thread(
                 target=supervise_csi, daemon=True,
-                args=(view, csi_w, csi_h, args.fps,
+                args=(view, csi_w, csi_h, vfps,
                       args.quality, args.csi_camera))
         elif view.target:
             t = threading.Thread(
                 target=supervise, daemon=True,
-                args=(view.target, script_text, view.latest, view.stats,
-                      view.state))
+                args=(view.target, script_for(view.label), view.latest,
+                      view.stats, view.state))
         else:
             continue        # missing board: its panel already says so
         t.start()
