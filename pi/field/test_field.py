@@ -821,5 +821,136 @@ class TestNetInfoResolvesSbinTools(unittest.TestCase):
         self.assertTrue(seen["argv"][0].endswith("iw"))
         self.assertEqual(seen["argv"][1:], ["dev", "wlan0", "link"])
 
+
+# --- S29: LiFePO4wered power cycle (vendored from nereus-vision-dev) --------
+
+import lifepo4                                    # noqa: E402
+import power_cycle                                # noqa: E402
+
+
+class TestVerifyClockPair(unittest.TestCase):
+    """The vendored rules. Each one, absent, leaves the rig dark."""
+
+    NOW = 1_800_000_000
+    WAKE = NOW + 25
+
+    def _v(self, **over):
+        kw = dict(requested_wake_unix=self.WAKE, rtc_time=self.NOW,
+                  wake_time=self.WAKE, auto_boot=2, now_unix=self.NOW)
+        kw.update(over)
+        return lifepo4.verify_clock_pair(**kw)
+
+    def test_happy_path(self):
+        self.assertEqual(self._v(), (True, "ok"))
+
+    def test_wrong_auto_boot_refused(self):
+        ok, why = self._v(auto_boot=0)
+        self.assertFalse(ok)
+        self.assertIn("AUTO_BOOT", why)
+
+    def test_wake_in_the_past_refused(self):
+        ok, why = self._v(requested_wake_unix=self.NOW - 10,
+                          wake_time=self.NOW - 10)
+        self.assertFalse(ok)
+        self.assertIn("not in the future", why)
+
+    def test_wake_implausibly_far_ahead_refused(self):
+        far = self.NOW + 40 * 3600
+        ok, why = self._v(requested_wake_unix=far, wake_time=far)
+        self.assertFalse(ok)
+        self.assertIn("far ahead", why)
+
+    def test_rtc_disagreeing_with_linux_refused(self):
+        ok, why = self._v(rtc_time=self.NOW - 500)
+        self.assertFalse(ok)
+        self.assertIn("RTC_TIME outside tolerance", why)
+
+    def test_wake_readback_mismatch_refused(self):
+        ok, why = self._v(wake_time=self.WAKE + 60)
+        self.assertFalse(ok)
+        self.assertIn("RTC_WAKE_TIME outside tolerance", why)
+
+    def test_unreadable_registers_refused(self):
+        self.assertFalse(self._v(rtc_time=None)[0])
+        self.assertFalse(self._v(wake_time=None)[0])
+
+
+class TestProgramWakeRetries(unittest.TestCase):
+    def _runner_factory(self, wake_offset_by_attempt):
+        state = {"RTC_TIME": 0, "RTC_WAKE_TIME": 0, "AUTO_BOOT": 2,
+                 "attempt": 0}
+
+        def runner(argv, capture_output, text, timeout):
+            class R:
+                returncode = 0
+                stderr = ""
+                stdout = ""
+            _, op = argv[0], argv[1]
+            if op == "set":
+                key, val = argv[2], int(argv[3])
+                if key == "RTC_WAKE_TIME":
+                    state["attempt"] += 1
+                    off = wake_offset_by_attempt.get(state["attempt"], 0)
+                    val += off
+                state[key] = val
+                R.stdout = str(val)
+            else:
+                R.stdout = str(state.get(argv[2], 0))
+            return R
+        return runner
+
+    def test_succeeds_first_try(self):
+        got = lifepo4.program_wake(25, runner=self._runner_factory({}),
+                                   sleep=lambda s: None)
+        self.assertEqual(got["attempt"], 1)
+
+    def test_retries_then_succeeds(self):
+        # First write lands wrong (readback mismatch), second is clean.
+        got = lifepo4.program_wake(25,
+                                   runner=self._runner_factory({1: 999}),
+                                   sleep=lambda s: None)
+        self.assertEqual(got["attempt"], 2)
+
+    def test_raises_after_exhausting_retries(self):
+        bad = {i: 999 for i in range(1, 10)}
+        with self.assertRaises(lifepo4.LiFePO4Error):
+            lifepo4.program_wake(25, runner=self._runner_factory(bad),
+                                 retries=3, sleep=lambda s: None)
+
+    def test_rejects_non_positive_delay(self):
+        with self.assertRaises(lifepo4.LiFePO4Error):
+            lifepo4.program_wake(0)
+
+
+class TestPowerCyclePreflight(unittest.TestCase):
+    def test_clean_when_charging_and_auto_boot_right(self):
+        self.assertEqual(power_cycle.preflight(
+            {"AUTO_BOOT": 2, "VBAT": 3400, "VBAT_SHDN": 2950, "VIN": 4967}), [])
+
+    def test_refuses_wrong_auto_boot(self):
+        p = power_cycle.preflight(
+            {"AUTO_BOOT": 0, "VBAT": 3400, "VBAT_SHDN": 2950, "VIN": 4967})
+        self.assertTrue(any("AUTO_BOOT" in x for x in p))
+
+    def test_refuses_flat_battery_with_no_input(self):
+        # The exact state this rig was in earlier today: a cycle here would
+        # not have come back.
+        p = power_cycle.preflight(
+            {"AUTO_BOOT": 2, "VBAT": 3100, "VBAT_SHDN": 2950, "VIN": 47})
+        self.assertTrue(any("VBAT" in x for x in p))
+
+    def test_allows_low_battery_when_charger_is_present(self):
+        self.assertEqual(power_cycle.preflight(
+            {"AUTO_BOOT": 2, "VBAT": 3100, "VBAT_SHDN": 2950, "VIN": 4967}), [])
+
+    def test_min_wake_is_enforced(self):
+        rc = power_cycle.main(["--wake-in", "5"])
+        self.assertEqual(rc, 2)
+
+    def test_min_wake_exceeds_the_shutdown_delay(self):
+        # SHDN_DELAY is 96 ticks = ~12 s on this rig; a wake inside that
+        # window can land before power actually drops and be missed.
+        self.assertGreater(power_cycle.MIN_WAKE_SEC, 12)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
