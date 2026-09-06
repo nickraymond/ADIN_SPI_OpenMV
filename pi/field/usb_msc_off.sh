@@ -19,6 +19,16 @@ ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", \
   RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/usb-storage/unbind 2>/dev/null || true'"
 RULEEOF
 
+# The DFU rule from S7 (pi/ae3_flash/99-openmv-dfu.rules) gives the pi user
+# write access to a board sitting in its DFU bootloader, so firmware can be
+# flashed without root. Installed here because this script already runs as
+# root under systemd, and my sudo grant covers systemctl/apt only.
+DFU_SRC="$(dirname "$(dirname "$(readlink -f "$0")")")/ae3_flash/99-openmv-dfu.rules"
+if [ -f "$DFU_SRC" ]; then
+  cp "$DFU_SRC" /etc/udev/rules.d/99-openmv-dfu.rules
+  echo "usb_msc_off: installed 99-openmv-dfu.rules"
+fi
+
 udevadm control --reload 2>/dev/null || true
 
 # Unbind anything already attached (the rule only fires on future adds).
