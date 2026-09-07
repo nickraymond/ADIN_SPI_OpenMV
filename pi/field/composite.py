@@ -418,3 +418,157 @@ def stack_raw(paths, geom, pattern="BGGR"):
                            dtype=np.uint8)[:w * h].reshape(h, w).astype(np.float32)
     return (s28_stack.demosaic(single.astype(np.uint8), pattern),
             s28_stack.demosaic(np.clip(mean, 0, 255).astype(np.uint8), pattern))
+
+
+# --- EV bracket on RAW: the merge that is only valid in linear space --------
+
+#: Bracket by SHUTTER only, never gain. Gain multiplies the signal AND the
+#: read noise; extra exposure time buys real photons. S28: "never gain --
+#: gain adds back the noise the photons are buying out".
+BOARD_BRACKET = '''
+import sensor, image, time, ubinascii, gc
+sensor.reset()
+sensor.set_pixformat(sensor.BAYER)
+sensor.set_framesize(sensor.%(SIZE)s)
+sensor.skip_frames(time=2000)
+# Meter once with AE on, read what it chose, then lock and step around it.
+base = 0
+try:
+    base = sensor.get_exposure_us()
+except Exception as e:
+    print("#W get_exposure", e)
+try:
+    sensor.set_auto_gain(False)
+except Exception as e:
+    print("#W lock_gain", e)
+print("#B %%d" %% base)
+img = sensor.snapshot()
+print("#G %%d %%d" %% (img.width(), img.height()))
+CH = 8192
+for us in %(EXPS)s:
+    try:
+        sensor.set_auto_exposure(False, exposure_us=us)
+    except Exception as e:
+        print("#W set_exposure", us, e)
+    sensor.skip_frames(time=250)
+    got = -1
+    try:
+        got = sensor.get_exposure_us()
+    except Exception:
+        pass
+    img = sensor.snapshot()
+    mv = img.bytearray()
+    n = len(mv)
+    # Report the exposure the sensor ACTUALLY settled on -- the merge divides
+    # by the exposure ratio, so a clamped exposure silently corrupts it.
+    print("#R %%d %%d %%d" %% (us, got, n))
+    off = 0
+    while off < n:
+        print(ubinascii.b2a_base64(mv[off:off+CH]).decode().strip())
+        off += CH
+    print("#E %%d" %% us)
+    gc.collect()
+print("#D done")
+'''
+
+
+def board_bracket(port, exposures_us, out_dir, label, size="HD", timeout=600):
+    """Capture one raw frame per exposure. Returns (frames, geom, base_us).
+
+    frames: list of dicts {want_us, got_us, path}. `got_us` is what the
+    sensor actually used -- the exposure ladder is CLAMPED by the current
+    frame time on these sensors (S28 measured the clamp), so trusting the
+    requested value would corrupt the divide-by-ratio merge.
+    """
+    import base64
+    sys.path.insert(0, os.path.join(_ROOT, "bench"))
+    from n6_stream_host import SerialBoard
+    script = BOARD_BRACKET % {"SIZE": size,
+                              "EXPS": repr(list(int(e) for e in exposures_us))}
+    board = SerialBoard(port).start(script)
+    frames, geom, base_us, buf, cur = [], None, None, [], None
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            line = board.readline()
+            if not line:
+                break
+            line = line.rstrip(b"\r\n")
+            if line.startswith(b"#B "):
+                base_us = int(line.split()[1])
+            elif line.startswith(b"#G "):
+                _, w, h = line.split()
+                geom = (int(w), int(h))
+            elif line.startswith(b"#R "):
+                _, want, got, n = line.split()
+                cur = {"want_us": int(want), "got_us": int(got),
+                       "bytes": int(n)}
+                buf = []
+            elif line.startswith(b"#E "):
+                if cur is None:
+                    continue
+                raw = b"".join(buf)
+                p = os.path.join(out_dir, "%s_ev_%d.bin"
+                                 % (label, cur["want_us"]))
+                with open(p, "wb") as fh:
+                    fh.write(raw)
+                if cur["bytes"] and len(raw) == cur["bytes"]:
+                    cur["path"] = p
+                    frames.append(cur)
+                else:
+                    print("  %s exposure %d SHORT: %d of %d"
+                          % (label, cur["want_us"], len(raw), cur["bytes"]))
+                cur, buf = None, []
+            elif line.startswith(b"#D"):
+                break
+            elif line.startswith(b"#W"):
+                print("  board warn: %s" % line.decode("utf-8", "replace"))
+            elif cur is not None:
+                try:
+                    buf.append(base64.b64decode(line))
+                except Exception:                    # noqa: BLE001
+                    pass
+    finally:
+        try:
+            board.stop()
+        except Exception:                            # noqa: BLE001
+            pass
+    return frames, geom, base_us
+
+
+def merge_bracket(frames, geom):
+    """Exposure-fused HDR from raw. Linear domain, weighted by confidence.
+
+    Each frame is normalised by ITS OWN exposure so every one becomes an
+    estimate of the same scene radiance -- that division is the merge, and
+    it is arithmetic on photon counts, which is why it is only valid on RAW.
+    Pixels near clipping or near black carry little information, so they are
+    down-weighted rather than trusted equally.
+    """
+    np = _np()
+    w, h = geom
+    num = np.zeros((h, w), dtype=np.float32)
+    den = np.zeros((h, w), dtype=np.float32)
+    for f in frames:
+        a = np.frombuffer(open(f["path"], "rb").read(),
+                          dtype=np.uint8)[:w * h].reshape(h, w).astype(np.float32)
+        us = float(f.get("got_us") or f["want_us"])
+        if us <= 0:
+            continue
+        # Hat weight: full trust mid-range, zero at 0 and 255.
+        wt = 1.0 - np.abs((a - 127.5) / 127.5) ** 2
+        np.clip(wt, 0.0, 1.0, out=wt)
+        wt[a >= 254] = 0.0          # clipped: carries no information
+        wt[a <= 1] = 0.0            # black: below the noise floor
+        num += wt * (a / us)
+        den += wt
+    den[den <= 0] = 1e-6
+    radiance = num / den            # scene radiance, exposure-independent
+    return radiance
+
+
+def tonemap(radiance, percentile=99.5):
+    """Radiance -> a viewable 8-bit image. Normalise then gamma."""
+    np = _np()
+    hi = float(np.percentile(radiance, percentile)) or 1.0
+    return to_display(np.clip(radiance / hi, 0.0, 1.0))
