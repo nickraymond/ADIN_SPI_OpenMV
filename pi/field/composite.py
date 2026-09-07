@@ -616,6 +616,10 @@ def merge_bracket(frames, geom):
         wt[a <= 1] = 0.0            # black: below the noise floor
         num += wt * (a / us)
         den += wt
+    if not float(den.max()):
+        raise RuntimeError(
+            "bracket merge got no usable frames -- every exposure was <= 0 "
+            "or every pixel was clipped/black. Check the exposure readback.")
     den[den <= 0] = 1e-6
     radiance = num / den            # scene radiance, exposure-independent
     return radiance
@@ -667,26 +671,33 @@ def imx_raw_capture(n, out_dir, shutter_us=None, gain=None,
 
 
 def imx_raw_exposure(dng_path):
-    """The exposure the sensor actually used, from the DNG metadata."""
-    try:
-        import rawpy
-        with rawpy.imread(dng_path) as r:
-            # rawpy exposes shutter via the underlying libraw 'other' params.
-            v = getattr(r, "camera_whitebalance", None)  # touch to force load
-            del v
-    except Exception:                                    # noqa: BLE001
-        pass
+    """The exposure the sensor ACTUALLY used, in microseconds, from the DNG.
+
+    It lives in the EXIF SUB-IFD, not among the page's own tags -- looking
+    only at page.tags returns nothing and the caller silently falls back to
+    the requested value. Measured on this rig: ExposureTime reads as the
+    rational (16095927, 268435456) = 59963 us.
+
+    Returns -1 if it cannot be read, and callers MUST treat -1 as "unknown"
+    rather than as a number (an `or` idiom does not, because -1 is truthy;
+    that exact bug emptied the bracket merge).
+    """
     try:
         import tifffile
         with tifffile.TiffFile(dng_path) as tf:
             for page in tf.pages:
-                for tag in ("ExposureTime", 33434):
-                    t = page.tags.get(tag)
-                    if t is not None:
-                        val = t.value
-                        if isinstance(val, tuple) and len(val) == 2 and val[1]:
-                            return int(val[0] * 1e6 / val[1])
-                        return int(float(val) * 1e6)
+                exif = page.tags.get("ExifTag")
+                val = None
+                if exif is not None and isinstance(exif.value, dict):
+                    val = exif.value.get("ExposureTime")
+                if val is None:
+                    t = page.tags.get("ExposureTime")
+                    val = t.value if t is not None else None
+                if val is None:
+                    continue
+                if isinstance(val, tuple) and len(val) == 2 and val[1]:
+                    return int(round(val[0] * 1e6 / val[1]))
+                return int(round(float(val) * 1e6))
     except Exception:                                    # noqa: BLE001
         pass
     return -1

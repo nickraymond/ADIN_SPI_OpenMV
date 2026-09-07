@@ -116,11 +116,18 @@ def imx_card(args, run_dir, index):
             got = composite.imx_raw_capture(1, run_dir, shutter_us=us,
                                             gain=gain, tag="IMXev%d" % us)
             if got:
-                # merge_bracket reads raw bytes; give it decoded arrays via
-                # the same weighted-radiance maths instead.
+                # `or` is WRONG here: an unreadable exposure comes back as
+                # -1, which is truthy, so every frame was skipped as
+                # "us <= 0" and the merge divided an empty accumulator
+                # ("'<=' not supported between NoneType and int").
+                # rpicam honours --shutter precisely within sensor limits,
+                # so the requested value is a sound fallback -- unlike the
+                # boards, where the sensor clamps and the readback is the
+                # only truth.
+                read = got[0].get("got_us")
                 frames.append({"path": got[0]["path"],
                                "want_us": us,
-                               "got_us": got[0]["got_us"] or us})
+                               "got_us": read if (read and read > 0) else us})
         if len(frames) >= 2:
             got_list = [f["got_us"] for f in frames]
             spread = max(got_list) / min(got_list) if min(got_list) else 0
@@ -162,6 +169,10 @@ def imx_merge_bracket(frames):
         num = contrib if num is None else num + contrib
         den = wt if den is None else den + wt
         del a, norm, wt, contrib
+    if num is None or den is None:
+        raise RuntimeError(
+            "bracket merge got no usable frames -- every exposure was <= 0. "
+            "Check the per-frame exposure readback.")
     den[den <= 0] = 1e-6
     return num / den
 
