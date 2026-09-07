@@ -48,6 +48,37 @@ def _np():
     return numpy
 
 
+#: The boards apply a static gamma-2.2 LUT at debayer (S28 bite 0, source
+#: verified); JPEG/sRGB is likewise gamma-encoded. 2.2 is the right inverse
+#: for the board path and close enough for the IMX's sRGB curve at the
+#: precision this comparison needs.
+GAMMA = 2.2
+
+
+def to_linear(arr):
+    """Undo display gamma: encoded 0..255 -> LINEAR 0..1.
+
+    THIS IS NOT COSMETIC. Averaging gamma-encoded values is averaging the
+    wrong numbers: gamma compresses the highlights and stretches the
+    shadows, so a mean over encoded pixels is biased exactly where stacking
+    is supposed to help -- the shadows. It is why the first JPEG composites
+    looked barely different from a single frame.
+
+    For BRACKETING it is not a bias but an error: merging exposures means
+    dividing by the exposure ratio, and a ratio only means anything when
+    the numbers are proportional to photons. S28 called RGB565 "the wrong
+    domain for the bracket's divide-by-exposure-ratio math" for this reason.
+    """
+    np = _np()
+    return np.power(np.clip(arr, 0, 255) / 255.0, GAMMA)
+
+
+def to_display(lin):
+    """LINEAR 0..1 -> encoded 0..255, for viewing."""
+    np = _np()
+    return np.power(np.clip(lin, 0.0, 1.0), 1.0 / GAMMA) * 255.0
+
+
 def decode_jpeg(data):
     """JPEG bytes -> float32 HxWx3 (or HxW for mono). PIL, then a raw fallback."""
     np = _np()
@@ -84,12 +115,15 @@ def stack_paths(paths, mode="mean"):
     """
     np = _np()
     if mode == "mean":
+        # Accumulate in LINEAR light, then re-encode for display. Summing
+        # encoded values would bias the result toward the shadows-are-noisy
+        # region we are trying to clean up.
         acc = None
         for p in paths:
-            f = decode_jpeg(open(p, "rb").read()).astype(np.float32)
+            f = to_linear(decode_jpeg(open(p, "rb").read()).astype(np.float32))
             acc = f if acc is None else acc + f
             del f
-        return acc / len(paths)
+        return to_display(acc / len(paths))
     import s28_stack
     stack = np.stack([_small(np, decode_jpeg(open(p, "rb").read()))
                       for p in paths], axis=0)
@@ -260,3 +294,127 @@ def board_burst(port, n, out_dir, label, size="HD", quality=90,
         except Exception:                        # noqa: BLE001
             pass
     return paths
+
+
+# --- RAW stills: the boards give plain 8-bit Bayer, no container -------------
+
+#: Capture N BAYER frames. Raw is ALREADY LINEAR -- no debayer, no white
+#: balance, no gamma LUT (S28 bite 0, source-verified on the PAG7936). That
+#: is the whole point: stacking and especially bracketing are arithmetic on
+#: photon counts, and raw is the only place the numbers mean that.
+#:
+#: Cost: 1,024,000 bytes/frame at HD, +33% as base64 on the wire = ~1.37 MB
+#: per frame, against ~85 kB for the same frame as JPEG. Raw is ~16x the
+#: bytes on the slowest link in the rig, which is why it is stills-only.
+BOARD_RAW_BURST = '''
+import sensor, image, time, ubinascii, gc
+sensor.reset()
+sensor.set_pixformat(sensor.BAYER)
+sensor.set_framesize(sensor.%(SIZE)s)
+sensor.skip_frames(time=2000)
+try:
+    sensor.set_auto_exposure(False)
+except Exception as e:
+    print("#W lock_exposure", e)
+try:
+    sensor.set_auto_gain(False)
+except Exception as e:
+    print("#W lock_gain", e)
+time.sleep_ms(400)
+img = sensor.snapshot()
+print("#G %%d %%d" %% (img.width(), img.height()))
+CH = 8192
+for i in range(%(N)d):
+    img = sensor.snapshot()
+    mv = img.bytearray()
+    n = len(mv)
+    print("#R %%d %%d" %% (i, n))
+    off = 0
+    while off < n:
+        print(ubinascii.b2a_base64(mv[off:off+CH]).decode().strip())
+        off += CH
+    print("#E %%d" %% i)
+    gc.collect()
+print("#D done")
+'''
+
+
+def board_raw_burst(port, n, out_dir, label, size="HD", timeout=600):
+    """Capture N raw Bayer frames from a board. Returns (paths, (w, h)).
+
+    Chunked because a whole HD frame as one base64 line is ~1.37 MB and the
+    raw REPL is a line protocol -- the stream viewer's own #F/payload shape
+    does not scale to that.
+    """
+    import base64
+    sys.path.insert(0, os.path.join(_ROOT, "bench"))
+    from n6_stream_host import SerialBoard
+    script = BOARD_RAW_BURST % {"SIZE": size, "N": n}
+    board = SerialBoard(port).start(script)
+    paths, geom, buf, idx, want = [], None, [], None, 0
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            line = board.readline()
+            if not line:
+                break
+            line = line.rstrip(b"\r\n")
+            if line.startswith(b"#G "):
+                _, w, h = line.split()
+                geom = (int(w), int(h))
+            elif line.startswith(b"#R "):
+                _, i, nbytes = line.split()
+                idx, want, buf = int(i), int(nbytes), []
+            elif line.startswith(b"#E "):
+                if idx is None:
+                    continue
+                raw = b"".join(buf)
+                p = os.path.join(out_dir, "%s_raw_%02d.bin" % (label, idx))
+                with open(p, "wb") as fh:
+                    fh.write(raw)
+                # Trust the artifact, not the transfer: a short frame is a
+                # corrupt frame and must not enter the stack silently.
+                if want and len(raw) == want:
+                    paths.append(p)
+                else:
+                    print("  %s frame %s SHORT: %d of %d bytes"
+                          % (label, idx, len(raw), want))
+                idx, buf = None, []
+            elif line.startswith(b"#D"):
+                break
+            elif line.startswith(b"#W"):
+                print("  board warn: %s" % line.decode("utf-8", "replace"))
+            elif idx is not None:
+                try:
+                    buf.append(base64.b64decode(line))
+                except Exception:                    # noqa: BLE001
+                    pass
+    finally:
+        try:
+            board.stop()
+        except Exception:                            # noqa: BLE001
+            pass
+    return paths, geom
+
+
+def stack_raw(paths, geom, pattern="BGGR"):
+    """Mean-stack raw Bayer frames IN LINEAR SPACE, then demosaic for viewing.
+
+    Order matters and is the whole lesson: average first (raw is linear, so
+    the mean is a true mean of photon counts), demosaic second, gamma last.
+    Demosaicing first would average interpolated pixels; gamma first would
+    average the wrong numbers.
+    """
+    np = _np()
+    import s28_stack
+    w, h = geom
+    acc = None
+    for p in paths:
+        a = np.frombuffer(open(p, "rb").read(), dtype=np.uint8)
+        a = a[:w * h].reshape(h, w).astype(np.float32)
+        acc = a if acc is None else acc + a
+    mean = acc / len(paths)
+    single = np.frombuffer(open(paths[0], "rb").read(),
+                           dtype=np.uint8)[:w * h].reshape(h, w).astype(np.float32)
+    return (s28_stack.demosaic(single.astype(np.uint8), pattern),
+            s28_stack.demosaic(np.clip(mean, 0, 255).astype(np.uint8), pattern))
