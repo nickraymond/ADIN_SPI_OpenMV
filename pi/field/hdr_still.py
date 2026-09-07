@@ -26,20 +26,23 @@ import discover as discovery                         # noqa: E402
 from raw_still import finish                         # noqa: E402
 
 
-def ev_ladder(base_us, stops=(-2.0, 0.0, 2.0), frame_time_us=None):
-    """Exposures for the EV rungs, clamped to what the frame time allows.
+#: The frame-time register is 21-bit, ~2.1 s (S28). Beyond that the board
+#: cannot go, and asking would silently clamp again.
+MAX_EXPOSURE_US = 2000000
 
-    These sensors CLAMP exposure to the current frame time minus a margin
-    (S28 measured it on the PAG7936), so a +2 EV request can silently come
-    back unchanged -- which would make two 'different' frames identical and
-    the merge meaningless. Clamping here makes the limit visible instead.
+
+def ev_ladder(base_us, stops=(-2.0, 0.0, 2.0)):
+    """Exposures for the EV rungs.
+
+    No longer clamped to the frame time: the board now EXTENDS the frame
+    time (PAG7936 registers, S28's wedge-free method) before setting each
+    exposure, so the long rungs are actually reachable. Only the register's
+    own 21-bit ceiling still applies.
     """
     out = []
     for ev in stops:
         us = int(base_us * (2.0 ** ev))
-        if frame_time_us:
-            us = min(us, int(frame_time_us * 0.95))
-        out.append(max(us, 1))
+        out.append(max(min(us, MAX_EXPOSURE_US), 1))
     return out
 
 

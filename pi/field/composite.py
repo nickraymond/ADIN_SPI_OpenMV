@@ -426,37 +426,81 @@ def stack_raw(paths, geom, pattern="BGGR"):
 #: read noise; extra exposure time buys real photons. S28: "never gain --
 #: gain adds back the noise the photons are buying out".
 BOARD_BRACKET = '''
-import sensor, image, time, ubinascii, gc
-sensor.reset()
-sensor.set_pixformat(sensor.BAYER)
-sensor.set_framesize(sensor.%(SIZE)s)
-sensor.skip_frames(time=2000)
+import csi, image, time, ubinascii, gc
+
+# PAG7936 frame-time registers (AE3). VENDORED VERBATIM from S28
+# (pi/s28/s28_board_burst.py) -- these constants were earned on this exact
+# sensor and are not the place to improvise.
+#
+# WHY: exposure is CLAMPED to the current frame time, so a +2 EV request
+# silently comes back unchanged (measured on this rig: wanted 66336 us, got
+# 16584). csi.framerate() would lift it but calls omv_csi_abort() plus a
+# full mode-register rewrite, which WEDGES the board (S28 root-caused it).
+# Writing the frame-time registers directly extends the window with no abort
+# and no reconfigure, and set_auto_exposure then reads the live registers.
+# No firmware rebuild -- __write_reg is already exposed on stock v5.0.1.
+_FT_H, _FT_M, _FT_L = 0x004E, 0x004D, 0x004C
+_SENSOR_UPDATE, _SU_FLAG = 0x00EB, 0x80
+FT_SLACK = 5000            # us of headroom above the exposure
+
+def set_frame_time(c, ft_us):
+    ft_us = min(max(int(ft_us), 200), 2000000)     # 21-bit reg, ~2.1 s
+    h = c.__read_reg(_FT_H)
+    c.__write_reg(_FT_H, (h & 0xE0) | ((ft_us >> 16) & 0x1F))
+    c.__write_reg(_FT_M, (ft_us >> 8) & 0xFF)
+    c.__write_reg(_FT_L, ft_us & 0xFF)
+    c.__write_reg(_SENSOR_UPDATE, _SU_FLAG)
+
+def snap(c, tries=4):
+    # The first capture after a frame-time change can time out, then succeed
+    # (S28, measured 2026-09-02). A persistent timeout is a real fault.
+    for i in range(tries):
+        try:
+            return c.snapshot()
+        except RuntimeError as e:
+            if "timed out" in str(e) and i < tries - 1:
+                time.sleep_ms(60)
+                continue
+            raise
+
+csi0 = csi.CSI()
+csi0.reset()
+csi0.pixformat(csi.BAYER)
+csi0.framesize(csi.%(SIZE)s)
+csi0.skip_frames(time=2000)
+sensor = csi0
 # Meter once with AE on, read what it chose, then lock and step around it.
 base = 0
 try:
-    base = sensor.get_exposure_us()
+    base = csi0.exposure_us()
 except Exception as e:
     print("#W get_exposure", e)
 try:
-    sensor.set_auto_gain(False)
+    csi0.auto_gain(False)
 except Exception as e:
     print("#W lock_gain", e)
 print("#B %%d" %% base)
-img = sensor.snapshot()
+img = snap(csi0)
 print("#G %%d %%d" %% (img.width(), img.height()))
 CH = 8192
 for us in %(EXPS)s:
+    # EXTEND THE FRAME TIME FIRST -- otherwise the exposure clamps to it and
+    # the long rung is silently identical to the metered one.
     try:
-        sensor.set_auto_exposure(False, exposure_us=us)
+        set_frame_time(csi0, us + FT_SLACK)
+    except Exception as e:
+        print("#W set_frame_time", us, e)
+    try:
+        csi0.auto_exposure(False, exposure_us=us)
     except Exception as e:
         print("#W set_exposure", us, e)
-    sensor.skip_frames(time=250)
+    csi0.skip_frames(time=400)
     got = -1
     try:
-        got = sensor.get_exposure_us()
+        got = csi0.exposure_us()
     except Exception:
         pass
-    img = sensor.snapshot()
+    img = snap(csi0)
     mv = img.bytearray()
     n = len(mv)
     # Report the exposure the sensor ACTUALLY settled on -- the merge divides
