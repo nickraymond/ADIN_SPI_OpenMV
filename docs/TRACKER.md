@@ -1,26 +1,31 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-06 (**NEW SPRINT S29 — nereus002 FIELD RIG: bites
-1-3 DONE, bite 4 (power-cycle reboot) in acceptance.** Pi Zero 2 W +
-IMX708-wide + AE3 + N6 on a LiFePO4wered/Pi+. **Demo PASSED: one card,
-three live streams — IMX708 15.0 / AE3 14.9 / N6 14.9 fps, 7.88 Mbps,
-load 1.41 on 4 cores.** Boards are found by ASKING them their role, never
-by USB serial, because this rig's boards get swapped AND because **the AE3
-and N6 here are nereus000's physical boards, moved** (proven via the N6's
-chip UID) — **nereus000 now has no cameras.** Two bench faults root-caused:
-**wifi `power_save` was ON** (radio dozes, rx negotiated to 1.0 Mb/s, AP
-ages out the association, Pi sits up with no network — seen 3× in one
-session; a REPEAT of nereus000's 2026-08-25 fix, now repo-carried and
-enabled at boot) and **`VIN` read 47 mV** (charger not on the Pi+ input, so
-the rig ran off the cell and died repeatedly; resolved physically).
-**`systemctl reboot` is BANNED on this rig** — it becomes a power-off, and
-it cannot cut USB VBUS, which is the AE3's only cure; use
-`pi/field/power_cycle.py`, whose LiFePO4wered logic is VENDORED from Nick's
-nereus-vision-dev (copied, not imported — that deployed project is
-untouched). Four defects were found by DRIVING the page rather than by
-tests, one of them a real safety regression (the settle window was
-skippable across recipe types). Previous:*
+*Last updated: 2026-09-07 (**S29 nereus002 FIELD RIG — bites 1-8 DONE,
+bites 9-11 open.** Pi Zero 2 W + IMX708-wide + AE3 + N6 on a
+LiFePO4wered/Pi+. Three cards live: three-camera streams, composite
+capture (stack & bracket), RAW composite. Boards are found by ASKING
+them their role, never by USB serial, because this rig's boards get
+swapped AND because **the AE3 and N6 here are nereus000's physical
+boards, moved** (proven via the N6's chip UID) — **nereus000 now has no
+cameras.** Three bench faults root-caused, all of which had been
+misdiagnosed at least once: **wifi `power_save` was ON** (radio dozes,
+rx negotiated to 1.0 Mb/s, AP ages out the association, Pi sits up with
+no network — a REPEAT of nereus000's 2026-08-25 fix, now repo-carried);
+**`VIN` read 47 mV** (charger not on the Pi+ input; resolved
+physically); and **usb-storage MSC probing** livelocked both boards in
+USB device resets at ~46/min, which is the whole "board fell off the
+bus" family and presented as four different bugs.
+**`systemctl reboot` is BANNED on this rig** — it becomes a power-off,
+and it cannot cut USB VBUS; use `pi/field/power_cycle.py` (5/5), whose
+LiFePO4wered logic is VENDORED from Nick's nereus-vision-dev (copied,
+not imported — that deployed project is untouched).
+**Endurance measured:** 78 min from ~3.20 V to the 2950 mV cutoff at a
+2.73 W mean, `throttled` 0x0 throughout; **~3 h from a full charge** is
+the field-planning number. **STILL OPEN and blocking field-ready: the
+AE3 refuses the REPL where the N6 never does** (3 failures vs 0, same
+code, same sensor), cleared only by a full power cut.
+**Building a second rig? Use the `field-rig-bringup` skill.** Previous:*
 *2026-09-01 (**NEW SPRINT S28 — capture-side frame
 stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
 plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
@@ -3005,7 +3010,7 @@ configs name the same two strings**, so by-id can no longer identify a rig.
       *Power:* `VIN` read **47 mV** — the charger was not on the Pi+ input,
       so the rig ran off the cell (~3.5 W, under 2 h) and died repeatedly.
       Resolved physically; VIN 4967 mV / VBAT 3407 mV confirmed charging.
-- [~] **Bite 4 — power-cycle reboot (the AE3's only remote cure).**
+- [x] **Bite 4 — power-cycle reboot (the AE3's only remote cure).**
       `systemctl reboot` is wrong here twice over: the Pi+ cuts power
       SHDN_DELAY after UART TX drops and a Zero 2 W can miss that window
       (a reboot becomes a power-off needing a physical button — measured),
@@ -3016,17 +3021,70 @@ configs name the same two strings**, so by-id can no longer identify a rig.
       so that deployed project is neither modified nor depended on. The
       wake is programmed and VERIFIED before anything shuts down, and a
       cycle is REFUSED on a flat battery with no charger.
-      *Exit:* 5 consecutive cycles, each returning with both boards.
+      **PASSED: 5/5 cycles, each returning with both boards.** The refusal
+      then earned its keep for real on 2026-09-07 — it correctly blocked a
+      recovery attempt at VBAT 3037 mV with VIN 47 mV.
+- [x] **Bite 5 — cameras online and stable. ROOT-CAUSED: usb-storage.**
+      Both boards expose `/flash` as an MSC disk. A udev probe landing
+      while the board is busy fails a SCSI read → USB **device reset** →
+      re-probe → livelock at **~46 resets/min**, and every reset re-binds
+      cdc_acm. That is the whole "AE3 fell off the bus" family, and it
+      presents as *four different bugs*: a missing device, a wedged port,
+      "could not enter raw repl", and a firmware crash. Fixed by
+      `pi/field/usb_msc_off.sh` + `field-usb-msc-off.service`, matched on
+      **interface CLASS 08/06/50** under VID 37c5 so a firmware update
+      that reorders interfaces cannot silently re-enable the disk.
+      The suspect list in the old wording (rail sag, the unpowered hub,
+      cable quality) was **wrong** — none of them.
+- [x] **Bite 6 — composite capture: stack + HDR bracket, all three
+      cameras.** *(Renumbered in flight — the original bite 6 was
+      "stills + video with UTC filenames"; that work is now bite 8.)*
+      Same-exposure stacking for noise, and shutter-only bracketing for
+      dynamic range, on IMX708 + AE3 + N6 through one card.
+      **Nick caught a real defect here:** the first version composited in
+      the **gamma domain**. Averaging and exposure-ratio division are only
+      valid on linear data, so `to_linear`/`to_display` (γ=2.2) now bracket
+      every merge. Measured noise ladder (raw, N=8): AE3 σ 4.374→1.431
+      (**3.06×**), N6 6.070→2.491, IMX 4.425→1.673.
+- [x] **Bite 7 — RAW path on all three cameras + on-board ISP stack.**
+      Boards capture BAYER (8-bit BGGR, linear, no gamma LUT); the IMX708
+      goes through DNG, with exposure read from the **EXIF sub-IFD** (not
+      the main IFD — that returned −1 and crashed the bracket).
+      **Nick's idea, and it worked:** stack 16 raw frames on the board,
+      then hand the result to the board's *own* debayer so the stack
+      inherits the hardware ISP — 16 frames in **795 ms**, debayer 48 ms,
+      out as a **28 KB JPEG** instead of ~22 MB of raw.
+      Raw capture cadence is far faster than it looked: **AE3 18.5 ms/frame
+      (54 fps), N6 7.5 ms (133 fps)** — the 8–10 s a burst appeared to take
+      was **99 % host transfer**, which answers Nick's motion-budget
+      question: a 16-frame stack is ~0.3–0.8 s of scene time, fine for
+      urchins, not for fish.
+- [x] **Bite 8 — endurance + thermal measurement.** `field-power-log`
+      writes a 10 s CSV (voltage, current, power, energy, CPU temp, load,
+      throttled), append-only and `fsync`'d per sample, EMPTY on a failed
+      read and never a fabricated zero. Overnight drawdown 2026-09-07:
+      **78 min** from ~3.20 V to the 2950 mV cutoff (stopped at 2952),
+      3.13 Wh, `throttled` **0x0** throughout. **From a full charge Nick
+      measures ~3 h, which is the number to plan field sessions against.**
+      | State | Load | CPU |
+      |---|---|---|
+      | idle | 2.42 W | 39 °C |
+      | two cameras at HD 15 fps | 3.48 W | 46 °C |
+      | peak (composite runs) | 4.18 W | 46.7 °C |
+      **Voltage sag goes non-linear at the end**: idle→HD raised power
+      1.44× but the sag rate **6.7×** (4.4 → 29.3 mV/min). That is cell
+      internal resistance, not consumption — the last few percent of the
+      pack cannot deliver a camera load. Do not plan to the last 100 mV.
 
-- [ ] **Bite 5 — cameras online and stable (priority 2).** The AE3 has twice
-      fallen off the USB bus entirely (`lsusb` lost it, not just a REPL
-      refusal). With bite 4 in hand the recovery is automatable; what is NOT
-      known is the CAUSE. Suspect list, unranked and unmeasured: rail sag on
-      battery at ~740 mA, the unpowered hub, cable quality (the shielded-cable
-      rule already cost this bench a week), enumeration order.
-- [ ] **Bite 6 — stills + video capture with UTC filenames** and the folder
-      structure, per the original ask.
-- [ ] **Bite 7 — wlan0 AP mode for field access (the polish step, LAST).**
+- [ ] **Bite 9 — stills + video capture with UTC filenames** and the
+      folder structure, per the original ask. *(Was bite 6.)* Nothing is
+      written to disk on a schedule yet; every capture so far is
+      operator-triggered through a card.
+- [ ] **Bite 10 — per-camera Settings menu** (Nick 2026-09-06, requested
+      and NOT built): a collapsed-by-default panel to set resolution,
+      quality and fps **per camera** before starting a demo. Today the
+      card toggles apply to all three at once.
+- [ ] **Bite 11 — wlan0 AP mode for field access (the polish step, LAST).**
       Nick 2026-09-06: "we will get to setting up the AP as the last step,
       for now more important to keep the Pi on my local wifi for active
       development." Recipe already written and field-proven in
@@ -3036,12 +3094,26 @@ configs name the same two strings**, so by-id can no longer identify a rig.
       access is lost** — this likely wants AP as a second interface, or a
       toggle, not a replacement.
 
+**OPEN, TOP OF THE LIST — the AE3 refuses the REPL where the N6 never
+does.** Three failures in the 2026-09-06/07 session against **zero** for
+the N6, on identical host code and the same PAG7936 sensor. Survives the
+usb-storage fix (bite 5), so it is a *second*, distinct fault. Cleared
+only by a full power cut. **This blocks calling the rig field-ready:
+"power cycle the camera" is not an acceptable field recovery.** Not
+diagnosed — do not assume a cause; the last three guesses here were wrong.
+
+**Second rig:** Nick is building one to replicate nereus002. Everything
+learned is in the **`field-rig-bringup`** skill — build from that, not
+from this section.
+
 **Demo (Nick):** open `http://nereus002:8088/`, click **Field rig — three
-camera streams**, then the link → three live streams side by side.
+camera streams**, then the link → three live streams side by side. Also
+live: **Composite capture** (stack & bracket) and **RAW composite**.
 **Standing facts for this rig:** boards by ROLE not by-id · never
 `systemctl reboot` (use `pi/field/power_cycle.py`) · mpremote lives in
 `~/mpv` (PEP 668) so launchers pick an interpreter · `iw`/`ip` are in
-/sbin, not on the pi user's PATH.
+/sbin, not on the pi user's PATH · `lifepo4wered-daemon` must be active
+or the Pi+ cuts power 5 min after every boot.
 
 ---
 

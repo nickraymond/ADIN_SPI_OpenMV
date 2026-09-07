@@ -33,7 +33,13 @@ case "$ROLE" in
   telemetry) UNIT=bm-telemetry.service;      AUTOSTART=no  ;;
   bench-web) UNIT=bench-web.service;         AUTOSTART=no  ;;
   workbench) UNIT=workbench.service;         AUTOSTART=yes ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench" >&2; exit 1 ;;
+  # S29 field rig (nereus002-class). All three are enabled at boot: they are
+  # bench-stability fixtures, not demos, and each one exists because its
+  # absence cost this bench a session. See .claude/skills/field-rig-bringup.
+  powersave) UNIT=wifi-powersave-off.service; AUTOSTART=yes ;;
+  usb-msc)   UNIT=field-usb-msc-off.service;  AUTOSTART=yes ;;
+  power-log) UNIT=field-power-log.service;    AUTOSTART=yes ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

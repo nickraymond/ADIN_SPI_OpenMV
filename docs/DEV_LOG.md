@@ -17,6 +17,77 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-07 — S29 — field rig: endurance measured, usb-storage root-caused, bites 4-8 closed
+
+**Branch:** `sprint/29-fieldunit` (61 commits). Rig: **nereus002**.
+
+**Done:**
+- **Bite 5 root cause found and fixed: usb-storage.** Both OpenMV boards
+  expose `/flash` as an MSC disk. A udev probe landing while the board is
+  busy fails a SCSI read → USB **device reset** → re-probe → livelock at
+  **~46 resets/min**, and every reset re-binds cdc_acm. This is the entire
+  "AE3 fell off the bus" family and it presented as *four* different bugs:
+  missing device, wedged port, "could not enter raw repl", firmware crash.
+  `field-usb-msc-off.service` matches **interface CLASS 08/06/50** under
+  VID 37c5, not a product ID, so a firmware update that reorders
+  interfaces cannot silently re-enable the disk.
+- **Bite 4 closed: power-cycle reboot, 5/5.** And the safety refusal was
+  not theoretical — on 2026-09-07 it correctly blocked a recovery attempt
+  at VBAT 3037 mV with VIN 47 mV.
+- **Bites 6+7: composite, HDR bracket and RAW on all three cameras**,
+  including Nick's on-board-ISP idea (stack 16 raw frames on the board,
+  then hand the result to the board's own debayer): 16 frames in 795 ms,
+  debayer 48 ms, out as a 28 KB JPEG instead of ~22 MB of raw.
+- **Bite 8: overnight endurance + thermal run.** 78 min from ~3.20 V to
+  the 2950 mV cutoff (stopped at **2952** — the register is accurate to
+  2 mV), 3.13 Wh, `throttled` **0x0** throughout. Idle 2.42 W / two HD
+  cameras 3.48 W / peak 4.18 W; 39-46.7 °C.
+- **New skill `field-rig-bringup`** — Nick is building a second rig, so
+  everything learned is now a build document rather than tribal memory.
+  Three of the field units were also added to `install_stream_service.sh`
+  (`powersave`, `usb-msc`, `power-log`); they were install-by-hand before,
+  which is exactly the gap a second rig would fall into.
+
+**Broke/surprised us:**
+- **Voltage sag goes non-linear well before the cutoff.** Idle→HD raised
+  power 1.44× but the sag rate **6.7×** (4.4 → 29.3 mV/min). That is cell
+  internal resistance, not consumption: the last few percent of the pack
+  cannot deliver a camera load. Do not plan to the last 100 mV.
+- **Two of my own safety mechanisms fought each other and killed a demo.**
+  The AE3 refused the REPL → discovery entered its 60 s silence wait →
+  the workbench's 60 s health gate SIGINT'd the viewer *mid-wait*. All
+  three cameras died because one board was grumpy, and it surfaced as a
+  `KeyboardInterrupt` inside `sleep()`, which reads like a mystery rather
+  than a timeout. Fixed by serving the page **before** discovering. The
+  general lesson: two independent timeouts of the same magnitude on the
+  same path is a bug, not defence in depth.
+- **Nick caught a real defect I had shipped:** the first composite
+  averaged in the **gamma domain**. Averaging and exposure-ratio division
+  are only valid on linear data. `to_linear`/`to_display` (γ=2.2) now
+  bracket every merge.
+- **Raw capture was never the slow part.** AE3 18.5 ms/frame (54 fps), N6
+  7.5 ms (133 fps) — the 8-10 s a burst appeared to take was **99 % host
+  transfer**. A 16-frame stack is ~0.3-0.8 s of scene time: fine for
+  urchins, not for fish.
+- **I over-committed to a diagnosis I had not measured.** After a reboot
+  failed to bring the Pi back I confidently blamed `SHDN_DELAY`; reading
+  the register (96 ≈ 12 s, already raised by Nick) said a flat battery was
+  far likelier. Separately I claimed sudo was passwordless when my calls
+  were riding Nick's cached credential (`timestamp_type=global`).
+- **`PI_BOOT_TO` is a boot watchdog, not a delay.** The 5-minute
+  power-off is `lifepo4wered-daemon` not running, not a register to zero.
+  Corrected in the skill after reading the live rig — nereus002 runs
+  happily with `PI_BOOT_TO=300`.
+
+**Next:** the **AE3 REPL-refusal** investigation — 3 failures against 0
+for the N6 on identical code and the same PAG7936 sensor, surviving the
+usb-storage fix, so it is a second and distinct fault. It is cleared only
+by a full power cut, which is not an acceptable field recovery, and it
+blocks calling the rig field-ready. Then bite 9 (stills + video with UTC
+filenames), which is the original ask and still unbuilt.
+
+---
+
 ## 2026-09-01 — S28 OPENED — frame stacking & bracketed exposure: plan approved, support audit run at the desk
 
 **Branch:** `claude/hdr-stacking-sprint-plan-6590ad` (docs-only PR).
