@@ -32,7 +32,10 @@ role = "N6"
 [params]
 mode = ["both", "stack", "bracket"]
 n = ["4", "8", "2"]
-stops = ["-2,0,2", "-3,0,3", "-1,0,1"]
+# +/- N stops around the metered exposure. The schema allows no
+# commas in a param value, so this is the SPAN and the runner
+# expands it to -N,0,+N.
+stops = ["2", "3", "1"]
 framesize = ["HD", "VGA"]
 
 [run]

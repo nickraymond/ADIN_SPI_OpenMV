@@ -35,6 +35,18 @@ from raw_still import finish                         # noqa: E402
 from hdr_still import ev_ladder                      # noqa: E402
 
 
+def parse_stops(spec):
+    """"2" -> [-2, 0, 2]; "-2,0,2" -> the same list, given explicitly.
+
+    The card sends the short form because the recipe schema forbids commas
+    in a param value; the CLI keeps the explicit form for asymmetric ladders.
+    """
+    if "," in spec:
+        return [float(x) for x in spec.split(",") if x.strip()]
+    n = abs(float(spec))
+    return [-n, 0.0, n]
+
+
 def _page(title, body):
     return """<!doctype html><meta charset="utf-8">
 <title>%s</title><style>
@@ -98,7 +110,7 @@ def run_all(args, run_dir, index):
                 info["port"], [0], run_dir, role + "_p", size=args.framesize)
             time.sleep(args.settle)
             base_us = base_us or 8000
-            exps = ev_ladder(base_us, [float(s) for s in args.stops.split(",")])
+            exps = ev_ladder(base_us, parse_stops(args.stops))
             frames, geom, _ = composite.board_bracket(
                 info["port"], exps, run_dir, role, size=args.framesize)
             if len(frames) >= 2 and geom:
@@ -147,7 +159,9 @@ def main(argv=None):
     ap.add_argument("--mode", default="both",
                     choices=("stack", "bracket", "both"))
     ap.add_argument("--n", type=int, default=4)
-    ap.add_argument("--stops", default="-2,0,2")
+    ap.add_argument("--stops", default="2",
+                    help="+/- N stops around metered; also accepts an "
+                         "explicit comma list like -2,0,2")
     ap.add_argument("--framesize", default="HD")
     ap.add_argument("--boards", default="AE3,N6")
     ap.add_argument("--settle", type=float, default=40.0,
