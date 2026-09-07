@@ -837,6 +837,12 @@ print("#H %%d" %% gc.mem_free())
 # between working and MemoryError.
 del img
 gc.collect()
+# ORDER MATTERS. Allocate the 8-bit output FIRST, then the accumulator on
+# top of it. Freeing the accumulator then leaves a clean contiguous block
+# for to_rgb565's own 2 MB, instead of a hole with `buf` stranded above it.
+# Measured on the AE3: the other order fails at to_rgb565 with ~3 MB
+# nominally free -- the heap has the space but not in one piece.
+buf = bytearray(W * H)
 try:
     acc = np2.zeros(W * H, dtype=np2.uint16)
 except MemoryError:
@@ -862,20 +868,23 @@ print("#T stack_ms %%d" %% time.ticks_diff(t1, t0))
 # only 2,043,264 B remain -- so a whole-array uint8 conversion (which
 # allocates a full-size temporary) fails by a few KB. Converting a strip at
 # a time needs the 1 MB output plus a few KB of scratch, and fits.
-acc //= N
-buf = bytearray(W * H)
-STRIP = W * 16                       # 16 rows at a time
+# NO whole-array division. Measured on the AE3: `acc //= N` is NOT in
+# place in ulab -- it allocates a second full-size (2,048,000 B) array,
+# and with only 2,043,184 B left after the accumulator it fails by ~5 kB.
+# Divide INSIDE the strip loop instead, where the temporary is 16 rows.
+STRIP = W * 16
 off = 0
 while off < W * H:
     end = off + STRIP
     if end > W * H:
         end = W * H
-    chunk = np2.array(acc[off:end], dtype=np2.uint8)
+    chunk = np2.array(acc[off:end] / N, dtype=np2.uint8)
     buf[off:end] = chunk.tobytes()
     del chunk
     off = end
 del acc
 gc.collect()
+print("#H %%d" %% gc.mem_free())
 stacked = image.Image(W, H, image.BAYER, buffer=buf)
 t2 = time.ticks_ms()
 rgb = stacked.to_rgb565(copy=True)      # the board's OWN debayer + gamma LUT
