@@ -58,7 +58,30 @@ h2{font-size:13px;color:#8fd0ff;margin:0 0 8px}
 figure{margin:0;flex:1 1 360px}figcaption{color:#8a949e;margin:0 0 4px}
 img{width:100%%;border-radius:3px;background:#000}
 .meta{color:#8a949e;margin:6px 0 0}.bad{color:#ef8a8a}.warn{color:#e6c15a}
-</style><h1>%s</h1>%s""" % (title, title, body)
+img{cursor:zoom-in}
+a.dl{color:#8fd0ff;text-decoration:none;border:1px solid #2a4a5a;
+     border-radius:3px;padding:0 5px;margin-left:6px;font-size:11px}
+a.dl:hover{background:#1d3040}
+/* Lightbox: click any image for a 1:1 look. Scrollable, because at full
+   resolution the point is to inspect pixels, not to fit the screen. */
+#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.94);
+    z-index:99;overflow:auto;padding:10px;text-align:center}
+#lb.on{display:block}
+#lb img{max-width:none;cursor:zoom-out}
+#lb .hint{color:#8a949e;position:fixed;top:8px;left:12px;font-size:12px}
+</style><h1>%s</h1>%s
+<div id="lb" onclick="this.className=''"><div class="hint">click anywhere or
+press Esc to close &middot; scroll to pan at full resolution</div>
+<img id="lbimg"></div>
+<script>
+function zoom(el){
+  document.getElementById('lbimg').src = el.getAttribute('src');
+  document.getElementById('lb').className = 'on';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('lb').className = '';
+});
+</script>""" % (title, title, body)
 
 
 def _progress(path, msg):
@@ -68,10 +91,31 @@ def _progress(path, msg):
                        '<p class="sub">%s</p>' % msg))
 
 
-def _fig_uri(p):
-    import base64
-    with open(p, "rb") as fh:
-        return "data:image/jpeg;base64," + base64.b64encode(fh.read()).decode()
+def _png(jpg_path):
+    """Write a full-resolution PNG beside the JPEG and return its name.
+
+    PNG because the download is for pixel-peeping and further processing --
+    re-encoding a JPEG to share it would add a second generation of loss on
+    top of the one already there.
+    """
+    from PIL import Image
+    png = jpg_path[:-4] + ".png"
+    if not os.path.exists(png):
+        Image.open(jpg_path).save(png, optimize=True)
+    return os.path.basename(png)
+
+
+def _fig(cap, path):
+    """One figure: click to enlarge, with a full-res PNG download link."""
+    jpg = os.path.basename(path)
+    png = _png(path)
+    from PIL import Image
+    with Image.open(path) as im:
+        w, h = im.size
+    return ('<figure><figcaption>%s '
+            '<a class="dl" href="%s" download>PNG %dx%d</a></figcaption>'
+            '<img src="%s" alt="%s" onclick="zoom(this)"></figure>'
+            % (cap, png, w, h, jpg, cap))
 
 
 def imx_card(args, run_dir, index):
@@ -95,10 +139,14 @@ def imx_card(args, run_dir, index):
                 [s["path"] for s in shots])
             p1 = os.path.join(run_dir, "IMX_single.jpg")
             p2 = os.path.join(run_dir, "IMX_stack.jpg")
-            Image.fromarray(finish(composite.imx_demosaic(first, scale))
-                            ).save(p1, quality=95)
-            Image.fromarray(finish(composite.imx_demosaic(mean, scale))
-                            ).save(p2, quality=95)
+            # Flatten the 4.14x centre-to-corner falloff the raw path
+            # leaves in (rpicam's ISP would normally do this from the
+            # tuning file). Applied to BOTH so the comparison is fair.
+            ls = composite.lens_shading
+            Image.fromarray(finish(composite.imx_demosaic(
+                ls(first, args.shading), scale))).save(p1, quality=95)
+            Image.fromarray(finish(composite.imx_demosaic(
+                ls(mean, args.shading), scale))).save(p2, quality=95)
             figs += [("1 raw frame", p1),
                      ("stacked x%d (linear)" % len(shots), p2)]
             meta.append("stack: %d raw frames, shutter %s us"
@@ -133,6 +181,7 @@ def imx_card(args, run_dir, index):
             spread = max(got_list) / min(got_list) if min(got_list) else 0
             rad = imx_merge_bracket(frames)
             p3 = os.path.join(run_dir, "IMX_hdr.jpg")
+            rad = composite.lens_shading(rad, args.shading)
             Image.fromarray(finish(composite.imx_demosaic(
                 rad, float(rad.max() or 1.0)), gamma=True)).save(p3, quality=95)
             figs.append(("HDR merge (%.0fx range)" % spread, p3))
@@ -144,8 +193,7 @@ def imx_card(args, run_dir, index):
         else:
             meta.append("bracket FAILED: %d frame(s)" % len(frames))
 
-    pair = "".join('<figure><figcaption>%s</figcaption><img src="%s">'
-                   '</figure>' % (cap, _fig_uri(p)) for cap, p in figs)
+    pair = "".join(_fig(cap, p) for cap, p in figs)
     return ('<div class="c"><h2>IMX708</h2><div class="pair">%s</div>'
             '<p class="meta">%s</p></div>' % (pair, " &middot; ".join(meta)))
 
@@ -245,16 +293,7 @@ def run_all(args, run_dir, index):
                 meta.append("bracket FAILED: %d frame(s)" % len(frames))
             time.sleep(args.settle)
 
-        import base64
-
-        def uri(p):
-            with open(p, "rb") as fh:
-                return "data:image/jpeg;base64," + base64.b64encode(
-                    fh.read()).decode()
-
-        pair = "".join('<figure><figcaption>%s</figcaption>'
-                       '<img src="%s"></figure>' % (cap, uri(p))
-                       for cap, p in figs)
+        pair = "".join(_fig(cap, p) for cap, p in figs)
         cards.append('<div class="c"><h2>%s</h2><div class="pair">%s</div>'
                      '<p class="meta">%s</p></div>'
                      % (role, pair, " &middot; ".join(meta)))
@@ -278,6 +317,9 @@ def main(argv=None):
     ap.add_argument("--framesize", default="HD")
     ap.add_argument("--boards", default="IMX,AE3,N6",
                     help="IMX = the CSI camera; AE3/N6 = the boards")
+    ap.add_argument("--shading", type=float, default=1.0,
+                    help="lens-shading correction strength, 0 = off "
+                         "(IMX708 only; measured 4.14x centre:corner)")
     ap.add_argument("--settle", type=float, default=40.0,
                     help="seconds of port silence between board attaches")
     ap.add_argument("--out", default=os.path.expanduser("~/raw_card_runs"))

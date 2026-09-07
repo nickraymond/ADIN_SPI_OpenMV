@@ -721,6 +721,34 @@ def imx_raw_load(path):
     return raw, (white - black)
 
 
+def lens_shading(bayer, strength=1.0):
+    """Flatten the radial brightness falloff that raw capture leaves in.
+
+    MEASURED on this rig's IMX708 wide: centre 146.3 vs corners 35.4 --
+    a 4.14x ratio, 76% falloff. That is the "halo" (bright middle, dark
+    corners), and it is NOT a merge artifact: rpicam's ISP normally applies
+    a Lens Shading Correction table from the camera tuning file, and the
+    raw path deliberately skips the whole ISP. The boards show it far less
+    because their lenses are narrower.
+
+    This is a generic radial fit, NOT the vendor's per-unit LSC table, so
+    treat it as a viewing aid rather than a calibrated correction. It is
+    applied AFTER stacking and BEFORE demosaic, and it is a per-pixel gain,
+    so it also amplifies corner noise -- which is honest: those corners
+    really did collect ~4x fewer photons.
+    """
+    np = _np()
+    h, w = bayer.shape
+    yy, xx = np.ogrid[:h, :w]
+    r = np.sqrt(((yy - h / 2.0) / (h / 2.0)) ** 2 +
+                ((xx - w / 2.0) / (w / 2.0)) ** 2)
+    r = np.clip(r / np.sqrt(2.0), 0.0, 1.0)
+    # cos^4 is the classical falloff; fit its inverse, softened by `strength`
+    gain = 1.0 / np.clip(np.cos(r * 0.9) ** 4, 0.05, 1.0)
+    gain = 1.0 + (gain - 1.0) * float(strength)
+    return bayer * gain.astype(np.float32)
+
+
 def imx_raw_stack(paths):
     """Mean-stack IMX raw with a running accumulator. O(1) in N.
 
