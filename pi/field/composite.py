@@ -463,12 +463,22 @@ def snap(c, tries=4):
                 continue
             raise
 
+def settle(c, ms):
+    # CSI objects have NO skip_frames (that is a module-level sensor.*
+    # helper) -- measured on v5.0.1, and its absence silently killed the
+    # whole bracket script. Discard frames for the requested time instead.
+    t0 = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), t0) < ms:
+        try:
+            c.snapshot()
+        except Exception:
+            pass
+
 csi0 = csi.CSI()
 csi0.reset()
 csi0.pixformat(csi.BAYER)
 csi0.framesize(csi.%(SIZE)s)
-csi0.skip_frames(time=2000)
-sensor = csi0
+settle(csi0, 2000)
 # Meter once with AE on, read what it chose, then lock and step around it.
 base = 0
 try:
@@ -494,7 +504,7 @@ for us in %(EXPS)s:
         csi0.auto_exposure(False, exposure_us=us)
     except Exception as e:
         print("#W set_exposure", us, e)
-    csi0.skip_frames(time=400)
+    settle(csi0, 400)
     got = -1
     try:
         got = csi0.exposure_us()
