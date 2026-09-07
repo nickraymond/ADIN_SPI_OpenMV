@@ -977,5 +977,59 @@ class TestPerCameraFpsCeiling(unittest.TestCase):
     def test_unknown_label_is_uncapped(self):
         self.assertEqual(field_stream.capped_fps("SOMETHING", 99.0), 99.0)
 
+
+import field_power_log as fpl                   # noqa: E402
+
+
+class TestPowerLogSampling(unittest.TestCase):
+    """Endurance data has to survive the interesting part: the end."""
+
+    def test_energy_integrates_actual_elapsed_not_nominal(self):
+        # A stalled sample must not invent energy that was never drawn.
+        vals = {"VIN": 4967, "VBAT": 3400, "VOUT": 5000, "IOUT": 1000}
+        orig = fpl.lifepo4
+        fpl.lifepo4 = lambda n: vals[n]
+        try:
+            t = [100.0]
+            row1, t1, e1 = fpl.sample(None, 0.0, clock=lambda: t[0])
+            t[0] = 3700.0                       # exactly one hour later
+            row2, t2, e2 = fpl.sample(t1, e1, clock=lambda: t[0])
+        finally:
+            fpl.lifepo4 = orig
+        # 5 V x 1 A = 5 W for 1 h = 5 Wh
+        self.assertAlmostEqual(e2, 5.0, places=3)
+        self.assertEqual(row1["energy_wh"], 0.0)
+
+    def test_failed_read_is_empty_not_zero(self):
+        orig = fpl.lifepo4
+        fpl.lifepo4 = lambda n: None
+        try:
+            row, _, _ = fpl.sample(None, 0.0, clock=lambda: 1.0)
+        finally:
+            fpl.lifepo4 = orig
+        # Zero volts is a measurement; a missing reading is not. Averaging
+        # invented zeros is how an endurance curve goes quietly wrong.
+        self.assertIsNone(row["vbat_mv"])
+        self.assertIsNone(row["load_w"])
+
+    def test_load_w_from_vout_times_iout(self):
+        vals = {"VIN": 4967, "VBAT": 3400, "VOUT": 4960, "IOUT": 750}
+        orig = fpl.lifepo4
+        fpl.lifepo4 = lambda n: vals[n]
+        try:
+            row, _, _ = fpl.sample(None, 0.0, clock=lambda: 1.0)
+        finally:
+            fpl.lifepo4 = orig
+        self.assertAlmostEqual(row["load_w"], 4.96 * 0.75, places=3)
+
+    def test_header_matches_row_keys(self):
+        orig = fpl.lifepo4
+        fpl.lifepo4 = lambda n: 1000
+        try:
+            row, _, _ = fpl.sample(None, 0.0, clock=lambda: 1.0)
+        finally:
+            fpl.lifepo4 = orig
+        self.assertEqual(sorted(row.keys()), sorted(fpl.FIELDS))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -830,25 +830,51 @@ print("#G %%d %%d %%d" %% (W, H, N))
 gc.collect()
 print("#H %%d" %% gc.mem_free())
 
+# ALLOCATE THE ACCUMULATOR FIRST. Measured on the AE3: with 4,091,424 B
+# free, a later np2 allocation of 2,048,000 B fails -- the heap has enough
+# space but not a contiguous block once the settle frames have fragmented
+# it. Claiming it up front, right after a collect, is the difference
+# between working and MemoryError.
+del img
+gc.collect()
+try:
+    acc = np2.zeros(W * H, dtype=np2.uint16)
+except MemoryError:
+    print("#E accumulator %%d B will not fit -- try VGA or fewer pixels"
+          %% (W * H * 2))
+    raise
+gc.collect()
+print("#H %%d" %% gc.mem_free())
+
 t0 = time.ticks_ms()
-acc = None
 for i in range(N):
     im = csi0.snapshot()
     a = np2.frombuffer(im.bytearray(), dtype=np2.uint8)
-    if acc is None:
-        acc = np2.array(a, dtype=np2.uint16)
-    else:
-        acc = acc + a
+    acc += a            # in place: no second 2 MB array per frame
     del a
 t1 = time.ticks_ms()
 print("#T stack_ms %%d" %% time.ticks_diff(t1, t0))
 
 # Mean back down to 8-bit Bayer, then let the BOARD debayer it.
-mean = np2.array(acc / N, dtype=np2.uint8)
+# Divide in place, then convert to 8-bit IN STRIPS.
+#
+# Measured on the AE3: after the 2,048,000 B uint16 accumulator is claimed,
+# only 2,043,264 B remain -- so a whole-array uint8 conversion (which
+# allocates a full-size temporary) fails by a few KB. Converting a strip at
+# a time needs the 1 MB output plus a few KB of scratch, and fits.
+acc //= N
+buf = bytearray(W * H)
+STRIP = W * 16                       # 16 rows at a time
+off = 0
+while off < W * H:
+    end = off + STRIP
+    if end > W * H:
+        end = W * H
+    chunk = np2.array(acc[off:end], dtype=np2.uint8)
+    buf[off:end] = chunk.tobytes()
+    del chunk
+    off = end
 del acc
-gc.collect()
-buf = bytearray(mean.tobytes())
-del mean
 gc.collect()
 stacked = image.Image(W, H, image.BAYER, buffer=buf)
 t2 = time.ticks_ms()

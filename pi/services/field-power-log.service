@@ -1,0 +1,27 @@
+# field-power-log.service — S29: endurance logging for the field rig.
+#
+# Answers "how long can we leave this running", which decides deployment
+# duration. Samples the LiFePO4wered/Pi+ and the SoC every 10 s to CSV.
+#
+# Enabled at boot on purpose: an endurance run that needs someone to
+# remember to start it is an endurance run that does not happen. The cost
+# is one lifepo4wered-cli read per 10 s, which is negligible against the
+# ~3.5 W the rig draws.
+#
+# Install: sudo systemctl link /home/pi/ADIN_SPI_OpenMV/pi/services/field-power-log.service
+#          sudo systemctl enable --now field-power-log
+# Read:    ~/power_logs/power_<stamp>.csv
+[Unit]
+Description=Field rig power + thermal logger (10 s CSV)
+After=multi-user.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+ExecStart=/usr/bin/python3 -u /home/pi/ADIN_SPI_OpenMV/pi/field/field_power_log.py --interval 10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
