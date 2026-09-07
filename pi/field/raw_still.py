@@ -104,7 +104,7 @@ def main(argv=None):
         sigmaN = float(np.mean(np.std(np.stack([m1, m2], 0), axis=0)))
         print("  %-4s %dx%d  N=%d  %.1fs  sigma 1frame=%.3f  %d-frame=%.3f  "
               "improvement=%.2fx" % (role, geom[0], geom[1], len(paths),
-                                     time.time() - t0, sigma1, half,
+                                     time.time() - t0, sigma1, half, sigmaN,
                                      sigma1 / sigmaN if sigmaN else 0),
               flush=True)
     print("artifacts: %s" % run_dir, flush=True)
