@@ -442,13 +442,19 @@ def main(argv=None):
     if args.csi_height:
         csi_h = args.csi_height
 
-    found, problems = discover_boards(args.attach_settle)
-
-    views = build_views(found, args.csi_camera,
+    # SERVE BEFORE DISCOVERING. A refused board sends discover_boards into
+    # its 60 s silence wait, and the workbench health-gates LIVE on this page
+    # answering within 60 s -- so discover-then-serve gets SIGINT'd mid-wait
+    # and the whole viewer dies because ONE board was grumpy. Measured
+    # 2026-09-07 with the AE3 refusing: two safety mechanisms fighting.
+    views = build_views({}, args.csi_camera,
                         want={"fps": args.fps, "framesize": args.framesize,
                               "csi_w": csi_w, "csi_h": csi_h})
     if args.no_csi:
         views = [v for v in views if v.kind != "csi"]
+    for v in views:
+        if v.kind == "serial":
+            v.stats.status = "discovering board..."
 
     pixfmt = "GRAYSCALE" if args.colour == "mono" else "RGB565"
 
@@ -460,7 +466,8 @@ def main(argv=None):
                                                  ms, pixfmt))
 
     threads = []
-    for view in views:
+
+    def spawn(view):
         vfps = capped_fps(view.label, args.fps)
         if vfps != args.fps:
             print("  %s capped to %g fps (thermal budget)"
@@ -477,9 +484,29 @@ def main(argv=None):
                 args=(view.target, script_for(view.label), view.latest,
                       view.stats, view.state))
         else:
-            continue        # missing board: its panel already says so
+            return          # missing board: its panel already says so
         t.start()
         threads.append(t)
+
+    def bring_up():
+        """Discover, then attach -- off the main thread so the page is up."""
+        found, problems = discover_boards(args.attach_settle)
+        for problem in problems:
+            print("  ! %s" % problem, flush=True)
+        for view in views:
+            if view.kind == "serial":
+                info = found.get(view.label)
+                if info:
+                    view.target = info["port"]
+                    view.stats.board = info.get("machine", "")
+                    view.stats.status = "attaching..."
+                else:
+                    view.stats.status = ("not found -- no board reported "
+                                         "role %s" % view.label)
+                    view.state["alive"] = False
+            spawn(view)
+
+    threading.Thread(target=bring_up, daemon=True).start()
 
     srv = QuietServer((args.bind, args.http_port), make_handler(views))
 
