@@ -68,6 +68,104 @@ def _progress(path, msg):
                        '<p class="sub">%s</p>' % msg))
 
 
+def _fig_uri(p):
+    import base64
+    with open(p, "rb") as fh:
+        return "data:image/jpeg;base64," + base64.b64encode(fh.read()).decode()
+
+
+def imx_card(args, run_dir, index):
+    """STACK and BRACKET on the IMX708, through the same linear pipeline.
+
+    Same maths as the boards -- the only difference is the container: the
+    IMX hands back a DNG rather than plain Bayer bytes, so it needs a
+    decode step the boards do not.
+    """
+    from PIL import Image
+    from raw_still import finish
+    figs, meta = [], []
+
+    if args.mode in ("stack", "both"):
+        _progress(index, "IMX708: metering, then %d raw frames&hellip;" % args.n)
+        shutter, gain = composite.imx_meter()
+        shots = composite.imx_raw_capture(args.n, run_dir, shutter_us=shutter,
+                                          gain=gain, tag="IMX")
+        if len(shots) >= 2:
+            first, mean, scale = composite.imx_raw_stack(
+                [s["path"] for s in shots])
+            p1 = os.path.join(run_dir, "IMX_single.jpg")
+            p2 = os.path.join(run_dir, "IMX_stack.jpg")
+            Image.fromarray(finish(composite.imx_demosaic(first, scale))
+                            ).save(p1, quality=95)
+            Image.fromarray(finish(composite.imx_demosaic(mean, scale))
+                            ).save(p2, quality=95)
+            figs += [("1 raw frame", p1),
+                     ("stacked x%d (linear)" % len(shots), p2)]
+            meta.append("stack: %d raw frames, shutter %s us"
+                        % (len(shots), shutter))
+        else:
+            meta.append("stack FAILED: %d raw frame(s)" % len(shots))
+
+    if args.mode in ("bracket", "both"):
+        _progress(index, "IMX708: bracketing exposures&hellip;")
+        base, gain = composite.imx_meter()
+        base = base or 8000
+        exps = ev_ladder(base, parse_stops(args.stops))
+        frames = []
+        for us in exps:
+            got = composite.imx_raw_capture(1, run_dir, shutter_us=us,
+                                            gain=gain, tag="IMXev%d" % us)
+            if got:
+                # merge_bracket reads raw bytes; give it decoded arrays via
+                # the same weighted-radiance maths instead.
+                frames.append({"path": got[0]["path"],
+                               "want_us": us,
+                               "got_us": got[0]["got_us"] or us})
+        if len(frames) >= 2:
+            got_list = [f["got_us"] for f in frames]
+            spread = max(got_list) / min(got_list) if min(got_list) else 0
+            rad = imx_merge_bracket(frames)
+            p3 = os.path.join(run_dir, "IMX_hdr.jpg")
+            Image.fromarray(finish(composite.imx_demosaic(
+                rad, float(rad.max() or 1.0)), gamma=True)).save(p3, quality=95)
+            figs.append(("HDR merge (%.0fx range)" % spread, p3))
+            meta.append("bracket: requested %s / actual %s us"
+                        % (exps, got_list))
+            if spread < 1.5:
+                meta.append('<span class="warn">exposures barely differ '
+                            '&mdash; not a real HDR</span>')
+        else:
+            meta.append("bracket FAILED: %d frame(s)" % len(frames))
+
+    pair = "".join('<figure><figcaption>%s</figcaption><img src="%s">'
+                   '</figure>' % (cap, _fig_uri(p)) for cap, p in figs)
+    return ('<div class="c"><h2>IMX708</h2><div class="pair">%s</div>'
+            '<p class="meta">%s</p></div>' % (pair, " &middot; ".join(meta)))
+
+
+def imx_merge_bracket(frames):
+    """Weighted linear-radiance merge over decoded DNGs (same maths as the
+    boards' merge_bracket, but the frames arrive as DNG rather than bytes)."""
+    np = composite._np()
+    num = den = None
+    for f in frames:
+        a, scale = composite.imx_raw_load(f["path"])
+        us = float(f["got_us"] or f["want_us"])
+        if us <= 0:
+            continue
+        norm = a / (scale or 1.0)
+        wt = 1.0 - np.abs((norm - 0.5) / 0.5) ** 2
+        np.clip(wt, 0.0, 1.0, out=wt)
+        wt[norm >= 0.99] = 0.0          # clipped: no information
+        wt[norm <= 0.005] = 0.0         # below the noise floor
+        contrib = wt * (a / us)
+        num = contrib if num is None else num + contrib
+        den = wt if den is None else den + wt
+        del a, norm, wt, contrib
+    den[den <= 0] = 1e-6
+    return num / den
+
+
 def run_all(args, run_dir, index):
     import numpy as np
     from PIL import Image
@@ -76,6 +174,10 @@ def run_all(args, run_dir, index):
     found, _ = discovery.discover()
     roles = [r.strip() for r in args.boards.split(",") if r.strip()]
     cards = []
+
+    if "IMX" in roles:
+        roles = [r for r in roles if r != "IMX"]
+        cards.append(imx_card(args, run_dir, index))
 
     for role in roles:
         info = found.get(role)
@@ -163,7 +265,8 @@ def main(argv=None):
                     help="+/- N stops around metered; also accepts an "
                          "explicit comma list like -2,0,2")
     ap.add_argument("--framesize", default="HD")
-    ap.add_argument("--boards", default="AE3,N6")
+    ap.add_argument("--boards", default="IMX,AE3,N6",
+                    help="IMX = the CSI camera; AE3/N6 = the boards")
     ap.add_argument("--settle", type=float, default=40.0,
                     help="seconds of port silence between board attaches")
     ap.add_argument("--out", default=os.path.expanduser("~/raw_card_runs"))

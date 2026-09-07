@@ -12,12 +12,13 @@
 # mean of photon counts, and bracketing divides by the exposure ratio. On
 # gamma-encoded JPEG the arithmetic is wrong, not merely imprecise.
 #
-# Boards only for now -- the IMX708 needs its DNG decoded (rawpy is
-# installed; the path is not wired up yet).
+# All three cameras. The IMX708's raw arrives as a DNG (decoded with rawpy)
+# rather than plain Bayer bytes, but everything downstream -- linear stack,
+# radiance merge, demosaic/WB/gamma -- is the same shared code.
 
 name = "field-raw-composite"
 title = "RAW composite — stack & HDR bracket"
-summary = "Raw Bayer capture on both OpenMV boards: STACK averages N locked-exposure frames in linear space (~√N noise win), BRACKET merges -2/0/+2 EV into radiance for 16× dynamic range. Shows single vs stacked vs HDR per camera. From sprint S29 bite 7."
+summary = "Raw capture on all three cameras: STACK averages N locked-exposure frames in linear space (~√N noise win), BRACKET merges -2/0/+2 EV into radiance for 16× dynamic range. Shows single vs stacked vs HDR for IMX708, AE3 and N6. From sprint S29 bite 7."
 opens = ":8095"
 thumbnail = "thumbs/field_raw_composite.jpg"
 

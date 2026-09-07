@@ -626,3 +626,112 @@ def tonemap(radiance, percentile=99.5):
     np = _np()
     hi = float(np.percentile(radiance, percentile)) or 1.0
     return to_display(np.clip(radiance / hi, 0.0, 1.0))
+
+
+# --- IMX708 RAW: DNG in, linear Bayer out -----------------------------------
+
+#: Sensor mode for raw capture. The full 4608x2592 frame is a 24 MB DNG and
+#: ~47.8 MB as float32 -- workable with an accumulator but wasteful, and it
+#: is 4x the linear resolution of what the boards deliver anyway. The
+#: 2304x1296 binned mode is ~6 MB, still above the boards' 1280x800, and
+#: keeps the comparison honest without courting the OOM killer that already
+#: took this process once.
+IMX_RAW_MODE = (2304, 1296)
+
+
+def imx_raw_capture(n, out_dir, shutter_us=None, gain=None,
+                    mode=IMX_RAW_MODE, tag="imx", runner=subprocess.run):
+    """Capture N raw DNGs. Returns [{path, got_us}].
+
+    rpicam writes the JPEG and the DNG side by side; we keep the DNG and
+    read the exposure ACTUALLY used out of it, never the requested value --
+    the bracket merge divides by exposure, so a clamped or rounded shutter
+    would corrupt it silently.
+    """
+    out = []
+    for i in range(n):
+        jpg = os.path.join(out_dir, "%s_%02d.jpg" % (tag, i))
+        argv = ["rpicam-still", "-n", "--immediate", "-t", "400",
+                "--mode", "%d:%d" % mode,
+                "--width", str(mode[0]), "--height", str(mode[1]),
+                "--raw", "-o", jpg]
+        if shutter_us:
+            argv += ["--shutter", str(int(shutter_us))]
+            argv += ["--gain", str(gain or 1.0)]
+            argv += ["--awbgains", "1,1"]     # no WB drift across the burst
+        runner(argv, capture_output=True, timeout=60)
+        dng = jpg[:-4] + ".dng"
+        if os.path.exists(dng):
+            out.append({"path": dng, "got_us": imx_raw_exposure(dng)})
+    return out
+
+
+def imx_raw_exposure(dng_path):
+    """The exposure the sensor actually used, from the DNG metadata."""
+    try:
+        import rawpy
+        with rawpy.imread(dng_path) as r:
+            # rawpy exposes shutter via the underlying libraw 'other' params.
+            v = getattr(r, "camera_whitebalance", None)  # touch to force load
+            del v
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        import tifffile
+        with tifffile.TiffFile(dng_path) as tf:
+            for page in tf.pages:
+                for tag in ("ExposureTime", 33434):
+                    t = page.tags.get(tag)
+                    if t is not None:
+                        val = t.value
+                        if isinstance(val, tuple) and len(val) == 2 and val[1]:
+                            return int(val[0] * 1e6 / val[1])
+                        return int(float(val) * 1e6)
+    except Exception:                                    # noqa: BLE001
+        pass
+    return -1
+
+
+def imx_raw_load(path):
+    """DNG -> LINEAR float32 Bayer with the black level removed.
+
+    Black level subtraction is not cosmetic: the sensor's zero is not 0, so
+    leaving the pedestal in biases every ratio the bracket merge computes,
+    and biases a stack toward the pedestal rather than the signal.
+    """
+    np = _np()
+    import rawpy
+    with rawpy.imread(path) as r:
+        raw = r.raw_image_visible.astype(np.float32)
+        black = float(np.mean(r.black_level_per_channel))
+        white = float(getattr(r, "white_level", 1023) or 1023)
+    raw -= black
+    np.clip(raw, 0, None, out=raw)
+    return raw, (white - black)
+
+
+def imx_raw_stack(paths):
+    """Mean-stack IMX raw with a running accumulator. O(1) in N.
+
+    Full-res float32 is 47.8 MB/frame; holding N of them is what the OOM
+    killer objected to. One accumulator plus one frame is ~72 MB even at
+    full resolution.
+    """
+    np = _np()
+    acc, scale, first = None, None, None
+    for p in paths:
+        a, s = imx_raw_load(p)
+        if acc is None:
+            acc, scale, first = a.copy(), s, a.copy()
+        else:
+            acc += a
+        del a
+    return first, acc / len(paths), scale
+
+
+def imx_demosaic(bayer, scale, pattern="BGGR"):
+    """Linear Bayer -> 8-bit RGB, reusing S28's demosaic."""
+    np = _np()
+    import s28_stack
+    norm = np.clip(bayer / (scale or 1.0), 0.0, 1.0) * 255.0
+    return s28_stack.demosaic(norm.astype(np.uint8), pattern)
