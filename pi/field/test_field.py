@@ -1031,5 +1031,63 @@ class TestPowerLogSampling(unittest.TestCase):
             fpl.lifepo4 = orig
         self.assertEqual(sorted(row.keys()), sorted(fpl.FIELDS))
 
+
+import raw_card                                   # noqa: E402
+
+
+class TestAttachRetry(unittest.TestCase):
+    """A refused board must get ONE retry after silence, then give up.
+
+    Repeated attaches are themselves how the AE3 wedges, so persistence is
+    the wrong instinct here -- silence is the cure.
+    """
+
+    def test_succeeds_first_try(self):
+        got, err = raw_card.attach_retry(lambda: "ok", "AE3", 1.0,
+                                         sleep=lambda s: None)
+        self.assertEqual(got, "ok")
+        self.assertIsNone(err)
+
+    def test_retries_once_on_raw_repl_refusal(self):
+        calls = []
+        slept = []
+
+        def fn():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("could not enter raw repl")
+            return "recovered"
+
+        got, err = raw_card.attach_retry(fn, "AE3", 40.0, sleep=slept.append)
+        self.assertEqual(got, "recovered")
+        self.assertIsNone(err)
+        self.assertEqual(slept, [40.0])
+
+    def test_gives_up_after_one_retry(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise RuntimeError("could not enter raw repl")
+
+        got, err = raw_card.attach_retry(fn, "AE3", 1.0, sleep=lambda s: None)
+        self.assertIsNone(got)
+        self.assertIn("raw repl", str(err))
+        self.assertEqual(len(calls), 2)      # never more than one retry
+
+    def test_non_repl_errors_are_not_retried(self):
+        # Only the refusal is worth waiting out; a real fault should surface
+        # immediately rather than costing another 40 s.
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise ValueError("something else entirely")
+
+        got, err = raw_card.attach_retry(fn, "N6", 1.0, sleep=lambda s: None)
+        self.assertIsNone(got)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("something else", str(err))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -118,6 +118,29 @@ def _fig(cap, path):
             % (cap, png, w, h, jpg, cap))
 
 
+def attach_retry(fn, label, settle_s, sleep=time.sleep, tries=2):
+    """Run a board operation, retrying ONCE after real silence on a refusal.
+
+    "could not enter raw repl" means the board is present but will not drop
+    to the REPL -- usually because something touched the port too recently.
+    The cure is silence, not persistence: repeated attaches are themselves
+    how the AE3 gets wedged, so this retries exactly once and then gives up.
+    """
+    last = None
+    for i in range(tries):
+        try:
+            return fn(), None
+        except Exception as exc:                     # noqa: BLE001
+            last = exc
+            if "raw repl" in str(exc).lower() and i < tries - 1:
+                print("  %s: %s -- %gs of silence, ONE retry"
+                      % (label, exc, settle_s), flush=True)
+                sleep(settle_s)
+                continue
+            break
+    return None, last
+
+
 def imx_card(args, run_dir, index):
     """STACK and BRACKET on the IMX708, through the same linear pipeline.
 
@@ -236,21 +259,53 @@ def run_all(args, run_dir, index):
 
     if "IMX" in roles:
         roles = [r for r in roles if r != "IMX"]
-        cards.append(imx_card(args, run_dir, index))
+        # The IMX needs no board at all -- a wedged AE3 must never stop it.
+        try:
+            cards.append(imx_card(args, run_dir, index))
+        except Exception as exc:                     # noqa: BLE001
+            cards.append('<div class="c"><h2>IMX708</h2>'
+                         '<p class="bad">%s</p></div>' % exc)
 
     for role in roles:
+        try:
+            cards.append(board_card(args, run_dir, index, found, role))
+        except Exception as exc:                     # noqa: BLE001
+            cards.append('<div class="c"><h2>%s</h2><p class="bad">%s</p>'
+                         '</div>' % (role, exc))
+
+    with open(index, "w") as fh:
+        fh.write(_page("RAW composite &mdash; %s" % args.mode,
+                       '<p class="sub">Raw is LINEAR: stacking averages real '
+                       'photon counts and bracketing divides by exposure. '
+                       'Both are only valid in this domain.</p>'
+                       + "\n".join(cards)))
+
+
+def board_card(args, run_dir, index, found, role):
+    """One board's stack + bracket. Raises only what the caller should show."""
+    import numpy as np
+    from PIL import Image
+    import s28_stack
+    from raw_still import finish
+
+    for role in [role]:
         info = found.get(role)
         if not info:
-            cards.append('<div class="c"><h2>%s</h2>'
-                         '<p class="bad">board not found</p></div>' % role)
-            continue
+            return ('<div class="c"><h2>%s</h2>'
+                    '<p class="bad">board not found</p></div>' % role)
         figs, meta = [], []
 
         if args.mode in ("stack", "both"):
             _progress(index, "%s: capturing %d raw frames for the stack&hellip;"
                       % (role, args.n))
-            paths, geom = composite.board_raw_burst(
-                info["port"], args.n, run_dir, role, size=args.framesize)
+            got, err = attach_retry(
+                lambda: composite.board_raw_burst(
+                    info["port"], args.n, run_dir, role,
+                    size=args.framesize),
+                role + " stack", args.settle)
+            paths, geom = got if got else ([], None)
+            if err:
+                meta.append("stack FAILED: %s" % err)
             if len(paths) >= 2 and geom:
                 single, stacked = composite.stack_raw(paths, geom)
                 p1 = os.path.join(run_dir, "%s_single.jpg" % role)
@@ -267,13 +322,26 @@ def run_all(args, run_dir, index):
 
         if args.mode in ("bracket", "both"):
             _progress(index, "%s: bracketing exposures&hellip;" % role)
-            probe, geom, base_us = composite.board_bracket(
-                info["port"], [0], run_dir, role + "_p", size=args.framesize)
+            got, err = attach_retry(
+                lambda: composite.board_bracket(
+                    info["port"], [0], run_dir, role + "_p",
+                    size=args.framesize),
+                role + " meter", args.settle)
+            if err:
+                meta.append("bracket FAILED: %s" % err)
+                got = None
+            probe, geom, base_us = got if got else (None, None, None)
             time.sleep(args.settle)
             base_us = base_us or 8000
             exps = ev_ladder(base_us, parse_stops(args.stops))
-            frames, geom, _ = composite.board_bracket(
-                info["port"], exps, run_dir, role, size=args.framesize)
+            frames = []
+            got2, err2 = attach_retry(
+                lambda: composite.board_bracket(
+                    info["port"], exps, run_dir, role, size=args.framesize),
+                role + " bracket", args.settle)
+            frames, geom, _ = got2 if got2 else ([], geom, None)
+            if err2:
+                meta.append("bracket FAILED: %s" % err2)
             if len(frames) >= 2 and geom:
                 got = [f["got_us"] for f in frames]
                 spread = max(got) / min(got) if min(got) else 0
@@ -294,16 +362,9 @@ def run_all(args, run_dir, index):
             time.sleep(args.settle)
 
         pair = "".join(_fig(cap, p) for cap, p in figs)
-        cards.append('<div class="c"><h2>%s</h2><div class="pair">%s</div>'
-                     '<p class="meta">%s</p></div>'
-                     % (role, pair, " &middot; ".join(meta)))
-
-    with open(index, "w") as fh:
-        fh.write(_page("RAW composite &mdash; %s" % args.mode,
-                       '<p class="sub">Raw is LINEAR: stacking averages real '
-                       'photon counts and bracketing divides by exposure. '
-                       'Both are only valid in this domain.</p>'
-                       + "\n".join(cards)))
+        return ('<div class="c"><h2>%s</h2><div class="pair">%s</div>'
+                '<p class="meta">%s</p></div>'
+                % (role, pair, " &middot; ".join(meta)))
 
 
 def main(argv=None):
