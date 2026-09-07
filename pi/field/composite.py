@@ -774,3 +774,138 @@ def imx_demosaic(bayer, scale, pattern="BGGR"):
     import s28_stack
     norm = np.clip(bayer / (scale or 1.0), 0.0, 1.0) * 255.0
     return s28_stack.demosaic(norm.astype(np.uint8), pattern)
+
+
+# --- ON-BOARD stack -> the board's OWN debayer/gamma (Nick's idea) ----------
+
+#: Stack N raw frames IN LINEAR SPACE on the board, then hand the RESULT to
+#: the board's own debayer so its ISP-side work (demosaic + the static
+#: gamma-2.2 LUT) runs on clean, averaged data instead of on one noisy frame.
+#:
+#: Two wins in one, and both were verified on hardware before this was
+#: written (2026-09-06):
+#:   * to_rgb565(copy=True) on a BAYER image: 1280x800 in 47 ms
+#:   * image.Image(w, h, BAYER, buffer=...) accepts our own buffer
+#:
+#: It also fixes the transfer cost that made raw stills-only: the board
+#: ships ONE finished JPEG (~85 kB) instead of N raw frames at 1.37 MB each.
+#: 16 frames goes from ~22 MB on the wire to ~85 kB.
+#:
+#: Memory is the limit and it is why `mean` is the only on-board mode: a
+#: uint16 accumulator at HD is 2.048 MB against the AE3's 4.09 MB heap, so
+#: median/sigma (which need all N resident) stay host-side. S28 scoped this
+#: exact shape for the production path.
+BOARD_ISP_STACK = '''
+import csi, image, time, gc, ubinascii
+from ulab import numpy as np2
+
+csi0 = csi.CSI()
+csi0.reset()
+csi0.pixformat(csi.BAYER)
+csi0.framesize(csi.%(SIZE)s)
+
+def settle(c, ms):
+    t0 = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), t0) < ms:
+        try:
+            c.snapshot()
+        except Exception:
+            pass
+
+settle(csi0, 2000)
+# FREEZE everything: a stack is only meaningful if every frame saw the same
+# scene through the same settings.
+for fn, args in (("auto_exposure", (False,)), ("auto_gain", (False,)),
+                 ("auto_whitebal", (False,))):
+    try:
+        getattr(csi0, fn)(*args)
+    except Exception as e:
+        print("#W", fn, e)
+settle(csi0, 300)
+
+img = csi0.snapshot()
+W, H = img.width(), img.height()
+N = %(N)d
+print("#G %%d %%d %%d" %% (W, H, N))
+gc.collect()
+print("#H %%d" %% gc.mem_free())
+
+t0 = time.ticks_ms()
+acc = None
+for i in range(N):
+    im = csi0.snapshot()
+    a = np2.frombuffer(im.bytearray(), dtype=np2.uint8)
+    if acc is None:
+        acc = np2.array(a, dtype=np2.uint16)
+    else:
+        acc = acc + a
+    del a
+t1 = time.ticks_ms()
+print("#T stack_ms %%d" %% time.ticks_diff(t1, t0))
+
+# Mean back down to 8-bit Bayer, then let the BOARD debayer it.
+mean = np2.array(acc / N, dtype=np2.uint8)
+del acc
+gc.collect()
+buf = bytearray(mean.tobytes())
+del mean
+gc.collect()
+stacked = image.Image(W, H, image.BAYER, buffer=buf)
+t2 = time.ticks_ms()
+rgb = stacked.to_rgb565(copy=True)      # the board's OWN debayer + gamma LUT
+t3 = time.ticks_ms()
+print("#T debayer_ms %%d" %% time.ticks_diff(t3, t2))
+j = rgb.to_jpeg(quality=%(Q)d)
+b = ubinascii.b2a_base64(j.bytearray()).decode().strip()
+print("#J %%d" %% len(b))
+print(b)
+gc.collect()
+print("#H %%d" %% gc.mem_free())
+print("#D done")
+'''
+
+
+def board_isp_stack(port, n, out_dir, label, size="HD", quality=92,
+                    timeout=300):
+    """Stack N frames on the board, debayer there, ship ONE JPEG back."""
+    import base64
+    sys.path.insert(0, os.path.join(_ROOT, "bench"))
+    from n6_stream_host import SerialBoard
+    script = BOARD_ISP_STACK % {"SIZE": size, "N": int(n), "Q": int(quality)}
+    board = SerialBoard(port).start(script)
+    info, path, want = {}, None, None
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            line = board.readline()
+            if not line:
+                break
+            line = line.rstrip(b"\r\n")
+            if line.startswith(b"#G "):
+                _, w, h, n_ = line.split()
+                info.update(w=int(w), h=int(h), n=int(n_))
+            elif line.startswith(b"#T "):
+                _, k, v = line.split()
+                info[k.decode()] = int(v)
+            elif line.startswith(b"#H "):
+                info.setdefault("heap", []).append(int(line.split()[1]))
+            elif line.startswith(b"#J "):
+                want = int(line.split()[1])
+                payload = board.readline().rstrip(b"\r\n")
+                if want and len(payload) == want:
+                    path = os.path.join(out_dir, "%s_isp_stack.jpg" % label)
+                    with open(path, "wb") as fh:
+                        fh.write(base64.b64decode(payload))
+                else:
+                    print("  %s: SHORT jpeg %d of %s" % (label,
+                                                         len(payload), want))
+            elif line.startswith(b"#W"):
+                print("  board warn: %s" % line.decode("utf-8", "replace"))
+            elif line.startswith(b"#D"):
+                break
+    finally:
+        try:
+            board.stop()
+        except Exception:                            # noqa: BLE001
+            pass
+    return path, info
