@@ -83,6 +83,53 @@ stock `v5.0.0`. Free heap differs ~7.7× (N6 25,393,136 B vs AE3 3,281,488 B,
 both at VGA with yolov8n_192 loaded). Any cross-board comparison carries this
 in addition to the already-known model-binary confound — see S8 bite D.
 
+### Camera SENSOR and ISP: same sensor, different pipeline (verified live 2026-09-02, `print(csi.CSI())` on both)
+
+**Both boards run the SAME sensor — the PixArt PAG7936** (chip id `0x7936`,
+24 MHz clock, RAW8, BGGR). The AE3's image quality deficit vs the N6 (washed
+color, crushed shadows, softer) is NOT a sensor difference. Verified:
+
+| | AE3 (Alif E3) | N6 (STM32N6) |
+|---|---|---|
+| Sensor | PAG7936, i2c 0x40 | PAG7936, i2c 0x15 (identical part) |
+| Interface | parallel CPI, RAW8 (`CPI_DATA_MODE_BIT_8`) | MIPI CSI-2 800 Mbps, RAW8 (DT 0x2A) |
+| Demosaic/color | **software** `imlib_debayer_image_awb` — bilinear, AWB gains only, no CCM, no bad-pixel removal | **hardware ISP** — STM32 DCMIPP (`ports/stm32/stm_isp.c`): HW demosaic, bad-pixel removal, HW AWB, contrast |
+| Gamma LUT init | `imlib_update_gamma_table(`**`-0.2f`**`, 1.0, 2.2)` (`ports/alif/omv_csi.c` `alif_csi_isp_reset`) | `stm_isp_update_gamma_table(…,`**`0.0f`**`, 1.0, 2.2)` (`stm_csi_isp_reset`) |
+| Measured (LCD card) | lapvar 19, white p99 206 | lapvar 33 (1.7× sharper), white p99 232 |
+
+**The Alif E3 has NO ISP hardware** (SPEC §S22 datasheet check — no JPEG/video
+codec either), so the AE3 does demosaic/AWB/gamma in crude software while the
+N6 has a dedicated hardware ISP. **Three factors, measured against the Nereus
+Reef Reference Card V1 as true ground truth (the N6 is NOT a reference — it has
+its own ISP color error):**
+
+1. **Brightness offset — tested, NOT a simple fix.** The AE3 bakes brightness
+   **−0.2** into its debayer gamma LUT vs the N6's **0.0**. Building/flashing
+   `0.0f` (patch `0006`, HP sha `45edc48b…`) over-corrected: it brightens but
+   CLIPS highlights (~5% pixels at 255) and *drops* saturation (0.39→0.23). The
+   −0.2 is a deliberate compensation for the AE3's raw-metering auto-exposure,
+   not a bug. Nick preferred the brighter look by eye; the AE3 currently runs
+   the `0.0` build (2026-09-02).
+2. **Color reproduction = the real deficit, and it is RECOVERABLE with a CCM.**
+   Measured mean ΔE76 vs the card (17 patches, ambient light): AE3 **34.0**,
+   N6 **44.8** (the N6's higher *raw* ΔE is exposure — its image is darker; the
+   confound the CCM removes). The AE3's software debayer applies NO
+   color-correction matrix, so saturated colors collapse toward gray (green
+   patch → near-white). **Fitting a 3×4 CCM from the card takes AE3 to ΔE
+   10.6 and N6 to 9.0 — a 3× improvement, near parity** — so the color
+   information IS present; the pipeline just never corrects it. Tool +
+   evidence: `bench/refcard/` (analyzer + `refcard_v1.json` + 10 host tests);
+   fitted CCMs and corrected images in the run artifacts. A firmware CCM in
+   `imlib_debayer` (or a post step) is the lever if AE3 color is wanted; it
+   must be fit under a known illuminant to generalize.
+3. **Lens/sharpness — separate.** The AE3 is measurably softer (lapvar 19 vs
+   N6 33; matches the E2 optical-softness finding); a replacement AE3 unit is
+   inbound to test a possibly scratched lens.
+
+**WB is NOT the problem:** both cameras' grayscale patches read essentially
+neutral on the card (AE3 G+1.4, N6 G+0.3). Stacking (S28) reduces NOISE, not
+any of the above.
+
 ### `find_blobs` with a threshold list (measured on the N6, 2026-08-20)
 
 `b.code` is a **bitfield of threshold INDEX** — bit 0 for the first threshold
@@ -180,6 +227,55 @@ pair, USB carrying no video.
 
 ## Open questions (flag, don't guess)
 
+- **S28 capture-stacking unknowns (raised 2026-09-01 at sprint
+  planning). (a)–(d) ANSWERED same day at the desk (S28 bite 0, OpenMV
+  src @ 7d4dbf7a — source-verified, on-board confirmation rides bite 1):**
+  (a) **Long exposure: extend the frame-time REGISTERS directly, do NOT
+  use `csi.framerate()`** — max ~2.1 s (21-bit frame-time reg, cap
+  2,097,151 µs; frame_time in µs). **`csi.framerate()` WEDGES the AE3**
+  (bite-3 finding, 2026-09-03): it calls `set_framerate` →
+  `omv_csi_abort` + `configure()`, a full mode-register rewrite +
+  capture abort that stops the sensor streaming and does not reliably
+  restart → `Frame capture has timed out`. **Wedge-free fix, proven on
+  hardware, no firmware rebuild:** write the PAG7936 frame-time regs
+  directly via `csi.__write_reg` — 0x004E `(read&0xE0)|((ft>>16)&0x1F)`,
+  0x004D `(ft>>8)&0xFF`, 0x004C `ft&0xFF`, then commit 0x00EB←0x80
+  (SENSOR_UPDATE). `set_auto_exposure` reads the LIVE frame-time regs, so
+  extend the frame time first, then set the exposure (it clamps to
+  frame_time − 80 µs). Discard 1–2 buffered frames after the change (the
+  first snapshot is stale). Granularity 8 µs. Implemented as
+  `set_frame_time()` in `pi/s28/s28_board_burst.py`; proven exposures
+  16.6/66/133 ms with settled frame period scaling exactly and no wedge
+  up or down.
+  (b) **AWB applies at software debayer on the HP, and disabling it is
+  a REAL lock.** The PAG7936 is raw-output; RGB565 is made by
+  `imlib_debayer_image_awb` with WB gains from a continuous-time EMA
+  over per-frame sensor RGB stats (`common/omv_csi.c:1171`;
+  `ports/alif/omv_csi.c:378-405`). `set_auto_whitebal(False)` stops
+  the EMA update → the frozen average is applied identically to every
+  subsequent frame. Note: manual rgb_gain_db args are IGNORED on this
+  sensor — the lock is freeze-what-converged, which is what S28 wants.
+  Wait for EMA convergence (τ = OMV_CSI_STATS_TAU_MS) before locking.
+  (c) **BAYER capture = 8-bit BGGR** (`CPI_DATA_MODE_BIT_8`,
+  `cfa_format = SUBFORMAT_ID_BGGR`); debayer is software on the HP —
+  requesting PIXFORMAT_BAYER skips debayer/WB/gamma entirely and is
+  the LINEAR domain the bracket math needs.
+  (d) **The AE3 has NO frame-dependent ISP stages.** Full pipeline:
+  on-chip sensor AE (lockable) → 8-bit Bayer via CPI DMA → optional
+  GPU crop → software debayer applying (freezable) WB gains + a
+  STATIC gamma LUT (gamma 2.2, brightness −0.2, contrast 1.0 — set
+  once at `ports/alif/omv_csi.c:143`). No denoise, no tonemap, no
+  per-frame adaptation. Stack math on RGB565 is safe once AE+AWB are
+  locked; linear math needs BAYER (or LUT inversion — lossy, prefer
+  Bayer). SIDE FINDING: the −0.2 brightness offset subtracts ~51
+  counts post-gamma — a plausible mechanism for the S24 dark-frame
+  "90.6% exactly-zero pixels" observation (not verified, noted).
+  **STILL OPEN:** (e) **HIL LCD backlight PWM/refresh vs a burst** —
+  does the screen alias frame-to-frame across N captures? Measure in
+  bite 1 before trusting any LCD-scene stacking number (scene call
+  2026-09-01: LCD first, printed reference card once the pipeline
+  works). (f) **N6 sensor manual exposure/gain/WB API** — unchecked;
+  audit before bite 4's N6 rows.
 - **AE3 HIL capture is optically soft — WHY is unverified (flagged
   2026-08-25, bite E2).** Measured: lap_var 233 vs the N6's 880 on the
   same screen content, and the AE3's view is heavily zoomed (screen

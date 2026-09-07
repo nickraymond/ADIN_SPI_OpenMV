@@ -34,6 +34,7 @@ Unit: pi/services/workbench.service         # enabled at boot -- the point
 """
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -67,7 +68,7 @@ DISK_MIN_FREE_MB = 500
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
             "boards", "run", "health", "guide", "params"}
-BOARD_KEYS = {"label", "by_id", "firmware", "models"}
+BOARD_KEYS = {"label", "by_id", "role", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd", "stop_grace"}
 STOP_GRACE_MAX = 120
@@ -109,7 +110,19 @@ def _validate_board(b, i, errs):
         return None
     _unknown(b, BOARD_KEYS, where, errs)
     label = _str(b, "label", where, errs, required=True)
-    by_id = _str(b, "by_id", where, errs, required=True)
+    # A board is named EITHER by its by_id path (a specific chip) or by its
+    # ROLE (whatever board answers "AE3"). Role exists because the field rig's
+    # boards get swapped: a by_id names the chip, so every recipe would need
+    # editing on swap day. Roles are resolved by ASKING the board at RUN time,
+    # never here -- preflight opens no serial port (D45) and cannot know which
+    # port is which without one.
+    by_id = _str(b, "by_id", where, errs)
+    role = _str(b, "role", where, errs)
+    if by_id and role:
+        errs.append("%s: give by_id or role, not both" % where)
+    if not by_id and not role:
+        errs.append("%s: needs by_id (a specific board) or role "
+                    "(whatever board answers, e.g. \"AE3\")" % where)
     if by_id and "/" in by_id:
         errs.append("%s: by_id is a name under %s, not a path"
                     % (where, BY_ID_DIR))
@@ -140,8 +153,8 @@ def _validate_board(b, i, errs):
                         % mw)
         out_models.append({"name": name, "path": path, "sha256": sha,
                            "src": src})
-    return {"label": label, "by_id": by_id, "firmware": firmware,
-            "models": out_models}
+    return {"label": label, "by_id": by_id, "role": role,
+            "firmware": firmware, "models": out_models}
 
 
 def validate_recipe(obj, source):
@@ -376,6 +389,66 @@ def board_preflight(by_id, dev_dir=BY_ID_DIR, proc="/proc"):
             "tty": real, "holders": holders}
 
 
+def board_key(b):
+    """The one identity a board is tracked by, whichever way it is named.
+
+    by_id boards key on their path; role boards key on "role:<ROLE>". Both
+    sides of every comparison must use THIS function -- mixing raw
+    ``b["by_id"]`` (None for a role board) with preflight's "role:AE3" is
+    what made the settle window silently skippable.
+    """
+    return b.get("by_id") or ("role:%s" % (b.get("role") or "?"))
+
+
+def keys_overlap(a, b):
+    """Do two sets of board keys refer to any common physical board?
+
+    Deliberately CONSERVATIVE. A role key ("role:AE3") and a by_id key name
+    the same two chips on this rig, but nothing in the strings says so, and
+    resolving it would mean opening a serial port -- which preflight must
+    never do (D45). So any role key on either side counts as a match.
+
+    The asymmetry of the risk decides it: a false match costs 35 s of
+    waiting; a missed match skips the settle window on a real board, and the
+    quick stop->start it allows is exactly what wedged the AE3 into the
+    power-cycle-only refusal that cost this sprint a session.
+    """
+    if not a or not b:
+        return False
+    if any(k.startswith("role:") for k in a | b):
+        return True
+    return bool(a & b)
+
+
+def role_preflight(role, dev_dir=BY_ID_DIR, proc="/proc"):
+    """Passive state for a ROLE-named board, without opening any port.
+
+    This deliberately does NOT say "the AE3 is ready" -- it cannot, because
+    knowing which port is the AE3 means asking the board, and preflight is
+    forbidden from opening a serial port (D45; the lock, not the panel, is the
+    correctness mechanism). Claiming a per-role verdict here would be
+    inventing a hardware fact. What it CAN say honestly is how many candidate
+    ports exist and whether anything is holding them.
+    """
+    ports = sorted(glob.glob(os.path.join(dev_dir, "*-if00")))
+    free, holders = [], []
+    for link in ports:
+        real = os.path.realpath(link)
+        held = scan_port_holders(real, proc)
+        if held:
+            holders.extend(held)
+        else:
+            free.append(real)
+    if not ports:
+        state = "waiting"
+    elif not free:
+        state = "held"
+    else:
+        state = "ready"
+    return {"by_id": "role:%s" % role, "role": role, "state": state,
+            "tty": None, "candidates": len(ports), "holders": holders}
+
+
 def _systemctl_state(unit):
     try:
         out = subprocess.run(
@@ -399,10 +472,14 @@ def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
     boards, units = {}, []
     for r in recipes:
         for b in r["boards"]:
-            if b["by_id"] not in boards:
-                entry = board_preflight(b["by_id"], dev_dir, proc)
+            key = board_key(b)
+            if key not in boards:
+                if b["by_id"]:
+                    entry = board_preflight(b["by_id"], dev_dir, proc)
+                else:
+                    entry = role_preflight(b["role"], dev_dir, proc)
                 entry["label"] = b["label"]
-                boards[b["by_id"]] = entry
+                boards[key] = entry
         for u in r.get("services") or []:
             if u not in units:
                 units.append(u)
@@ -613,9 +690,9 @@ class Runner:
             if not recipe.get("run"):
                 raise StartRefused("recipe '%s' has no [run] block"
                                    % recipe["name"])
-            needed = {b["by_id"] for b in recipe["boards"]}
+            needed = {board_key(b) for b in recipe["boards"]}
             remaining = self.settle_until - time.monotonic()
-            if remaining > 0 and needed & self.settle_boards:
+            if remaining > 0 and keys_overlap(needed, self.settle_boards):
                 raise StartRefused(
                     "the boards are settling after the last stop -- the AE3 "
                     "needs ~%.0f s of silence before a reattach or it wedges. "
@@ -768,7 +845,7 @@ class Runner:
     def _arm_settle(self):
         """Called (under the lock) whenever the demo releases its boards."""
         if self.recipe:
-            self.settle_boards = {b["by_id"]
+            self.settle_boards = {board_key(b)
                                   for b in self.recipe.get("boards", [])}
             self.settle_until = time.monotonic() + self.SETTLE
 

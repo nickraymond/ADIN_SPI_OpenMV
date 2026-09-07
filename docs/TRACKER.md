@@ -1,7 +1,47 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
+*Last updated: 2026-09-07 (**S29 nereus002 FIELD RIG — bites 1-8 DONE,
+bites 9-11 open.** Pi Zero 2 W + IMX708-wide + AE3 + N6 on a
+LiFePO4wered/Pi+. Three cards live: three-camera streams, composite
+capture (stack & bracket), RAW composite. Boards are found by ASKING
+them their role, never by USB serial, because this rig's boards get
+swapped AND because **the AE3 and N6 here are nereus000's physical
+boards, moved** (proven via the N6's chip UID) — **nereus000 now has no
+cameras.** Three bench faults root-caused, all of which had been
+misdiagnosed at least once: **wifi `power_save` was ON** (radio dozes,
+rx negotiated to 1.0 Mb/s, AP ages out the association, Pi sits up with
+no network — a REPEAT of nereus000's 2026-08-25 fix, now repo-carried);
+**`VIN` read 47 mV** (charger not on the Pi+ input; resolved
+physically); and **usb-storage MSC probing** livelocked both boards in
+USB device resets at ~46/min, which is the whole "board fell off the
+bus" family and presented as four different bugs.
+**`systemctl reboot` is BANNED on this rig** — it becomes a power-off,
+and it cannot cut USB VBUS; use `pi/field/power_cycle.py` (5/5), whose
+LiFePO4wered logic is VENDORED from Nick's nereus-vision-dev (copied,
+not imported — that deployed project is untouched).
+**Endurance measured:** 78 min from ~3.20 V to the 2950 mV cutoff at a
+2.73 W mean, `throttled` 0x0 throughout; **~3 h from a full charge** is
+the field-planning number. **STILL OPEN and blocking field-ready: the
+AE3 refuses the REPL where the N6 never does** (3 failures vs 0, same
+code, same sensor), cleared only by a full power cut.
+**Building a second rig? Use the `field-rig-bringup` skill.** Previous:*
+*2026-09-01 (**NEW SPRINT S28 — capture-side frame
+stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
+plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
+support audit run against OpenMV src @ `7d4dbf7a`: **no built-in
+stacking/HDR merge exists in imlib — but every primitive does**
+(manual exposure/gain lock + readback, `PIXFORMAT_BAYER` on the AE3's
+PAG7936, `to_ndarray` + ulab for uint16 accumulation; `img.add()`
+saturates at 8-bit — unusable). Constraint that shapes bite 3: manual
+exposure clamps to frame_time − margin, so +2/+3 EV brackets need
+`set_framerate` lowered first — true max exposure UNMEASURED. Scene
+call (Nick): start on the HIL LCD (PWM/refresh aliasing measured in
+bite 1 before trusting it), printed AprilTag/patch card once the
+pipeline works. Demo = a workbench compare card: single vs stacked vs
+bracketed side by side with the metrics table. Kickoff = PROMPTS §17.
+Previous:*
+*2026-08-27 (**S8 BITE E12 — LABELER BAKE-OFF ON NICK'S
 OWN LABELS, DESK-ONLY — RF-DETR (best-EMA e17) BEATS YOLOX-S IN THE
 DEPLOYMENT DOMAIN, on GT that structurally favors YOLOX-S:** HIL
 mAP50 0.876 vs 0.808 (186 reviewed stills / 4,966 boxes = the E10
@@ -2713,6 +2753,369 @@ retrained model to both boards and reads its scorecard — without Claude.
 **Needs:** S8 bites B3/C/E shipped (the GUI, the metrics harness, the
 urchin HIL demo); S25 bite 3.
 
+
+### S28 — Capture-side frame stacking & bracketed exposure (AE3 first)  `[ ]`  *(NEW 2026-09-01 — Nick approved the plan + scene call. Design notes: `docs/stacking_kickoff_notes.md` (from the Nereus BM camera work — the red channel at 4–5 m depth measures 3.5–14% of full scale and nothing post-hoc recovers it below ~5%; the fix is capture-time photons + noise). Bandwidth unchanged — still one image shipped — and denoised frames compress SMALLER at equal q.)*
+**Goal:** a measured answer to "does multi-frame capture buy image
+quality worth shipping": **(A) same-exposure stacking** (lock AE/gain/WB,
+burst N, average/median before encode — √N noise + sub-LSB dither) and
+**(B) shutter-only bracket** (+2/+3 EV long frames, red-from-long
+channel merge), each A/B'd against a **single HD still on the same
+scene**, reviewed in a compare tool on the workbench. AE3 first (Nick);
+N6 rows once the method wins. The two experiments are run SEPARATELY —
+they answer different questions and compose later.
+**Support audit (2026-09-01, OpenMV src @ `7d4dbf7a` — the AE3 build's
+base rev): NO built-in stacking/HDR merge exists in imlib** — but all
+primitives do: `set_auto_exposure(False, us)` (CLAMPED to frame_time −
+margin, `pag7936.c:786` — long frames need `set_framerate` lowered
+first; true max UNMEASURED), `set_auto_gain(False, db)` + `get_gain_db`
+readback, `PIXFORMAT_BAYER` on the PAG7936 (linear domain — RGB565 is
+5-bit red + gamma-encoded, the wrong domain for the bracket's
+divide-by-exposure-ratio math), `Image.to_ndarray` + ulab (enabled) for
+uint16 accumulation (`img.add()` saturates at 8-bit — unusable). WB on
+this sensor is host-side stats with NO on-chip gains — where AWB
+actually applies is an open question (SPEC).
+- [x] **Bite 0 — support audit (desk, zero board contact). DONE
+      2026-09-01** (source-verified @ 7d4dbf7a; full facts in SPEC
+      §Open questions, all four unknowns ANSWERED): max exposure ~1 s
+      via the integer-fps API (set_framerate FIRST, then
+      set_auto_exposure — the clamp reads the current frame time);
+      AWB applies at software debayer and `set_auto_whitebal(False)`
+      freezes the stats EMA = a real lock (manual WB gains are ignored
+      on this sensor — lock is freeze-what-converged); BAYER = 8-bit
+      BGGR, skipping debayer/WB/gamma = the linear domain; NO
+      frame-dependent ISP stages (only a static gamma-2.2/−0.2 LUT at
+      debayer). **Route chosen: bench = stream-and-stack on the Pi**
+      (all merge modes available offline; median/sigma-clip need all N
+      frames — N×HD does not fit the ~4 MB heap); on-board mean
+      accumulator (HD Bayer uint16 = 2.048 MB, fits) is the PRODUCTION
+      shape, sized in bite 4 only if the numbers justify it.
+- [~] **Bite 1 — locked-burst proof + exposure-range measurement —
+      CODE + 21 HOST TESTS DONE 2026-09-01 (nibble 2); bench
+      acceptance owed (first board window).** Shipped `pi/s28/`:
+      `s28_board_burst.py` (command-driven board script over stdin
+      JSON — cfg/conv/lock/manual/expo_probe/burst ops, raw frames as
+      one verified b64 line, E7/E4 wire precedents), `s28_session.py`
+      (testable core: parser + decode + verdicts, fake-board tested),
+      `s28_burst_capture.py` (host collector: workbench-idle+settle
+      preflight, ONE attach with the E4 retry, fresh per-run 9-marker
+      calibration — **Nick moved the bench, so patches are located
+      through the run's own CamMap, never assumed centered**; converge→
+      lock→burst matrix, expo table, EV rungs, PWM sweep; --no-lcd =
+      real-object control), `s28_patch_card.py` (playback media: 6-patch
+      card + uniform gray, ONE patch definition shared with stats),
+      `s28_burst_stats.py` (LOCK/NOISE/ORIENT/EXPO/BRACKET/FLICKER
+      verdicts → stats.json; RGB565 byte order PROVEN against the
+      red/blue patches, never assumed).
+      **BENCH CONTACT 2026-09-02: first run exposed + FIXED a real
+      protocol bug** — the board entered its command loop silently, so a
+      lost first command byte (a measured E4 wire failure) hung both
+      ends. Fix mirrors E4: board drains stdin → `#RDY` → `#W`
+      heartbeat; host `command()` resends on `#W` past grace. Added
+      `--plan smoke` (no LCD/calib/HD/gray first-contact). Suite 21→25.
+      **RUN ON HARDWARE + VERIFIED 2026-09-02** (bench recovered via
+      `sudo reboot` between attempts — Nick's call; fresh USB enum
+      cleared the wedge). Four more bench-found bugs fixed (suite →27):
+      GRAYSCALE-HD calib hang (→ RGB565+host-gray), redundant-reinit +
+      framerate capture-timeouts (op_cfg mode-skip + #D breadcrumbs +
+      snap() retry + no forced fps), and wedged-board host hangs (SIGALRM
+      op watchdog + SIGTERM handler + bounded os._exit stop). MEASURED:
+      **lock HELD on every burst; 8-bit BAYER confirmed; tight cadence
+      20 ms/frame (~50 fps) vs ~60 ms paced; √N STACKING PROVEN — green
+      σ 0.626→0.436→0.296→0.187 at 1/2/4/8 frames (~4× at 16); LCD-PWM
+      question ANSWERED — the LCD ALIASES (9.5–75× the independent-pixel
+      floor, small magnitude), so the printed card avoids a real
+      effect.** OWED: patch-level SNR needs CALIBRATION → **Nick must
+      RE-AIM the AE3** (aim check correctly failed: TL marker peak 19<30,
+      the moved-bench). BITE-3 FINDING: a sensor **framerate change
+      wedges the board** → the expo table + shutter bracket are blocked
+      on it (deferred to bite 3; `--plan full` opts in). Artifacts
+      `~/s28_runs/{smoke2,quick6,quick7}`. *(original scope)*
+      Converge
+      AE/AWB → freeze exposure/gain/WB →
+      burst N=8/16 → **PROVE the lock** (per-frame register readback +
+      per-frame mean/σ — "verify frames statistically identical" is the
+      notes' load-bearing rule) → stream frames losslessly to the Pi.
+      Same window: max `exposure_us` at lowered framerate (bite 3's
+      feasibility gate), burst wall time, memory headroom, and the
+      **LCD-PWM/refresh check** — does the screen alias frame-to-frame
+      across a burst (measured, not assumed; the scene is the HIL LCD
+      until the printed card arrives). Lighting recorded per run (a
+      measured condition). *Exit:* burst on disk with provably frozen
+      settings + per-frame noise numbers. No stacking yet.
+- [~] **Bite 2 — offline stack + the compare tool — BUILT + CARD
+      DEMO'D 2026-09-02 (Claude ran it; Nick's review owed).** Shipped
+      `pi/s28/s28_stack.py` (mean/median/sigma-clip merges on raw 8-bit
+      BAYER + demosaic w/ a numpy fallback so it runs on a bare Pi) +
+      `s28_compare.py` (self-contained HTML: single vs merges w/ 3×
+      zoom crops, the **√N noise ladder**, JPEG size at equal q, and a
+      **flicker check**) + `--plan stack` capture + the one-click
+      workbench card **`s28-stack-compare`** (wrapper
+      `s28_compare_run.py`: serve→capture→report→serve, frames toggle
+      8/16/32). 48 host tests. **MEASURED (16-frame card burst): noise
+      falls √N — k=2 1.34× / k=4 1.95× / k=8 ~3×; mean == sigma-clip on
+      a static scene, median slightly less.** KEY FINDING: the **honest
+      metric is group-means temporal σ** (a spatial std on a "uniform"
+      patch hides the win behind fixed print/lighting texture — it read
+      only 1.4×). ALSO: the flicker check flags the room light —
+      **ALIASED 7.2× (bright) → 21.9× (dim)**: room LED/fluorescent
+      flicker is frame-to-frame light wobble stacking CANNOT remove, so
+      a **constant/DC light source is needed** for a clean measurement
+      (Nick setting one up; it doubles as the color-work illuminant).
+      Card demo'd on the bench: click→LIVE→capture→report on :8093→Stop
+      releases the ports. *Exit (owed): Nick reviews at the page under a
+      steady light + the RGB565 deployed-path burst (the BAYER→RGB565
+      switch wedges — captured per-pixformat in a fresh attach).*
+- [~] **Bite 3 — shutter bracket + channel-wise merge. BLOCKER FIXED
+      2026-09-03: the framerate wedge is SOLVED.** Root cause (proven on
+      the AE3): `csi.framerate()` → `set_framerate` → `omv_csi_abort` +
+      `configure()` (a full mode-register rewrite + capture abort) stops
+      the sensor streaming and wedges the board. **Fix: extend the
+      PAG7936 frame-time registers DIRECTLY** (`__write_reg`
+      0x004C–0x004E + SENSOR_UPDATE 0x00EB) — no abort, no reconfigure;
+      `set_auto_exposure` reads the live frame-time regs so a long
+      exposure then clamps to the extended time. No firmware rebuild
+      (`__write_reg` already exposed). Proven: exposure readback exact
+      (want=132672 got=132672), settled frame period scales (EV+0 ~21ms
+      / +2 ~71ms / +3 ~138ms) and returns down, ZERO wedge across 4
+      changes; then the INTEGRATED path verified — `--plan bracket`
+      (+0/+2/+3 EV shutter bracket) ran clean, bursts lock-HELD at
+      8328/33312/66624 µs, run complete. `set_frame_time` in
+      `s28_board_burst.py`; `op_manual`/`op_expo_probe` drop the fps
+      arg. **BRACKET + RED-MERGE TOOL BUILT + TESTED 2026-09-03:**
+      `--plan bracket` captures NORMAL + +2/+3 EV shutter-only BAYER
+      bursts (N/rung, exposures exact, no wedge); `s28_bracket.py` does
+      the channel-wise merge (green/blue from NORMAL, red from LONG ÷
+      exposure ratio) + a report: exposure table, red-SNR (bounded
+      √ratio…ratio), red signal fraction (the notes' metric — shows
+      recovery when normal is crushed to black), and CLIP detection.
+      4 bracket tests + the merge math verified in the read-noise limit;
+      suite 47. **Correctly handles every bench case:** normal-black
+      (dark room → red-recovery story) and long-red-CLIPPED (bench red
+      well-exposed at 113/255 → +2/+3 EV saturates → merge flagged
+      INVALID, not a real gain). **The real red-SNR win needs a
+      red-STARVED scene** (underwater, or a deliberately red-dim bench
+      target) where the long red stays unclipped — the field
+      validation, per the notes. *Remaining:* motion-blur check on long
+      frames (low-pass-red fallback); a red-starved demo scene; optional
+      workbench card (mirror `s28-stack-compare`). *(original scope:)*
+      NORMAL frame first, then +2/+3 EV via shutter ONLY (never gain —
+      gain adds back the noise the photons are buying out); red-from-long
+      merge in LINEAR domain; green/blue clipping in the long frame
+      expected and irrelevant; motion-blur check on the long frames.
+      *Exit:* red fraction/SNR vs exposure-ratio table (DONE in the
+      tool), demonstrated on a red-starved scene.
+- [ ] **Bite 4 — N6 rows + the decision.** Winning config repeated on
+      the N6 (its sensor's manual-control API gets its own mini-audit
+      first — unchecked); Nick picks A / B / A+B / neither; config
+      knobs (N, EV steps, merge mode) speced into the capture config,
+      never hard-coded.
+      Cycle-time + power cost per capture recorded (INA3221 CH1 = AE3;
+      N6 N/A until the CH3 shunt re-wire).
+
+  **On-board stacking (the production path — scoped 2026-09-03, Nick's
+  ask; today ALL merging is Pi-side offline from streamed frames).**
+  *Mechanism:* a running `uint16` accumulator — capture a frame → add
+  into a sum buffer → repeat N → divide → one denoised frame → encode →
+  ship. The board holds only the accumulator + the current frame, never
+  N frames; `uint16` covers N ≤ ~256 (255×N < 65535). **Mean only** is
+  the on-board mode — median/sigma-clip need all N frames resident, so
+  they stay Pi-side/field-post; mean still gives the full √N win.
+  *THE LIMITING FACTOR IS MEMORY (the AE3's ~4 MB free heap), and it
+  bites at HD:*
+  | domain | HD accumulator | AE3 (~4 MB) | N6 (~25 MB) |
+  |---|---|---|---|
+  | BAYER (1 plane) | 1280×800×2 = **2.0 MB** | ✅ fits (+1 MB frame) | ✅ (but N6 can't BAYER) |
+  | RGB (3 ch)      | 1280×800×3×2 = **6.1 MB** | ❌ does NOT fit | ✅ |
+  So **AE3 HD on-board stacking must be BAYER** (RGB accumulator busts
+  the heap); VGA fits either domain; the N6 has room but is RGB565-only
+  (its BAYER firmware bug). Compute is NOT the limiter (a ulab add on a
+  1 MP plane is tens of ms, well under the frame cadence).
+  *Timing — on-board is capture-cadence-limited, not USB-limited, so it
+  is FAR faster than the Pi path (which pays ~1 s/HD-frame of USB —
+  measured 2026-09-03):* estimate ~30–50 ms/frame bright → **8 vs 16
+  frames differ by < 1 s** on-board (~3 s incl. converge/lock), vs the
+  Pi path's ~13 s / ~20 s at HD. In low light / for the bracket the
+  clock becomes **exposure × N**, not transfer. *(All on-board numbers
+  are estimates — the accumulator is not built yet; the Pi-path numbers
+  are measured.)* *Verifiable:* a board-side `accumulate` op (ulab
+  uint16 sum, or a small C helper if ulab is too slow), N + framesize
+  knobs, one denoised frame out; wall-time + INA3221 mJ/capture next to
+  the Pi-path numbers, HD BAYER on the AE3.
+**Demo (Nick):** open the workbench, click the S28 compare card, and
+read one page where single vs stacked vs bracketed sit side by side
+with the metrics table — the production call is made from it.
+**Scene (Nick's call 2026-09-01):** START on the HIL LCD (rig already
+up); the printed AprilTag/gray+color-patch reference card comes once
+the pipeline works. Consequence: bite 1's LCD-PWM check is mandatory
+before any LCD-scene number is trusted, and bench-honesty stands
+regardless — the bench proves the SNR mechanics; the red-channel win is
+validated underwater (dive rig / field), not on a screen.
+**Needs:** bench windows on nereus000 (interleaves with S8's remaining
+E-bite reviews at Nick's call); HIL LCD rig; no new hardware.
+**Synergies, recorded not chased:** the dive-recorder rig (stacked
+stills are exactly its capture mode; ~3-week deadline), S21's
+evidence-JPEG path, and smaller files at equal quality for every
+transport downstream.
+
+### S29 — nereus002 field rig (FieldUnit)  `[~]`  ← **RUNNING (Nick 2026-09-06)**
+*Branch `sprint/29-fieldunit`, cut from the S28 stacking branch so the field
+rig inherits that work. Hardware: **Raspberry Pi Zero 2 W**, Debian 13
+trixie, IMX708 (wide, autofocus) on CSI + the AE3 and N6 on USB through an
+unpowered Terminus hub, powered by a **LiFePO4wered/Pi+** with an 18650 cell.*
+
+**Goal:** a field-deployable camera rig that records stills and video from
+all three cameras with correct UTC timestamps, reviewable from a phone with
+no computer present. Nick's ordered priorities: **(1) a stable bench —
+wifi + power, (2) cameras online and stable, (3) new features.**
+
+**THE BOARDS MOVED. nereus000 HAS NO CAMERAS.** The AE3 and N6 on this rig
+are nereus000's physical boards, relocated — proven, not inferred: the N6's
+by-id serial is its STM32 chip UID and reverses byte-for-byte into the
+`board_id` the chip reports, matching SPEC's nereus000 entry exactly, and
+its `/flash` still carries the bench artifacts. Consequence: **both hosts'
+configs name the same two strings**, so by-id can no longer identify a rig.
+
+- [x] **Bite 1 — three-stream viewer + role-named boards.** Boards are found
+      by ASKING them (`omv.board_type()` → "AE3"/"N6"), never by USB serial,
+      because this rig's boards get swapped and by-id names the chip. No
+      cache: a cached role→port map is stale in exactly the swap scenario it
+      would exist for. `pi/field/{discover,sources,field_stream}.py`; the
+      measured half of the S8 viewer (SerialBoard, supervise, the
+      (2,5,10,20,30)s backoff) is IMPORTED, not copied. Workbench schema
+      grew `role` as an alternative to `by_id`, resolved at RUN time — never
+      in preflight, which opens no serial port (D45).
+      **DEMO PASSED 2026-09-06:** card → LIVE → link → three streams,
+      IMX708 15.0 / AE3 14.9 / N6 14.9 fps, 7.88 Mbps combined, load 1.41
+      on 4 cores, 48.3 °C. Three bugs were found only by running on
+      hardware: a `ticks_add` overflow that crashed BOTH boards, the
+      discovery/supervisor double-attach, and the PEP 668 interpreter gap.
+- [x] **Bite 2 — review fixes + card controls.** Four defects found by
+      DRIVING the page, not by tests: the settle window was silently
+      skippable across recipe types (safety — role and by_id key sets never
+      intersected, so a quick stop→start could wedge the AE3); role cards
+      read "not enumerated" while streaming; the page named nereus000 while
+      served from nereus002; no thumbnail. Added: click-to-fullscreen, a
+      fixed-row stats table (resolution, fps SET vs ACTUAL, stream rate),
+      a link meter, and framesize/fps/quality/colour as card toggles.
+      **A runnable recipe without a thumbnail now FAILS A TEST** (Nick's
+      rule) — four pre-existing recipes are a NAMED legacy list.
+- [x] **Bite 3 — bench stability: wifi and power. BOTH ROOT-CAUSED.**
+      *WiFi:* `power_save` was **on** — the radio dozes and negotiates the
+      floor rate (measured rx 1.0 Mb/s against tx 72.2), the AP ages out the
+      association, and the Pi sits **up with no network**. Seen three times
+      in one session. Fixed by `pi/services/wifi-powersave-off.service`,
+      repo-carried and enabled at boot. **This bench already paid for this
+      once** (nereus000, 2026-08-25). Nick's field units never hit it because
+      they run LTE with wlan0 as an **AP**, and AP mode does not sleep.
+      *Power:* `VIN` read **47 mV** — the charger was not on the Pi+ input,
+      so the rig ran off the cell (~3.5 W, under 2 h) and died repeatedly.
+      Resolved physically; VIN 4967 mV / VBAT 3407 mV confirmed charging.
+- [x] **Bite 4 — power-cycle reboot (the AE3's only remote cure).**
+      `systemctl reboot` is wrong here twice over: the Pi+ cuts power
+      SHDN_DELAY after UART TX drops and a Zero 2 W can miss that window
+      (a reboot becomes a power-off needing a physical button — measured),
+      and it does not cut USB VBUS, so it cannot clear either AE3 failure
+      state whose documented cure is a power cycle. `pi/field/lifepo4.py`
+      is **VENDORED** from Nick's `nereus-vision-dev`
+      (`system_agent/lifepo4wered_controller.py`) — copied, not imported,
+      so that deployed project is neither modified nor depended on. The
+      wake is programmed and VERIFIED before anything shuts down, and a
+      cycle is REFUSED on a flat battery with no charger.
+      **PASSED: 5/5 cycles, each returning with both boards.** The refusal
+      then earned its keep for real on 2026-09-07 — it correctly blocked a
+      recovery attempt at VBAT 3037 mV with VIN 47 mV.
+- [x] **Bite 5 — cameras online and stable. ROOT-CAUSED: usb-storage.**
+      Both boards expose `/flash` as an MSC disk. A udev probe landing
+      while the board is busy fails a SCSI read → USB **device reset** →
+      re-probe → livelock at **~46 resets/min**, and every reset re-binds
+      cdc_acm. That is the whole "AE3 fell off the bus" family, and it
+      presents as *four different bugs*: a missing device, a wedged port,
+      "could not enter raw repl", and a firmware crash. Fixed by
+      `pi/field/usb_msc_off.sh` + `field-usb-msc-off.service`, matched on
+      **interface CLASS 08/06/50** under VID 37c5 so a firmware update
+      that reorders interfaces cannot silently re-enable the disk.
+      The suspect list in the old wording (rail sag, the unpowered hub,
+      cable quality) was **wrong** — none of them.
+- [x] **Bite 6 — composite capture: stack + HDR bracket, all three
+      cameras.** *(Renumbered in flight — the original bite 6 was
+      "stills + video with UTC filenames"; that work is now bite 8.)*
+      Same-exposure stacking for noise, and shutter-only bracketing for
+      dynamic range, on IMX708 + AE3 + N6 through one card.
+      **Nick caught a real defect here:** the first version composited in
+      the **gamma domain**. Averaging and exposure-ratio division are only
+      valid on linear data, so `to_linear`/`to_display` (γ=2.2) now bracket
+      every merge. Measured noise ladder (raw, N=8): AE3 σ 4.374→1.431
+      (**3.06×**), N6 6.070→2.491, IMX 4.425→1.673.
+- [x] **Bite 7 — RAW path on all three cameras + on-board ISP stack.**
+      Boards capture BAYER (8-bit BGGR, linear, no gamma LUT); the IMX708
+      goes through DNG, with exposure read from the **EXIF sub-IFD** (not
+      the main IFD — that returned −1 and crashed the bracket).
+      **Nick's idea, and it worked:** stack 16 raw frames on the board,
+      then hand the result to the board's *own* debayer so the stack
+      inherits the hardware ISP — 16 frames in **795 ms**, debayer 48 ms,
+      out as a **28 KB JPEG** instead of ~22 MB of raw.
+      Raw capture cadence is far faster than it looked: **AE3 18.5 ms/frame
+      (54 fps), N6 7.5 ms (133 fps)** — the 8–10 s a burst appeared to take
+      was **99 % host transfer**, which answers Nick's motion-budget
+      question: a 16-frame stack is ~0.3–0.8 s of scene time, fine for
+      urchins, not for fish.
+- [x] **Bite 8 — endurance + thermal measurement.** `field-power-log`
+      writes a 10 s CSV (voltage, current, power, energy, CPU temp, load,
+      throttled), append-only and `fsync`'d per sample, EMPTY on a failed
+      read and never a fabricated zero. Overnight drawdown 2026-09-07:
+      **78 min** from ~3.20 V to the 2950 mV cutoff (stopped at 2952),
+      3.13 Wh, `throttled` **0x0** throughout. **From a full charge Nick
+      measures ~3 h, which is the number to plan field sessions against.**
+      | State | Load | CPU |
+      |---|---|---|
+      | idle | 2.42 W | 39 °C |
+      | two cameras at HD 15 fps | 3.48 W | 46 °C |
+      | peak (composite runs) | 4.18 W | 46.7 °C |
+      **Voltage sag goes non-linear at the end**: idle→HD raised power
+      1.44× but the sag rate **6.7×** (4.4 → 29.3 mV/min). That is cell
+      internal resistance, not consumption — the last few percent of the
+      pack cannot deliver a camera load. Do not plan to the last 100 mV.
+
+- [ ] **Bite 9 — stills + video capture with UTC filenames** and the
+      folder structure, per the original ask. *(Was bite 6.)* Nothing is
+      written to disk on a schedule yet; every capture so far is
+      operator-triggered through a card.
+- [ ] **Bite 10 — per-camera Settings menu** (Nick 2026-09-06, requested
+      and NOT built): a collapsed-by-default panel to set resolution,
+      quality and fps **per camera** before starting a demo. Today the
+      card toggles apply to all three at once.
+- [ ] **Bite 11 — wlan0 AP mode for field access (the polish step, LAST).**
+      Nick 2026-09-06: "we will get to setting up the AP as the last step,
+      for now more important to keep the Pi on my local wifi for active
+      development." Recipe already written and field-proven in
+      `nereus-vision-dev/device/docs/nereus_wlan0_ap_setup.md`: NetworkManager
+      AP on 10.42.0.1, phone connects, no internet needed. **Trade-off to
+      settle first: a rig in AP mode is no longer a wifi client, so Tailscale
+      access is lost** — this likely wants AP as a second interface, or a
+      toggle, not a replacement.
+
+**OPEN, TOP OF THE LIST — the AE3 refuses the REPL where the N6 never
+does.** Three failures in the 2026-09-06/07 session against **zero** for
+the N6, on identical host code and the same PAG7936 sensor. Survives the
+usb-storage fix (bite 5), so it is a *second*, distinct fault. Cleared
+only by a full power cut. **This blocks calling the rig field-ready:
+"power cycle the camera" is not an acceptable field recovery.** Not
+diagnosed — do not assume a cause; the last three guesses here were wrong.
+
+**Second rig:** Nick is building one to replicate nereus002. Everything
+learned is in the **`field-rig-bringup`** skill — build from that, not
+from this section.
+
+**Demo (Nick):** open `http://nereus002:8088/`, click **Field rig — three
+camera streams**, then the link → three live streams side by side. Also
+live: **Composite capture** (stack & bracket) and **RAW composite**.
+**Standing facts for this rig:** boards by ROLE not by-id · never
+`systemctl reboot` (use `pi/field/power_cycle.py`) · mpremote lives in
+`~/mpv` (PEP 668) so launchers pick an interpreter · `iw`/`ip` are in
+/sbin, not on the pi user's PATH · `lifepo4wered-daemon` must be active
+or the Pi+ cuts power 5 min after every boot.
+
+---
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22

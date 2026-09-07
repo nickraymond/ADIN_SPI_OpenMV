@@ -1,0 +1,50 @@
+# field_raw_composite.toml -- S29 bite 7: RAW stacking + HDR bracketing.
+#
+# Both experiments against the same scene, because they are two halves of
+# one question and trade against each other:
+#   stack   N frames at ONE locked exposure, averaged in LINEAR space.
+#           Noise falls ~sqrt(N). Short burst, safe on static subjects.
+#   bracket -EV/0/+EV, each divided by ITS OWN measured exposure and merged
+#           to radiance. Buys dynamic range, but the bright rung is a LONG
+#           exposure that smears anything that moves.
+#
+# RAW because both operations are only valid on linear data: averaging is a
+# mean of photon counts, and bracketing divides by the exposure ratio. On
+# gamma-encoded JPEG the arithmetic is wrong, not merely imprecise.
+#
+# All three cameras. The IMX708's raw arrives as a DNG (decoded with rawpy)
+# rather than plain Bayer bytes, but everything downstream -- linear stack,
+# radiance merge, demosaic/WB/gamma -- is the same shared code.
+
+name = "field-raw-composite"
+title = "RAW composite — stack & HDR bracket"
+summary = "Raw capture on all three cameras: STACK averages N locked-exposure frames in linear space (~√N noise win), BRACKET merges -2/0/+2 EV into radiance for 16× dynamic range. Shows single vs stacked vs HDR for IMX708, AE3 and N6. From sprint S29 bite 7."
+opens = ":8095"
+thumbnail = "thumbs/field_raw_composite.jpg"
+
+[[boards]]
+label = "AE3"
+role = "AE3"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+[params]
+mode = ["both", "stack", "bracket"]
+n = ["4", "8", "2"]
+# +/- N stops around the metered exposure. The schema allows no
+# commas in a param value, so this is the SPAN and the runner
+# expands it to -N,0,+N.
+stops = ["2", "3", "1"]
+framesize = ["HD", "VGA"]
+
+[run]
+argv = [
+  "bash", "pi/field/run_raw_card.sh",
+  "--bind", "0.0.0.0", "--http-port", "8095",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8095/index.html"

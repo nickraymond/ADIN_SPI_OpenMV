@@ -1,0 +1,35 @@
+# wifi-powersave-off.service — S29: keep the radio awake on a field Pi.
+#
+# ROOT CAUSE, measured on nereus002 2026-09-06: `iw dev wlan0 get power_save`
+# read "on", and the link showed rx 1.0 MBit/s against tx 72.2 MBit/s — the
+# classic power-save fingerprint, where the radio dozes between beacons and
+# negotiates the lowest rate. The AP then ages out the association and the
+# box is UP with no network: exactly what was seen three times in one
+# session, with the Pi still running.
+#
+# This is a REPEAT of a fault this bench already paid for once: TRACKER
+# records the same fix on nereus000 (2026-08-25, "Pi WiFi dropped twice →
+# powersave off"). It is carried in the repo this time so the next field
+# device inherits it instead of rediscovering it.
+#
+# Belt AND braces: the durable fix also belongs in the netplan/NetworkManager
+# profile (wifi.powersave=2). This unit does not depend on that, and re-applies
+# after the interface is up, so it survives a profile that re-enables it.
+#
+# Install: sudo systemctl link /home/pi/ADIN_SPI_OpenMV/pi/services/wifi-powersave-off.service
+#          sudo systemctl enable --now wifi-powersave-off
+# Verify:  /sbin/iw dev wlan0 get power_save   ->  "Power save: off"
+[Unit]
+Description=Disable WiFi power save (field rig link stability)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# `|| true` on the interface probe: a rig on Ethernet has no wlan0, and a
+# missing radio must not fail the boot.
+ExecStart=/bin/sh -c 'for i in wlan0 wlan1; do [ -e /sys/class/net/$i ] && /sbin/iw dev $i set power_save off || true; done'
+
+[Install]
+WantedBy=multi-user.target

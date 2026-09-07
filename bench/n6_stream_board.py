@@ -42,6 +42,21 @@ FRAMESIZE = _CFG.get("framesize", "VGA")
 QUALITY = _CFG.get("quality", 50)
 MAX_SECONDS = _CFG.get("max_seconds", 3600)
 MAX_FRAMES = _CFG.get("max_frames", 0)        # 0 = bounded by MAX_SECONDS only
+#: Minimum milliseconds per frame. 0 = free-run, which is the historical
+#: behaviour and stays the default so S8/S28 runs are byte-identical.
+#: The field rig sets this: the N6 free-runs at ~41 fps at VGA and would
+#: eat USB bandwidth the other two cameras on the same bus need.
+PACE_MS = _CFG.get("pace_ms", 0)
+#: "RGB565" (colour) or "GRAYSCALE" (mono). Default is colour so every
+#: existing S8/S28 run is byte-identical. Mono exists to measure the
+#: AE3's real HD ceiling (Nick, 2026-09-06): S23 measured HD mono at
+#: 3.62 fps against a much slower colour path, because this SoC has no
+#: hardware JPEG and colour costs a convert plus 3x the DCT work.
+#: CAUTION: S28 hit a GRAYSCALE-at-HD hang in its calibration path and
+#: worked around it with RGB565+host-gray. Whether that fault also
+#: exists on this plain stream path is UNVERIFIED -- measure, do not
+#: assume, and keep colour as the default until it is.
+PIXFMT = _CFG.get("pixfmt", "RGB565")
 MODEL = _CFG.get("model", "/rom/yolov8n_192.tflite")
 THRESHOLD = _CFG.get("threshold", 0.4)
 DETECT = _CFG.get("detect", True)             # run the model at all
@@ -371,7 +386,8 @@ def main():
 
     csi0 = csi.CSI()
     csi0.reset()
-    csi0.pixformat(csi.RGB565)
+    csi0.pixformat(csi.GRAYSCALE if PIXFMT == "GRAYSCALE"
+                   else csi.RGB565)
     csi0.framesize(framesize_const(FRAMESIZE))
 
     model = None
@@ -417,25 +433,36 @@ def main():
     # from bite A. Both are answers to "apples to apples?" -- the model half
     # for the boards, the blob half for the control method.
     print("#I {\"board\":%s,\"fw\":%s,\"framesize\":\"%s\",\"w\":%d,\"h\":%d,"
-          "\"pixfmt\":\"RGB565\",\"model\":\"%s\",\"model_bytes\":%d,"
+          "\"pixfmt\":%s,\"model\":\"%s\",\"model_bytes\":%d,"
           "\"model_in\":%s,\"model_out\":%s,\"arena\":%d,"
           "\"labels\":%s,\"quality\":%d,\"heap\":%d,\"blob_classes\":%s,"
           "\"blob_scan\":\"%s\",\"overlay\":%d}"
           % (_json_str(os.uname().machine), _json_str(sys.version),
              FRAMESIZE, img.width(), img.height(),
-             minfo["path"], minfo["bytes"],
+             _json_str(PIXFMT), minfo["path"], minfo["bytes"],
              _json_str(minfo["in"]), _json_str(minfo["out"]), minfo["arena"],
              _json_list(labels), QUALITY, gc.mem_free(),
              _json_list([c[0] for c in BLOB_CLASSES]), BLOB_SCAN, OVERLAY))
 
     threshes = [c[1] for c in BLOB_CLASSES]
     seq = 0
+    _t_last = time.ticks_ms()
     t_end = time.ticks_add(time.ticks_ms(), int(MAX_SECONDS * 1000))
     while True:
         if time.ticks_diff(t_end, time.ticks_ms()) <= 0:
             break
         if MAX_FRAMES and seq >= MAX_FRAMES:
             break
+
+        # Pace BEFORE the capture timer starts, so the sleep never lands in
+        # the cap_us/enc_us ledger -- a paced run must report the same
+        # per-stage costs as a free-running one, or the numbers stop
+        # comparing across sprints.
+        if PACE_MS:
+            _dt = time.ticks_diff(time.ticks_ms(), _t_last)
+            if _dt < PACE_MS:
+                time.sleep_ms(PACE_MS - _dt)
+        _t_last = time.ticks_ms()
 
         t_cap0 = time.ticks_us()
         img = csi0.snapshot()

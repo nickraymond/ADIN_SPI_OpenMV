@@ -1,0 +1,13 @@
+diff --git a/ports/alif/omv_csi.c b/ports/alif/omv_csi.c
+index 97f6935c..fb130897 100644
+--- a/ports/alif/omv_csi.c
++++ b/ports/alif/omv_csi.c
+@@ -140,7 +140,7 @@ static bool alif_csi_is_active(omv_csi_t *csi) {
+ 
+ int alif_csi_isp_reset(omv_csi_t *csi) {
+     #ifdef IMLIB_ENABLE_GAMMA_LUT
+-    imlib_update_gamma_table(-0.2f, 1.0f, 2.2f);
++    imlib_update_gamma_table(0.0f, 1.0f, 2.2f);
+     #endif
+     return 0;
+ }

@@ -1,0 +1,41 @@
+# field_composite.toml -- S29 bite 6: composite capture on all three cameras.
+#
+# Two experiments, kept separate because they answer different questions
+# (S28's framing, and its rule that they compose later, not now):
+#   stack   -- N frames at ONE locked exposure, averaged. Noise falls as
+#              sqrt(N); signal does not. The underwater win.
+#   bracket -- -EV/0/+EV merged for dynamic range, like iPhone HDR.
+#              NOT IMPLEMENTED YET; the card reports that rather than
+#              quietly handing back a single frame.
+#
+# Boards are named by ROLE so a swap needs no edit here.
+
+name = "field-composite"
+title = "Composite capture — stack & bracket"
+summary = "Multi-frame composites on all three cameras: STACK averages N frames at one locked exposure to cut noise (√N), BRACKET varies exposure for dynamic range. Shows single vs composite side by side with the measured noise ladder. From sprint S29 bite 6."
+opens = ":8094"
+thumbnail = "thumbs/field_composite.jpg"
+
+[[boards]]
+label = "AE3"
+role = "AE3"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+[params]
+mode = ["stack", "bracket"]
+n = ["8", "4", "16"]
+merge = ["mean", "median", "sigma"]
+framesize = ["HD", "VGA"]
+
+[run]
+argv = [
+  "bash", "pi/field/run_composite.sh",
+  "--bind", "0.0.0.0", "--http-port", "8094",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8094/index.html"

@@ -1,0 +1,37 @@
+# field-usb-msc-off.service — keep usb-storage off BOTH OpenMV boards.
+#
+# ROOT CAUSE, already diagnosed on nereus000 as S23 bite R and shipped as
+# pi/ae3_flash/99-ae3-no-msc.rules — but never installed on this rig, and
+# the original rule covers the AE3 only.
+#
+# Both boards expose their flash as USB mass storage alongside the CDC
+# serial we actually use. When udev/blkid probes that volume while the
+# board is busy, the SCSI read fails, usb-storage escalates to a USB DEVICE
+# RESET, the reset re-triggers the probe, and it livelocks (~46 resets/min).
+# Every reset re-binds cdc_acm, so an in-flight session dies and
+# /dev/serial/by-id flickers. In the rule's own words it "presents EXACTLY
+# as 'could not enter raw repl' or a board that fell off the bus, on
+# completely healthy hardware" -- which is BOTH symptoms seen on nereus002
+# on 2026-09-06 (AE3 refusing the REPL, then vanishing from lsusb; N6
+# dropping under HD/q90/30fps load).
+#
+# It is a RACE, which is why it looks capricious and load-dependent: more
+# bus traffic means more chances for a probe to land while the board is
+# busy. That fits the N6 dropping specifically at maximum load.
+#
+# This unit does what the udev rule does, for BOTH boards (AE3 37c5:16e3
+# and N6 37c5:1206), and installs the rule for later hotplugs. Neither
+# board is ever used as a disk here -- file transfer is serial only.
+[Unit]
+Description=Unbind usb-storage from OpenMV boards (prevents reset livelock)
+After=systemd-udev-settle.service
+DefaultDependencies=no
+Before=basic.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/usb_msc_off.sh
+
+[Install]
+WantedBy=sysinit.target
