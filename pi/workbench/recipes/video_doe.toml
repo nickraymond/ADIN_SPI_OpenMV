@@ -1,0 +1,62 @@
+# video_doe.toml -- S30: the video DOE card.
+#
+# Nick's question is a LINK BUDGET question: "what will it take to transmit a
+# 5 second video per hour from any of the boards." So the headline number this
+# card reports is BYTES AS PRODUCED BY THE CAMERA -- the JPEG payloads the
+# board encodes -- because that is what a radio has to move.
+#
+# The card also reports an H.264 size, and the page is explicit that this is
+# the PI's encoder (VideoCore, /dev/video11), never the board's: neither
+# OpenMV board can produce H.264 from MicroPython. That column exists to
+# price the other architecture -- a Pi in the link that transcodes before
+# transmit is worth ~4x on the budget -- and is never merged with the first.
+#
+# Two stages. The PROBE measures capture+encode rate and bytes/frame for
+# every (camera, resolution, quality) without transferring a frame, which
+# prices every fps target at once; on this rig transfer is 99% of a burst's
+# wall time, so a probe that shipped frames would measure USB and call it
+# frame rate. The CLIPS are recorded only so Nick can LOOK at them -- "where
+# is the quality floor" is not a number to take from a spreadsheet.
+#
+# Boards by ROLE, not by_id: this rig's AE3 and N6 get swapped.
+
+name = "video-doe"
+title = "Video DOE — rate, size & link budget"
+summary = "Sweeps every camera across QVGA/VGA/HD and six JPEG quality levels, measuring how fast each can capture+encode and what a frame costs. Reports bytes per 5s clip and the sustained bandwidth to send one per hour, then records watchable clips at each camera's fastest sustainable rate. From sprint S30."
+opens = ":8094"
+thumbnail = "thumbs/video_doe.jpg"
+
+[[boards]]
+label = "AE3"
+role = "AE3"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+# The quality axis covers the band Nick wants to operate in -- q50-q90, set
+# 2026-09-07 after he looked at real frames ("q30 is not impressive") -- plus
+# q40 as the one rung below, so the report shows what leaving the band costs
+# instead of just asserting where it is.
+#
+# The schema forbids commas in a param choice (S29 hit this with bracket
+# stops), so a list is spelled with dashes; the module parses either.
+# scope trades runtime for coverage. "full" is the whole grid and takes the
+# better part of an hour; "probe" skips the clips and returns the COMPLETE
+# size matrix in a few minutes, which is the link-budget answer on its own.
+[params]
+qualities = ["40-50-60-70-80-90", "50-70-90", "60-75-90", "40-60-80"]
+resolutions = ["QVGA-VGA-HD", "VGA-HD", "QVGA-VGA", "HD"]
+probe-ms = ["3000", "2000", "5000"]
+# Which cameras to sweep. A rig with no CSI camera picks a board-only set.
+cameras = ["IMX708-N6-AE3", "N6-AE3", "IMX708-N6", "N6"]
+
+[run]
+argv = [
+  "bash", "pi/field/run_video_doe.sh",
+  "--bind", "0.0.0.0", "--http-port", "8094",
+]
+cwd = "."
+
+[health]
+http = "http://127.0.0.1:8094/healthz"

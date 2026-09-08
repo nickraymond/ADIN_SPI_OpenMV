@@ -31,15 +31,29 @@ answer.
 import argparse
 import glob
 import json
+import os
 import sys
 
 #: The roles this rig knows how to place. Order is the viewer's left-to-right
 #: order downstream, so it is meaningful, not alphabetical.
 ROLES = ("AE3", "N6")
 
-#: Only ``-if00`` -- an OpenMV board exposes one CDC interface, and globbing
-#: without the suffix returns the same device twice on some kernels.
-PORT_GLOB = "/dev/serial/by-id/*-if00"
+#: EVERY by-id entry, deduplicated by the device it actually points at.
+#:
+#: This used to be ``*-if00``, on the reasoning that an OpenMV board exposes
+#: one CDC interface and a bare glob double-lists on some kernels. The second
+#: half is true; the first is NOT, and it was falsified by hardware:
+#: nereus000's N6 (2026-09-08, a different physical board from nereus002's)
+#: enumerates in USB **HS** mode as
+#: ``usb-MicroPython_Pyboard_Virtual_Comm_Port_in_HS_Mode_0065345D3643-if01``
+#: -- interface **01**. The old glob silently found zero N6 on that rig, which
+#: is precisely the hardware-swap case this module exists to survive.
+#:
+#: So the dedupe is done by the mechanism rather than by a naming heuristic:
+#: resolve each symlink and keep one entry per underlying tty. A by-id entry
+#: is always a serial device, and a port that is not a board simply fails its
+#: probe and lands in ``problems`` -- which is the safe direction.
+PORT_GLOB = "/dev/serial/by-id/*"
 
 #: Bounded, and it prints BEFORE anything can fail: if ``omv`` is missing we
 #: still learn what the board is from ``sys.version``, instead of getting a
@@ -63,8 +77,24 @@ class ProbeError(Exception):
 
 
 def list_ports(pattern=PORT_GLOB):
-    """Serial devices that might be a board, in a stable (sorted) order."""
-    return sorted(glob.glob(pattern))
+    """Serial devices that might be a board, in a stable (sorted) order.
+
+    Deduplicated by the tty each symlink resolves to, so a kernel that
+    publishes several by-id aliases for one device is probed ONCE. Probing the
+    same board twice is not merely wasteful: repeated raw-REPL attaches are a
+    known way to wedge the AE3 (see probe_port).
+    """
+    seen, out = set(), []
+    for path in sorted(glob.glob(pattern)):
+        try:
+            real = os.path.realpath(path)
+        except OSError:
+            real = path
+        if real in seen:
+            continue
+        seen.add(real)
+        out.append(path)
+    return out
 
 
 def parse_probe(text):

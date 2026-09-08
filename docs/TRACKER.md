@@ -1,7 +1,23 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-07 night (**S31 CLOSED ON HARDWARE; S32 OPENED — the
+*Last updated: 2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
+NEW AE3+N6 (Pi 5, **no CSI camera**); `nereus002` carries the OLD pair plus
+the IMX708. **Nick's boards are cleared: the old AE3/N6 are NOT optically
+damaged** — rectified-card sharpness differs 7% (AE3) / 12% (N6) old-vs-new,
+where a scratched lens or lost focus is 2-5x, so the S30 video baseline
+stands. Toolkit at `bench/optics/`. Three defects found on the way: discovery
+globbed `*-if00` and SILENTLY missed nereus000's N6 (it is `-if01`);
+`install_stream_service.sh` printed OK without ever restarting a running unit,
+so a two-day-old workbench kept serving 11 recipes with 15 on disk; and
+`composite.board_burst` returns BLACK frames in a dim room because it freezes
+AE before it has converged. **A descriptor that says "FS Mode" is a NAME, not
+a speed** — both N6s negotiate 480 Mbps, measured at
+`/sys/bus/usb/devices/*/speed`. STILL OPEN: the new boards measure ~1.8x
+noisier, but they ran 15-24 dB of gain and gain was never read off the old
+boards, so that is an observation about the rigs, not a claim about the
+sensors. Previous:*
+*2026-09-07 night (**S31 CLOSED ON HARDWARE; S32 OPENED — the
 video recorder.** H.264 measured on the N6: at HD max quality it is only
 **1.5x** smaller than MJPEG, because at a fine QP the encoder spends its bits
 coding SENSOR NOISE (proven: an identical frame re-encoded costs **43 bytes**;
@@ -3133,6 +3149,12 @@ usb-storage fix (bite 5), so it is a *second*, distinct fault. Cleared
 only by a full power cut. **This blocks calling the rig field-ready:
 "power cycle the camera" is not an acceptable field recovery.** Not
 diagnosed — do not assume a cause; the last three guesses here were wrong.
+
+**S31 — the second rig exists.** `nereus000` now carries the NEW AE3+N6 and
+is current. Standing facts for it: **no CSI camera** (the streams card takes
+`csi = off`); boards are `-if01`/`-if00`, so address by ROLE only; the old
+`s8-*`/`hil-*` cards pin `by_id` and will sit in "waiting" against the new
+serials. Optics comparison and its traps: `bench/optics/README.md`.
 
 **Second rig:** Nick is building one to replicate nereus002. Everything
 learned is in the **`field-rig-bringup`** skill — build from that, not
