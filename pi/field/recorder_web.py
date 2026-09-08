@@ -346,11 +346,15 @@ def viewer_page(m):
                _fmt_bytes(c.get("mjpeg_bytes", 0)),
                _fmt_bytes(c.get("mp4_bytes", 0)),
                "<a href='/download/%s/%s'>mp4</a> &middot; "
-               "<a href='/download/%s/%s'>mjpeg</a>"
+               "<a href='/download/%s/%s'>mjpeg</a> &middot; "
+               "<a href='/still/%s/%s/%d' target=_blank>original frame</a>"
                % (urllib.parse.quote(m["name"]),
                   urllib.parse.quote(c.get("mp4") or ""),
                   urllib.parse.quote(m["name"]),
-                  urllib.parse.quote(c.get("mjpeg") or ""))))
+                  urllib.parse.quote(c.get("mjpeg") or ""),
+                  urllib.parse.quote(m["name"]),
+                  urllib.parse.quote(c.get("mjpeg") or ""),
+                  min(30, max(0, c.get("written_frames", 1) // 2)))))
 
     return _shell("Recording %s" % m["name"], """
 <h1><a href='/' class=dim>&larr;</a> %s</h1>
@@ -380,7 +384,11 @@ def viewer_page(m):
 <div class=dim style="margin-top:8px;font-size:12px">
 "Lost in flight" counts gaps in the board's own frame numbering &mdash; frames
 it encoded that never arrived. That is a different failure from a frame the
-board never managed to make, and they are not added together.</div></div>
+board never managed to make, and they are not added together.<br>
+<b>Judging image quality? Use "original frame", not the video above.</b> The
+player shows an x264 transcode, so an artefact there may be x264's rather than
+the camera's. "original frame" serves the board's own JPEG byte-for-byte, which
+is the only thing that answers what q70 or q90 really looks like.</div></div>
 <h2>Manifest</h2>
 <div class=card><pre>%s</pre></div>
 <script>
@@ -475,6 +483,41 @@ def make_handler(state, root):
                 return None
             return p if os.path.isfile(p) else None
 
+        def _serve_still(self, path, n):
+            """Serve the nth JPEG out of a .mjpeg, BYTE-EXACT from the board.
+
+            This exists because the .mp4 beside it cannot answer "what does
+            MJPEG q70 actually look like" -- it is an x264 transcode, so any
+            artefact you see there might be x264's. Only the board's own bytes
+            settle a quality question, and this hands them over untouched.
+
+            Scanned in chunks rather than read whole: a 20 minute recording is
+            2.7 GB and must not be loaded into RAM to fetch frame 50.
+            """
+            soi, eoi = b"\xff\xd8", b"\xff\xd9"
+            buf = bytearray()
+            idx = 0
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(1 << 20)
+                    if not chunk:
+                        return self._send(404, "only %d frames in that clip" % idx,
+                                          "text/plain")
+                    buf += chunk
+                    while True:
+                        s = buf.find(soi)
+                        if s < 0:
+                            del buf[:max(0, len(buf) - 1)]
+                            break
+                        e = buf.find(eoi, s + 2)
+                        if e < 0:
+                            del buf[:s]
+                            break
+                        if idx == n:
+                            return self._send(200, bytes(buf[s:e + 2]), "image/jpeg")
+                        del buf[:e + 2]
+                        idx += 1
+
         def _serve_file(self, path, download=False):
             """Serve with Range support -- without it, video seeking is dead."""
             size = os.path.getsize(path)
@@ -548,6 +591,19 @@ def make_handler(state, root):
                 if not p:
                     return self._send(404, "not found", "text/plain")
                 return self._serve_file(p, download=(parts[0] == "download"))
+            # /still/<session>/<camera>.mjpeg/<n> -- the board's original JPEG
+            if len(parts) == 4 and parts[0] == "still":
+                p = self._safe_path(parts[1], parts[2])
+                if not p or not p.endswith(".mjpeg"):
+                    return self._send(404, "not found", "text/plain")
+                try:
+                    n = int(parts[3])
+                except ValueError:
+                    return self._send(400, "frame index must be a number",
+                                      "text/plain")
+                if not (0 <= n < 1000000):
+                    return self._send(400, "frame index out of range", "text/plain")
+                return self._serve_still(p, n)
             self._send(404, "not found", "text/plain")
 
         def do_POST(self):
@@ -612,19 +668,30 @@ def main(argv=None):
         # file and write its manifest. The recipe declares stop_grace = 45 for
         # exactly this window; exiting immediately would strand a multi-GB clip
         # with no manifest, and the library would silently not show it.
+        #
+        # The waiting and the srv.shutdown() MUST happen on another thread.
+        # BaseServer.shutdown() blocks until serve_forever() returns, and
+        # serve_forever() runs on this thread -- calling it from inside the
+        # handler deadlocks the process, which then ignores SIGINT *and*
+        # SIGTERM. The workbench correctly refuses to SIGKILL, so the card
+        # lands in "stuck" and the board stays held. Measured, once.
         print("recorder: signal %d -- closing any recording in flight"
               % signum, flush=True)
         state.stop.set()
-        deadline = time.time() + 40
-        while state.busy and time.time() < deadline:
-            time.sleep(0.5)
-        if state.busy:
-            print("recorder: recording did not close within 40 s; exiting "
-                  "anyway -- check the last session for a missing manifest",
-                  flush=True)
-        else:
-            print("recorder: recording closed cleanly", flush=True)
-        srv.shutdown()
+
+        def finish():
+            deadline = time.time() + 40
+            while state.busy and time.time() < deadline:
+                time.sleep(0.5)
+            if state.busy:
+                print("recorder: recording did not close within 40 s; exiting "
+                      "anyway -- check the last session for a missing manifest",
+                      flush=True)
+            else:
+                print("recorder: recording closed cleanly", flush=True)
+            srv.shutdown()
+
+        threading.Thread(target=finish, daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)

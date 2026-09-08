@@ -1,5 +1,18 @@
 {
  "cameras": {
+  "AE3": {
+   "bytes": {},
+   "cells": {},
+   "delivered": {
+    "HD_q70": 2.29
+   },
+   "delivered_bytes": {
+    "HD_q70": 89149
+   },
+   "firmware": "",
+   "note": "1 delivered cells measured end to end",
+   "sources": []
+  },
   "N6": {
    "bytes": {
     "HD_q30": 48152,
@@ -33,14 +46,14 @@
     "HD_q30": 30.12,
     "HD_q70": 30.24,
     "HD_q85": 23.81,
-    "HD_q90": 16.23,
+    "HD_q90": 19.91,
     "VGA_q90": 30.16
    },
    "delivered_bytes": {
     "HD_q30": 48002,
     "HD_q70": 74815,
     "HD_q85": 195021,
-    "HD_q90": 422649,
+    "HD_q90": 292366,
     "VGA_q90": 115988
    },
    "firmware": "(sysname='pyboard', nodename='pyboard', release='1.28.0', version='v1.28.0-64 on 2026-09-05', machine='OpenMV N6 with STM32N657X0')",
@@ -51,7 +64,7 @@
    ]
   }
  },
- "generated": "2026-09-08T16:52:36",
+ "generated": "2026-09-08T18:36:07",
  "host": "nereus000",
  "how": "measured by pi/field/n6_h264_run.py -> make_ceilings.py; encoder ceiling = capture+encode loop fps on the board, with no USB payload transfer in the path"
 }
