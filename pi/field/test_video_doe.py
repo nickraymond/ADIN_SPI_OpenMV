@@ -258,8 +258,13 @@ class TestState(unittest.TestCase):
 
 
 class TestPage(unittest.TestCase):
-    def test_page_does_not_claim_the_board_makes_h264(self):
-        self.assertIn("the boards cannot make H.264", v.PAGE)
+    def test_page_is_accurate_about_which_board_can_make_h264(self):
+        # S31 measured the N6's VC8000 encoding H.264 in hardware, so the
+        # original blanket "the boards cannot make H.264" is false. The page
+        # must say which board, and that it needs an unmerged upstream draft.
+        self.assertIn("The AE3 cannot make H.264 at all", v.PAGE)
+        self.assertIn("openmv/openmv#3247", v.PAGE)
+        self.assertNotIn("the boards cannot make H.264", v.PAGE)
 
     def test_page_has_no_hardcoded_hostname(self):
         for host in ("nereus000", "nereus001", "nereus002"):

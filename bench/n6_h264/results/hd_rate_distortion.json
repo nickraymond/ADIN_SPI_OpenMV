@@ -1,0 +1,17 @@
+{
+  "what": "S31: HD rate-distortion on the N6. Quality is the encoder's own hardware MSE readback, converted to PSNR. Same scene, same run, 90 frames each.",
+  "board": "OpenMV N6 on nereus002, firmware OpenMV v5.0.0-58.ga83bc776f5 (PR #3247 + denoise patch)",
+  "when": "2026-09-07",
+  "frame": {"w": 1280, "h": 800},
+  "results": [
+    {"mode": "mjpeg", "arg": 90,       "bytes_per_frame": 398596.9, "fps": 40.05, "psnr": null},
+    {"mode": "h264 quality", "arg": 70, "bytes_per_frame": 181051.4, "fps": 44.62, "psnr": 45.30},
+    {"mode": "h264 quality", "arg": 75, "bytes_per_frame": 279006.7, "fps": 40.72, "psnr": 47.68},
+    {"mode": "h264 quality", "arg": 80, "bytes_per_frame": 349398.9, "fps": 37.70, "psnr": 49.39},
+    {"mode": "h264 bitrate", "arg": 8000000,  "bytes_per_frame": 22946.5, "fps": 52.35, "psnr": 40.42},
+    {"mode": "h264 bitrate", "arg": 16000000, "bytes_per_frame": 47130.1, "fps": 50.99, "psnr": 41.44},
+    {"mode": "h264 bitrate", "arg": 32000000, "bytes_per_frame": 98074.3, "fps": 49.02, "psnr": 43.05},
+    {"mode": "h264 bitrate", "arg": 64000000, "error": "H264 encoder error -3 (INVALID_ARGUMENT) -- level 4.1 caps the bitrate near 50 Mbps, so rate-controlled H.264 cannot be asked to spend MJPEG-q90 bytes at all"}
+  ],
+  "denoise_probe": "codec.H264Encoder(denoise=N) raises 'this silicon reports no denoise filter' for every N>0. H264EncApi.c:527 gates noiseReductionEnable on hwCfg.dnfSupport, and the N6's VC8000 reports 0. The in-loop Wiener denoiser is NOT available on this chip."
+}

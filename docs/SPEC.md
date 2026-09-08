@@ -220,7 +220,11 @@ pair, USB carrying no video.
 
 - Bristlemouth protocol compliance / bm_core port (S7 produces a *decision*, not code)
 - Connecting to a live Spotter bus
-- N6/H.264 path, potting, enclosure work
+- N6/H.264 path, potting, enclosure work *(the H.264 half of this is
+  worth Nick re-reading after S31: the desk investigation found the
+  feature is an upstream OpenMV PR milestoned v5.1.0, not custom
+  firmware, so its cost is a release rather than a fork — status
+  unchanged until Nick says otherwise. `docs/N6_H264_FINDINGS.md`)*
 - Public-tier streaming (720p ≥24 fps needs H.264 → N6 follow-on; MJPEG at
   that tier exceeds the T1L wire itself, ~16 Mbps)
 - v2 PCBA layout (this project produces the facts it needs)
@@ -948,3 +952,46 @@ pair, USB carrying no video.
   (`firmware/ae3_usb/README.md` §Known firmware crash); file upstream with
   OpenMV. Watch item for S6: does the SPI-driver-era capture loop hit the
   same fault class on sensor re-init?
+- **S31 N6 hardware H.264 — open after the desk investigation (2026-09-07,
+  `docs/N6_H264_FINDINGS.md`). The premise is SETTLED, not open:** the
+  STM32N657 carries a Hantro/VeriSilicon **VC8000NanoE** video encoder
+  (ST CMSIS `stm32n657xx.h`: `VENC_BASE` = APB5+0x5000, `VENC_IRQn` 62,
+  128 KB dedicated VENC RAM at 0x24400000; ST LL driver
+  `lib/stm32/n6/{include,src}/stm32n6xx_ll_venc.{h,c}`), OpenMV vendors
+  the full VC8000NanoE v9.22.3.7 package under BSD-3-Clause
+  (`drivers/vc8000/` @ `55d6fb90`) with a complete EWL
+  (`ports/stm32/stm_vc8000.c` @ `8af1f3d0`), **all of it already compiled
+  into shipping N6 firmware**, and the block is *already* the N6's JPEG
+  encoder (`stm_jpeg.c:287-294`) — so S30's measured 68.6 fps VGA is this
+  silicon, and the AE3's 13.7 fps is software JPEG (the AE3 declares
+  neither `HAS_VENC` nor `HAS_JPEG`). The MicroPython binding exists
+  upstream in **open PR openmv/openmv#3247**, milestoned **v5.1.0**, CI
+  green. What remains open:
+  - **VENC documented capability is unread at source.** A search snippet
+    attributed to the STM32N657 datasheet says "baseline / main / high
+    profile, level 1 to 5.2, up to 15 fps at 1080p"; `st.com` was
+    unreachable from the desk, so this is a lead, not a read document.
+    ST's own forum confirms RM0486 is vague on the block and ST has an
+    internal doc ticket (209269) open on it. **Cheapest settlement is on
+    the board, not in a PDF:** the EWL already reads the ASIC capability
+    words (`EWLReadAsicID`, `EWLReadAsicConfig` — registers 0, 63, 296),
+    which report `maxEncodedWidth` and the `h264Enabled` fuse bit from
+    silicon.
+  - **N6 H.264 encode throughput at VGA/720p is UNMEASURED.** Predicted
+    comfortable at VGA (the JPEG mode of the same block measures 68.6 fps
+    there); 720p30 is the cell that could bind.
+  - **The compression ratio in a particulate-heavy underwater scene is
+    UNMEASURED, and the whole case rests on it.** The 3-8x band used in
+    the findings is a prediction. Marine snow, backscatter and surge are
+    adversarial for inter-frame coding; a measured ratio below 2x at
+    matched quality kills the 720p claim.
+  - **Per-clip energy cost of H.264 vs MJPEG on the N6 is unknown** —
+    H.264 does strictly more work per frame, and S29's 78-minute battery
+    budget is not indifferent to that.
+  - **Writing DFU alt 1 (FIRMWARE) on the N6 is UNVERIFIED on this bench.**
+    Alt 3 (ROMFS0) is proven with read-back (`ml/README.md`); whether the
+    bootloader takes a raw `firmware.bin` at alt 1 has never been tested
+    here. OpenMV IDE's `Tools -> Run Bootloader` is the documented route.
+  - **v5.1.0 has no due date** (7 open PRs on the milestone). If the 720p
+    tier is ever promoted from non-goal to goal, that becomes a schedule
+    dependency.

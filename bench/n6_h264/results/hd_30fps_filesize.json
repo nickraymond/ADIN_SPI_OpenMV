@@ -1,0 +1,19 @@
+{
+  "what": "S31 FINAL file-size table. N6, HD 1280x800, bit allocation set for a TRUE 30 fps stream via synthetic 33333 us timestamps.",
+  "board": "OpenMV N6 on nereus002, firmware OpenMV v5.0.0-58.ga83bc776f5 (PR #3247 + denoise patch)",
+  "when": "2026-09-07",
+  "scene": "static indoor -- H.264's best case; motion and particulate make every ratio WORSE",
+  "clip_basis": "5 s at 30 fps = 150 frames",
+  "rows": [
+    {"encoding": "MJPEG q90 (today)", "bytes_per_frame": 426720, "clip_mb": 64.0, "ratio": 1.0,  "encoder_fps": 40.0, "note": "baseline"},
+    {"encoding": "H.264 quality-matched (q75)", "bytes_per_frame": 279007, "clip_mb": 41.9, "ratio": 1.5, "encoder_fps": 40.7, "note": "matched to MJPEG q90 by intra size; PSNR 47.7 dB"},
+    {"encoding": "H.264 32 Mbps", "bytes_per_frame": 135260, "clip_mb": 20.3, "ratio": 3.2,  "encoder_fps": 49.0, "note": "PSNR 43.0 dB"},
+    {"encoding": "H.264 16 Mbps", "bytes_per_frame":  69636, "clip_mb": 10.4, "ratio": 6.1,  "encoder_fps": 51.0, "note": "PSNR 41.4 dB"},
+    {"encoding": "H.264 8 Mbps",  "bytes_per_frame":  35884, "clip_mb":  5.4, "ratio": 11.9, "encoder_fps": 52.4, "note": "PSNR 40.4 dB"}
+  ],
+  "rate_control_validation": "Targets are hit precisely: 8/16/32 Mbps at 30 fps predict 33333/66667/133333 B/frame; measured 35884/69636/135260 (the excess is the IDRs).",
+  "open_defects": [
+    "mp4.py cannot mux HD at 30 fps on this board -- measured 12-13 fps with all file I/O removed, so the muxer is the bottleneck, not the link. A 30 fps HD recording to file needs a faster muxer.",
+    "The FIRST IDR after encoder construction is intermittently undecodable ('top block unavailable for requested intra mode'). Later IDRs recover the stream, so frames after the second keyframe are clean. Seen at 8 and 32 Mbps in one run and at none in another, same code -- intermittent."
+  ]
+}

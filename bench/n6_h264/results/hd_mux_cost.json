@@ -1,0 +1,20 @@
+{
+  "what": "S31: where the time goes at HD 30 fps on the N6 -- encoder vs muxer vs storage.",
+  "board": "OpenMV N6 on nereus002, firmware OpenMV v5.0.0-58.ga83bc776f5 (PR #3247 + denoise patch)",
+  "when": "2026-09-07",
+  "cell": {"size": "HD", "w": 1280, "h": 800, "bitrate": 16000000, "frames": 45, "timestamps": "synthetic 33333 us (true 30 fps allocation)"},
+  "stages": [
+    {"stage": "capture + encode only",        "fps": 50.0, "ms_per_frame": 20.0},
+    {"stage": "+ bytes() copy of the AU",     "fps": 43.4, "ms_per_frame": 23.0},
+    {"stage": "+ mp4.py mux, frag=60",        "fps": 13.7, "ms_per_frame": 73.1},
+    {"stage": "+ mp4.py mux, frag=300, 8 MB", "fps":  3.8, "ms_per_frame": 264.9}
+  ],
+  "conclusion": "The ENCODER is not the bottleneck -- 50 fps at HD leaves 66% headroom over 30. mp4.py costs 50 ms/frame on top, which is what caps HD recording at ~13.7 fps. Raising fragment_frames makes it dramatically WORSE (264.9 ms/frame), so that knob is a trap, not a tuning option -- the cost scales with the fragment buffer, which points at GC pressure rather than per-frame work.",
+  "storage_on_this_board": {
+    "filesystems": ["/rom", "/flash"],
+    "sdcard": "ENODEV -- /sdcard and /sd both absent. No SD card present on this unit.",
+    "flash_free_mb": 3,
+    "implication": "There is nowhere on this board to put HD video. /flash's 3 MB does not hold one second of HD at 16 Mbps (~2 MB/s). Anything recorded must leave over USB."
+  },
+  "usb_throughput": "UNMEASURED -- the attempt hit a raw-REPL refusal and board contact was stopped rather than retried."
+}

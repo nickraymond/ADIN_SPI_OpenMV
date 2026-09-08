@@ -70,6 +70,168 @@ is the piece that gain alone does not obviously explain.
 
 ---
 
+## 2026-09-07 night — S31 — H.264 MEASURED ON HARDWARE: 1.5x at max quality, 3-12x if you accept a quality ceiling
+
+**Branch:** `sprint/31-n6-h264` · PR #79. Rig: **nereus002**, handed over by
+the S30 session and **restored to stock before release** (verified below).
+
+**Done:**
+- **Flashed the PR #3247 build and measured.** Before writing anything I read
+  DFU **alt 1** back and byte-compared it to official v5.0.1 — MATCH — which
+  both proved the partition format and gave an exact rollback. That also makes
+  **headless alt-1 (FIRMWARE) flashing proven on this bench**, where only
+  alt 3 (ROMFS0) was before.
+- **The HD answer Nick asked for** (1280x800 — the PAG7936 is 16:10, so
+  `csi.HD` is NOT 1280x720), 5 s clip at 30 fps, quality paired by intra-frame
+  size rather than by nominal q:
+
+  | Encoding | B/frame | 5 s clip | vs MJPEG | PSNR |
+  |---|---|---|---|---|
+  | MJPEG q90 | 426,720 | 64.0 MB | 1.0x | — |
+  | H.264 quality-matched (q75) | 279,007 | 41.9 MB | **1.5x** | 47.7 dB |
+  | H.264 32 Mbps | 135,260 | 20.3 MB | **3.2x** | 43.0 dB |
+  | H.264 16 Mbps | 69,636 | 10.4 MB | **6.1x** | 41.4 dB |
+  | H.264 8 Mbps | 35,884 | 5.4 MB | **11.9x** | 40.4 dB |
+
+- **Root-caused why max quality wins nothing.** Nick pushed back that it did
+  not add up. It did not, so: encode the SAME frame 60 times → P-frame
+  **43 bytes**. Live static scene → **257,704**. AE/AWB locked → **257,756**,
+  i.e. not ISP drift. The whole cost is **sensor noise**, uncorrelated frame to
+  frame, which a fine QP faithfully preserves. The ladder shows it cleanly:
+  P-frame as a fraction of an I-frame runs 20% at q50 → 80% at q90 → **99% at
+  q100**.
+- **Rolled back and released the rig.** `v1.28.0-64 / OpenMV v5.0.1`, board id
+  unchanged, `/rom` 19 entries with both `stage1_*` models, `import codec`
+  fails as it must on stock, usb-storage unbound.
+
+**Broke/surprised us:**
+- **The N6 has NO hardware denoiser.** Nick picked that option, so I exposed
+  the VC8000's Wiener denoiser as a `denoise=` kwarg (patch 0007) and built it.
+  Every `denoise>0` raises: `H264EncApi.c:527` gates it on `hwCfg.dnfSupport`
+  and this silicon reports 0. Cheapest lever, closed by measurement.
+- **I nearly shipped garbage as evidence, twice.** First the H.264 stills were
+  blank grey while writing 1.0-1.4 MB PNGs — noise compresses poorly, and I
+  read *file size* as success. Only a luma-stddev check caught it (4.6 vs 38.8).
+  Then the first clips were recorded at 8-13 fps, and since rate control follows
+  the timestamps it is given, each frame got ~2.5x a 30 fps allocation — which
+  flattered both size and picture. Caught from the MP4 durations. **PNG size is
+  not proof of a decoded frame, and a clip is not a 30 fps clip because you
+  asked for 30.**
+- **`mp4.py` cannot mux HD at 30 fps here** — 13.7 fps, where capture+encode
+  alone does **50**. Raising `fragment_frames` makes it far WORSE (3.8 fps), so
+  that knob is a trap. And **this N6 has no SD card** (`/sdcard` ENODEV,
+  `/flash` 3 MB), so recorded video must leave over USB — throughput unmeasured.
+- **Two API traps in the PR.** `encode()` emits only the slice NAL, so an
+  Annex-B file must start with `sps_pps()`; and that header must come from the
+  *same* encoder instance, because in bitrate mode `qpHdr=-1` lets rate control
+  pick `pic_init_qp` from the first frame — a separately built encoder yields a
+  different PPS and decodes washed-out rather than erroring. Also
+  `mp4.Mp4(buffer_size=)` defaults to 256 KB and an HD IDR is ~293 KB.
+- **The first IDR after encoder construction is intermittently undecodable**
+  ('top block unavailable for requested intra mode'). Later IDRs recover the
+  stream. Seen through both the raw and MP4 paths, so it is the encoder's.
+  **Not reported upstream** — draft PR, and our usage is not fully cleared.
+- **Three raw-REPL refusals on the PR firmware**, where stock had zero in the
+  S30 session. Cleared by a power cut each time. Undiagnosed; a live suspicion
+  against the draft build.
+- **I misread the battery and said so.** VIN dropped to 47 mV (Nick had pulled
+  the charger deliberately) and VBAT fell 3617→3260 in 8 min; I called ~1 h of
+  runtime from S29's 78-min figure. It then went **flat at 3260-3267 for half
+  an hour** — that drop was surface charge settling, and LiFePO4 sits on a
+  plateau near 3.2 V. Nick's ~3 h was right. Also learned: on battery a cycle
+  took **~7 min** to return vs ~2.5 with the charger, and `power_cycle.py`
+  refuses below **3200 mV** with no VIN.
+
+**Next:** Nick's adopt/don't call on the numbers above. Owed and unmeasured: a
+**moving** scene (every ratio here is a static-scene ceiling), per-clip energy,
+and USB throughput off the board — which, with no SD card, decides whether
+30 fps HD can leave the N6 at all.
+
+---
+
+## 2026-09-07 later — S31 — N6 hardware H.264: the premise is true, the fork is not needed, and the duty cycle kills the business case
+
+**Branch:** `sprint/31-n6-h264`. **Hardware touched: NONE** — nereus002 and
+both OpenMV boards were owned by a concurrent session mid-measurement. Desk
+only, on the Mac. Brief: `docs/N6_H264_SPEC.md`; answer:
+`docs/N6_H264_FINDINGS.md`.
+
+**Done:**
+- **Gate A settled at source, all four claims.** STM32N657 VENC is real —
+  ST's own CMSIS header gives `VENC_BASE` (APB5+0x5000), `VENC_IRQn` 62 and
+  a **128 KB dedicated VENC RAM** at 0x24400000, and ST ships an LL driver
+  for it. The IP is a Hantro/VeriSilicon **VC8000NanoE** (confirmed by ST
+  staff on their own forum, who also concede RM0486 is vague and have an
+  internal doc ticket open).
+- **OpenMV vendors the whole VC8000NanoE v9.22.3.7 package under
+  BSD-3-Clause** (`drivers/vc8000/` @ `55d6fb90`) with a complete EWL
+  (`ports/stm32/stm_vc8000.c` @ `8af1f3d0`) — including `EWLMallocRefFrm`,
+  which only inter-frame coding needs. **All of it, H.264 included, already
+  compiles into every shipping N6 image.**
+- **Found the in-flight upstream work: openmv/openmv#3247.** `codec.H264Encoder`
+  + a pure-Python fragmented-MP4 muxer + an asyncio RTSP server, by OpenMV's
+  maintainer, `mergeable_state: clean`, all CI green, +58,120 B of N6 text,
+  −88 B on every other board. **Milestoned v5.1.0 on 2026-09-07** — the same
+  day this investigation ran.
+- **Built the firmware and verified the artifact, did not flash it.**
+  `firmware/openmv_build/build_n6.sh --pr 3247` (new; sibling of
+  `build_ae3.sh`, with `--pr N` and a separate tree). Checks that passed:
+  all 7 artifacts present, `strings firmware.bin | grep H264Encoder` hits,
+  and `.text` of 2,035,472 minus CI's reported +58,120 lands on 1,977,352 —
+  the base's text, exactly. Flash procedure + rollback:
+  `firmware/openmv_build/N6_H264_FLASH.md`.
+- **Measured the feature's flash cost A/B instead of inferring it.** Built
+  the PR's own base commit (`aa5d9f7d`) the same way: `firmware.bin`
+  1,985,272 → 2,043,432 B = **+58,160 B (+2.93 %)** vs upstream CI's
+  reported +58,120 B (+2.94 %) — agreeing to 40 bytes, the length of the
+  differing version strings. That base build is also the probe's
+  **negative control**: it correctly reports the codec absent.
+- **Wrote the duty-cycle arithmetic as a runnable artifact**
+  (`bench/n6_h264/duty_cycle.py`) rather than as prose in a doc.
+
+**Broke/surprised us:**
+- **The baseline was being read wrong, project-wide.** The VC8000 is
+  *already* the N6's JPEG encoder — `jpeg_compress()` tries it first
+  (`stm_jpeg.c:287-294`). So S30's measured **68.6 fps VGA is this same
+  silicon**, and the AE3's 13.7 fps is software JPEG: the AE3 declares
+  neither `HAS_VENC` nor `HAS_JPEG`. The N6's ~5x JPEG advantage over the
+  AE3 has always been this block. H.264 is a second mode of an accelerator
+  running in production on this bench, not a bring-up.
+- **The policy question dissolved on inspection.** "Do we spin custom
+  firmware" has no answer here because there is no fork: the code is
+  upstream's, the CI is upstream's, and the wait is one release. That is a
+  completely different cost from what the policy was written to avoid, and
+  it is the first bullet Nick needs.
+- **The arithmetic is brutal and it is not about the ratio.** At one 5 s VGA
+  clip per hour the entire MJPEG video budget is **4.68 kbps** — the saving
+  is bounded above by the whole thing. Arguing 3x vs 8x is arguing about
+  2.5 kbps. Saving 100 kbps needs 143 s of video per hour.
+- **`st.com` was unreachable from this desk** — the datasheet PDF and the ST
+  wiki both timed out repeatedly, so the "1080p15, baseline/main/high,
+  level 1–5.2" figure is a search snippet, not a read document. Recorded as
+  a lead per CLAUDE.md rule 3. The cheap settlement is on the board, not in
+  a PDF: the EWL already reads the ASIC capability registers (0, 63, 296),
+  which report `maxEncodedWidth` and the `h264Enabled` fuse bit.
+- **The docker `safe.directory` patch is required, not cosmetic** —
+  re-measured by reverting it: the container's `git submodule update` dies
+  with "dubious ownership" → `make: Error 128`. `build_n6.sh` now applies it
+  as a real commit on a throwaway build branch so the firmware's embedded
+  version label stays clean instead of degrading to `-dirty`.
+- **Underwater is the falsifier, and it is a physical argument, not a
+  hedge.** Marine snow, backscatter and surge are adversarial for
+  inter-frame prediction — every particle is uncorrelated motion. That is
+  why the predicted band is 3–8x rather than a number, and why the bench
+  plan attacks it before believing anything else.
+
+**Next:** Nick's decision — adopt on v5.1.0 (zero cost, no date) or spend a
+bench session now on the branch build to measure early. Whichever he picks,
+the first hardware leg is the **MJPEG regression check** on the new firmware
+(if 68.6 fps / 13.7 KB does not reproduce, every comparison is
+contaminated), then the particulate-scene ratio measurement, which is the
+number the whole case rests on.
+
+---
+
 ## 2026-09-07 — S29 — field rig: endurance measured, usb-storage root-caused, bites 4-8 closed
 
 **Branch:** `sprint/29-fieldunit` (61 commits). Rig: **nereus002**.

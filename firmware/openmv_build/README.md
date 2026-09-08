@@ -54,6 +54,49 @@ edit, re-run `build_ae3.sh --incremental`. A dirty tree skips the rev sync
 (your edits are never hard-reset away) and shows as `-dirty` in the manifest
 rev.
 
+## Building for the N6 (`build_n6.sh`)
+
+```bash
+./build_n6.sh                     # upstream master
+./build_n6.sh --rev v5.0.1        # exact release tag
+./build_n6.sh --pr 3247           # an UNMERGED upstream pull request head
+./build_n6.sh --pr 3247 --incremental
+```
+
+Same docker/Rosetta/SDK plumbing and the same artifacts-not-exit-codes
+verification as `build_ae3.sh`, with two deliberate differences.
+
+**It uses a separate tree, `~/openmv-dev/openmv-n6`.** The AE3 clone above is
+the C dev loop and carries this repo's in-flight AE3 patches (framebuffer
+sticky-highwater, jpege MVE colorconvert). An N6 build must not silently
+inherit them and then be reported as "upstream". The script seeds the second
+tree by cloning the first when it exists — same filesystem, so git hardlinks
+the objects and the history costs ~0 disk.
+
+**`--pr <N>` builds an unmerged upstream PR by number.** That is the point:
+hardware H.264 on the N6 is openmv/openmv#3247, which is upstream work rather
+than a fork (S31 — `docs/N6_H264_FINDINGS.md`). The PR head is fetched to
+`FETCH_HEAD`, not to a local branch, because git refuses to fetch into a
+branch that is checked out.
+
+**The `safe.directory` patch (`../openmv_patches/0003`) is required, not
+optional.** Without it the container's `git submodule update` dies with
+"detected dubious ownership" → `make: Error 128` (re-measured 2026-09-07 by
+reverting it). `build_n6.sh` applies it as a real commit on a throwaway
+`build/n6-<sha>` branch instead of as a dirty-tree edit, so `git describe`
+stays clean and the firmware's embedded version label remains checkable
+rather than degrading to `...dirty`. The patch touches `docker/Makefile`
+only — no compiled source.
+
+**Verification beyond "exit 0".** All 7 artifacts an official
+`firmware_OPENMV_N6.zip` carries must exist and be plausibly sized; the
+firmware's self-reported label must match the built rev; and the manifest
+records a **feature probe** (`codec.H264Encoder in image: yes|no`), because a
+firmware that builds cleanly without the feature in it is the failure mode
+this repo keeps meeting.
+
+Flashing is out of scope for this script. See `N6_H264_FLASH.md`.
+
 ## bm_core next (placeholder)
 
 Same pattern planned post-S7 decision: Sofar's bm_core in its own container,

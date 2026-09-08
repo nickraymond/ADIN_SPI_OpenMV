@@ -841,7 +841,7 @@ PAGE = """<!doctype html><meta charset="utf-8">
 <h1>Video DOE — what each camera can deliver, and what it costs to send</h1>
 <div class="sub">Headline is <b>bytes as produced by the camera</b> (MJPEG).
 A 5&nbsp;s clip once per hour is a sustained link budget: bytes&nbsp;&divide;&nbsp;3600&nbsp;s.
-The H.264 column is <b>the Pi's</b> encoder, not the board's — the boards cannot make H.264.
+The H.264 column is <b>the Pi's</b> encoder, not the board's. The AE3 cannot make H.264 at all; the <b>N6 can</b>, in hardware &mdash; measured S31 at HD, 51&nbsp;fps at 16&nbsp;Mbps &mdash; but only on an unmerged upstream draft (openmv/openmv#3247), so it is deliberately not in this comparison.
 <br><b>N6 vs AE3 fps is not like-for-like:</b> the N6's JPEG is done by its VC8000
 hardware encoder, the AE3's in software (reported by the S31 desk session from
 OpenMV source, <i>not verified here</i>). The gap is silicon, not tuning.</div>

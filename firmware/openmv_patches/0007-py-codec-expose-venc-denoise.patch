@@ -1,0 +1,73 @@
+diff --git a/ports/stm32/modules/py_codec.c b/ports/stm32/modules/py_codec.c
+index 71e9ffcd..62768568 100644
+--- a/ports/stm32/modules/py_codec.c
++++ b/ports/stm32/modules/py_codec.c
+@@ -439,7 +439,8 @@ static MP_DEFINE_CONST_FUN_OBJ_1(py_h264_encoder_deinit_obj, py_h264_encoder_dei
+ 
+ static mp_obj_t py_h264_encoder_make_new(const mp_obj_type_t *type, size_t n_args,
+                                          size_t n_kw, const mp_obj_t *all_args) {
+-    enum { ARG_width, ARG_height, ARG_fps, ARG_bitrate, ARG_quality, ARG_keyframe_interval, ARG_refresh_interval };
++    enum { ARG_width, ARG_height, ARG_fps, ARG_bitrate, ARG_quality, ARG_keyframe_interval, ARG_refresh_interval,
++           ARG_denoise };
+     static const mp_arg_t allowed_args[] = {
+         { MP_QSTR_width, MP_ARG_REQUIRED | MP_ARG_INT },
+         { MP_QSTR_height, MP_ARG_REQUIRED | MP_ARG_INT },
+@@ -448,6 +449,12 @@ static mp_obj_t py_h264_encoder_make_new(const mp_obj_type_t *type, size_t n_arg
+         { MP_QSTR_quality, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = -1 } },
+         { MP_QSTR_keyframe_interval, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 30 } },
+         { MP_QSTR_refresh_interval, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0 } },
++        // VC8000 in-loop Wiener denoiser. 0 = off (upstream behaviour,
++        // unchanged); 1..30 = noiseLevel. Sensor noise is uncorrelated
++        // frame to frame, so at a fine QP it is what P-frames actually
++        // spend their bits on; denoising before the coding loop is the
++        // one lever that recovers inter-frame prediction at high quality.
++        { MP_QSTR_denoise, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0 } },
+     };
+ 
+     // Parse args.
+@@ -481,6 +488,11 @@ static mp_obj_t py_h264_encoder_make_new(const mp_obj_type_t *type, size_t n_arg
+         mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("refresh_interval must be 0 to 300"));
+     }
+ 
++    // noiseLow/noiseLevel are documented [1,30] in h264encapi.h.
++    if ((args[ARG_denoise].u_int < 0) || (args[ARG_denoise].u_int > 30)) {
++        mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("denoise must be 0 (off) to 30"));
++    }
++
+     if (args[ARG_quality].u_int > 100) {
+         mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("Invalid quality"));
+     }
+@@ -545,6 +557,18 @@ static mp_obj_t py_h264_encoder_make_new(const mp_obj_type_t *type, size_t n_arg
+     // bitrate smooth for streaming.
+     coding.gdrDuration = self->refresh_interval;
+ 
++    // The driver refuses noiseReductionEnable when the synthesised hardware
++    // has no denoise filter (H264EncApi.c:527 checks hwCfg.dnfSupport), so a
++    // board without it fails loudly at construction rather than silently
++    // encoding without denoise.
++    if (args[ARG_denoise].u_int > 0) {
++        coding.noiseReductionEnable = 1;
++        coding.noiseLevel = args[ARG_denoise].u_int;
++        coding.noiseLow = 5;  // driver default
++    } else {
++        coding.noiseReductionEnable = 0;
++    }
++
+     if (self->quality >= 0) {
+         // Constant-quality mode: quality [0..100] maps linearly to a fixed
+         // QP [51..0], bitrate is ignored. Open the QP window fully (the
+@@ -574,7 +598,13 @@ static mp_obj_t py_h264_encoder_make_new(const mp_obj_type_t *type, size_t n_arg
+     preproc.rotation = H264ENC_ROTATE_0;
+     preproc.colorConversion.type = H264ENC_RGBTOYUV_BT601;
+ 
+-    py_h264_encoder_check(H264EncSetCodingCtrl(self->inst, &coding));
++    if (H264EncSetCodingCtrl(self->inst, &coding) != H264ENC_OK) {
++        if (args[ARG_denoise].u_int > 0) {
++            mp_raise_msg(&mp_type_OSError,
++                         MP_ERROR_TEXT("encoder rejected denoise= (this silicon reports no denoise filter)"));
++        }
++        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("H264EncSetCodingCtrl failed"));
++    }
+     py_h264_encoder_check(H264EncSetRateCtrl(self->inst, &rate));
+     py_h264_encoder_check(H264EncSetPreProcessing(self->inst, &preproc));
+ 

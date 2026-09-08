@@ -1,0 +1,12 @@
+{
+  "what": "S31: why are H.264 P-frames expensive at high quality on a static scene?",
+  "board": "OpenMV N6 on nereus002, firmware OpenMV v5.0.0-57.g9d67f849f2 (PR #3247 build)",
+  "when": "2026-09-07",
+  "cell": {"size": "HD", "w": 1280, "h": 800, "quality": 75, "keyframe_interval": 300, "frames": 60},
+  "cases": [
+    {"case": "A live, AE/AWB auto",   "intra": 369642, "inter_mean": 257704.34, "inter_min": 256803, "inter_max": 260667, "pct_of_intra": 69.72},
+    {"case": "B live, AE/AWB locked", "intra": 370743, "inter_mean": 257756.10, "inter_min": 257037, "inter_max": 260800, "pct_of_intra": 69.52},
+    {"case": "C same frame x60",      "intra": 370182, "inter_mean": 50.51,     "inter_min": 43,     "inter_max": 406,    "pct_of_intra": 0.014}
+  ],
+  "conclusion": "Case C proves inter-frame prediction and the driving code are correct: a byte-identical frame costs 43 B, 0.014% of an I-frame. Case B rules out AE/AWB drift -- locking exposure and white balance changes nothing (257,756 vs 257,704). The entire P-frame cost is therefore per-frame SENSOR NOISE, which is uncorrelated between frames and which a fine QP faithfully preserves."
+}
