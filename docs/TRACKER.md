@@ -3321,6 +3321,31 @@ the Pi reads big chunks with pyserial straight to a file.** See
    different code path (picamera2/rpicam-vid), and the cheapest camera to
    get recording first.
 
+**THE PIVOT TRIGGER, stated in advance so nobody has to judge it mid-sprint.**
+MJPEG is the route *while it works*. If bite 0 finds the SD card cannot hold
+**10.4 MB/s sustained**, stop and put H.264 to Nick rather than hunting for a
+cleverer writer. Measured at HD (S31):
+
+| | MJPEG q90 (stock) | H.264 16 Mbps (draft PR) |
+|---|---|---|
+| encode margin | 30.5 fps vs 30 = **none** | 51 fps = **70 %** |
+| sustained to the card | **10.4 MB/s** | **2.0 MB/s** |
+| 5 s clip · per hour | 64 MB · 37 GB | 10.4 MB · 7.2 GB |
+| browser playback | needs a transcode | native, `ffmpeg -c copy` |
+
+It removes **three of the four pinch points at once**. The catch is honest and
+is Nick's call, not the agent's: the gain comes from accepting a **bitrate
+target instead of a quality number** (16 Mbps = 41.4 dB, indistinguishable
+from q90 in 1:1 crops but not q90-*equivalent*; quality-matched H.264 is only
+1.5x), plus firmware from an unmerged draft with an intermittent first-IDR
+glitch and three unexplained REPL refusals. Ground is prepared:
+`build_n6.sh --pr 3247 --patch …/0007-*`, `N6_H264_FLASH.md`, and a byte-exact
+rollback still on the Pi at `~/s31_h264/rollback_v5.0.1_firmware.bin`.
+
+**So build the pump CODEC-AGNOSTIC.** MJPEG frames and H.264 access units are
+both length-prefixed byte blobs on the wire; keep the encoding behind a
+parameter and the pivot costs nothing already written.
+
 **Suggested bite order** (Nick approves the plan before code, per the ritual):
 0. Desk: SD write throughput + the q80/q85 encode rungs + confirm the Zero
    2 W's H.264 encoder exists. Any one of these can change the design.

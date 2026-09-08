@@ -717,8 +717,17 @@ THINGS THAT WILL WASTE YOUR TIME IF YOU ASSUME THEM:
   refuse or warn on an impossible request, not silently drop frames.
   The IMX708 is on the Pi's CSI bus and needs no USB pump at all, so it
   is the cheapest camera to get recording first.
-- The N6 CAN do hardware H.264, but only via an unmerged draft PR.
-  OUT OF SCOPE. Use MJPEG on stock v5.0.1.
+- The N6 CAN do hardware H.264, via an unmerged draft PR. Start on
+  MJPEG on stock v5.0.1 — but that exclusion is CONDITIONAL, not
+  absolute. If bite 0 finds the SD card cannot sustain 10.4 MB/s, do
+  not go hunting for a cleverer writer: report the number and put the
+  H.264 option to me. It removes three of the four pinch points at
+  once (encode margin 30.5 -> 51 fps, card load 10.4 -> 2.0 MB/s,
+  native browser playback), at the cost of a bitrate target instead of
+  a quality number and a draft-PR firmware. See S32's pivot trigger.
+- BUILD THE PUMP CODEC-AGNOSTIC. MJPEG frames and H.264 access units
+  are both length-prefixed byte blobs on the wire. Keep the encoding
+  behind a parameter and a pivot costs nothing already written.
 
 BENCH RULES: boards by ROLE not by-id (pi/field/discover.py); one owner
 per port — check :8088/api/runner and /api/preflight before any board
