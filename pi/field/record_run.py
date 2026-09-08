@@ -24,6 +24,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 import recorder as R                                        # noqa: E402
+import storage as ST                                        # noqa: E402
 import transcode as T                                       # noqa: E402
 
 CEILINGS_PATH = os.path.join(_HERE, "camera_ceilings.json")
@@ -123,9 +124,32 @@ def settings_for(role, framesize, quality, per_camera=None):
     return got.get("framesize", framesize), int(got.get("quality", quality))
 
 
+def estimate_bytes(ceilings, chosen, fps, duration_s):
+    """Roughly how much disk this recording will want, so the ring can make room
+    BEFORE it starts rather than discovering the problem mid-write.
+
+    Uses each camera's measured bytes/frame and its measured delivered rate --
+    asking for 30 fps from a camera that does 11.7 must not reserve 30 fps of
+    disk. The +15% covers the mp4 the transcode adds beside the .mjpeg
+    (measured: the 20 min soak produced 2.715 GB of MJPEG and a 322 MB mp4).
+    """
+    total = 0
+    for role, s in chosen.items():
+        key = "%s_q%d" % (s["framesize"], s["quality"])
+        cam = (ceilings.get("cameras") or {}).get(role, {})
+        bpf = (cam.get("delivered_bytes", {}).get(key)
+               or cam.get("bytes", {}).get(key) or 450000)
+        rate = ceiling_for(ceilings, role, s["framesize"], s["quality"])[0] or fps
+        total += bpf * min(fps, rate) * duration_s
+    return int(total * 1.15)
+
+
 def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
                   cameras=("N6", "AE3"), transcode=True, log=print,
-                  progress=None, stop_event=None, per_camera=None):
+                  progress=None, stop_event=None, per_camera=None,
+                  ring_bytes=ST.DEFAULT_RING_BYTES,
+                  min_free_bytes=ST.DEFAULT_MIN_FREE_BYTES,
+                  keep_latest=ST.DEFAULT_KEEP_LATEST):
     ceilings = load_ceilings()
     result = {"ok": False, "errors": [], "warnings": [], "cameras": [],
               "summary": ""}
@@ -162,6 +186,21 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
         note("%s: %s" % (verdict.upper(), msg))
         if verdict in ("impossible", "tight", "unmeasured"):
             result["warnings"].append(msg)
+
+    # Make room BEFORE recording. The ring evicts oldest-first so a rig left
+    # running cannot reach the filesystem; the OS is what this protects.
+    need = estimate_bytes(ceilings, chosen, fps, duration_s)
+    note("storage: this clip needs ~%.2f GB" % (need / 1e9))
+    pre = ST.enforce(root, ring_bytes=ring_bytes, min_free_bytes=min_free_bytes,
+                     keep_latest=keep_latest, need_bytes=need, log=note)
+    if pre["deleted"]:
+        note("storage: evicted %d oldest session(s) to make room: %s"
+             % (len(pre["deleted"]), ", ".join(pre["deleted"])))
+    if pre["shortfall_bytes"] > 0:
+        result["warnings"].append(
+            "storage: %.2f GB short even after evicting everything evictable; "
+            "the newest %d sessions and the active one are never deleted"
+            % (pre["shortfall_bytes"] / 1e9, keep_latest))
 
     session = R.Session(root)
     session.manifest["settings"] = {
@@ -308,6 +347,18 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
         session.manifest["cameras"].append(st)
 
     session.manifest["ring"] = {"mem_available_bytes": mem}
+    # Enforce again now that the real sizes are on disk -- the pre-flight used
+    # an estimate. The session just recorded is passed as `active` so it can
+    # never be the thing evicted to make room for itself.
+    post = ST.enforce(root, ring_bytes=ring_bytes, min_free_bytes=min_free_bytes,
+                      keep_latest=keep_latest, active=session.name, log=note)
+    session.manifest["storage"] = {"before": pre, "after": post}
+    if post["deleted"]:
+        note("storage: evicted %d session(s) after the recording: %s"
+             % (len(post["deleted"]), ", ".join(post["deleted"])))
+    note("storage: ring %.2f / %.2f GB used, card %.1f%% full"
+         % (post.get("used_bytes", 0) / 1e9, ring_bytes / 1e9,
+            post.get("sd_used_pct") or 0.0))
     if stop.is_set():
         session.manifest["interrupted"] = True
         result["warnings"].append(

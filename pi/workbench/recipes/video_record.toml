@@ -38,6 +38,15 @@ argv = [
   "python3", "-u", "pi/field/recorder_web.py",
   "--bind", "0.0.0.0", "--http-port", "8093",
   "--root", "/home/pi/recordings",
+  # The recordings store is CAPPED. Oldest sessions are evicted first, so video
+  # can never grow into the filesystem and corrupt the OS -- Nick's rule, and
+  # the spec is his (bm_cam_legacy TODO-BM-008, which specifies this but does
+  # not implement it). A 2 GB free-space floor is enforced on the card itself
+  # as well, because something OTHER than video can fill it while the ring sits
+  # politely inside its quota.
+  "--ring-gb", "50",
+  "--min-free-gb", "2",
+  "--keep-latest", "2",
 ]
 cwd = "."
 # A recording in flight owns a board and is mid-write to a file. SIGINT unwinds

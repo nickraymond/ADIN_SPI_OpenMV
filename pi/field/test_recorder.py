@@ -22,6 +22,7 @@ sys.path.insert(0, _HERE)
 
 import recorder as R            # noqa: E402
 import record_run as RR         # noqa: E402
+import storage as ST            # noqa: E402
 import transcode as T           # noqa: E402
 
 
@@ -341,6 +342,124 @@ class TestNoCameraPath(unittest.TestCase):
             self.assertIn("wedged", " ".join(res["warnings"]))
         finally:
             R.find_boards = real
+
+
+class TestStorageRing(unittest.TestCase):
+    """The bounded store. Each test pins one of Nick's stated rules
+    (bm_cam_legacy TODO-BM-008), because a ring buffer that deletes the wrong
+    thing is worse than a full disk.
+    """
+
+    def _store(self, d, names, size=1000):
+        for i, name in enumerate(names):
+            p = os.path.join(d, name)
+            os.makedirs(p)
+            with open(os.path.join(p, "N6.mjpeg"), "wb") as f:
+                f.write(b"x" * size)
+            with open(os.path.join(p, "manifest.json"), "w") as f:
+                f.write("{}")
+            os.utime(p, (1000 + i, 1000 + i))       # deterministic age order
+        return ST.list_sessions(d)
+
+    def test_sessions_come_back_oldest_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["c", "a", "b"])     # names out of age order
+            self.assertEqual([s["name"] for s in ss], ["c", "a", "b"])
+
+    def test_evicts_oldest_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2", "r3", "r4"])
+            v, rep = ST.plan_eviction(ss, ring_bytes=2500, free_bytes=10 ** 12,
+                                      keep_latest=0)
+            self.assertEqual(rep["victims"][0], "r1")
+
+    def test_newest_n_are_never_deleted(self):
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2", "r3", "r4"])
+            _, rep = ST.plan_eviction(ss, ring_bytes=1, free_bytes=10 ** 12,
+                                      keep_latest=2)
+            self.assertNotIn("r3", rep["victims"])
+            self.assertNotIn("r4", rep["victims"])
+            self.assertGreater(rep["shortfall_bytes"], 0)   # reported, not hidden
+
+    def test_the_active_recording_is_never_deleted(self):
+        """It must not evict the clip it is in the middle of writing."""
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2", "r3"])
+            _, rep = ST.plan_eviction(ss, ring_bytes=1, free_bytes=10 ** 12,
+                                      keep_latest=0, active="r1")
+            self.assertNotIn("r1", rep["victims"])
+
+    def test_low_free_space_triggers_eviction_even_inside_budget(self):
+        """The budget alone does not protect the OS -- something else can fill
+        the card while the ring sits politely inside its quota."""
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2", "r3"])
+            _, rep = ST.plan_eviction(ss, ring_bytes=10 ** 12,      # miles of budget
+                                      free_bytes=1000,              # but no disk
+                                      min_free_bytes=5000, keep_latest=0)
+            self.assertGreater(rep["short_on_free_bytes"], 0)
+            self.assertTrue(rep["victims"])
+
+    def test_headroom_for_the_next_clip_is_reserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2"])
+            _, a = ST.plan_eviction(ss, ring_bytes=3000, free_bytes=10 ** 12,
+                                    keep_latest=0, need_bytes=0)
+            _, b = ST.plan_eviction(ss, ring_bytes=3000, free_bytes=10 ** 12,
+                                    keep_latest=0, need_bytes=2000)
+            self.assertEqual(a["victims"], [])
+            self.assertTrue(b["victims"])
+
+    def test_dry_run_deletes_nothing(self):
+        """Nick's spec: dry-run mode first."""
+        with tempfile.TemporaryDirectory() as d:
+            self._store(d, ["r1", "r2", "r3"])
+            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0, dry_run=True)
+            self.assertTrue(rep["deleted"])
+            self.assertEqual(sorted(os.listdir(d)), ["r1", "r2", "r3"])
+
+    def test_enforce_actually_frees_and_reports(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._store(d, ["r1", "r2", "r3"])
+            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0)
+            self.assertIn("r1", rep["deleted"])
+            self.assertNotIn("r1", os.listdir(d))
+            self.assertIn("r3", os.listdir(d))       # newest survives
+
+    def test_nothing_outside_the_root_is_ever_deletable(self):
+        with tempfile.TemporaryDirectory() as outer:
+            root = os.path.join(outer, "recordings")
+            os.makedirs(root)
+            self.assertFalse(ST._safe_under(root, outer))
+            self.assertFalse(ST._safe_under(root, "/etc"))
+            self.assertFalse(ST._safe_under(root, root))
+            self.assertTrue(ST._safe_under(root, os.path.join(root, "rec_x")))
+
+    def test_a_symlink_is_counted_as_a_link_not_its_target(self):
+        """A link into the OS must not inflate the ring's apparent usage."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "rec_1")
+            os.makedirs(p)
+            with open(os.path.join(p, "real.bin"), "wb") as f:
+                f.write(b"x" * 100)
+            try:
+                os.symlink("/etc/services", os.path.join(p, "link"))
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            self.assertEqual(ST.dir_size_bytes(p), 100)
+
+    def test_status_has_what_the_dashboard_draws(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._store(d, ["r1"])
+            st = ST.status(d, ring_bytes=10000)
+            for key in ("ring_bytes", "ring_used_bytes", "ring_used_pct",
+                        "sd_total_bytes", "sd_used_pct", "sessions"):
+                self.assertIn(key, st)
+            self.assertEqual(st["sessions"], 1)
+
+    def test_missing_root_is_not_a_crash(self):
+        self.assertEqual(ST.list_sessions("/nonexistent/x"), [])
 
 
 class TestPagesRender(unittest.TestCase):

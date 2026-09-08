@@ -41,6 +41,7 @@ sys.path.insert(0, _HERE)
 
 import recorder as R                                        # noqa: E402
 import record_run as RR                                     # noqa: E402
+import storage as ST                                        # noqa: E402
 
 FRAMESIZES = ("QVGA", "VGA", "HD")
 #: The AE3 needs the low rungs -- its VGA ladder plateaus at ~13.8 fps and q30
@@ -58,8 +59,15 @@ CTYPES = {".mp4": "video/mp4", ".mjpeg": "video/x-motion-jpeg",
 class RecorderState:
     """One recording at a time. A second request is refused, never queued."""
 
-    def __init__(self, root):
+    def __init__(self, root, ring_bytes=ST.DEFAULT_RING_BYTES,
+                 min_free_bytes=ST.DEFAULT_MIN_FREE_BYTES,
+                 keep_latest=ST.DEFAULT_KEEP_LATEST):
         self.root = root
+        #: The recordings store is CAPPED. Video can never grow into the
+        #: filesystem, because the oldest sessions are evicted first.
+        self.ring_bytes = ring_bytes
+        self.min_free_bytes = min_free_bytes
+        self.keep_latest = keep_latest
         #: Set by SIGINT/SIGTERM. A recording in flight then ENDS rather than
         #: being killed: the pumps return, the writers drain, and the manifest
         #: is written and marked interrupted. Without this, stopping a long
@@ -101,7 +109,10 @@ class RecorderState:
             # ONE sink. Passing self.note as both log and progress printed
             # every line to the status pane twice.
             res = RR.run_recording(root=self.root, log=self.note,
-                                   stop_event=self.stop, **kw)
+                                   stop_event=self.stop,
+                                   ring_bytes=self.ring_bytes,
+                                   min_free_bytes=self.min_free_bytes,
+                                   keep_latest=self.keep_latest, **kw)
             self.last = res
             self.note("DONE: %s" % (res.get("summary") or "").replace("\n", " | "))
         except Exception as e:                              # noqa: BLE001
@@ -150,6 +161,12 @@ pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
 .chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;
   background:#22262e;color:var(--dim);margin-right:6px}
 input[type=range]{width:100%}
+.meter{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
+  height:22px;overflow:hidden;position:relative}
+.meter>i{display:block;height:100%;background:var(--ok);transition:width .3s}
+.meter.warn>i{background:var(--warn)} .meter.bad>i{background:var(--bad)}
+.meter>span{position:absolute;left:8px;top:0;line-height:22px;font-size:11px;
+  color:#e8eaed;text-shadow:0 1px 2px #000;font-family:ui-monospace,Menlo,monospace}
 """
 
 
@@ -277,6 +294,18 @@ def index_page(state, sessions, ceilings):
   <button id=go onclick=startRec()>&#9679; Record</button>
   <a href="/" class=dim style="margin-left:10px">refresh</a>
 </div>
+<h2>Storage</h2>
+<div class=card>
+  <div style="margin-bottom:12px">
+    <label>Recording ring &mdash; capped; oldest sessions are deleted first</label>
+    <div class=meter id=ringmeter><i id=ringbar style="width:0%"></i><span id=ringtxt>&hellip;</span></div>
+  </div>
+  <div>
+    <label>SD card (whole filesystem)</label>
+    <div class=meter id=sdmeter><i id=sdbar style="width:0%"></i><span id=sdtxt>&hellip;</span></div>
+  </div>
+  <div class=dim style="margin-top:10px;font-size:12px" id=storenote></div>
+</div>
 <div class=card><h2 style="margin-top:0">Status</h2><pre id=log>idle</pre></div>
 <h2>Measured camera limits on this rig</h2>
 <div class=card><table>
@@ -340,6 +369,31 @@ async function poll(){
   if(j.busy){setTimeout(poll,800);} else {setTimeout(()=>location.reload(),1200);}
 }
 poll();
+function gb(b){return (b/1e9).toFixed(2)+' GB';}
+function setMeter(meter,bar,txt,pct,label){
+  const el=document.getElementById(meter);
+  el.classList.remove('warn','bad');
+  if(pct>=90) el.classList.add('bad'); else if(pct>=75) el.classList.add('warn');
+  document.getElementById(bar).style.width=Math.min(100,Math.max(0,pct))+'%';
+  document.getElementById(txt).textContent=label;
+}
+async function storage(){
+  try{
+    const r=await fetch('/api/storage'); const s=await r.json();
+    const rp = s.ring_used_pct||0;
+    setMeter('ringmeter','ringbar','ringtxt', rp,
+      gb(s.ring_used_bytes)+' of '+gb(s.ring_bytes)+'  ('+rp.toFixed(1)+'%)  '+s.sessions+' recordings');
+    const sp = s.sd_used_pct||0;
+    setMeter('sdmeter','sdbar','sdtxt', sp,
+      gb(s.sd_used_bytes)+' of '+gb(s.sd_total_bytes)+'  ('+sp.toFixed(1)+'%)  '+gb(s.sd_free_bytes)+' free');
+    document.getElementById('storenote').innerHTML =
+      'When the ring is full the oldest recording is deleted to make room, so the card cannot fill up. '+
+      'The newest '+ (s.keep_latest!==undefined?s.keep_latest:2) +' are never deleted, nor is a recording in progress. '+
+      (s.oldest? ('Oldest: <b>'+s.oldest+'</b>. ') : '') +
+      'A floor of '+gb(s.min_free_bytes)+' free is enforced on the card itself as well.';
+  }catch(e){}
+}
+storage(); setInterval(storage, 5000);
 </script>
 """,
         CAMS=cam_html,
@@ -611,6 +665,10 @@ def make_handler(state, root):
                 return self._json(200, state.snapshot())
             if path == "/api/sessions":
                 return self._json(200, R.load_sessions(root))
+            if path == "/api/storage":
+                st = ST.status(root, state.ring_bytes, state.min_free_bytes)
+                st["keep_latest"] = state.keep_latest
+                return self._json(200, st)
             if path == "/" or path == "/index.html":
                 return self._send(200, index_page(state, R.load_sessions(root),
                                                   RR.load_ceilings()),
@@ -713,9 +771,21 @@ def main(argv=None):
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--http-port", type=int, default=8093)
     ap.add_argument("--root", default=os.path.expanduser("~/recordings"))
+    ap.add_argument("--ring-gb", type=float, default=ST.DEFAULT_RING_BYTES / 1e9,
+                    help="cap on the recordings directory; oldest sessions are "
+                         "evicted first so the filesystem cannot fill")
+    ap.add_argument("--min-free-gb", type=float,
+                    default=ST.DEFAULT_MIN_FREE_BYTES / 1e9,
+                    help="free space floor enforced on the card itself, "
+                         "independently of the ring budget")
+    ap.add_argument("--keep-latest", type=int, default=ST.DEFAULT_KEEP_LATEST,
+                    help="newest N recordings are never evicted")
     a = ap.parse_args(argv)
     os.makedirs(a.root, exist_ok=True)
-    state = RecorderState(a.root)
+    state = RecorderState(a.root, int(a.ring_gb * 1e9),
+                          int(a.min_free_gb * 1e9), a.keep_latest)
+    print("recordings ring: %.1f GB, min free %.1f GB, keep newest %d"
+          % (a.ring_gb, a.min_free_gb, a.keep_latest), flush=True)
     # Serve FIRST, touch hardware later: the workbench health-gates LIVE on this
     # page answering within 60 s, and board discovery can take longer (D48).
     srv = QuietServer((a.bind, a.http_port), make_handler(state, a.root))
