@@ -1,7 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-07 later (**S31 DESK INVESTIGATION CLOSED — the N6
+*Last updated: 2026-09-07 night (**S31 CLOSED ON HARDWARE; S32 OPENED — the
+video recorder.** H.264 measured on the N6: at HD max quality it is only
+**1.5x** smaller than MJPEG, because at a fine QP the encoder spends its bits
+coding SENSOR NOISE (proven: an identical frame re-encoded costs **43 bytes**;
+a live static scene costs **257,704**). The win is real only at a quality
+ceiling — 3.2x at 32 Mbps, 6.1x at 16, 11.9x at 8. **There is no v5.1.0**; PR
+#3247 is still a DRAFT, so H.264 today means non-release firmware, and the N6
+was rolled back to stock v5.0.1 and the rig released. Also measured, and it
+redirects the whole effort: **USB is NOT a bottleneck — 19.5 MB/s N6→Pi** —
+while the current stream delivers **3.6 fps** at HD q90 against an encoder
+that does 30.5. The gap is software. **S32 is therefore the video recorder:**
+N6 → Pi at HD 30 fps, saved on the Pi, played and downloaded from a workbench
+card. Two unmeasured risks own that sprint: **SD write throughput on a Zero
+2 W** (10.4 MB/s sustained at q90) and **q90's zero encode margin**. Kickoff =
+PROMPTS §18. Previous:*
+*2026-09-07 later (**S31 DESK INVESTIGATION CLOSED — the N6
 H.264 question is answered, and the answer is that there is no custom-firmware
 question to answer.** Hardware H.264 on the N6 is upstream OpenMV PR #3247, by
 OpenMV's own maintainer, CI green and **milestoned v5.1.0 the same day**;
@@ -3224,6 +3239,83 @@ USB number. Also open: the first IDR after encoder construction is
 **intermittently undecodable** through both the raw and MP4 paths, and the
 PR firmware drew **three raw-REPL refusals** where stock drew zero.
 
+
+---
+
+### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[ ]`  ← **NEXT (Nick 2026-09-07 night)**
+
+*The streaming app, but recording. Opened straight off S31's measurements —
+every number below is measured, do not re-derive them.*
+
+**Nick's demo, and it is the acceptance test:**
+1. Open a **card on the nereus002 workbench** (`:8088`) — same pattern as the
+   three-camera streams card.
+2. Set **quality, fps target, and duration**. Press record.
+3. It triggers the **N6** and the **AE3**, and the **IMX708** if it can.
+4. **The N6 saves a 5 s video to the Pi.**
+5. From the same web interface, **load that video, watch it in the browser,
+   and download it locally.**
+
+**The one thing standing in the way is a fast frame-pump.** Everything else
+is already measured and sufficient:
+
+| Piece | State | Number |
+|---|---|---|
+| N6 encodes HD q90 | ready | **30.5 fps** (stock v5.0.1) |
+| USB link N6 → Pi | ready | **19.5 MB/s** measured; q90 needs 10.4 |
+| Pi storage | ready | 108 GB free; q90 HD30 = 52 MB per 5 s clip, 37 GB/h |
+| **The pump** | **MISSING** | today's stream delivers **3.6 fps** |
+
+The 8x gap is a per-frame request/response protocol in Python on both ends.
+The wire and the encoder are both fine. Shape that is already proven to move
+19.5 MB/s: **the board writes length-prefixed frames continuously to stdout;
+the Pi reads big chunks with pyserial straight to a file.** See
+`bench/n6_h264/usb_throughput_direct.py`.
+
+**Four pinch points, ranked. Two are unmeasured and could each sink the demo:**
+
+1. **HD q90 has ZERO encode margin — 30.5 fps against the 30 asked for.**
+   The demo names q90 specifically, so this is the crux. q80 is unmeasured;
+   q70 is **37.9 fps** with 26 % margin. **Measure the q80/q85 rungs early**
+   and tell Nick what q90 actually sustains under a full pipeline before
+   promising it.
+2. **SD-card write throughput on a Pi Zero 2 W — UNMEASURED, and the most
+   likely thing to bite.** HD q90 at 30 fps is **10.4 MB/s sustained to the
+   card**, for the whole recording. q70 is 2.8. Measure this *before*
+   building anything else; it may decide the quality on its own.
+3. **Browser playback needs a container browsers can play.** Concatenated
+   MJPEG is what the board produces and `ffmpeg -f mjpeg -r 30 -i clip.mjpeg
+   -c copy clip.mkv` is instant and lossless — **but MJPEG-in-MKV does not
+   play in Chrome or Safari.** Options: transcode on the Pi (the Zero 2 W's
+   BCM2710A1 does have hardware H.264, unlike the Pi 5 — verify before
+   relying on it), or serve MJPEG for preview and offer the file for
+   download. **Do NOT mux on the board:** `mp4.py` runs at 13.7 fps at HD.
+4. **The three cameras are not equals and the card must not pretend they
+   are.** Measured maxima at HD q90: **N6 30.5 fps · IMX708 54 fps · AE3
+   2.1 fps.** The AE3 has no hardware JPEG and cannot exceed ~2 fps at HD or
+   ~9 fps at VGA — the card should show each camera's ceiling and refuse or
+   warn on an impossible request rather than silently dropping frames. The
+   IMX708 is on the Pi's CSI bus and needs **no USB pump at all** — a
+   different code path (picamera2/rpicam-vid), and the cheapest camera to
+   get recording first.
+
+**Suggested bite order** (Nick approves the plan before code, per the ritual):
+0. Desk: SD write throughput + the q80/q85 encode rungs + confirm the Zero
+   2 W's H.264 encoder exists. Any one of these can change the design.
+1. The pump, N6 only, no UI: sustained fps, dropped frames, one 5 s file.
+2. Container + browser playback + download.
+3. The workbench card: quality / fps / duration, per-camera ceilings.
+4. AE3 + IMX708 legs, at whatever each can actually do.
+5. Soak at dive length, then Nick's demo.
+
+**Standing facts for this sprint** (S31, measured — in `docs/N6_H264_FINDINGS.md`
+and `bench/n6_h264/results/`): the N6's `csi.HD` is **1280×800**, not
+1280×720 (16:10 sensor) · the N6 has **no SD card** and `/flash` has 3 MB, so
+nothing buffers on the board · free heap is 25.6 MB, and a 5 s HD q90 clip is
+52 MB, so it **cannot** be held in RAM · hardware H.264 exists on the N6 but
+only via an unmerged draft PR — **out of scope here, MJPEG on stock firmware
+is the route** · the rig's charger was out at handover (VBAT 3209 mV), and
+`power_cycle.py` refuses below 3200 mV.
 
 ---
 

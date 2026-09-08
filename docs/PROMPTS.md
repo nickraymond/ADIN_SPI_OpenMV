@@ -665,3 +665,70 @@ the printed reference card exists — no LCD-scene stacking number is
 trusted before the PWM check. No code beyond throwaway probes until
 the bite-1 plan is approved.
 ```
+
+---
+
+## 18 — Ready to paste: S32 — video recorder, N6 → Pi at HD 30 fps + a workbench card (written 2026-09-07 night, straight off S31's measurements)
+
+```
+Run /agent-entry, then pick up S32 in docs/TRACKER.md — the video
+recorder. Branch sprint/32-video-recorder off main.
+
+THE DEMO IS THE SPEC. I open a card on the nereus002 workbench, set
+quality + fps target + duration, press record, and it triggers the N6
+and the AE3 (and the IMX708 if it can). The N6 saves a 5 second video
+to the Pi. Then from that same web interface I load the video, watch it
+in my browser, and download it locally. It is the streaming app we
+already have, but recording.
+
+I want HD, q90, 30 fps. Tell me early if I cannot have all three.
+
+READ S31 FIRST AND DO NOT RE-DERIVE ITS NUMBERS —
+docs/N6_H264_FINDINGS.md, bench/n6_h264/results/, decision D49. The
+short version: the USB link does 19.5 MB/s measured, the N6 encodes HD
+q90 at 30.5 fps, and the Pi has 108 GB free. The ONLY missing piece is
+a fast frame-pump: today's stream delivers 3.6 fps because it does a
+per-frame request/response in Python on both ends. The proven shape is
+in bench/n6_h264/usb_throughput_direct.py — board writes
+length-prefixed frames continuously to stdout, Pi reads big chunks with
+pyserial straight to a file.
+
+START WITH BITE 0 AT THE DESK / ON THE PI, BEFORE ANY DESIGN. Three
+unknowns can each change what gets built:
+  1. SD-card write throughput on the Pi Zero 2 W. HD q90 at 30 fps is
+     10.4 MB/s sustained to the card for the whole recording. This is
+     the most likely thing to sink the demo and nobody has measured it.
+  2. The q80 and q85 encode rungs on the N6. q90 measures 30.5 fps
+     against the 30 I asked for — zero margin. q70 is 37.9.
+  3. Whether the Zero 2 W's BCM2710A1 hardware H.264 encoder is usable
+     from this OS, because MJPEG-in-MKV does not play in a browser and
+     something has to make a playable file.
+Report those three, with your recommendation on quality, and get my
+approval before writing the recorder.
+
+THINGS THAT WILL WASTE YOUR TIME IF YOU ASSUME THEM:
+- The N6's csi.HD is 1280x800, not 1280x720. It is a 16:10 sensor.
+- The N6 has NO SD card and /flash has 3 MB. Nothing buffers on the
+  board — a 5 s HD q90 clip is 52 MB against 25.6 MB of free heap.
+- Do NOT mux on the board. mp4.py runs at 13.7 fps at HD.
+- The three cameras are not equals. Measured maxima at HD q90: N6 30.5
+  fps, IMX708 54 fps, AE3 2.1 fps. The AE3 has no hardware JPEG and
+  cannot do video at HD — the card must show each camera's ceiling and
+  refuse or warn on an impossible request, not silently drop frames.
+  The IMX708 is on the Pi's CSI bus and needs no USB pump at all, so it
+  is the cheapest camera to get recording first.
+- The N6 CAN do hardware H.264, but only via an unmerged draft PR.
+  OUT OF SCOPE. Use MJPEG on stock v5.0.1.
+
+BENCH RULES: boards by ROLE not by-id (pi/field/discover.py); one owner
+per port — check :8088/api/runner and /api/preflight before any board
+contact and stop demos from the page, never by killing a process; 35 s
+of port silence after any stream stops; never systemctl reboot this rig,
+use pi/field/power_cycle.py; mpremote lives in ~/mpv. CHECK THE CHARGER
+IS PLUGGED IN before you start — it was out at S31 handover with VBAT
+3209 mV, and power_cycle.py refuses below 3200, which means a wedged
+board cannot be recovered remotely.
+
+This supports an underwater test where I swim with the camera or leave
+it recording, so soak it at dive length before you tell me it works.
+```
