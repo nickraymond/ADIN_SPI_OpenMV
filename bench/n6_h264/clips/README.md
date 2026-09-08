@@ -1,4 +1,25 @@
-# S31 clip grab — INCOMPLETE, and why
+# S31 clip grab — RESOLVED via mp4.py
+
+**2026-09-07, second attempt: the comparison is delivered.**
+`COMPARE_hd_crops.png` is a 1:1 centre-crop of MJPEG q90 against
+H.264 at 8 / 16 / 32 Mbps, all four verified as real images
+(luma stddev 38.8-44.7; a garbage frame measures 4-8).
+
+**What fixed it: `mp4.py`, PR #3247's own supported route.** It muxes
+to AVCC with SPS/PPS out-of-band in the `avcC` box, pulled from the
+encoder instance itself. All three MP4s decode with zero ffmpeg
+warnings. The raw Annex-B path remains unexplained and is recorded
+below — but it is NOT a proven PR defect, and the working route is
+the one the PR documents.
+
+**One gotcha worth carrying:** `mp4.Mp4(...)` defaults to
+`buffer_size=262144`, and an HD IDR here is ~293 KB, so the default
+raises `ValueError: access unit larger than buffer_size`. Pass
+`buffer_size=2*1024*1024` for HD.
+
+---
+
+## The earlier raw-Annex-B attempt, and why it failed
 
 **Status 2026-09-07: the visual comparison is NOT delivered.** The MJPEG q90
 reference decodes correctly; the three H.264 clips do not, and the board
