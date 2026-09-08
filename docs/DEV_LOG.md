@@ -48,6 +48,12 @@ only, on the Mac. Brief: `docs/N6_H264_SPEC.md`; answer:
   and `.text` of 2,035,472 minus CI's reported +58,120 lands on 1,977,352 —
   the base's text, exactly. Flash procedure + rollback:
   `firmware/openmv_build/N6_H264_FLASH.md`.
+- **Measured the feature's flash cost A/B instead of inferring it.** Built
+  the PR's own base commit (`aa5d9f7d`) the same way: `firmware.bin`
+  1,985,272 → 2,043,432 B = **+58,160 B (+2.93 %)** vs upstream CI's
+  reported +58,120 B (+2.94 %) — agreeing to 40 bytes, the length of the
+  differing version strings. That base build is also the probe's
+  **negative control**: it correctly reports the codec absent.
 - **Wrote the duty-cycle arithmetic as a runnable artifact**
   (`bench/n6_h264/duty_cycle.py`) rather than as prose in a doc.
 

@@ -36,6 +36,8 @@ Artifacts land in `~/openmv-dev/openmv-n6/build/OPENMV_N6/bin/` alongside
 | Feature probe | `strings firmware.bin \| grep H264Encoder` **hits**, and the ELF carries `MP_QSTR_H264Encoder` and `py_codec.c`. The binding is really in the image |
 | Self-reported label | `v5.0.0-57.g9d67f849f2` — matches the manifest's `build_sha` |
 | **Reproducible** | re-running the build yields the **same** `build_sha` and the **same** `firmware.bin` sha256. The harness commit's dates are pinned to the upstream commit's so identical inputs give an identical artifact |
+| **A/B against the PR's own base** | the base commit `aa5d9f7d` was built the same way: `firmware.bin` **1,985,272 B** vs the PR's **2,043,432 B** = **+58,160 B (+2.93 %)**, against upstream CI's reported **+58,120 B (+2.94 %)**. `FLASH_TEXT` 54.09 % → 55.68 %. The feature's cost in flash is measured here, not inferred |
+| **Negative control** | the same probe on the base build correctly reports `codec.H264Encoder in image: no`. A probe that only ever says "yes" proves nothing |
 
 A firmware that builds without the codec in it is exactly the failure mode
 this repo keeps meeting, so `build_n6.sh` records the probe result in the

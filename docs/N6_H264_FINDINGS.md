@@ -416,6 +416,14 @@ and `py_codec.c`). And the build is **reproducible** — re-running it yields
 the same `build_sha` and the same `firmware.bin` sha256, because the build
 harness commit's dates are pinned to the upstream commit's.
 
+**The feature's cost in flash was measured, not inferred.** The PR's own base
+commit (`aa5d9f7d`) was built the same way for an A/B: `firmware.bin`
+**1,985,272 B → 2,043,432 B = +58,160 B (+2.93 %)**, against upstream CI's
+reported +58,120 B (+2.94 %) — the two agree to 40 bytes, which is the length
+of the differing version strings. `FLASH_TEXT` goes 54.09 % → 55.68 %. The
+base build also serves as the probe's **negative control**: the same check
+correctly reports `codec.H264Encoder in image: no` there.
+
 **The probe itself had to be debugged, and the bug is a repo classic.**
 Written as `strings … | grep -q`, it reported the codec *absent* from an image
 that provably contained it: under `set -o pipefail`, `grep -q` exits at the
