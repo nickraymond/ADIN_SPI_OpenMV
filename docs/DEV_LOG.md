@@ -17,6 +17,83 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-07 later — S31 — N6 hardware H.264: the premise is true, the fork is not needed, and the duty cycle kills the business case
+
+**Branch:** `sprint/31-n6-h264`. **Hardware touched: NONE** — nereus002 and
+both OpenMV boards were owned by a concurrent session mid-measurement. Desk
+only, on the Mac. Brief: `docs/N6_H264_SPEC.md`; answer:
+`docs/N6_H264_FINDINGS.md`.
+
+**Done:**
+- **Gate A settled at source, all four claims.** STM32N657 VENC is real —
+  ST's own CMSIS header gives `VENC_BASE` (APB5+0x5000), `VENC_IRQn` 62 and
+  a **128 KB dedicated VENC RAM** at 0x24400000, and ST ships an LL driver
+  for it. The IP is a Hantro/VeriSilicon **VC8000NanoE** (confirmed by ST
+  staff on their own forum, who also concede RM0486 is vague and have an
+  internal doc ticket open).
+- **OpenMV vendors the whole VC8000NanoE v9.22.3.7 package under
+  BSD-3-Clause** (`drivers/vc8000/` @ `55d6fb90`) with a complete EWL
+  (`ports/stm32/stm_vc8000.c` @ `8af1f3d0`) — including `EWLMallocRefFrm`,
+  which only inter-frame coding needs. **All of it, H.264 included, already
+  compiles into every shipping N6 image.**
+- **Found the in-flight upstream work: openmv/openmv#3247.** `codec.H264Encoder`
+  + a pure-Python fragmented-MP4 muxer + an asyncio RTSP server, by OpenMV's
+  maintainer, `mergeable_state: clean`, all CI green, +58,120 B of N6 text,
+  −88 B on every other board. **Milestoned v5.1.0 on 2026-09-07** — the same
+  day this investigation ran.
+- **Built the firmware and verified the artifact, did not flash it.**
+  `firmware/openmv_build/build_n6.sh --pr 3247` (new; sibling of
+  `build_ae3.sh`, with `--pr N` and a separate tree). Checks that passed:
+  all 7 artifacts present, `strings firmware.bin | grep H264Encoder` hits,
+  and `.text` of 2,035,472 minus CI's reported +58,120 lands on 1,977,352 —
+  the base's text, exactly. Flash procedure + rollback:
+  `firmware/openmv_build/N6_H264_FLASH.md`.
+- **Wrote the duty-cycle arithmetic as a runnable artifact**
+  (`bench/n6_h264/duty_cycle.py`) rather than as prose in a doc.
+
+**Broke/surprised us:**
+- **The baseline was being read wrong, project-wide.** The VC8000 is
+  *already* the N6's JPEG encoder — `jpeg_compress()` tries it first
+  (`stm_jpeg.c:287-294`). So S30's measured **68.6 fps VGA is this same
+  silicon**, and the AE3's 13.7 fps is software JPEG: the AE3 declares
+  neither `HAS_VENC` nor `HAS_JPEG`. The N6's ~5x JPEG advantage over the
+  AE3 has always been this block. H.264 is a second mode of an accelerator
+  running in production on this bench, not a bring-up.
+- **The policy question dissolved on inspection.** "Do we spin custom
+  firmware" has no answer here because there is no fork: the code is
+  upstream's, the CI is upstream's, and the wait is one release. That is a
+  completely different cost from what the policy was written to avoid, and
+  it is the first bullet Nick needs.
+- **The arithmetic is brutal and it is not about the ratio.** At one 5 s VGA
+  clip per hour the entire MJPEG video budget is **4.68 kbps** — the saving
+  is bounded above by the whole thing. Arguing 3x vs 8x is arguing about
+  2.5 kbps. Saving 100 kbps needs 143 s of video per hour.
+- **`st.com` was unreachable from this desk** — the datasheet PDF and the ST
+  wiki both timed out repeatedly, so the "1080p15, baseline/main/high,
+  level 1–5.2" figure is a search snippet, not a read document. Recorded as
+  a lead per CLAUDE.md rule 3. The cheap settlement is on the board, not in
+  a PDF: the EWL already reads the ASIC capability registers (0, 63, 296),
+  which report `maxEncodedWidth` and the `h264Enabled` fuse bit.
+- **The docker `safe.directory` patch is required, not cosmetic** —
+  re-measured by reverting it: the container's `git submodule update` dies
+  with "dubious ownership" → `make: Error 128`. `build_n6.sh` now applies it
+  as a real commit on a throwaway build branch so the firmware's embedded
+  version label stays clean instead of degrading to `-dirty`.
+- **Underwater is the falsifier, and it is a physical argument, not a
+  hedge.** Marine snow, backscatter and surge are adversarial for
+  inter-frame prediction — every particle is uncorrelated motion. That is
+  why the predicted band is 3–8x rather than a number, and why the bench
+  plan attacks it before believing anything else.
+
+**Next:** Nick's decision — adopt on v5.1.0 (zero cost, no date) or spend a
+bench session now on the branch build to measure early. Whichever he picks,
+the first hardware leg is the **MJPEG regression check** on the new firmware
+(if 68.6 fps / 13.7 KB does not reproduce, every comparison is
+contaminated), then the particulate-scene ratio measurement, which is the
+number the whole case rests on.
+
+---
+
 ## 2026-09-07 — S29 — field rig: endurance measured, usb-storage root-caused, bites 4-8 closed
 
 **Branch:** `sprint/29-fieldunit` (61 commits). Rig: **nereus002**.

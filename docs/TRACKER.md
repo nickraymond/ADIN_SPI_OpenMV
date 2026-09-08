@@ -1,7 +1,24 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-07 (**S29 nereus002 FIELD RIG — bites 1-8 DONE,
+*Last updated: 2026-09-07 later (**S31 DESK INVESTIGATION CLOSED — the N6
+H.264 question is answered, and the answer is that there is no custom-firmware
+question to answer.** Hardware H.264 on the N6 is upstream OpenMV PR #3247, by
+OpenMV's own maintainer, CI green and **milestoned v5.1.0 the same day**;
+`codec.H264Encoder` + an MP4 muxer + asyncio RTSP. Gate A passed emphatically
+and corrected a baseline everyone had been reading wrong: the STM32N657's
+encoder is a Hantro **VC8000NanoE**, OpenMV already compiles its H.264 half
+into every shipping N6 image, and **that same block is already the N6's JPEG
+encoder** — so S30's 68.6 fps VGA is this silicon and the AE3's 13.7 fps is
+software JPEG. The decision Nick owns is about DUTY CYCLE, not ratio: at one
+5 s VGA clip per hour the whole MJPEG budget is **4.68 kbps**, so H.264 can
+return at most that; saving 100 kbps needs **143 s of video per hour**. Where
+it is *enabling* rather than cheaper is the **720p tier** (MJPEG ~10.1 Mbps
+does not fit the 8 Mbps T1L budget; H.264 ~2.5 Mbps does). Firmware BUILT from
+the PR and verified (text delta reproduces CI's +58,120 B exactly) and
+**NOT FLASHED** — zero hardware touched, both boards owned by a concurrent
+session. Decision D49. Previous:*
+*2026-09-07 (**S29 nereus002 FIELD RIG — bites 1-8 DONE,
 bites 9-11 open.** Pi Zero 2 W + IMX708-wide + AE3 + N6 on a
 LiFePO4wered/Pi+. Three cards live: three-camera streams, composite
 capture (stack & bracket), RAW composite. Boards are found by ASKING
@@ -3114,6 +3131,57 @@ live: **Composite capture** (stack & bracket) and **RAW composite**.
 `~/mpv` (PEP 668) so launchers pick an interpreter · `iw`/`ip` are in
 /sbin, not on the pi user's PATH · `lifepo4wered-daemon` must be active
 or the Pi+ cuts power 5 min after every boot.
+
+---
+
+### S31 — N6 hardware H.264: is custom firmware worth the squeeze?  `[x]`  *(**DESK INVESTIGATION COMPLETE 2026-09-07 — awaiting Nick's decision.** Scoped exception Nick authorised to *evaluate the trade*, not to adopt custom firmware. Brief: `docs/N6_H264_SPEC.md`. Answer: `docs/N6_H264_FINDINGS.md`. Ran desk-only on the Mac with nereus002 and both boards owned by a concurrent session — **zero hardware touched**, so every H.264 number in it is a prediction and says so.)*
+
+**The finding that changes the question: this is not custom firmware.**
+Hardware H.264 on the N6 is **upstream OpenMV PR
+[#3247](https://github.com/openmv/openmv/pull/3247)**, written by OpenMV's
+own maintainer, `mergeable_state: clean`, all CI green, and **milestoned
+v5.1.0 on 2026-09-07** — the day this ran. It adds `codec.H264Encoder`, a
+pure-Python fragmented-MP4 muxer and an asyncio RTSP server. The standing
+policy ("if we need to spin custom firmware to get a feature, we bail")
+was written to avoid owning a fork; there is no fork to own here.
+
+**Gate A passed emphatically, and the baseline was misread.** The
+STM32N657's encoder is a Hantro/VeriSilicon **VC8000NanoE**; OpenMV
+vendors the whole package BSD-3-Clause and **already compiles the H.264
+half into every shipping N6 image** — and the same block is *already* the
+N6's JPEG encoder. So **S30's measured 68.6 fps VGA is this silicon**, and
+the AE3's 13.7 fps is software JPEG (the AE3 declares neither `HAS_VENC`
+nor `HAS_JPEG`). H.264 is a second mode of an accelerator already in
+production on this bench, not a bring-up. Detail: DESIGN **D49**.
+
+**The number Nick's decision turns on — duty cycle, not ratio.** At his
+stated one 5 s VGA clip per hour the *entire* MJPEG video budget is
+**4.68 kbps**, so H.264 can return at most that and realistically ~3.5.
+Saving even 100 kbps sustained needs **143 s of video per hour** (2.4 %
+duty), not one clip. Where it changes feasibility rather than cost is the
+**720p tier**: MJPEG ~10.1 Mbps does not fit the 8 Mbps T1L budget at all,
+H.264 ~2.5 Mbps does — the cell SPEC.md already named a non-goal.
+Arithmetic is runnable: `python3 bench/n6_h264/duty_cycle.py`.
+
+**Built, not flashed.** `firmware/openmv_build/build_n6.sh --pr 3247`
+produced an OPENMV_N6 image carrying the binding (verified by string probe
+and by the text delta reproducing upstream CI's +58,120 B exactly).
+Procedure + rollback: `firmware/openmv_build/N6_H264_FLASH.md`. **A
+hardware-owning session flashes it; this one could not and did not.**
+
+**Owed before any H.264 number is believed** (bench plan = FINDINGS §Rung
+6): leg 0 is an MJPEG regression check on the new firmware; leg 2 is the
+falsifier — a particulate-heavy underwater scene, where inter-frame coding
+is adversarially loaded and a measured ratio **< 2x at matched quality
+kills the 720p claim**; leg 3 reads the ASIC capability registers, which
+settles the unverified 1080p15 datasheet figure from silicon in one REPL
+line. Also unmeasured: encode throughput, per-clip energy, and whether DFU
+alt 1 (FIRMWARE) can be written headlessly on this bench.
+
+**Nick's call, in one line:** adopt on v5.1.0 (no cost), or spend a bench
+session now on the branch build to get the measurement early. Nothing here
+argues against H.264; it argues that the hourly-clip use case cannot pay
+for it and the 720p tier can.
 
 ---
 
