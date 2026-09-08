@@ -219,6 +219,25 @@ class TestRatioIsQualityTargeted(unittest.TestCase):
         self.assertLess(a.index("-r"), a.index("-i"))
 
 
+class TestEncoderAsymmetryIsDisclosed(unittest.TestCase):
+    """The N6/AE3 fps gap must not read as one camera simply being faster.
+
+    Per the S31 desk session's source reading (unverified in this checkout):
+    the N6's JPEG runs on the VC8000 hardware encoder, the AE3's in software.
+    A card that prints 68 fps beside 12 fps without saying so invites the
+    wrong conclusion about the boards.
+    """
+
+    def test_page_discloses_the_asymmetry(self):
+        self.assertIn("not like-for-like", v.PAGE)
+        self.assertIn("VC8000", v.PAGE)
+
+    def test_page_marks_the_claim_unverified(self):
+        """Attributed, not established -- this repo has been burned by
+        plausible second-hand hardware facts before."""
+        self.assertIn("not verified here", v.PAGE)
+
+
 class TestState(unittest.TestCase):
     def test_snapshot_is_json_serialisable(self):
         import json

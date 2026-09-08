@@ -46,6 +46,21 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))
 
 CAMERAS = ("IMX708", "N6", "AE3")
 
+#: THE N6 AND AE3 JPEG RATES ARE NOT A LIKE-FOR-LIKE COMPARISON.
+#:
+#: Reported by the S31 desk session 2026-09-07 from the OpenMV source, and
+#: NOT independently verified here (this checkout has no OpenMV tree): the
+#: STM32N657's Hantro/VeriSilicon VC8000NanoE is ALREADY the N6's JPEG
+#: encoder -- jpeg_compress() tries it first, ports/stm32/stm_jpeg.c:287-294 --
+#: while the AE3 sets OMV_JPEG_CODEC_ENABLE(0) and declares neither HAS_VENC
+#: nor HAS_JPEG, so it encodes JPEG in software.
+#:
+#: So the ~5x gap this card measures (N6 68.2 fps vs AE3 11.9 fps at VGA q50)
+#: is hardware silicon against a software loop, not one camera being "faster"
+#: than another. Anywhere these two rates sit in the same column, that is the
+#: explanation. Treat it as attributed, not established, until someone reads
+#: the source here.
+
 #: The three sensors do NOT frame the same rectangle and this tool must not
 #: pretend otherwise (field_stream.py carries the same warning). The boards
 #: letterbox to 16:10; the IMX708 picks freely from a 4608x2592 sensor and is
@@ -826,7 +841,10 @@ PAGE = """<!doctype html><meta charset="utf-8">
 <h1>Video DOE — what each camera can deliver, and what it costs to send</h1>
 <div class="sub">Headline is <b>bytes as produced by the camera</b> (MJPEG).
 A 5&nbsp;s clip once per hour is a sustained link budget: bytes&nbsp;&divide;&nbsp;3600&nbsp;s.
-The H.264 column is <b>the Pi's</b> encoder, not the board's — the boards cannot make H.264.</div>
+The H.264 column is <b>the Pi's</b> encoder, not the board's — the boards cannot make H.264.
+<br><b>N6 vs AE3 fps is not like-for-like:</b> the N6's JPEG is done by its VC8000
+hardware encoder, the AE3's in software (reported by the S31 desk session from
+OpenMV source, <i>not verified here</i>). The gap is silicon, not tuning.</div>
 <div class="bar"><span id="ph">starting…</span> <span id="nt" style="color:#8b98a5"></span>
 <div class="prog"><i id="pb"></i></div></div>
 <div id="body"></div>
