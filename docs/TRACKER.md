@@ -1,7 +1,25 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
+*Last updated: 2026-09-08 later (**S32 — THE VIDEO RECORDER RUNS, AND THE
+ANSWER IS "PICK TWO".** HD + q90 + 30 fps is NOT available on this hardware:
+measured end to end, **VGA q90 = 30.16 fps** and **HD q70 = 30.06**, while
+**HD q90 = 16.23** and HD q85 = 23.81 — every run with zero dropped frames and
+zero sequence gaps. The pump works: board writes length-prefixed frames
+continuously, Pi reads big chunks to disk. **Both boards were found on OpenMV
+v4.8.1, which does JPEG in SOFTWARE** (HD q90 165.9 ms/frame vs v5.0.1's 33.3;
+USB 9.13 MB/s vs 17.64) — flashed both to stock v5.0.1, byte-verified, and
+BOTH walls lifted. **A flash CHANGES the by-id path** (v5.0.1 reports the full
+96-bit chip UID), so every `by_id`-pinned recipe on this rig broke; find boards
+by ROLE. Two measured constraints shaped the design: the SD card stalls up to
+**3.86 s even at 21% of its ceiling** (hence a RAM ring, sized from
+MemAvailable), and the board's USB write is serialized with its encode loop, so
+**delivered fps is far below the encoder ceiling** at high bitrates (HD q85:
+34.9 encoding, 23.8 delivered) — the card guards on delivered. **THE AE3 IS OFF
+THE BUS and needs a physical replug** (`error -71`; a de-authorize attempted as
+recovery is what took it off, and a host-controller rebind did not restore it).
+Evidence: `bench/s32_recorder/README.md`. Previous:*
+*2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
 NEW AE3+N6 (Pi 5, **no CSI camera**); `nereus002` carries the OLD pair plus
 the IMX708. **Nick's boards are cleared: the old AE3/N6 are NOT optically
 damaged** — rectified-card sharpness differs 7% (AE3) / 12% (N6) old-vs-new,
@@ -3264,7 +3282,66 @@ PR firmware drew **three raw-REPL refusals** where stock drew zero.
 
 ---
 
-### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[ ]`  ← **NEXT (Nick 2026-09-07 night)**
+### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[~]`  ← **RUNNING on nereus000 (Nick moved it there 2026-09-08; nereus002 is offline)**
+
+**BITE 0 ANSWERED, AND IT CHANGES THE ASK — `bench/s32_recorder/README.md`.**
+Measured end to end through the real recorder on nereus000 (Pi 5), 5 s clips,
+**zero dropped frames and zero sequence gaps in every run**:
+
+| Setting | Delivered fps | Written per 5 s | vs the 30 fps ask |
+|---|---|---|---|
+| VGA q90 | **30.16** | 17.5 MB | meets it |
+| HD q70 | **30.06** | 11.5 MB | meets it |
+| HD q85 | 23.81 | 23.4 MB | 21% short |
+| HD q90 | **16.23** | 34.7 MB | 46% short |
+
+**So HD + q90 + 30 fps is not available: HD at 30 fps needs q70, q90 at 30 fps
+needs VGA.** Also measured: **q80 ≡ q85 and q90 ≡ q95 byte-for-byte** — the
+hardware encoder quantizes the quality knob, so q85 over q80 buys nothing.
+
+**The unblocking find was firmware, not hardware.** Both boards shipped on
+OpenMV **v4.8.1**, which encodes JPEG in **software**: HD q90 at 165.9 ms/frame
+against v5.0.1's 33.3, and a **9.13 MB/s** USB link against **17.64**. The
+shape convicted it (v4.8.1 was FASTER at QVGA and scaled 21x for 16x the
+pixels; v5.0.1 scaled 2.6x) — software JPEG vs the VC8000 block, D49. Both
+boards flashed to stock v5.0.1 with byte-verified read-back and an exact
+rollback kept. **Consequence for every recipe on this rig: a flash CHANGES the
+by-id path** (v5.0.1 reports the full 96-bit chip UID) — find boards by ROLE.
+
+**Two measured facts shaped the design, not preference:**
+- **The SD card stalls up to 3.86 s even at 21% of its sustained ceiling**
+  (paced at the recorder's own 14.5 MB/s, write p50 0.21 ms, three stalls over
+  a second). A recorder writing on the reader thread loses ~115 frames to one.
+  Hence a RAM ring, sized at run time from `MemAvailable` so a 512 MB Zero 2 W
+  is not asked for a Pi 5's ring.
+- **The board's USB write is serialized with its encode loop**, so delivered
+  fps sits far below the encoder ceiling at high bitrates (HD q85: 34.9
+  encoding, 23.8 delivered). The card guards on **delivered**; guarding on the
+  encoder number would promise 30 fps and hand back 24.
+
+**Shipped:** `pi/field/{record_board,recorder,record_run,recorder_web,
+transcode,make_ceilings}.py` + 42 host tests + the `video-record` workbench
+card. The page carries the record form with a LIVE verdict against each
+camera's measured limit, the library of past recordings with the settings that
+produced them, both cameras side by side off ONE scrubber, file sizes,
+in-browser playback and download. Verified in a real browser.
+
+**BLOCKED, NEEDS NICK'S HANDS: the AE3 is off the USB bus** (`error -71`,
+enumeration fails). It first refused the REPL after its ceiling sweep hit a
+900 s mpremote timeout; **a USB de-authorize attempted as recovery is what took
+it off the bus entirely**, and rebinding its host controller (`xhci-hcd.1`,
+N6 untouched) did not restore it. `ae3-usb-unstick` step 2 is a Pi reboot
+(not permitted to this session), step 3 is a physical replug. Until then the
+two-camera leg and the AE3's own ceilings are unmeasured, and the card
+declares only the N6 (the workbench refuses to start a recipe whose declared
+board is absent).
+
+**STILL OWED, and it does not transfer:** nereus002 is a **Pi Zero 2 W** and is
+the actual field host. Its **SD throughput and transcode cost are unmeasured** —
+the Pi 5 numbers above do NOT carry over, and unlike the Pi 5 it *does* have a
+hardware H.264 encoder, which `transcode.py` will select automatically.
+
+*(original sprint definition below)*
 
 *The streaming app, but recording. Opened straight off S31's measurements —
 every number below is measured, do not re-derive them.*
