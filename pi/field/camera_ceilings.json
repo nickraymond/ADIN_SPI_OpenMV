@@ -1,0 +1,57 @@
+{
+ "cameras": {
+  "N6": {
+   "bytes": {
+    "HD_q30": 48152,
+    "HD_q70": 117564,
+    "HD_q80": 195369,
+    "HD_q85": 195367,
+    "HD_q90": 423181,
+    "HD_q95": 423203,
+    "QVGA_q30": 5528,
+    "QVGA_q70": 10728,
+    "QVGA_q90": 32508,
+    "VGA_q30": 15059,
+    "VGA_q70": 33845,
+    "VGA_q90": 116094
+   },
+   "cells": {
+    "HD_q30": 39.13,
+    "HD_q70": 37.24,
+    "HD_q80": 34.9,
+    "HD_q85": 34.9,
+    "HD_q90": 29.29,
+    "HD_q95": 29.31,
+    "QVGA_q30": 81.48,
+    "QVGA_q70": 81.08,
+    "QVGA_q90": 79.3,
+    "VGA_q30": 69.19,
+    "VGA_q70": 68.04,
+    "VGA_q90": 63.14
+   },
+   "delivered": {
+    "HD_q30": 30.12,
+    "HD_q70": 30.06,
+    "HD_q85": 23.81,
+    "HD_q90": 16.23,
+    "VGA_q90": 30.16
+   },
+   "delivered_bytes": {
+    "HD_q30": 48002,
+    "HD_q70": 76368,
+    "HD_q85": 195021,
+    "HD_q90": 422649,
+    "VGA_q90": 115988
+   },
+   "firmware": "(sysname='pyboard', nodename='pyboard', release='1.28.0', version='v1.28.0-64 on 2026-09-05', machine='OpenMV N6 with STM32N657X0')",
+   "note": "12 encoder cells, fastest QVGA_q30 at 81.5 fps; 5 delivered cells measured end to end",
+   "sources": [
+    "n6_matrix_v501.json",
+    "n6_rungs_v501.json"
+   ]
+  }
+ },
+ "generated": "2026-09-08T16:27:16",
+ "host": "nereus000",
+ "how": "measured by pi/field/n6_h264_run.py -> make_ceilings.py; encoder ceiling = capture+encode loop fps on the board, with no USB payload transfer in the path"
+}

@@ -1,0 +1,49 @@
+# video_record.toml -- S32: the streaming app, but recording.
+#
+# Opens the recorder page: set frame size / quality / fps / duration, press
+# Record, then watch the clip in the browser and download it. Every past
+# recording stays in the library on the same page, with the settings that
+# produced it, so runs can be compared.
+#
+# WHY THE SETTINGS ARE NOT CARD PARAMS: the page shows a LIVE verdict against
+# each camera's measured limit as you change them ("N6: 23.8 fps measured end
+# to end -- 30 fps is NOT achievable"). That feedback is the point, and a
+# static card dropdown cannot give it. The card's job is to own the board lock
+# and launch the page.
+#
+# BOARDS: only the N6 is declared, deliberately. The workbench REFUSES to start
+# a recipe whose declared board is not enumerated, so declaring the AE3 would
+# make this card unstartable whenever that board is unwell -- and on 2026-09-08
+# it was. The recorder discovers the AE3 at RUN time and reports its absence on
+# the page instead of failing the whole demo. Add it here only once the AE3 is
+# reliably on the bus.
+#
+# Boards are found by ROLE, never by_id. That is not a style choice: flashing
+# this rig's N6 from v4.8.1 to v5.0.1 CHANGED its by-id path, because the newer
+# firmware reports the full 96-bit chip UID. Every by_id-pinned recipe on this
+# rig broke that morning.
+
+name = "video-record"
+title = "Video recorder — record, watch, download"
+summary = "Record a clip from the OpenMV boards straight to the Pi, then play it in the browser and download it. Set frame size, quality, fps and duration on the page; it shows each camera's measured limit and refuses an impossible request rather than silently dropping frames. Past recordings stay in a library with the settings that made them. From sprint S32."
+opens = ":8093"
+thumbnail = "thumbs/video_record.jpg"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+[run]
+argv = [
+  "python3", "-u", "pi/field/recorder_web.py",
+  "--bind", "0.0.0.0", "--http-port", "8093",
+  "--root", "/home/pi/recordings",
+]
+cwd = "."
+# A recording in flight owns a board and is mid-write to a file. SIGINT unwinds
+# the pump, drains the ring and closes the clip; give it room to finish rather
+# than leaving a truncated file behind.
+stop_grace = 45
+
+[health]
+http = "http://127.0.0.1:8093/healthz"
