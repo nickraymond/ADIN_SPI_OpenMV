@@ -277,9 +277,28 @@ Do not call a rig ready until every line is *observed*:
   AP on 10.42.0.1). **Unsettled trade-off: a rig in AP mode is no longer
   a wifi client, so Tailscale access is lost** — this likely wants AP as
   a second interface or a toggle, not a replacement.
-- **No H.264 anywhere.** All three cameras stream MJPEG. Measured on the
-  IMX at 720p15: MJPEG 26.43 Mbps vs H.264 6.60 Mbps = **4.0×**. The N6
-  has the VC8000 encoder driver vendored in the OpenMV tree but **zero
-  MicroPython bindings**, so using it would need custom firmware — which
-  is outside Nick's standing policy ("stock + small fixes; if a feature
-  needs custom firmware, we bail").
+- **No H.264 anywhere in the shipping rig** — all three cameras stream
+  MJPEG. **The rest of this entry was corrected by S31 (2026-09-07), which
+  measured it on this rig; do not act on the old version.**
+  - The N6's encoder is a Hantro **VC8000NanoE**, and it is **already the
+    N6's JPEG encoder** (`ports/stm32/stm_jpeg.c:287-294`). So the N6's
+    ~5× JPEG advantage over the AE3 is this silicon, and the AE3's figure
+    is *software* JPEG (`OMV_JPEG_CODEC_ENABLE (0)`).
+  - MicroPython bindings **exist**, in upstream PR openmv/openmv#3247 —
+    but it is still a **DRAFT**, unmerged, and there is **no v5.1.0
+    release** (it is a milestone label with no due date). So H.264 today
+    still means a non-release firmware. The policy question is live; what
+    changed is that the code would be upstream's, not a fork of ours.
+  - **The 4.0× is quality-dependent and does not survive "max quality".**
+    Measured on the N6 at HD 1280×800, 30 fps: quality-matched H.264 is
+    only **1.5×** smaller than MJPEG q90. The win is real at a quality
+    ceiling — 3.2× at 32 Mbps, 6.1× at 16, 11.9× at 8 — because at a fine
+    QP the encoder spends its bits coding **sensor noise**, which is
+    uncorrelated frame to frame and so has no temporal redundancy to
+    exploit. Proven: re-encoding one identical frame costs **43 bytes** a
+    P-frame; live capture of a *static* scene costs **257,704**.
+  - Two blockers if anyone tries to record it here: `mp4.py` cannot mux HD
+    at 30 fps on this board (**13.7 fps**; the encoder alone does 50), and
+    **this rig's N6 has no SD card** (`/sdcard` ENODEV, `/flash` 3 MB free),
+    so video has to leave over USB.
+  - Detail: `docs/N6_H264_FINDINGS.md`, `bench/n6_h264/`, decision **D49**.

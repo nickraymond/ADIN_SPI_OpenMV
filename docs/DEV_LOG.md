@@ -17,6 +17,85 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-07 night — S31 — H.264 MEASURED ON HARDWARE: 1.5x at max quality, 3-12x if you accept a quality ceiling
+
+**Branch:** `sprint/31-n6-h264` · PR #79. Rig: **nereus002**, handed over by
+the S30 session and **restored to stock before release** (verified below).
+
+**Done:**
+- **Flashed the PR #3247 build and measured.** Before writing anything I read
+  DFU **alt 1** back and byte-compared it to official v5.0.1 — MATCH — which
+  both proved the partition format and gave an exact rollback. That also makes
+  **headless alt-1 (FIRMWARE) flashing proven on this bench**, where only
+  alt 3 (ROMFS0) was before.
+- **The HD answer Nick asked for** (1280x800 — the PAG7936 is 16:10, so
+  `csi.HD` is NOT 1280x720), 5 s clip at 30 fps, quality paired by intra-frame
+  size rather than by nominal q:
+
+  | Encoding | B/frame | 5 s clip | vs MJPEG | PSNR |
+  |---|---|---|---|---|
+  | MJPEG q90 | 426,720 | 64.0 MB | 1.0x | — |
+  | H.264 quality-matched (q75) | 279,007 | 41.9 MB | **1.5x** | 47.7 dB |
+  | H.264 32 Mbps | 135,260 | 20.3 MB | **3.2x** | 43.0 dB |
+  | H.264 16 Mbps | 69,636 | 10.4 MB | **6.1x** | 41.4 dB |
+  | H.264 8 Mbps | 35,884 | 5.4 MB | **11.9x** | 40.4 dB |
+
+- **Root-caused why max quality wins nothing.** Nick pushed back that it did
+  not add up. It did not, so: encode the SAME frame 60 times → P-frame
+  **43 bytes**. Live static scene → **257,704**. AE/AWB locked → **257,756**,
+  i.e. not ISP drift. The whole cost is **sensor noise**, uncorrelated frame to
+  frame, which a fine QP faithfully preserves. The ladder shows it cleanly:
+  P-frame as a fraction of an I-frame runs 20% at q50 → 80% at q90 → **99% at
+  q100**.
+- **Rolled back and released the rig.** `v1.28.0-64 / OpenMV v5.0.1`, board id
+  unchanged, `/rom` 19 entries with both `stage1_*` models, `import codec`
+  fails as it must on stock, usb-storage unbound.
+
+**Broke/surprised us:**
+- **The N6 has NO hardware denoiser.** Nick picked that option, so I exposed
+  the VC8000's Wiener denoiser as a `denoise=` kwarg (patch 0007) and built it.
+  Every `denoise>0` raises: `H264EncApi.c:527` gates it on `hwCfg.dnfSupport`
+  and this silicon reports 0. Cheapest lever, closed by measurement.
+- **I nearly shipped garbage as evidence, twice.** First the H.264 stills were
+  blank grey while writing 1.0-1.4 MB PNGs — noise compresses poorly, and I
+  read *file size* as success. Only a luma-stddev check caught it (4.6 vs 38.8).
+  Then the first clips were recorded at 8-13 fps, and since rate control follows
+  the timestamps it is given, each frame got ~2.5x a 30 fps allocation — which
+  flattered both size and picture. Caught from the MP4 durations. **PNG size is
+  not proof of a decoded frame, and a clip is not a 30 fps clip because you
+  asked for 30.**
+- **`mp4.py` cannot mux HD at 30 fps here** — 13.7 fps, where capture+encode
+  alone does **50**. Raising `fragment_frames` makes it far WORSE (3.8 fps), so
+  that knob is a trap. And **this N6 has no SD card** (`/sdcard` ENODEV,
+  `/flash` 3 MB), so recorded video must leave over USB — throughput unmeasured.
+- **Two API traps in the PR.** `encode()` emits only the slice NAL, so an
+  Annex-B file must start with `sps_pps()`; and that header must come from the
+  *same* encoder instance, because in bitrate mode `qpHdr=-1` lets rate control
+  pick `pic_init_qp` from the first frame — a separately built encoder yields a
+  different PPS and decodes washed-out rather than erroring. Also
+  `mp4.Mp4(buffer_size=)` defaults to 256 KB and an HD IDR is ~293 KB.
+- **The first IDR after encoder construction is intermittently undecodable**
+  ('top block unavailable for requested intra mode'). Later IDRs recover the
+  stream. Seen through both the raw and MP4 paths, so it is the encoder's.
+  **Not reported upstream** — draft PR, and our usage is not fully cleared.
+- **Three raw-REPL refusals on the PR firmware**, where stock had zero in the
+  S30 session. Cleared by a power cut each time. Undiagnosed; a live suspicion
+  against the draft build.
+- **I misread the battery and said so.** VIN dropped to 47 mV (Nick had pulled
+  the charger deliberately) and VBAT fell 3617→3260 in 8 min; I called ~1 h of
+  runtime from S29's 78-min figure. It then went **flat at 3260-3267 for half
+  an hour** — that drop was surface charge settling, and LiFePO4 sits on a
+  plateau near 3.2 V. Nick's ~3 h was right. Also learned: on battery a cycle
+  took **~7 min** to return vs ~2.5 with the charger, and `power_cycle.py`
+  refuses below **3200 mV** with no VIN.
+
+**Next:** Nick's adopt/don't call on the numbers above. Owed and unmeasured: a
+**moving** scene (every ratio here is a static-scene ceiling), per-clip energy,
+and USB throughput off the board — which, with no SD card, decides whether
+30 fps HD can leave the N6 at all.
+
+---
+
 ## 2026-09-07 later — S31 — N6 hardware H.264: the premise is true, the fork is not needed, and the duty cycle kills the business case
 
 **Branch:** `sprint/31-n6-h264`. **Hardware touched: NONE** — nereus002 and

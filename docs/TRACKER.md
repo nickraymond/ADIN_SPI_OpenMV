@@ -3134,7 +3134,7 @@ or the Pi+ cuts power 5 min after every boot.
 
 ---
 
-### S31 — N6 hardware H.264: is custom firmware worth the squeeze?  `[x]`  *(**DESK INVESTIGATION COMPLETE 2026-09-07 — awaiting Nick's decision.** Scoped exception Nick authorised to *evaluate the trade*, not to adopt custom firmware. Brief: `docs/N6_H264_SPEC.md`. Answer: `docs/N6_H264_FINDINGS.md`. Ran desk-only on the Mac with nereus002 and both boards owned by a concurrent session — **zero hardware touched**, so every H.264 number in it is a prediction and says so.)*
+### S31 — N6 hardware H.264: is custom firmware worth the squeeze?  `[x]`  ← **MEASURED ON HARDWARE 2026-09-07 night; awaiting Nick's adopt/don't call**  *(**DESK INVESTIGATION COMPLETE 2026-09-07 — awaiting Nick's decision.** Scoped exception Nick authorised to *evaluate the trade*, not to adopt custom firmware. Brief: `docs/N6_H264_SPEC.md`. Answer: `docs/N6_H264_FINDINGS.md`. Ran desk-only on the Mac with nereus002 and both boards owned by a concurrent session — **zero hardware touched**, so every H.264 number in it is a prediction and says so.)*
 
 **The finding that changes the question: this is not custom firmware.**
 Hardware H.264 on the N6 is **upstream OpenMV PR
@@ -3182,6 +3182,48 @@ alt 1 (FIRMWARE) can be written headlessly on this bench.
 session now on the branch build to get the measurement early. Nothing here
 argues against H.264; it argues that the hourly-clip use case cannot pay
 for it and the 720p tier can.
+
+**BENCH SESSION RUN (2026-09-07 night) — the desk predictions were wrong in
+both directions, and the release story was wrong too.** Nick authorised the
+run; the S30 session handed the rig over; the N6 was flashed, measured, and
+**restored to stock v5.0.1 before release** (verified: `import codec` fails,
+`/rom` 19 entries intact).
+
+**There is NO v5.1.0** — no tag, no release, no due date; it is a milestone
+label, and PR #3247 is still a **DRAFT**, unmerged, so even OpenMV's rolling
+`development` build has no H.264. Today H.264 on an N6 means a non-release
+firmware. The policy question is live; only the *source* of the code changed.
+
+**Measured, HD 1280x800 (the PAG7936 is 16:10 — `csi.HD` is NOT 1280x720),
+5 s clip at 30 fps**, quality paired by intra-frame size:
+
+| Encoding | B/frame | 5 s clip | vs MJPEG | PSNR |
+|---|---|---|---|---|
+| MJPEG q90 (today) | 426,720 | 64.0 MB | 1.0x | — |
+| H.264 quality-matched | 279,007 | 41.9 MB | **1.5x** | 47.7 dB |
+| H.264 32 Mbps | 135,260 | 20.3 MB | **3.2x** | 43.0 dB |
+| H.264 16 Mbps | 69,636 | 10.4 MB | **6.1x** | 41.4 dB |
+| H.264 8 Mbps | 35,884 | 5.4 MB | **11.9x** | 40.4 dB |
+
+**Why max quality wins nothing, root-caused:** encode the SAME frame 60 times
+→ P-frame **43 bytes**; live static scene → **257,704**; AE/AWB locked →
+**257,756** (so not ISP drift). The whole P-frame cost is **sensor noise**,
+which has no temporal redundancy. P-frame as a fraction of an I-frame: 20% at
+q50 → 80% at q90 → **99% at q100**.
+
+**Three blockers on actually using it**, all measured: the N6 has **no
+hardware denoiser** (`hwCfg.dnfSupport == 0` — the cheapest lever, closed);
+**`mp4.py` cannot mux HD at 30 fps** (13.7 fps, where capture+encode alone
+does 50 — and `fragment_frames` makes it worse, not better); and **this rig's
+N6 has no SD card** (`/sdcard` ENODEV, `/flash` 3 MB free), so video must
+leave over USB — **throughput unmeasured, and it decides feasibility**.
+
+**Still owed:** a **moving** scene (every ratio above is a static-scene
+ceiling — motion and particulate make them worse), per-clip energy, and that
+USB number. Also open: the first IDR after encoder construction is
+**intermittently undecodable** through both the raw and MP4 paths, and the
+PR firmware drew **three raw-REPL refusals** where stock drew zero.
+
 
 ---
 
