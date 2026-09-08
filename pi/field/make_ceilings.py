@@ -90,12 +90,20 @@ def main(argv=None):
             except (OSError, ValueError):
                 continue
             s = man.get("settings") or {}
-            fs, q = s.get("framesize"), s.get("quality")
-            if not fs or q is None:
-                continue
+            # Cameras no longer share one setting: the N6 shoots HD q70 while
+            # the AE3 shoots VGA q30 in the SAME session. Attributing the
+            # session's top-level framesize to both would file the AE3's 13.5 fps
+            # under HD, and the card would then promise HD at 13.5 on a board
+            # that manages 2.29 there.
+            per_cam = s.get("per_camera") or {}
             for c in man.get("cameras", []):
                 role, cf = c.get("label"), c.get("capture_fps")
                 if not role or not cf or c.get("written_frames", 0) < 10:
+                    continue
+                own = per_cam.get(role) or {}
+                fs = own.get("framesize", s.get("framesize"))
+                q = own.get("quality", s.get("quality"))
+                if not fs or q is None:
                     continue
                 cam = doc["cameras"].setdefault(
                     role, {"cells": {}, "bytes": {}, "sources": [],

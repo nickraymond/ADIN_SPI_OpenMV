@@ -88,9 +88,44 @@ def check_request(ceilings, role, framesize, quality, fps):
                      100.0 * (ceil - fps) / ceil))
 
 
+#: What each camera should shoot when the operator has not said otherwise.
+#: These are Nick's calls, made against measurements taken on this rig:
+#:   N6  -- HD q70. The only HD rung that reaches 30 fps end to end (30.24 vs
+#:          q90's 19.9) and 3.6x fewer bytes, after he compared byte-exact q70
+#:          and q90 frames from the same scene.
+#:   AE3 -- VGA q50, Nick's pick 2026-09-08 after seeing q30 and q50 side by
+#:          side. The AE3 has no hardware JPEG, so at HD it manages 2.29 fps.
+#:          Its VGA ladder is 9.26 / 11.66 / 13.47 / 13.78 fps at q70 / q50 /
+#:          q30 / q10, PLATEAUING at ~13.8 because below q30 the colour convert
+#:          and DCT dominate rather than entropy coding. q50 costs 1.8 fps
+#:          against q30 and visibly removes the blocking in flat wall and floor
+#:          areas. At 11.66 fps it sits just under his stated 12 floor, which he
+#:          chose knowingly.
+CAMERA_DEFAULTS = {
+    "N6": {"framesize": "HD", "quality": 70},
+    "AE3": {"framesize": "VGA", "quality": 50},
+}
+
+
+def settings_for(role, framesize, quality, per_camera=None):
+    """What this camera should actually shoot.
+
+    Explicit per-camera override wins; otherwise the camera's own measured
+    default; otherwise whatever was asked for globally. The cameras are not
+    equals and one global setting cannot serve them -- HD q70 gives the N6
+    30 fps and the AE3 2.29.
+    """
+    per_camera = per_camera or {}
+    got = dict(CAMERA_DEFAULTS.get(role, {"framesize": framesize,
+                                          "quality": quality}))
+    got.update({k: v for k, v in (per_camera.get(role) or {}).items()
+                if v is not None})
+    return got.get("framesize", framesize), int(got.get("quality", quality))
+
+
 def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
                   cameras=("N6", "AE3"), transcode=True, log=print,
-                  progress=None, stop_event=None):
+                  progress=None, stop_event=None, per_camera=None):
     ceilings = load_ceilings()
     result = {"ok": False, "errors": [], "warnings": [], "cameras": [],
               "summary": ""}
@@ -118,9 +153,12 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
         result["summary"] = "no cameras found; nothing recorded"
         return result
 
-    # Verdicts BEFORE recording, so the operator learns the truth up front.
+    # Resolve each camera's own settings first, then judge each against ITS cell.
+    chosen = {}
     for role in live:
-        verdict, msg = check_request(ceilings, role, framesize, quality, fps)
+        fs_r, q_r = settings_for(role, framesize, quality, per_camera)
+        chosen[role] = {"framesize": fs_r, "quality": q_r}
+        verdict, msg = check_request(ceilings, role, fs_r, q_r, fps)
         note("%s: %s" % (verdict.upper(), msg))
         if verdict in ("impossible", "tight", "unmeasured"):
             result["warnings"].append(msg)
@@ -129,6 +167,10 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
     session.manifest["settings"] = {
         "framesize": framesize, "quality": quality, "fps_requested": fps,
         "duration_s": duration_s, "cameras": list(live),
+        # What each camera was ACTUALLY told to shoot. The top-level values are
+        # what the operator asked for globally; these are what ran, and they
+        # differ per camera on purpose.
+        "per_camera": chosen,
     }
     note("session %s" % session.name)
 
@@ -143,7 +185,8 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
 
     # -- open + start every board, in parallel so they overlap ---------------
     def bring_up(role):
-        cfg = {"framesize": framesize, "quality": quality, "pixfmt": "RGB565",
+        cfg = {"framesize": chosen[role]["framesize"],
+               "quality": chosen[role]["quality"], "pixfmt": "RGB565",
                "duration_s": duration_s, "pace_ms": pace,
                "max_frames": int(duration_s * 200) + 100}
         rec = R.BoardRecorder(role, ports[role], cfg,
@@ -179,9 +222,10 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
     mem = R.mem_available_bytes()
     for role in started:
         rec = recorders[role]
-        ceil = ceiling_for(ceilings, role, framesize, quality)[0] or fps
+        fs_r, q_r = chosen[role]["framesize"], chosen[role]["quality"]
+        ceil = ceiling_for(ceilings, role, fs_r, q_r)[0] or fps
         cam_c = ceilings.get("cameras", {}).get(role, {})
-        key = "%s_q%d" % (framesize, quality)
+        key = "%s_q%d" % (fs_r, q_r)
         est_bpf = (cam_c.get("delivered_bytes", {}).get(key)
                    or cam_c.get("bytes", {}).get(key) or 450000)
         byte_rate = est_bpf * min(fps, ceil)

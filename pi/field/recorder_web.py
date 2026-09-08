@@ -43,7 +43,14 @@ import recorder as R                                        # noqa: E402
 import record_run as RR                                     # noqa: E402
 
 FRAMESIZES = ("QVGA", "VGA", "HD")
-QUALITIES = (70, 80, 85, 90, 95)
+#: The AE3 needs the low rungs -- its VGA ladder plateaus at ~13.8 fps and q30
+#: is where it gets essentially all of that (13.47). The N6 barely uses them.
+QUALITIES = (10, 30, 50, 70, 80, 85, 90, 95)
+#: Nick's call 2026-09-08, after looking at byte-exact q70 and q90 frames from
+#: the same scene: "q70 looks fine, make it the default for N6". It is also the
+#: only HD rung that reaches 30 fps end to end (30.24 measured vs q90's 19.9)
+#: and costs 3.6x fewer bytes.
+DEFAULT_QUALITY = 70
 CTYPES = {".mp4": "video/mp4", ".mjpeg": "video/x-motion-jpeg",
           ".json": "application/json"}
 
@@ -194,10 +201,29 @@ def index_page(state, sessions, ceilings):
                or "<span class=dim>none yet</span>",
                html.escape(", ".join("%s %.1f" % (k, v)
                                      for k, v in sorted(cells.items())))))
-    opts_fs = "".join("<option%s>%s</option>"
-                      % (" selected" if f == "HD" else "", f) for f in FRAMESIZES)
-    opts_q = "".join("<option%s>%d</option>"
-                     % (" selected" if q == 85 else "", q) for q in QUALITIES)
+    def cam_controls():
+        """One framesize + quality control per camera, defaulted from the
+        SAME table the recorder uses, so the form cannot drift from what
+        actually runs."""
+        out = []
+        for role in ("N6", "AE3"):
+            d = RR.CAMERA_DEFAULTS.get(role, {"framesize": "HD",
+                                              "quality": DEFAULT_QUALITY})
+            fs = "".join("<option%s>%s</option>"
+                         % (" selected" if f == d["framesize"] else "", f)
+                         for f in FRAMESIZES)
+            qs = "".join("<option%s>%d</option>"
+                         % (" selected" if q == d["quality"] else "", q)
+                         for q in QUALITIES)
+            out.append(
+                "<div><label>%s frame size</label>"
+                "<select id='fs_%s' class=camctl>%s</select></div>"
+                "<div><label>%s quality</label>"
+                "<select id='q_%s' class=camctl>%s</select></div>"
+                % (role, role, fs, role, role, qs))
+        return "".join(out)
+
+    cam_html = cam_controls()
 
     lib = []
     for m in sessions:
@@ -235,8 +261,6 @@ def index_page(state, sessions, ceilings):
 <h1>Video recorder</h1>
 <div class=card>
   <div class=row>
-    <div><label>Frame size</label><select id=framesize>@@OPTS_FS@@</select></div>
-    <div><label>Quality</label><select id=quality>@@OPTS_Q@@</select></div>
     <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
     <div><label>Duration (s)</label><input id=duration type=number value=5 min=1 max=3600></div>
     <div><label>Cameras</label><select id=cameras>
@@ -244,6 +268,11 @@ def index_page(state, sessions, ceilings):
       <option value="N6">N6 only</option>
       <option value="AE3">AE3 only</option></select></div>
   </div>
+  <div class=dim style="margin:12px 0 6px;font-size:12px">
+    Each camera has its own settings, because they are not equals: HD q70 gives
+    the N6 30.2 fps and the AE3 2.3. Defaults below are the measured picks.
+  </div>
+  <div class=row>@@CAMS@@</div>
   <div id=verdict class=dim style="margin:10px 0"></div>
   <button id=go onclick=startRec()>&#9679; Record</button>
   <a href="/" class=dim style="margin-left:10px">refresh</a>
@@ -262,36 +291,43 @@ above uses delivered wherever it exists.</div></div>
 @@LIB@@
 <script>
 const CEIL = @@CEIL@@;
-function verdict(){
-  const fs=document.getElementById('framesize').value,
-        q=+document.getElementById('quality').value,
-        fps=+document.getElementById('fps').value,
-        cams=document.getElementById('cameras').value.split(',');
-  let out=[];
+function camSettings(){
+  const cams=document.getElementById('cameras').value.split(',');
+  const out={};
   for(const c of cams){
-    const cam=((CEIL.cameras||{})[c]||{}), key=fs+'_q'+q;
+    const fs=document.getElementById('fs_'+c), q=document.getElementById('q_'+c);
+    if(fs&&q) out[c]={framesize:fs.value, quality:+q.value};
+  }
+  return out;
+}
+function verdict(){
+  const fps=+document.getElementById('fps').value, per=camSettings();
+  let out=[];
+  for(const c of Object.keys(per)){
+    const cam=((CEIL.cameras||{})[c]||{});
+    const key=per[c].framesize+'_q'+per[c].quality;
     // DELIVERED (measured end to end) beats the encoder number, which excludes
     // the board's own USB write and is therefore always the optimistic one.
     const dv=(cam.delivered||{})[key], ev=(cam.cells||{})[key];
-    const v = (dv!==undefined)?dv:ev;
-    const kind = (dv!==undefined)?'measured end to end':'encoder only, real rate is lower';
-    if(v===undefined){out.push('<span class=warn>'+c+': '+fs+' q'+q+' has never been measured on this rig</span>');}
-    else if(fps>v){out.push('<span class=bad>'+c+': '+v.toFixed(1)+' fps ('+kind+') &mdash; '+fps+' fps is NOT achievable, expect ~'+v.toFixed(1)+'</span>');}
-    else if(fps>v*0.9){out.push('<span class=warn>'+c+': '+v.toFixed(1)+' fps ('+kind+') &mdash; only '+(100*(v-fps)/v).toFixed(0)+'% margin</span>');}
-    else {out.push('<span class=ok>'+c+': '+v.toFixed(1)+' fps ('+kind+') &mdash; '+(100*(v-fps)/v).toFixed(0)+'% margin</span>');}
+    const v=(dv!==undefined)?dv:ev;
+    const kind=(dv!==undefined)?'measured end to end':'encoder only, real rate is lower';
+    const at=c+' at '+per[c].framesize+' q'+per[c].quality+': ';
+    if(v===undefined){out.push('<span class=warn>'+at+'never measured on this rig</span>');}
+    else if(fps>v){out.push('<span class=bad>'+at+v.toFixed(1)+' fps ('+kind+') &mdash; '+fps+' fps is NOT achievable, expect ~'+v.toFixed(1)+'</span>');}
+    else if(fps>v*0.9){out.push('<span class=warn>'+at+v.toFixed(1)+' fps ('+kind+') &mdash; only '+(100*(v-fps)/v).toFixed(0)+'% margin</span>');}
+    else {out.push('<span class=ok>'+at+v.toFixed(1)+' fps ('+kind+') &mdash; '+(100*(v-fps)/v).toFixed(0)+'% margin</span>');}
   }
   document.getElementById('verdict').innerHTML=out.join('<br>');
 }
-for(const id of ['framesize','quality','fps','cameras'])
-  document.getElementById(id).addEventListener('change',verdict);
+for(const id of ['fps','cameras']) document.getElementById(id).addEventListener('change',verdict);
+for(const el of document.querySelectorAll('.camctl')) el.addEventListener('change',verdict);
 verdict();
 async function startRec(){
   const b=document.getElementById('go'); b.disabled=true;
-  const body={framesize:document.getElementById('framesize').value,
-    quality:+document.getElementById('quality').value,
-    fps:+document.getElementById('fps').value,
+  const body={fps:+document.getElementById('fps').value,
     duration:+document.getElementById('duration').value,
-    cameras:document.getElementById('cameras').value};
+    cameras:document.getElementById('cameras').value,
+    per_camera:camSettings()};
   const r=await fetch('/api/record',{method:'POST',body:JSON.stringify(body)});
   const j=await r.json();
   if(!j.ok){alert(j.err||'refused');b.disabled=false;}
@@ -306,7 +342,7 @@ async function poll(){
 poll();
 </script>
 """,
-        OPTS_FS=opts_fs, OPTS_Q=opts_q,
+        CAMS=cam_html,
         ROWS="".join(rows) or "<tr><td colspan=3 class=dim>none measured</td></tr>",
         LIB="".join(lib), CEIL=json.dumps(ceilings)))
 
@@ -615,23 +651,46 @@ def make_handler(state, root):
                 body = json.loads(self.rfile.read(n) or b"{}")
             except (ValueError, OSError) as e:
                 return self._json(400, {"ok": False, "err": str(e)})
-            fs = str(body.get("framesize", "HD"))
-            if fs not in FRAMESIZES:
-                return self._json(400, {"ok": False, "err": "bad framesize"})
             try:
-                q = int(body.get("quality", 85))
                 fps = float(body.get("fps", 30))
                 dur = float(body.get("duration", 5))
             except (TypeError, ValueError):
                 return self._json(400, {"ok": False, "err": "bad number"})
-            if not (10 <= q <= 100 and 0 < fps <= 200 and 0 < dur <= 3600):
+            if not (0 < fps <= 200 and 0 < dur <= 3600):
                 return self._json(400, {"ok": False, "err": "value out of range"})
             cams = [c for c in str(body.get("cameras", "N6,AE3")).split(",")
                     if c in ("N6", "AE3")]
             if not cams:
                 return self._json(400, {"ok": False, "err": "no valid camera"})
-            ok, msg = state.start(framesize=fs, quality=q, fps=fps,
-                                  duration_s=dur, cameras=cams)
+
+            # Per-camera settings. Every field is validated against the same
+            # enums the form offers -- nothing free-form reaches the board
+            # config, and an unknown camera is dropped rather than passed on.
+            raw = body.get("per_camera") or {}
+            if not isinstance(raw, dict):
+                return self._json(400, {"ok": False, "err": "per_camera must be an object"})
+            per = {}
+            for role, v in raw.items():
+                if role not in ("N6", "AE3") or not isinstance(v, dict):
+                    continue
+                fs_r = v.get("framesize")
+                if fs_r is not None and fs_r not in FRAMESIZES:
+                    return self._json(400, {"ok": False,
+                                            "err": "bad framesize for %s" % role})
+                q_r = v.get("quality")
+                if q_r is not None:
+                    try:
+                        q_r = int(q_r)
+                    except (TypeError, ValueError):
+                        return self._json(400, {"ok": False,
+                                                "err": "bad quality for %s" % role})
+                    if not (10 <= q_r <= 100):
+                        return self._json(400, {"ok": False,
+                                                "err": "quality out of range for %s" % role})
+                per[role] = {"framesize": fs_r, "quality": q_r}
+
+            ok, msg = state.start(fps=fps, duration_s=dur, cameras=cams,
+                                  per_camera=per)
             return self._json(200 if ok else 409, {"ok": ok, "err": None if ok else msg})
 
     return H

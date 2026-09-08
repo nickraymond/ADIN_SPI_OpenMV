@@ -202,6 +202,43 @@ class TestCeilingCheck(unittest.TestCase):
         self.assertIn("lower", msg)
 
 
+class TestPerCameraSettings(unittest.TestCase):
+    """The cameras are not equals, so one global setting cannot serve them.
+
+    HD q70 gives the N6 30.24 fps and the AE3 2.29. Measured, this rig.
+    """
+
+    def test_each_camera_gets_its_own_measured_default(self):
+        self.assertEqual(RR.settings_for("N6", "HD", 85), ("HD", 70))
+        self.assertEqual(RR.settings_for("AE3", "HD", 85), ("VGA", 50))
+
+    def test_explicit_override_beats_the_default(self):
+        got = RR.settings_for("AE3", "HD", 85,
+                              {"AE3": {"framesize": "QVGA", "quality": 50}})
+        self.assertEqual(got, ("QVGA", 50))
+
+    def test_partial_override_keeps_the_rest_of_the_default(self):
+        self.assertEqual(RR.settings_for("AE3", "HD", 85,
+                                         {"AE3": {"quality": 70}}),
+                         ("VGA", 70))
+
+    def test_none_values_do_not_clobber(self):
+        """A form that sends nothing for a field must not erase the default."""
+        self.assertEqual(RR.settings_for("N6", "HD", 85,
+                                         {"N6": {"framesize": None,
+                                                 "quality": None}}),
+                         ("HD", 70))
+
+    def test_unknown_camera_falls_back_to_the_global_ask(self):
+        self.assertEqual(RR.settings_for("IMX", "VGA", 50), ("VGA", 50))
+
+    def test_quality_is_coerced_to_int(self):
+        """The form sends strings; a str would break the "%s_q%d" cell key."""
+        fs, q = RR.settings_for("N6", "HD", 85, {"N6": {"quality": "90"}})
+        self.assertIsInstance(q, int)
+        self.assertEqual(q, 90)
+
+
 class TestSessions(unittest.TestCase):
     def test_broken_manifest_is_reported_not_hidden(self):
         with tempfile.TemporaryDirectory() as d:
