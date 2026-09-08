@@ -169,6 +169,59 @@ in roughly 7 minutes.
 
 ---
 
+## The H.264 question, answered against S31's stated trigger
+
+The S31 session set a trigger in advance: *if the SD card cannot sustain
+10.4 MB/s for a whole recording, stop trying to make MJPEG work and put
+hardware H.264 in front of Nick.*
+
+**That trigger is NOT met on nereus000.** The card does 68.7 MB/s direct, held
+14.5 MB/s exactly when paced at the recorder's real rate, and the 20-minute
+soak ran at 2.26 MB/s with zero drops while the ring never passed 6% of its
+capacity. Storage has roughly 5x headroom. **No pivot is forced.**
+
+**But the recommendation lands anyway, for a different reason, and it is worth
+Nick's attention.** The constraint that actually binds is not the card and not
+the link in aggregate — it is that **the board writes each frame over USB from
+inside the same single-threaded loop that encodes it**. That makes the cost
+per frame proportional to frame SIZE, which is exactly what H.264 attacks:
+
+| HD, 30 fps target | Bytes/frame | Board write cost | Delivered |
+|---|---|---|---|
+| MJPEG q90 | 423,200 | ~28 ms on top of 33 ms encode | **16.2 fps** (measured) |
+| MJPEG q70 | 117,564 | ~7 ms on top of 26 ms encode | **30.2 fps** (measured) |
+| H.264 16 Mbps | 69,636 (S31) | ~4 ms, encoder measured at 51 fps | **not measured here** |
+
+So the real question is narrower than "MJPEG or H.264": it is **whether Nick
+wants the HD-at-high-quality cell at 30 fps**. MJPEG reaches 30 fps at HD only
+by dropping to q70. H.264 could plausibly hold 30 fps at HD with far better
+compression — but the gain comes from accepting a **bitrate target instead of a
+quality number**, which is Nick's call, not an engineering one. Quality-matched
+H.264 is only 1.5x smaller and gives most of the advantage back.
+
+**What it would cost, from S31 and not re-verified here:** firmware from an
+unmerged draft PR (openmv/openmv#3247 — there is no v5.1.0 release); the first
+IDR after encoder construction is intermittently undecodable, costing roughly
+the first second of a clip; and three raw-REPL refusals on that firmware where
+stock drew zero, which on a dive rig is control risk.
+
+**What a pivot would cost in this code: about 30 lines, and no rework.** The
+wire format is deliberately encoding-agnostic — `MAGIC | seq | length |
+payload` carries an H.264 access unit exactly as well as a JPEG. Three places
+name JPEG and would each change once: the board's `img.to_jpeg()` call, the
+parser's SOI check (which exists so a corrupt length cannot be silently
+accepted, and would become an Annex-B start-code check), and ffmpeg's `-f
+mjpeg` input. The pump, the ring, the writer, the manifest, the page and the
+viewer are all unaffected.
+
+**Two S31 warnings that apply to any future H.264 work here**, recorded so they
+are not rediscovered: do NOT mux on the board (`mp4.py` runs at 13.7 fps at HD;
+mux on the Pi with `ffmpeg -c copy`), and `encode()` rate control follows the
+timestamps it is given — feed it real ticks from a slow loop and it allocates
+~2.5x a 30 fps budget, inflating both file size and apparent quality.
+
+---
+
 ## Reproducing
 
 ```bash

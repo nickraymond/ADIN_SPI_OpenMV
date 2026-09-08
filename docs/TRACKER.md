@@ -3430,6 +3430,36 @@ is the route** · the rig's charger was out at handover (VBAT 3209 mV), and
 closed; each item now names its own origin. Nothing here is owned by a
 live bite, and nothing here should be assumed benign because it is old.)*
 
+- **H.264 ON THE N6 — Nick's call, re-raised 2026-09-08 by S31 against a
+  trigger it set in advance, and the trigger did NOT fire.** S31's rule was
+  "if the SD card cannot sustain 10.4 MB/s, pivot from MJPEG to H.264".
+  **Measured on nereus000: it can, with ~5x to spare** (68.7 MB/s direct;
+  held 14.5 MB/s exactly when paced; a 20-min soak at 2.26 MB/s with zero
+  drops and the ring under 6%). **So nothing forces a pivot, and MJPEG on
+  stock firmware stays the route.**
+  **But the recommendation survives on a different constraint, which is the
+  one S32 actually found:** the board writes each frame over USB from inside
+  the loop that encodes it, so cost scales with FRAME SIZE. That is precisely
+  what H.264 attacks:
+
+  | HD, 30 fps target | B/frame | Delivered |
+  |---|---|---|
+  | MJPEG q90 | 423,200 | **16.2 fps** (measured) |
+  | MJPEG q70 | 117,564 | **30.2 fps** (measured) |
+  | H.264 16 Mbps | 69,636 (S31) | unmeasured; encoder does 51 fps |
+
+  **The decision is therefore narrow and it is Nick's:** MJPEG reaches HD at
+  30 fps only at q70. H.264 could plausibly hold HD 30 fps at much better
+  compression, but only by accepting a **bitrate target instead of a quality
+  number** — quality-matched H.264 is just 1.5x and gives the advantage back.
+  Costs, from S31: unmerged draft PR firmware (there is no v5.1.0 release),
+  an intermittently undecodable first IDR (~the first second of a clip), and
+  three raw-REPL refusals where stock drew zero.
+  **A pivot costs ~30 lines here and no rework** — the wire format is
+  encoding-agnostic; only the board's `to_jpeg()`, the parser's SOI check and
+  ffmpeg's `-f mjpeg` name JPEG. Detail + S31's muxing/timestamp warnings:
+  `bench/s32_recorder/README.md` §"The H.264 question".
+
 - **THE 720p TIER — Nick's decision, flagged 2026-09-07 (S31). This is the
   only cell where H.264 changes what is POSSIBLE rather than what is
   cheap, and it is currently a declared non-goal.** SPEC.md lists
