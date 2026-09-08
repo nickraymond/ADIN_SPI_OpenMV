@@ -76,9 +76,16 @@ def transcode(mjpeg_path, mp4_path, fps, prefer=None, timeout=900):
     probe's answers are what decide `ok`.
     """
     name, enc_args = pick_encoder(prefer)
+    # Leave one core for the page and the next recording. Transcoding a 20 min
+    # HD clip took 186 s with every core pegged and carried nereus000 to 77.9 C,
+    # against a Pi 5 soft limit of 80 -- and the field rig has far less thermal
+    # headroom than that. One spare core costs a little wall time and keeps the
+    # rig answering while a long clip converts.
+    threads = max(1, (os.cpu_count() or 2) - 1)
     cmd = (["ffmpeg", "-nostdin", "-v", "error", "-y",
             "-f", "mjpeg", "-framerate", "%g" % fps, "-i", mjpeg_path]
-           + enc_args + ["-movflags", "+faststart", mp4_path])
+           + enc_args + ["-threads", str(threads),
+                         "-movflags", "+faststart", mp4_path])
     t0 = time.monotonic()
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)

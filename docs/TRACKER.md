@@ -3319,6 +3319,13 @@ by-id path** (v5.0.1 reports the full 96-bit chip UID) — find boards by ROLE.
   encoding, 23.8 delivered). The card guards on **delivered**; guarding on the
   encoder number would promise 30 fps and hand back 24.
 
+**SOAKED AT DIVE LENGTH — 20 min continuous, HD q70: 36,291 frames at
+**30.24 fps sustained**, **zero frames lost in flight**, zero ring drops, zero
+resyncs, 2.715 GB. Ring peaked at 1.36 MB of 25 MB while absorbing a 0.6 s card
+stall; board heap flat. Transcode 186 s → 322 MB playable mp4. The x264 pass
+carried the Pi to 77.9 °C (soft limit 80, not throttling at the time), so
+`transcode.py` now leaves one core free.
+
 **Shipped:** `pi/field/{record_board,recorder,record_run,recorder_web,
 transcode,make_ceilings}.py` + 42 host tests + the `video-record` workbench
 card. The page carries the record form with a LIVE verdict against each

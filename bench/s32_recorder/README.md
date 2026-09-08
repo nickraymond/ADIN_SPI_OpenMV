@@ -138,6 +138,37 @@ Since q80≡q85 and q90≡q95, the useful HD rungs are q70, q85 and q90, and
 
 ---
 
+## The dive-length soak — 20 minutes continuous, nothing lost
+
+`HD q70, 30 fps, 1200 s`, recorded through the card exactly as an operator
+would. Raw manifest: `results/soak_20min_manifest.json`.
+
+| | |
+|---|---|
+| Frames | **36,291** in 1200.0 s = **30.24 fps sustained** |
+| **Frames lost in flight** | **0** — not one gap in 36,291 board sequence numbers |
+| **Ring drops** | **0** |
+| Resyncs | 0 |
+| Written | 2.715 GB at 2.26 MB/s |
+| Ring high water | 1.36 MB of a 25 MB ring (5%) |
+| Worst SD write stall | 0.6 s — absorbed by the ring, no frame lost |
+| Board free heap | 25,600,992 → 25,600,624 B (flat; no leak over 36k frames) |
+| Transcode | 186 s → 322 MB mp4, `h264 / yuvj420p`, duration 1199.98 s |
+
+**The ring earned its place and then some.** A 0.6 s write stall at 2.26 MB/s
+is ~1.4 MB of frames that a synchronous writer would have dropped on the floor;
+the ring swallowed it without reaching 6% of capacity.
+
+**Thermal, worth knowing before a long dive clip:** the x264 pass pegged all
+four cores for 186 s and carried the Pi to **77.9 °C** against a soft limit of
+80. It was not throttling at the time (current throttle bits clear, clock at
+full 2.40 GHz), but the sticky "has occurred" bits were set at some point in
+that uptime. `transcode.py` now leaves one core free so the page stays
+responsive and the rig keeps some headroom; a 45 min dive clip should convert
+in roughly 7 minutes.
+
+---
+
 ## Reproducing
 
 ```bash

@@ -31,14 +31,14 @@
    },
    "delivered": {
     "HD_q30": 30.12,
-    "HD_q70": 30.06,
+    "HD_q70": 30.24,
     "HD_q85": 23.81,
     "HD_q90": 16.23,
     "VGA_q90": 30.16
    },
    "delivered_bytes": {
     "HD_q30": 48002,
-    "HD_q70": 76368,
+    "HD_q70": 74815,
     "HD_q85": 195021,
     "HD_q90": 422649,
     "VGA_q90": 115988
@@ -51,7 +51,7 @@
    ]
   }
  },
- "generated": "2026-09-08T16:27:16",
+ "generated": "2026-09-08T16:52:36",
  "host": "nereus000",
  "how": "measured by pi/field/n6_h264_run.py -> make_ceilings.py; encoder ceiling = capture+encode loop fps on the board, with no USB payload transfer in the path"
 }

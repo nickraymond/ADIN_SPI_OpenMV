@@ -1,0 +1,83 @@
+{
+ "name": "rec_20260908T162842",
+ "created": 1788884922.8998775,
+ "created_iso": "2026-09-08T16:28:42",
+ "host": "nereus000",
+ "settings": {
+  "framesize": "HD",
+  "quality": 70,
+  "fps_requested": 30.0,
+  "duration_s": 1200.0,
+  "cameras": [
+   "N6"
+  ]
+ },
+ "cameras": [
+  {
+   "label": "N6",
+   "port": "/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_10003500025043364d343000-if00",
+   "frames": 36291,
+   "bytes": 2715139958,
+   "wall_s": 1200.91,
+   "delivered_fps": 30.22,
+   "mb_per_s": 2.26,
+   "board_fps": 30,
+   "board_frames": 36291,
+   "seq_gaps": 0,
+   "resyncs": 0,
+   "banner": {
+    "board": "N6",
+    "w": 1280,
+    "h": 800,
+    "framesize": "HD",
+    "quality": 70,
+    "pixfmt": "RGB565",
+    "duration_s": 1200,
+    "pace_ms": 33,
+    "fw": "3.4.0; OpenMV v5.0.1; MicroPython v1.28.0-64",
+    "heap": 25600992
+   },
+   "trailer": {
+    "frames": 36291,
+    "bytes": 2715139958,
+    "wall_ms": 1200017,
+    "enc_ms_per_frame": 25,
+    "fps": 30,
+    "heap": 25600624
+   },
+   "error": "",
+   "ring_capacity_bytes": 25165824,
+   "ring_high_water_bytes": 1363061,
+   "ring_dropped_frames": 0,
+   "written_bytes": 2715139958,
+   "written_frames": 36291,
+   "max_write_stall_s": 0.6,
+   "start_offset_s": 0.0,
+   "mjpeg": "N6.mjpeg",
+   "capture_fps": 30.24,
+   "transcode": {
+    "encoder": "libx264",
+    "cmd": "ffmpeg -nostdin -v error -y -f mjpeg -framerate 30.2421 -i /home/pi/recordings/rec_20260908T162842/N6.mjpeg -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart /home/pi/recordings/rec_20260908T162842/N6.mp4",
+    "rc": 0,
+    "wall_s": 186.03,
+    "stderr": "",
+    "ok": true,
+    "bytes": 322701387,
+    "probe": {
+     "codec_name": "h264",
+     "width": 1280,
+     "height": 800,
+     "pix_fmt": "yuvj420p",
+     "nb_frames": "36290",
+     "duration": "1199.982805",
+     "size": "322701387"
+    }
+   },
+   "mp4": "N6.mp4"
+  }
+ ],
+ "notes": [],
+ "ring": {
+  "mem_available_bytes": 8011399168
+ }
+}

@@ -46,6 +46,12 @@ redirected the sprint here because nereus002 is offline.
   readyState 4, duration 5.03 s, scrubber seeks.
 - **Flashed both boards from v4.8.1 to stock v5.0.1**, byte-verified read-back
   on each, with the pre-flash partition kept as an exact rollback.
+- **Soaked it at dive length: 20 minutes continuous, HD q70, and nothing was
+  lost.** 36,291 frames in 1200.0 s = **30.24 fps sustained**, **zero gaps in
+  the board's own sequence numbers**, zero ring drops, zero resyncs, 2.715 GB
+  written. The ring peaked at 1.36 MB of 25 MB while absorbing a 0.6 s card
+  stall, and board free heap was flat across 36k frames. Transcode 186 s → a
+  322 MB mp4 that probes as h264, 1199.98 s long.
 
 **Broke/surprised us:**
 - **THE BOARDS WERE ON THE WRONG FIRMWARE AND IT COST 5x.** nereus000's N6
