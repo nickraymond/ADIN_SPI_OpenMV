@@ -3190,6 +3190,41 @@ for it and the 720p tier can.
 closed; each item now names its own origin. Nothing here is owned by a
 live bite, and nothing here should be assumed benign because it is old.)*
 
+- **THE 720p TIER — Nick's decision, flagged 2026-09-07 (S31). This is the
+  only cell where H.264 changes what is POSSIBLE rather than what is
+  cheap, and it is currently a declared non-goal.** SPEC.md lists
+  "Public-tier streaming (720p >=24 fps needs H.264 -> N6 follow-on)" under
+  Non-goals, and its product table puts "Public 720p stream — needs H.264
+  (N6, non-goal)" in the high-res/high-fps quadrant. S31 removed the
+  reason that non-goal was cheap to hold: H.264 is no longer a fork, it is
+  upstream PR openmv/openmv#3247 milestoned **v5.1.0**, so the tier now
+  costs a firmware release rather than an owned fork.
+  **The arithmetic (derived from S30's measured 0.365 bpp at VGA q30;
+  `python3 bench/n6_h264/duty_cycle.py`):**
+
+  | Resolution | fps | MJPEG | H.264 @4x | vs the 8 Mbps T1L video budget |
+  |---|---|---|---|---|
+  | VGA | 30 | 3.37 Mbps | 0.84 Mbps | MJPEG already fits |
+  | **720p** | **24** | **8.08 Mbps** | **2.02 Mbps** | **H.264 only** |
+  | **720p** | **30** | **10.10 Mbps** | **2.53 Mbps** | **H.264 only** |
+
+  **What the decision needs before it can be made** (none of it is
+  engineering — it is one measurement and one product call):
+  1. **The measured hardware ratio at 720p on a real underwater scene.**
+     The 4x above is PREDICTED from the S29 IMX708 anchor. Marine snow,
+     backscatter and surge are adversarial for inter-frame coding.
+     **Falsifier stated in advance: below 2x at matched quality, 720p24
+     needs ~5 Mbps and the margin against 8 Mbps is gone.** Owed by the
+     S31 bench session.
+  2. **Whether the N6 can encode 720p30 at all** — throughput unmeasured;
+     memory is fine (4.20 MiB, 16.4% of the N6's 25.6 MB free heap).
+  3. **Nick's product call:** is a public 720p tier wanted? Everything
+     above is moot if the answer is no, and the honest default is that it
+     stays a non-goal.
+  Do NOT quietly un-declare the non-goal on the strength of the S31
+  finding — S31 changed the COST of the tier, not the decision to want it.
+  Detail: `docs/N6_H264_FINDINGS.md` §4.6; decision D49.
+
 - **AE3 dive-recorder rig (flagged 2026-08-21 night, S26 session; ~3-WEEK
   DEADLINE — Nick's Channel Islands dive).** Nick's plan: GoPro 4K + the
   AE3 in a waterproof housing recording VGA color locally, paired
