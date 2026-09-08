@@ -3333,6 +3333,33 @@ camera's measured limit, the library of past recordings with the settings that
 produced them, both cameras side by side off ONE scrubber, file sizes,
 in-browser playback and download. Verified in a real browser.
 
+**STORAGE IS BOUNDED (Nick's ask 2026-09-08): the rig can only fill a capped
+recordings store, and the oldest sessions roll off, so video can never fill the
+card and corrupt the OS.** `pi/field/storage.py`. **Correction worth carrying:
+he expected this to already exist in `bm_cam_legacy` -- it does NOT.** That repo
+holds the SPEC (TODO-BM-008) and the reporting half (`collect_storage_health`)
+and states "Ring buffer is intentionally not implemented yet". His rules are
+implemented verbatim here (never touch the active run, never delete outside the
+store, oldest first, keep the newest N, minimum free-space floor, dry-run mode,
+telemetry on cleanup) and the telemetry field names match that repo's so the two
+rigs read alike. **TWO limits, because either alone leaves a hole:** the ring
+budget caps the recordings directory, and a free-space floor catches anything
+ELSE filling the card while the ring sits inside its quota. Room is made BEFORE
+a clip from a measured size estimate, and again afterwards with the new session
+marked active so it can never be evicted for itself. The card shows two meters,
+ring fullness and whole-card fullness. Operating value: **50 GB**, which at
+~0.85 GB per 5-minute two-camera session is ~59 sessions, so filling it by
+recording takes nearly 5 hours.
+
+**Per-camera settings (Nick 2026-09-08):** the N6 and AE3 no longer share one
+framesize, because HD q70 gives the N6 30.24 fps and the AE3 2.29. Defaults are
+**N6 HD q70** and **AE3 VGA q50**, both his picks against byte-exact frames.
+The AE3's VGA ladder is 9.26 / 11.66 / 13.47 / 13.78 fps at q70 / q50 / q30 /
+q10 and PLATEAUS at ~13.8 -- below q30 the colour convert and DCT dominate, not
+entropy coding, so no quality setting buys more. **The one untried lever for the
+AE3 is grayscale** (no colour convert, a third of the DCT work); not tested
+because this repo records an unexplained grayscale-at-HD hang on that board.
+
 **BLOCKED, NEEDS NICK'S HANDS: the AE3 is off the USB bus** (`error -71`,
 enumeration fails). It first refused the REPL after its ceiling sweep hit a
 900 s mpremote timeout; **a USB de-authorize attempted as recovery is what took

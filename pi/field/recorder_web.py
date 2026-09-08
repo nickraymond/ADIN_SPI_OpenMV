@@ -382,7 +382,7 @@ async function storage(){
     const r=await fetch('/api/storage'); const s=await r.json();
     const rp = s.ring_used_pct||0;
     setMeter('ringmeter','ringbar','ringtxt', rp,
-      gb(s.ring_used_bytes)+' of '+gb(s.ring_bytes)+'  ('+rp.toFixed(1)+'%)  '+s.sessions+' recordings');
+      gb(s.ring_used_bytes)+' of '+gb(s.ring_bytes)+'  ('+rp.toFixed(1)+'%)  '+s.sessions+(s.sessions===1?' recording':' recordings'));
     const sp = s.sd_used_pct||0;
     setMeter('sdmeter','sdbar','sdtxt', sp,
       gb(s.sd_used_bytes)+' of '+gb(s.sd_total_bytes)+'  ('+sp.toFixed(1)+'%)  '+gb(s.sd_free_bytes)+' free');
