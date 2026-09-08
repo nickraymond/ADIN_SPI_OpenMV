@@ -1,31 +1,22 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-07 (**S29 nereus002 FIELD RIG — bites 1-8 DONE,
-bites 9-11 open.** Pi Zero 2 W + IMX708-wide + AE3 + N6 on a
-LiFePO4wered/Pi+. Three cards live: three-camera streams, composite
-capture (stack & bracket), RAW composite. Boards are found by ASKING
-them their role, never by USB serial, because this rig's boards get
-swapped AND because **the AE3 and N6 here are nereus000's physical
-boards, moved** (proven via the N6's chip UID) — **nereus000 now has no
-cameras.** Three bench faults root-caused, all of which had been
-misdiagnosed at least once: **wifi `power_save` was ON** (radio dozes,
-rx negotiated to 1.0 Mb/s, AP ages out the association, Pi sits up with
-no network — a REPEAT of nereus000's 2026-08-25 fix, now repo-carried);
-**`VIN` read 47 mV** (charger not on the Pi+ input; resolved
-physically); and **usb-storage MSC probing** livelocked both boards in
-USB device resets at ~46/min, which is the whole "board fell off the
-bus" family and presented as four different bugs.
-**`systemctl reboot` is BANNED on this rig** — it becomes a power-off,
-and it cannot cut USB VBUS; use `pi/field/power_cycle.py` (5/5), whose
-LiFePO4wered logic is VENDORED from Nick's nereus-vision-dev (copied,
-not imported — that deployed project is untouched).
-**Endurance measured:** 78 min from ~3.20 V to the 2950 mV cutoff at a
-2.73 W mean, `throttled` 0x0 throughout; **~3 h from a full charge** is
-the field-planning number. **STILL OPEN and blocking field-ready: the
-AE3 refuses the REPL where the N6 never does** (3 failures vs 0, same
-code, same sensor), cleared only by a full power cut.
-**Building a second rig? Use the `field-rig-bringup` skill.** Previous:*
+*Last updated: 2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
+NEW AE3+N6 (Pi 5, **no CSI camera**); `nereus002` carries the OLD pair plus
+the IMX708. **Nick's boards are cleared: the old AE3/N6 are NOT optically
+damaged** — rectified-card sharpness differs 7% (AE3) / 12% (N6) old-vs-new,
+where a scratched lens or lost focus is 2-5x, so the S30 video baseline
+stands. Toolkit at `bench/optics/`. Three defects found on the way: discovery
+globbed `*-if00` and SILENTLY missed nereus000's N6 (it is `-if01`);
+`install_stream_service.sh` printed OK without ever restarting a running unit,
+so a two-day-old workbench kept serving 11 recipes with 15 on disk; and
+`composite.board_burst` returns BLACK frames in a dim room because it freezes
+AE before it has converged. **A descriptor that says "FS Mode" is a NAME, not
+a speed** — both N6s negotiate 480 Mbps, measured at
+`/sys/bus/usb/devices/*/speed`. STILL OPEN: the new boards measure ~1.8x
+noisier, but they ran 15-24 dB of gain and gain was never read off the old
+boards, so that is an observation about the rigs, not a claim about the
+sensors. Previous:*
 *2026-09-01 (**NEW SPRINT S28 — capture-side frame
 stacking + bracketed exposure, AE3 first (Nick approved the 5-bite
 plan).** Design notes vendored at `docs/stacking_kickoff_notes.md`;
@@ -3101,6 +3092,12 @@ usb-storage fix (bite 5), so it is a *second*, distinct fault. Cleared
 only by a full power cut. **This blocks calling the rig field-ready:
 "power cycle the camera" is not an acceptable field recovery.** Not
 diagnosed — do not assume a cause; the last three guesses here were wrong.
+
+**S31 — the second rig exists.** `nereus000` now carries the NEW AE3+N6 and
+is current. Standing facts for it: **no CSI camera** (the streams card takes
+`csi = off`); boards are `-if01`/`-if00`, so address by ROLE only; the old
+`s8-*`/`hil-*` cards pin `by_id` and will sit in "waiting" against the new
+serials. Optics comparison and its traps: `bench/optics/README.md`.
 
 **Second rig:** Nick is building one to replicate nereus002. Everything
 learned is in the **`field-rig-bringup`** skill — build from that, not

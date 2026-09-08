@@ -7,6 +7,7 @@ Run: python3 pi/field/test_field.py
 import io
 import os
 import sys
+import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +61,47 @@ class TestDiscover(unittest.TestCase):
             return {"role": mapping[port], "port": port,
                     "version": "v", "machine": "m", "board_id": "i"}
         return probe
+
+    def test_finds_a_board_on_a_non_zero_interface(self):
+        """nereus000's N6 enumerates as -if01, not -if00.
+
+        MEASURED 2026-09-08 on the new boards: in USB HS mode the N6 presents
+        its CDC data interface as 01. The old ``*-if00`` glob found ZERO N6 on
+        that rig -- a silent miss, in exactly the hardware-swap case this
+        module exists to survive.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            # /dev/serial/by-id holds ONLY symlinks; the ttys live in /dev.
+            d = os.path.join(root, "by-id")
+            dev = os.path.join(root, "dev")
+            os.makedirs(d)
+            os.makedirs(dev)
+            names = ["usb-MicroPython_Pyboard_Virtual_Comm_Port_in_HS_Mode_0065345D3643-if01",
+                     "usb-OpenMV_OpenMV_Camera_08602ac000000000-if00"]
+            for i, n in enumerate(names):
+                tty = os.path.join(dev, "ttyACM%d" % i)
+                open(tty, "w").close()
+                os.symlink(tty, os.path.join(d, n))
+            got = discover.list_ports(os.path.join(d, "*"))
+            self.assertEqual(len(got), 2, got)
+            self.assertTrue(any(p.endswith("-if01") for p in got), got)
+
+    def test_aliases_for_one_device_are_probed_once(self):
+        """Several by-id names for one tty must yield ONE port.
+
+        Not a tidiness point: repeated raw-REPL attaches are a known way to
+        wedge the AE3, so probing the same board twice is actively harmful.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "by-id")
+            dev = os.path.join(root, "dev")
+            os.makedirs(d)
+            os.makedirs(dev)
+            tty = os.path.join(dev, "ttyACM0")
+            open(tty, "w").close()
+            for n in ("usb-Thing-if00", "usb-Thing-if00-port0", "usb-Thing_alias"):
+                os.symlink(tty, os.path.join(d, n))
+            self.assertEqual(len(discover.list_ports(os.path.join(d, "*"))), 1)
 
     def test_maps_roles_regardless_of_port_order(self):
         # The whole point: role comes from the BOARD, not the path. Swap the
