@@ -29,6 +29,7 @@ import html
 import json
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -52,6 +53,12 @@ class RecorderState:
 
     def __init__(self, root):
         self.root = root
+        #: Set by SIGINT/SIGTERM. A recording in flight then ENDS rather than
+        #: being killed: the pumps return, the writers drain, and the manifest
+        #: is written and marked interrupted. Without this, stopping a long
+        #: recording left a multi-GB .mjpeg with no manifest, which the library
+        #: silently skips -- the clip simply vanished.
+        self.stop = threading.Event()
         self.lock = threading.Lock()
         self.busy = False
         self.log = []
@@ -86,7 +93,8 @@ class RecorderState:
             self.note("starting: %s" % json.dumps(kw))
             # ONE sink. Passing self.note as both log and progress printed
             # every line to the status pane twice.
-            res = RR.run_recording(root=self.root, log=self.note, **kw)
+            res = RR.run_recording(root=self.root, log=self.note,
+                                   stop_event=self.stop, **kw)
             self.last = res
             self.note("DONE: %s" % (res.get("summary") or "").replace("\n", " | "))
         except Exception as e:                              # noqa: BLE001
@@ -598,10 +606,34 @@ def main(argv=None):
     srv = QuietServer((a.bind, a.http_port), make_handler(state, a.root))
     print("recorder on http://%s:%d/  root=%s" % (a.bind, a.http_port, a.root),
           flush=True)
+
+    def shutdown(signum, frame):
+        # Ask an in-flight recording to END, then give it room to close the
+        # file and write its manifest. The recipe declares stop_grace = 45 for
+        # exactly this window; exiting immediately would strand a multi-GB clip
+        # with no manifest, and the library would silently not show it.
+        print("recorder: signal %d -- closing any recording in flight"
+              % signum, flush=True)
+        state.stop.set()
+        deadline = time.time() + 40
+        while state.busy and time.time() < deadline:
+            time.sleep(0.5)
+        if state.busy:
+            print("recorder: recording did not close within 40 s; exiting "
+                  "anyway -- check the last session for a missing manifest",
+                  flush=True)
+        else:
+            print("recorder: recording closed cleanly", flush=True)
+        srv.shutdown()
+
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("recorder: stopping", flush=True)
+        state.stop.set()
+    print("recorder: stopped", flush=True)
     return 0
 
 

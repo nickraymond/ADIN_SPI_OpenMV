@@ -272,6 +272,40 @@ class TestEncoderPick(unittest.TestCase):
             T._v4l2_encoder_present = real
 
 
+class TestNoCameraPath(unittest.TestCase):
+    """A missing camera must fail loudly and locally, not hang or crash.
+
+    This is not hypothetical: on 2026-09-08 the AE3 went off the USB bus
+    mid-session, and a recording asking for it had to still record the N6 and
+    say plainly what was missing.
+    """
+
+    def test_no_cameras_found_reports_and_records_nothing(self):
+        real = R.find_boards
+        R.find_boards = lambda roles=(), **kw: ({}, ["AE3 did not answer"], {})
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                res = RR.run_recording(root=d, cameras=["AE3"], log=lambda m: None)
+            self.assertFalse(res["ok"])
+            self.assertIn("no cameras found", res["summary"])
+            self.assertTrue(any("did not answer" in w for w in res["warnings"]))
+        finally:
+            R.find_boards = real
+
+    def test_a_wedged_board_is_a_warning_not_an_exception(self):
+        """The bounded probe reports; it must never raise into the caller."""
+        real = R.find_boards
+        R.find_boards = lambda roles=(), **kw: (
+            {}, ["/dev/x did not answer within 25 s -- the board may be wedged"],
+            {})
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                res = RR.run_recording(root=d, cameras=["N6"], log=lambda m: None)
+            self.assertIn("wedged", " ".join(res["warnings"]))
+        finally:
+            R.find_boards = real
+
+
 class TestPagesRender(unittest.TestCase):
     """The pages must actually build.
 

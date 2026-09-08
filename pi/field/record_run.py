@@ -90,7 +90,7 @@ def check_request(ceilings, role, framesize, quality, fps):
 
 def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
                   cameras=("N6", "AE3"), transcode=True, log=print,
-                  progress=None):
+                  progress=None, stop_event=None):
     ceilings = load_ceilings()
     result = {"ok": False, "errors": [], "warnings": [], "cameras": [],
               "summary": ""}
@@ -134,7 +134,12 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
 
     pace = R.pace_ms_for(fps)
     recorders, rings, writers, states = {}, {}, {}, {}
-    stop = threading.Event()
+    # Stopping a long recording must CLOSE it, not orphan it. The operator
+    # pressing Stop (or the workbench's SIGINT) sets this; the pumps return, the
+    # writers drain what is already queued, and the manifest is written and
+    # marked interrupted. Nick's dive case is "leave it recording, then stop",
+    # so the stop path is a normal ending, not an error path.
+    stop = stop_event if stop_event is not None else threading.Event()
 
     # -- open + start every board, in parallel so they overlap ---------------
     def bring_up(role):
@@ -259,6 +264,11 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
         session.manifest["cameras"].append(st)
 
     session.manifest["ring"] = {"mem_available_bytes": mem}
+    if stop.is_set():
+        session.manifest["interrupted"] = True
+        result["warnings"].append(
+            "stopped before the requested duration -- the clip holds what was "
+            "recorded up to that point, and its frame count says how much")
     session.save()
 
     lines = []
