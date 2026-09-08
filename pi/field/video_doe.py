@@ -297,6 +297,20 @@ def board_probe(port, size, quality, probe_ms=PROBE_MS, timeout=90):
 #: does not raise -- it wedges a board that then costs a settle window.
 HEAP_MARGIN = 0.45
 
+#: Shortest true-motion reference worth transcoding. Below roughly a second
+#: the H.264 ratio is dominated by the opening keyframe and stops meaning
+#: anything. 0.9 rather than 1.0 because the N6 at HD q90 -- the cell the
+#: firmware decision actually turns on -- fits 29 frames, i.e. 0.97 s, and a
+#: 1.0 s floor would silently skip exactly the measurement that matters.
+MIN_MOTION_REF_S = 0.9
+
+
+def buffered_frames(bytes_per_frame, free_heap, margin=HEAP_MARGIN):
+    """How many frames fit in RAM at once. 0 if we cannot know."""
+    if not free_heap or not bytes_per_frame:
+        return 0
+    return int((free_heap * margin) // bytes_per_frame)
+
 
 def buffer_fits(n_frames, bytes_per_frame, free_heap, margin=HEAP_MARGIN):
     """Can the whole clip sit in RAM? Base64 happens per frame, so this is raw."""
@@ -452,6 +466,22 @@ def imx_clip(width, height, fps, quality, out_path, seconds=CLIP_SECONDS,
 #: runs twice.
 H264_ENCODER = "h264_v4l2m2m"
 
+#: ...but the SIZE comparison cannot use it, and this was shipped wrong once.
+#:
+#: h264_v4l2m2m is bitrate-controlled only. Encoding every clip at a fixed
+#: -b:v 4M made every output ~2 MB regardless of input, so the reported
+#: "ratio" was measuring the bitrate I picked, not H.264's efficiency -- a
+#: bigger MJPEG simply scored a bigger ratio. Measured 2026-09-07: IMX VGA
+#: q90 "4.44x" and N6 VGA q90 "7.36x" were both artefacts of 4 Mbps x 5 s.
+#:
+#: A size comparison needs QUALITY-targeted encoding, so the encoder spends
+#: the bytes the content actually needs. Only libx264 offers that (-crf), so
+#: the ratio pass is software and slower (~33 s per 720p clip at veryfast).
+#: The hardware encoder still makes the VIEWING copy, where fixed-bitrate is
+#: exactly right.
+RATIO_ENCODER = "libx264"
+RATIO_CRF = 23              # the conventional "visually good" default
+
 
 def concat_jpegs(paths, out_path):
     """Board frames -> one MJPEG file, the same container the IMX writes."""
@@ -460,6 +490,18 @@ def concat_jpegs(paths, out_path):
             with open(p, "rb") as fh:
                 out.write(fh.read())
     return out_path
+
+
+def ratio_argv(src, dst, fps, crf=RATIO_CRF):
+    """Quality-targeted encode -- the only kind whose SIZE means anything.
+
+    The output bytes are chosen by the content at a fixed visual quality,
+    which is what "what would H.264 buy us" actually asks.
+    """
+    return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-r", "%g" % fps, "-f", "mjpeg", "-i", src,
+            "-c:v", RATIO_ENCODER, "-preset", "veryfast", "-crf", str(crf),
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst]
 
 
 def transcode_argv(src, dst, fps, encoder=H264_ENCODER, bitrate=None):
@@ -479,10 +521,12 @@ def transcode_argv(src, dst, fps, encoder=H264_ENCODER, bitrate=None):
 
 
 def transcode(src, dst, fps, encoder=H264_ENCODER, bitrate="4M",
-              runner=subprocess.run):
+              runner=subprocess.run, argv_fn=None):
     """Returns the H.264 size in bytes, or None. Never raises on a bad clip."""
+    argv = (argv_fn(src, dst, fps) if argv_fn
+            else transcode_argv(src, dst, fps, encoder, bitrate))
     try:
-        runner(transcode_argv(src, dst, fps, encoder, bitrate),
+        runner(argv,
                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
     except Exception:                                # noqa: BLE001
         return None
@@ -548,6 +592,7 @@ def clip_row(cam, res, quality, fps, ports, out_dir, imx_camera=0,
                 return row
             span_ms = seconds * 1000.0
             mode = "rpicam"
+            row["motion_true"] = True       # rpicam paces the sensor itself
         else:
             port = ports.get(cam)
             if not port:
@@ -556,6 +601,7 @@ def clip_row(cam, res, quality, fps, ports, out_dir, imx_camera=0,
             buffered = bool(probe) and buffer_fits(
                 int(round(fps * seconds)), probe.get("bytes_per_frame"),
                 probe.get("free_heap"))
+            row["motion_true"] = buffered
             frames_dir = os.path.join(out_dir, "_frames_" + label)
             os.makedirs(frames_dir, exist_ok=True)
             paths, stamps = board_clip(port, RESOLUTIONS[res]["board"], quality,
@@ -593,11 +639,61 @@ def clip_row(cam, res, quality, fps, ports, out_dir, imx_camera=0,
         "mjpeg": os.path.basename(mjpeg),
     })
     if do_transcode:
-        mp4 = os.path.join(out_dir, label + ".mp4")
-        h264 = transcode(mjpeg, mp4, fps)
+        mp4 = os.path.join(out_dir, label + ".mp4")        # viewing copy (hw)
+        transcode(mjpeg, mp4, fps)
+        row["mp4"] = os.path.basename(mp4) if os.path.exists(mp4) else None
+        # The number: quality-targeted, so the size is the content's, not ours.
+        crf_path = os.path.join(out_dir, label + "_crf.mp4")
+        h264 = transcode(mjpeg, crf_path, fps, argv_fn=ratio_argv)
         row["h264_bytes"] = h264
         row["h264_link_bps"] = link_bitrate_bps(h264) if h264 else None
-        row["mp4"] = os.path.basename(mp4) if h264 else None
+        row["h264_ratio"] = (total / float(h264)) if h264 else None
+        row["h264_mode"] = "libx264 crf%d" % RATIO_CRF
+
+    # A STREAMED clip is not a valid basis for an H.264 ratio. Its frames are
+    # spaced by the USB link, not by the requested rate, so consecutive frames
+    # share far less than they would at 30 fps -- H.264 then compresses it
+    # badly and UNDERSTATES its own benefit. That is the exact number the
+    # custom-firmware decision rests on, so where the viewable clip had to
+    # stream, record the longest TRUE-MOTION burst that fits in RAM and take
+    # the ratio from that instead.
+    if do_transcode and not row.get("motion_true") and probe and cam != "IMX708":
+        fit = buffered_frames(probe.get("bytes_per_frame"), probe.get("free_heap"))
+        ref_s = fit / float(fps) if fit else 0.0
+        if ref_s >= MIN_MOTION_REF_S:
+            ref_s = min(ref_s, seconds)
+            rlabel = label + "_ref"
+            rdir = os.path.join(out_dir, "_frames_" + rlabel)
+            os.makedirs(rdir, exist_ok=True)
+            try:
+                rpaths, _ = board_clip(ports[cam], RESOLUTIONS[res]["board"],
+                                       quality, fps, rdir, rlabel, ref_s, True)
+            except Exception as exc:                  # noqa: BLE001
+                rpaths = []
+                row["ref_error"] = str(exc)
+            if rpaths:
+                rsizes = [os.path.getsize(x) for x in rpaths]
+                rmj = os.path.join(out_dir, rlabel + ".mjpeg")
+                concat_jpegs(rpaths, rmj)
+                for x in rpaths:
+                    try:
+                        os.unlink(x)
+                    except OSError:
+                        pass
+                rmp4 = os.path.join(out_dir, rlabel + ".mp4")
+                transcode(rmj, rmp4, fps)                     # viewing copy
+                rh = transcode(rmj, os.path.join(out_dir, rlabel + "_crf.mp4"),
+                               fps, argv_fn=ratio_argv)
+                row["ref_seconds"] = round(ref_s, 2)
+                row["ref_frames"] = len(rsizes)
+                row["ref_mjpeg_bytes"] = sum(rsizes)
+                row["ref_h264_bytes"] = rh
+                row["ref_h264_ratio"] = (sum(rsizes) / float(rh)) if rh else None
+                row["ref_mp4"] = os.path.basename(rmp4) if rh else None
+            try:
+                os.rmdir(rdir)
+            except OSError:
+                pass
     return row
 
 
@@ -777,8 +873,15 @@ function tick(){
     if(!c.ok){h+='<div class="clip"><div class="cap"><b>'+c.label+'</b><br>'+(c.error||'failed')+'</div></div>';continue;}
     h+='<div class="clip">'+(c.mp4?'<video controls loop muted playsinline src="/v/'+c.mp4+'"></video>':'')
      +'<div class="cap"><b>'+c.camera+'  '+c.resolution+'  q'+c.quality+'  '+c.fps_target+' fps</b>'
-     +'<br>camera MJPEG <b>'+B(c.mjpeg_bytes)+'</b> → <b>'+R(c.link_bps)+'</b> hourly'
-     +'<br>Pi H.264 '+B(c.h264_bytes)+' → '+R(c.h264_link_bps)+' hourly'
+     +'<br><b>before</b> camera MJPEG <b>'+B(c.mjpeg_bytes)+'</b> → '+R(c.link_bps)+' hourly'
+     +'<br><b>after</b> Pi H.264 <b>'+B(c.h264_bytes)+'</b> → '+R(c.h264_link_bps)+' hourly'
+     +(c.h264_ratio?'<br>ratio <b>'+c.h264_ratio.toFixed(2)+'x</b>'
+        +(c.motion_true?' <span class="hit">(true motion)</span>'
+          :' <span class="miss">— NOT valid: clip streamed, frames are link-spaced</span>'):'')
+     +(c.ref_h264_ratio?'<br><span class="hit">true-motion ref '+c.ref_seconds+'s / '
+        +c.ref_frames+'f: '+B(c.ref_mjpeg_bytes)+' → '+B(c.ref_h264_bytes)
+        +' = <b>'+c.ref_h264_ratio.toFixed(2)+'x</b></span>'
+        +(c.ref_mp4?' <a href="/v/'+c.ref_mp4+'" style="color:#7dd3fc">ref clip</a>':''):'')
      +'<br>'+c.frames+' frames, actual '+c.fps_actual.toFixed(1)+' fps ('+c.mode+')'
      +' · <a href="/v/'+c.mjpeg+'" style="color:#7dd3fc">mjpeg</a></div></div>';
    }

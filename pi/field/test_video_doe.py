@@ -170,6 +170,55 @@ class TestImxProbeAsksHighEnough(unittest.TestCase):
                                 max(v.FPS_TARGETS) / v.FPS_TOLERANCE)
 
 
+class TestMotionReference(unittest.TestCase):
+    """A STREAMED clip cannot price H.264.
+
+    Its frames are spaced by the USB link, not the requested rate, so they
+    share far less than 33 ms apart would -- H.264 compresses it badly and
+    understates its own benefit. That is the number the custom-firmware
+    decision rests on, so it must come from a true-motion capture.
+    """
+
+    def test_floor_admits_the_n6_hd_q90_cell(self):
+        # 25.6 MB heap, 385 KB/frame -> 29 frames -> 0.97 s at 30 fps.
+        fit = v.buffered_frames(385 * 1024, 25607984)
+        self.assertGreaterEqual(fit / 30.0, v.MIN_MOTION_REF_S)
+
+    def test_buffered_frames_is_zero_without_a_reading(self):
+        self.assertEqual(v.buffered_frames(None, 100), 0)
+        self.assertEqual(v.buffered_frames(100, None), 0)
+
+    def test_page_marks_a_streamed_ratio_invalid(self):
+        self.assertIn("NOT valid: clip streamed", v.PAGE)
+
+    def test_page_shows_before_and_after(self):
+        self.assertIn("<b>before</b>", v.PAGE)
+        self.assertIn("<b>after</b>", v.PAGE)
+
+
+class TestRatioIsQualityTargeted(unittest.TestCase):
+    """The SIZE comparison must not be bitrate-controlled.
+
+    Shipped wrong once: every clip was encoded at -b:v 4M, so every output was
+    ~2 MB regardless of input and the "ratio" measured the bitrate I chose,
+    not H.264. A bigger MJPEG mechanically scored a bigger ratio -- N6 VGA q90
+    read 7.36x against the same cell's true 2.4x-class behaviour.
+    """
+
+    def test_ratio_encode_uses_crf_not_bitrate(self):
+        a = v.ratio_argv("/a.mjpeg", "/b.mp4", 30)
+        self.assertIn("-crf", a)
+        self.assertNotIn("-b:v", a)
+
+    def test_viewing_encode_may_still_use_bitrate(self):
+        a = v.transcode_argv("/a.mjpeg", "/b.mp4", 30, bitrate="4M")
+        self.assertIn("-b:v", a)
+
+    def test_ratio_encode_sets_input_framerate(self):
+        a = v.ratio_argv("/a.mjpeg", "/b.mp4", 30)
+        self.assertLess(a.index("-r"), a.index("-i"))
+
+
 class TestState(unittest.TestCase):
     def test_snapshot_is_json_serialisable(self):
         import json
