@@ -51,7 +51,14 @@ install -m 644 "$SRC" "/etc/systemd/system/$UNIT"
 systemctl daemon-reload
 
 if [ "$AUTOSTART" = "yes" ]; then
-  systemctl enable --now "$UNIT"
+  # enable --now STARTS a stopped unit but does NOT restart a running one, so
+  # re-running this after a git pull left the OLD code serving while printing
+  # OK. Measured 2026-09-08 on nereus000: the workbench kept a two-day-old
+  # process alive and reported 11 recipes when 15 were on disk. Enable, then
+  # restart unconditionally -- that is what "idempotent" has to mean when the
+  # point of re-running is to pick up new code.
+  systemctl enable "$UNIT"
+  systemctl restart "$UNIT"
   sleep 2
   systemctl --no-pager --lines=3 status "$UNIT" || {
     echo "!! $UNIT failed to start — journalctl -u $UNIT" >&2

@@ -41,6 +41,9 @@ quality = ["50", "75", "90"]
 # JPEG on that SoC, so colour costs a convert plus 3x the DCT work.
 # Affects the two OpenMV boards only; the IMX708 stays colour.
 colour = ["color", "mono"]
+# Rigs without a CSI camera (nereus000 is boards-only) set this off, so the
+# page shows two panels rather than a third that looks broken.
+csi = ["on", "off"]
 
 [run]
 argv = [

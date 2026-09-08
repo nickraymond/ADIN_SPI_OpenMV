@@ -48,6 +48,8 @@ role = "N6"
 qualities = ["40-50-60-70-80-90", "50-70-90", "60-75-90", "40-60-80"]
 resolutions = ["QVGA-VGA-HD", "VGA-HD", "QVGA-VGA", "HD"]
 probe-ms = ["3000", "2000", "5000"]
+# Which cameras to sweep. A rig with no CSI camera picks a board-only set.
+cameras = ["IMX708-N6-AE3", "N6-AE3", "IMX708-N6", "N6"]
 
 [run]
 argv = [

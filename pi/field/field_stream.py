@@ -430,6 +430,12 @@ def parse_args(argv=None):
                          "that refused the raw REPL (default: %(default)s)")
     ap.add_argument("--no-csi", action="store_true",
                     help="serial boards only (for a rig with no CSI camera)")
+    # The recipe param mechanism renders --<key> <value>, so a bare store_true
+    # cannot be a card toggle. nereus000 has no CSI camera at all (it is the
+    # HIL rig -- boards only), and a dead third panel there reads as a broken
+    # demo rather than an absent sensor.
+    ap.add_argument("--csi", choices=("on", "off"), default="on",
+                    help="include the CSI camera panel (default: %(default)s)")
     return ap.parse_args(argv)
 
 
@@ -450,7 +456,7 @@ def main(argv=None):
     views = build_views({}, args.csi_camera,
                         want={"fps": args.fps, "framesize": args.framesize,
                               "csi_w": csi_w, "csi_h": csi_h})
-    if args.no_csi:
+    if args.no_csi or args.csi == "off":
         views = [v for v in views if v.kind != "csi"]
     for v in views:
         if v.kind == "serial":
