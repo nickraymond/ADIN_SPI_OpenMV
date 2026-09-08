@@ -84,9 +84,15 @@ else
             || fail "could not fetch openmv/openmv PR #${PR}"
         UPSTREAM_REF="$(git -C "${OPENMV_DIR}" rev-parse FETCH_HEAD)"
     else
-        git -C "${OPENMV_DIR}" fetch --quiet --tags origin
-        git -C "${OPENMV_DIR}" rev-parse --verify --quiet "origin/${REV}" >/dev/null \
-            && UPSTREAM_REF="origin/${REV}" || UPSTREAM_REF="${REV}"
+        # Non-fatal: a rev that already resolves locally (e.g. rebuilding an
+        # exact sha for an A/B comparison) must not need the network.
+        git -C "${OPENMV_DIR}" fetch --quiet --tags origin \
+            || echo "WARN: fetch failed -- resolving '${REV}' from local objects"
+        if git -C "${OPENMV_DIR}" rev-parse --verify --quiet "origin/${REV}" >/dev/null; then
+            UPSTREAM_REF="origin/${REV}"
+        else
+            UPSTREAM_REF="${REV}"
+        fi
     fi
     git -C "${OPENMV_DIR}" checkout --quiet --detach "${UPSTREAM_REF}" \
         || fail "rev '${UPSTREAM_REF}' not found in openmv.git"
@@ -105,6 +111,14 @@ git -C "${OPENMV_DIR}" branch -D "${BUILD_BRANCH}" >/dev/null 2>&1 || true
 git -C "${OPENMV_DIR}" checkout --quiet -b "${BUILD_BRANCH}" "${UPSTREAM_SHA}"
 if git -C "${OPENMV_DIR}" apply --check "${SAFEDIR_PATCH}" >/dev/null 2>&1; then
     git -C "${OPENMV_DIR}" apply "${SAFEDIR_PATCH}"
+    # Pin the harness commit's dates to the upstream commit's, so the same
+    # upstream rev always yields the same build sha -- and therefore the same
+    # embedded version label and the same firmware.bin sha256. Without this a
+    # rebuild of identical inputs produces a different artifact every time,
+    # which makes the manifest useless for deciding "is this the image I
+    # verified?".
+    UPSTREAM_DATE=$(git -C "${OPENMV_DIR}" show -s --format=%cI "${UPSTREAM_SHA}")
+    GIT_AUTHOR_DATE="${UPSTREAM_DATE}" GIT_COMMITTER_DATE="${UPSTREAM_DATE}" \
     git -C "${OPENMV_DIR}" -c user.name="build_n6.sh" -c user.email="build@local" \
         commit --quiet -m "docker: allow git safe.directory in the dev container (build harness only)" \
         -- docker/Makefile
@@ -165,7 +179,14 @@ esac
 
 # Feature probe: does this image actually carry the H.264 binding? A build
 # that "succeeded" without it is the exact failure this repo keeps hitting.
-if strings "${BIN_DIR}/firmware.bin" | grep -q 'H264Encoder'; then
+# NOTE: `strings ... | grep -q` is WRONG under `set -o pipefail`. grep -q exits
+# on the first match and closes the pipe, strings dies of SIGPIPE (141), and
+# pipefail reports the pipeline as failed -- so a firmware that DOES contain
+# the codec gets recorded as "no". Measured 2026-09-07: the probe said no while
+# `strings ... | grep -c` said 1. grep -c reads to EOF, so it cannot SIGPIPE;
+# it exits 1 on zero matches, hence the `|| true`.
+H264_HITS=$(strings "${BIN_DIR}/firmware.bin" | grep -c 'H264Encoder' || true)
+if [ "${H264_HITS}" -gt 0 ]; then
     H264="yes"
 else
     H264="no"

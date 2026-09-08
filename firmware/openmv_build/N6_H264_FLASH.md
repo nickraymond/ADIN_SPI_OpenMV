@@ -31,14 +31,24 @@ Artifacts land in `~/openmv-dev/openmv-n6/build/OPENMV_N6/bin/` alongside
 | Check | Result |
 |---|---|
 | All 7 artifacts present and non-empty | yes — the same 7 filenames an official `firmware_OPENMV_N6.zip` carries |
-| `firmware.bin` size | 2,043,440 B vs the 2026-09-05 development release's 1,987,840 B — **+55,600 B**, consistent with upstream CI's reported +58,120 B of text for this PR against its own base |
-| `.text` | 2,035,472 B. Upstream CI reported +58,120 for the PR; 2,035,472 − 58,120 = **1,977,352**, the base's text. The delta reproduces exactly |
-| Feature probe | `strings firmware.bin \| grep H264Encoder` **hits**, along with `sps_pps`, `refresh_interval` and the encoder's `__str__` format. The binding is really in the image |
-| Self-reported label | `OpenMV v5.0.0-56.g5aa4755302; MicroPython cf80cce8a0` |
+| `firmware.bin` | **2,043,432 B**, sha256 `99fc71af73566fbf5a9f5dcea37f52609ec4c8214bad00ec00e13d6b73770c39` |
+| `.text` | 2,035,464 B — `FLASH_TEXT 55.68 %` of the N6's 3584 KB region, so the feature is nowhere near a flash wall |
+| Feature probe | `strings firmware.bin \| grep H264Encoder` **hits**, and the ELF carries `MP_QSTR_H264Encoder` and `py_codec.c`. The binding is really in the image |
+| Self-reported label | `v5.0.0-57.g9d67f849f2` — matches the manifest's `build_sha` |
+| **Reproducible** | re-running the build yields the **same** `build_sha` and the **same** `firmware.bin` sha256. The harness commit's dates are pinned to the upstream commit's so identical inputs give an identical artifact |
 
 A firmware that builds without the codec in it is exactly the failure mode
 this repo keeps meeting, so `build_n6.sh` records the probe result in the
 manifest as `codec.H264Encoder in image: yes|no`.
+
+**The probe lied once, and the way it lied is worth carrying.** Written as
+`strings … | grep -q`, it reported **no** on an image that provably contained
+the string. Under `set -o pipefail`, `grep -q` exits at the first match and
+closes the pipe, `strings` dies of SIGPIPE (141), and pipefail hands the
+pipeline that failure — so *finding* the feature was reported as *not finding*
+it. `grep -c` reads to EOF and cannot SIGPIPE. This is CLAUDE.md's
+"a pipeline returns the LAST command's status" trap wearing a different hat:
+here the verifier itself was the thing that needed verifying.
 
 ---
 
@@ -120,7 +130,7 @@ re-entered and rewritten.
 ```bash
 # 1. The board is running the image we built.
 mpremote connect <n6-by-id> exec 'import os; print(os.uname().version)'
-#    expect the manifest's openmv_label: OpenMV v5.0.0-56.g5aa4755302; MicroPython cf80cce8a0
+#    expect the manifest's openmv_label: v5.0.0-57.g9d67f849f2
 
 # 2. The binding exists and constructs.
 mpremote connect <n6-by-id> exec 'import codec; e = codec.H264Encoder(640, 480, fps=30, bitrate=1000000); print(e); print(len(e.sps_pps()))'

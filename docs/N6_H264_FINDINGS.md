@@ -116,11 +116,13 @@ bool jpeg_compress(image_t *src, image_t *dst, int quality, bool realloc, ...) {
 ```
 
 So the spec's **measured baseline of 68.6 fps VGA on the N6 is this
-encoder's JPEG mode**, and the AE3's 13.7 fps is software JPEG — the AE3's
-`board_config.h` declares `HAS_GPU, HAS_NPU, HAS_CRC, HAS_PMU, HAS_WIFI,
-HAS_BT, HAS_SD, HAS_ETH, HAS_USB_HS, HAS_MULTICORE` and neither `HAS_VENC`
-nor `HAS_JPEG`. **The N6's 5x JPEG advantage over the AE3 is already this
-block earning its keep.** H.264 is not a new accelerator to bring up; it is
+encoder's JPEG mode**, and the AE3's 13.7 fps is software JPEG. Two
+independent lines in the AE3's own board config say so:
+`OMV_JPEG_CODEC_ENABLE (0)` (`boards/OPENMV_AE3/board_config.h:51`), and a
+capability set of `HAS_GPU, HAS_NPU, HAS_CRC, HAS_PMU, HAS_WIFI, HAS_BT,
+HAS_SD, HAS_ETH, HAS_USB_HS, HAS_MULTICORE` — neither `HAS_VENC` nor
+`HAS_JPEG`. **The N6's 5.0x JPEG advantage over the AE3 (68.6 / 13.7) is
+already this block earning its keep.** H.264 is not a new accelerator to bring up; it is
 a second mode of one that is running in production on this bench today.
 
 ### 1.3 The bindings — true when written, false now
@@ -405,6 +407,22 @@ must not be flashed by this session.**
   AE3 dev clone. That clone carries this repo's in-flight AE3 patches
   (framebuffer, jpege), and an N6 build must not silently inherit them.
 - Artifacts, manifest and the flash procedure: `firmware/openmv_build/N6_H264_FLASH.md`.
+
+**Verified as an artifact, not as an exit code.** `firmware.bin` is
+2,043,432 B; `.text` is 2,035,464 B = **55.68 % of the N6's 3584 KB flash
+region**, so the feature is nowhere near a wall. The image really carries the
+binding (`strings` hits `H264Encoder`; the ELF carries `MP_QSTR_H264Encoder`
+and `py_codec.c`). And the build is **reproducible** — re-running it yields
+the same `build_sha` and the same `firmware.bin` sha256, because the build
+harness commit's dates are pinned to the upstream commit's.
+
+**The probe itself had to be debugged, and the bug is a repo classic.**
+Written as `strings … | grep -q`, it reported the codec *absent* from an image
+that provably contained it: under `set -o pipefail`, `grep -q` exits at the
+first match, `strings` dies of SIGPIPE, and pipefail reports the pipeline as
+failed. `grep -c` reads to EOF and cannot SIGPIPE. CLAUDE.md's
+"a pipeline returns the LAST command's status" trap, this time inside the
+verifier.
 
 ---
 
