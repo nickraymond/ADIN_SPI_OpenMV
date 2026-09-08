@@ -37,6 +37,7 @@ PR=""
 OPENMV_DIR="${HOME}/openmv-dev/openmv-n6"
 SDK_DIR=""
 INCREMENTAL=0
+EXTRA_PATCHES=()
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SAFEDIR_PATCH="${HERE}/../openmv_patches/0003-docker-makefile-git-safedir.patch"
 
@@ -47,6 +48,10 @@ while [ $# -gt 0 ]; do
         --openmv-dir)  OPENMV_DIR="$2"; shift 2 ;;
         --sdk-dir)     SDK_DIR="$2"; shift 2 ;;
         --incremental) INCREMENTAL=1; shift ;;
+        # Extra source patches, applied on the build branch after the harness
+        # patch. Repeatable, applied in the order given. Each one is a real
+        # commit, so `git describe` stays clean and the manifest names them.
+        --patch)       EXTRA_PATCHES+=("$2"); shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -126,6 +131,18 @@ if git -C "${OPENMV_DIR}" apply --check "${SAFEDIR_PATCH}" >/dev/null 2>&1; then
 else
     echo "== build-harness patch 0003 already present upstream -- skipped"
 fi
+for pf in "${EXTRA_PATCHES[@]+"${EXTRA_PATCHES[@]}"}"; do
+    [ -f "${pf}" ] || fail "patch not found: ${pf}"
+    git -C "${OPENMV_DIR}" apply --check "${pf}" \
+        || fail "patch does not apply to ${UPSTREAM_DESC}: ${pf}"
+    git -C "${OPENMV_DIR}" apply "${pf}"
+    GIT_AUTHOR_DATE="${UPSTREAM_DATE:-$(git -C "${OPENMV_DIR}" show -s --format=%cI HEAD)}" \
+    GIT_COMMITTER_DATE="${UPSTREAM_DATE:-$(git -C "${OPENMV_DIR}" show -s --format=%cI HEAD)}" \
+    git -C "${OPENMV_DIR}" -c user.name="build_n6.sh" -c user.email="build@local" \
+        commit --quiet -a -m "patch: $(basename "${pf}")"
+    echo "== applied $(basename "${pf}")"
+done
+
 git -C "${OPENMV_DIR}" submodule update --init --depth=50 --quiet
 
 GIT_DESC=$(git -C "${OPENMV_DIR}" describe --tags --always --dirty)
@@ -201,6 +218,9 @@ MANIFEST="${BIN_DIR}/MANIFEST.txt"
     echo "build_rev:    ${GIT_DESC}"
     echo "build_sha:    ${GIT_SHA10}"
     echo "harness:      0003-docker-makefile-git-safedir.patch (docker/Makefile only)"
+    for pf in "${EXTRA_PATCHES[@]+"${EXTRA_PATCHES[@]}"}"; do
+        echo "patch:        $(basename "${pf}")"
+    done
     [ -n "${OPENMV_LABEL}" ] && echo "openmv_label: ${OPENMV_LABEL}"
     echo "sdk:          ${WANT_SDK} linux-x86_64"
     echo "codec.H264Encoder in image: ${H264}"
