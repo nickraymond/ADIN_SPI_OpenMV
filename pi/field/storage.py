@@ -234,6 +234,20 @@ def enforce(root, ring_bytes=DEFAULT_RING_BYTES,
             else:
                 log("storage: FAILED to evict %s: %s" % (s["name"], e))
                 report["failed"].append({"name": s["name"], "err": str(e)})
+
+    # Report the store as it is NOW, not as it was before evicting. The plan's
+    # `used_bytes` is the pre-eviction total, and printing that after a
+    # successful eviction said "ring 2.83 / 2.50 GB used" immediately after
+    # freeing 0.95 GB -- a number that contradicted the action just taken.
+    if report["deleted"] and not dry_run:
+        freed = sum(s["bytes"] for s in victims
+                    if s["name"] in report["deleted"])
+        report["freed_bytes"] = freed
+        report["used_bytes"] = max(0, report["used_bytes"] - freed)
+        if ring_bytes:
+            report["used_pct"] = round(report["used_bytes"] / ring_bytes * 100.0, 2)
+    else:
+        report["freed_bytes"] = 0
     return report
 
 

@@ -99,6 +99,33 @@ redirected the sprint here because nereus002 is offline.
   N6 untouched) did not recover it. The skill's step 2 is a Pi reboot, which
   the session was not permitted to run; step 3 is a physical replug.
 
+**Later the same day — the AE3 came back, per-camera settings, and a bounded store:**
+- **Both cameras record together**, zero drops each: N6 136 frames at 27.1 fps
+  HD q70, AE3 12 at 2.29 fps. Per-camera settings shipped, because one global
+  framesize cannot serve boards where HD q70 gives 30.24 fps and 2.29 fps.
+  Defaults are Nick's picks: **N6 HD q70, AE3 VGA q50**.
+- **The AE3's VGA ladder PLATEAUS at ~13.8 fps**: 9.26 / 11.66 / 13.47 / 13.78
+  at q70 / q50 / q30 / q10. Below q30 the colour convert and DCT dominate rather
+  than entropy coding, so no quality setting buys more. Untried lever:
+  grayscale, skipped because of the unexplained grayscale-at-HD hang on that
+  board.
+- **Bounded recordings store shipped and PROVEN ON HARDWARE.** 4 x 5 min
+  two-camera recordings into a deliberately small 2.5 GB ring: every recording
+  **9,025-9,036 N6 frames at exactly 30.0 fps with zero drops and zero gaps**,
+  and the ring evicted the oldest session on cycles 3 and 4 (0.95 GB and
+  0.94 GB), holding steady at ~1.9 GB while the card never moved off 12.9%.
+  Recording forever cannot fill the card, which was the whole point.
+- **Correction to carry: `bm_cam_legacy` does NOT implement the ring.** Nick
+  expected it there; that repo has the SPEC (TODO-BM-008) and the reporting half
+  and says "Ring buffer is intentionally not implemented yet". His rules were
+  implemented here verbatim, reusing that repo's telemetry field names.
+- **Two bugs of my own, both caught by running it.** A SIGINT handler I added
+  called `srv.shutdown()` from the serve thread and deadlocked, so the process
+  ignored SIGINT *and* SIGTERM and the card landed in "stuck" holding a board;
+  and the eviction summary reported the PRE-eviction total, printing "ring
+  2.83 / 2.50 GB used" in the same breath as freeing 0.95 GB. Both fixed, both
+  now pinned by tests.
+
 **Next:** Nick replugs the AE3 (or reboots nereus000), then the two-camera leg
 and the AE3's own ceilings can be measured. Owed regardless: **nereus002's SD
 throughput and transcode cost are still unmeasured** — the Pi 5 numbers here do

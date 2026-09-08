@@ -427,6 +427,29 @@ class TestStorageRing(unittest.TestCase):
             self.assertNotIn("r1", os.listdir(d))
             self.assertIn("r3", os.listdir(d))       # newest survives
 
+    def test_reported_usage_matches_disk_after_eviction(self):
+        """The summary must describe the store AFTER the action, not before.
+
+        It did not: the plan's used_bytes is the pre-eviction total, so the
+        live test printed "ring 2.83 / 2.50 GB used" in the same breath as
+        having just freed 0.95 GB.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            self._store(d, ["r1", "r2", "r3"])
+            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0)
+            on_disk = sum(ST.dir_size_bytes(os.path.join(d, n))
+                          for n in os.listdir(d))
+            self.assertEqual(rep["used_bytes"], on_disk)
+            self.assertGreater(rep["freed_bytes"], 0)
+
+    def test_dry_run_reports_no_freed_bytes(self):
+        """A dry run frees nothing, so it must not claim to have."""
+        with tempfile.TemporaryDirectory() as d:
+            before = self._store(d, ["r1", "r2", "r3"])
+            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0, dry_run=True)
+            self.assertEqual(rep["freed_bytes"], 0)
+            self.assertEqual(rep["used_bytes"], sum(s["bytes"] for s in before))
+
     def test_nothing_outside_the_root_is_ever_deletable(self):
         with tempfile.TemporaryDirectory() as outer:
             root = os.path.join(outer, "recordings")
