@@ -10,14 +10,27 @@ concurrent session throughout.
 
 ## The recommendation
 
-> **Do not spin custom firmware, because the policy question does not
-> arise: H.264 on the N6 is an unmerged *upstream* OpenMV pull request
-> (#3247, written by OpenMV's own maintainer, milestoned v5.1.0, all CI
-> green) — and at Nick's stated one-5 s-clip-per-hour duty cycle the
-> entire MJPEG video budget is 4.68 kbps, so H.264 can return at most
-> 4.68 kbps and realistically ~3.5 kbps. Take the feature when v5.1.0
-> ships, and spend it on the 720p tier, where MJPEG's ~10.1 Mbps does not
-> fit the 8 Mbps T1L budget at all and H.264's ~2.5 Mbps does.**
+> **MEASURED ANSWER (2026-09-07, on the board): do not adopt, because at
+> HD and max quality — the cell Nick actually cares about — hardware
+> H.264 is only 1.44x smaller than MJPEG at matched quality, on a STATIC
+> scene that is H.264's best case, and at true max quality (MJPEG q100)
+> the saving falls to 1.01x and H.264 drops to 21.8 fps, below 30.**
+
+**And the release story is worse than this document first said. Corrected
+2026-09-07 after Nick asked directly:** there is **no v5.1.0**. No tag, no
+release, no due date. "v5.1.0" is a **milestone label** with 7 open PRs and
+0 closed — a maintainer's intent tag, not a schedule. PR #3247 is still a
+**DRAFT**, unchanged since 2026-08-22. It is **not merged to master**, so
+OpenMV's rolling `development` build does not carry it either (verified: a
+build of the PR's own base reports `codec.H264Encoder in image: no`).
+**Today the only way to get hardware H.264 on an N6 is a non-release
+firmware built from an unmerged draft PR** — which is what this
+investigation built and flashed. That does not dissolve Nick's
+custom-firmware policy the way the desk-only version of this document
+implied; it means the policy question is live, just with upstream code
+instead of ours.
+
+The duty-cycle arithmetic below is unchanged and still bounds the prize.
 
 **The duty-cycle crossover, as a number:** with the S29-anchored 4x
 ratio, saving even **100 kbps** sustained requires **143 s of video per

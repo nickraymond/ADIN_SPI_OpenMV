@@ -81,13 +81,13 @@ def build_script(plan):
     return src + "\n\nrun(%s)\n" % json.dumps(plan)
 
 
-def drive(port, plan, timeout):
+def drive(port, plan, timeout, mpremote="mpremote"):
     script = build_script(plan)
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tf:
         tf.write(script)
         path = tf.name
     try:
-        cmd = ["mpremote", "connect", port, "run", path]
+        cmd = [mpremote, "connect", port, "run", path]
         print("running: %s" % " ".join(cmd))
         # ONE attempt. Retrying against a board that refused the REPL is how
         # this bench wedges boards -- contact restarts the quiet-exit timer.
@@ -185,7 +185,12 @@ def main():
     ap.add_argument("--frames", type=int, default=DEFAULT_PLAN["frames"])
     ap.add_argument("--sizes", default=",".join(DEFAULT_PLAN["sizes"]))
     ap.add_argument("--timeout", type=int, default=900)
+    # Debian 13 is PEP 668, so the bench Pis keep mpremote in a venv at ~/mpv.
+    # Bare python3 cannot import it and --break-system-packages is not the fix.
+    ap.add_argument("--mpremote", default=os.environ.get("MPREMOTE", "mpremote"),
+                    help="path to mpremote (bench Pis: ~/mpv/bin/mpremote)")
     ap.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"))
+    ap.add_argument("--plan", help="JSON file overriding the default cell plan")
     args = ap.parse_args()
 
     if args.compare:
@@ -201,10 +206,14 @@ def main():
         preflight(args.workbench)
 
     plan = dict(DEFAULT_PLAN)
-    plan["frames"] = args.frames
-    plan["sizes"] = [s.strip() for s in args.sizes.split(",") if s.strip()]
+    if args.plan:
+        with open(args.plan) as f:
+            plan.update(json.load(f))
+    else:
+        plan["frames"] = args.frames
+        plan["sizes"] = [s.strip() for s in args.sizes.split(",") if s.strip()]
 
-    stdout = drive(args.port, plan, args.timeout)
+    stdout = drive(args.port, plan, args.timeout, args.mpremote)
     info, results, errors = parse(stdout)
 
     doc = {"port": args.port, "plan": plan, "info": info,

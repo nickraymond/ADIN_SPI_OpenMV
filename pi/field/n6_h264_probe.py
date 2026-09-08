@@ -95,6 +95,14 @@ def cell_h264(csi0, size, quality, frames, bitrate, keyframe_interval):
     total = len(enc.sps_pps())
     enc_us = 0
     keyframes = 0
+    # Split intra from inter. The first frame is an IDR, i.e. an intra-coded
+    # still at this resolution -- the closest thing H.264 has to a JPEG. It is
+    # the only honest way to quality-match the two codecs without a decoder:
+    # two intra frames of the same size at the same resolution are roughly the
+    # same quality, whereas nominal "q70" means nothing across codecs.
+    intra_bytes = 0
+    inter_bytes = 0
+    n_intra = 0
     t0 = time.ticks_us()
     try:
         for _ in range(frames):
@@ -103,14 +111,22 @@ def cell_h264(csi0, size, quality, frames, bitrate, keyframe_interval):
             e0 = ts
             au = enc.encode(img, timestamp_us=ts)
             enc_us += time.ticks_diff(time.ticks_us(), e0)
-            total += len(au)
+            n = len(au)
+            total += n
             if enc.keyframe():
                 keyframes += 1
+                intra_bytes += n
+                n_intra += 1
+            else:
+                inter_bytes += n
         wall_us = time.ticks_diff(time.ticks_us(), t0)
     finally:
         enc.deinit()
 
     res = _result("h264", size, w, h, quality, frames, total, enc_us, wall_us)
+    res["intra_bytes_mean"] = intra_bytes / n_intra if n_intra else 0
+    res["inter_bytes_mean"] = inter_bytes / (frames - n_intra) if frames > n_intra else 0
+    res["intra_frames"] = n_intra
     res["bitrate_target"] = None if quality is not None else bitrate
     res["keyframe_interval"] = keyframe_interval
     res["keyframes"] = keyframes
