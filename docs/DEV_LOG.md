@@ -17,6 +17,59 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-08 — S31 — two rigs, four boards: optics compared, old boards cleared
+
+**Branch:** `sprint/31-nereus000-boards`. Rigs: **nereus000** (NEW AE3+N6,
+Pi 5, no CSI camera) and **nereus002** (OLD AE3+N6).
+
+**Done:**
+- **Brought nereus000 current** — it was on an S28-era commit. Installed the
+  two missing stability units, restarted the workbench, verified both new
+  boards answer by role and stream at HD.
+- **Answered Nick's question: the old boards are NOT damaged.** He suspected
+  he had scratched a lens or bodged the focus, which would have invalidated
+  the whole S30 baseline. Rectified the printed reference card in all four
+  frames (homography off the card boundary, then ECC registration to align
+  content) and measured sharpness on identical geometry: **7% apart on the
+  AE3, 12% on the N6.** A scratched lens or lost focus is 2-5x. No localised
+  blur, no veiling haze, no asymmetry. **The S30 baseline stands.**
+- Toolkit shipped at `bench/optics/` with a README, plus 9 tests that skip
+  where numpy/cv2 are absent.
+
+**Broke/surprised us:**
+- **Discovery silently missed nereus000's N6.** It enumerates as `-if01`; the
+  glob was `*-if00`. Zero N6 found, no complaint — the exact hardware-swap
+  case the module exists to survive. Now deduped by resolved tty.
+- **`install_stream_service.sh` never restarted anything.** `enable --now`
+  starts a stopped unit but not a running one, so it printed OK while a
+  two-day-old workbench served 11 recipes with 15 on disk.
+- **`composite.board_burst` returns BLACK frames in a dim room** — it freezes
+  AE/AWB/gain (right for stacking, wrong for "what does this camera see"), and
+  the freeze lands before AE converges. Both artifacts were valid 28 kB JPEGs.
+  Textbook trust-the-artifact-not-the-exit-code.
+- **I published a confounded image and a teammate caught it.** The N6 frame in
+  my first cut sheet was captured while the S31 desk session had that board on
+  a draft H.264 firmware. Re-shot after rollback: noise 2.11 -> 2.09, chroma
+  3.86 -> 3.89. The confound was real and its effect measures as nil, which is
+  itself a useful negative result for that PR.
+- **Two of my own metrics were measuring the scene, not the camera.**
+  Vignetting read 1.07 old / 0.81 new, which looks like lens falloff; the
+  corners simply contained a bright door. Acutance tracks subject distance.
+  Both are now labelled untrustworthy on real scenes.
+- **The FS/HS descriptor is a NAME, not a speed.** nereus002's N6 says
+  "FS Mode" and negotiates **480 Mbps**, same as nereus000's "HS Mode" board.
+  A peer session was about to conclude a ~40x bandwidth gap and constrain the
+  H.264 design around it. `/sys/bus/usb/devices/*/speed` settles it.
+
+**Next:** the noise difference is still **not gain-normalised** — the new
+boards ran 15 dB (AE3) and 24 dB (N6) of gain, which manufactures exactly the
+noise seen, and reading gain off nereus002 returned silence with rc=0 three
+times. Both rigs side by side under bright light would settle whether the new
+sensors are worse or merely working harder. The N6's chroma-noise gap (2.6x)
+is the piece that gain alone does not obviously explain.
+
+---
+
 ## 2026-09-07 — S29 — field rig: endurance measured, usb-storage root-caused, bites 4-8 closed
 
 **Branch:** `sprint/29-fieldunit` (61 commits). Rig: **nereus002**.
