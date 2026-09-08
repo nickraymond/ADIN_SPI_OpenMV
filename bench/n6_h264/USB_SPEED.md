@@ -1,4 +1,23 @@
-# Why nereus002's N6 is in USB full speed — and how to change it
+# The N6's "FS Mode" descriptor is cosmetic — the link is high speed
+
+> **CORRECTED 2026-09-07 by measurement.** This document originally argued
+> that nereus002's N6 was running at USB full speed (12 Mbps) and that only
+> 8 Mbps H.264 would fit. **That was wrong.** The S30 session read
+> `/sys/bus/usb/devices/*/speed` on both rigs and got **480** for both, and I
+> then confirmed `wMaxPacketSize = 512` on the bulk endpoints — the
+> high-speed value, not FS's 64. Measured throughput is **19-20 MB/s**, and
+> **every encoding fits, MJPEG included.**
+>
+> The mistake: I inferred a hardware speed from a *product string*. That
+> string comes from `pdev->dev_speed` (`usbd_desc.c:115`) and does not track
+> what the link negotiated. A descriptor name is not a measurement.
+>
+> The source analysis below is still accurate about the *mechanism* — HS is
+> compiled in, `high_speed=` is a runtime switch — and remains useful if the
+> device stack ever does need forcing. But there is no bandwidth problem to
+> solve here. See `results/usb_throughput.json`.
+
+## Original analysis (mechanism, still correct)
 
 **Source-verified 2026-09-07 against the OpenMV tree at the PR #3247 base.
 No hardware was touched to establish any of this.**

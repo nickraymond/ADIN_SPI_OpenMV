@@ -1,0 +1,31 @@
+{
+  "what": "S31: how fast can frames leave the N6 for the Pi over USB? With no SD card fitted this decides whether 30 fps HD is deliverable at all.",
+  "board": "OpenMV N6 on nereus002, stock OpenMV v5.0.1 (rolled back)",
+  "host": "Raspberry Pi Zero 2 W, single DWC2 OTG port, unpowered Terminus hub, AE3 idle on the same hub",
+  "when": "2026-09-07",
+  "link": {
+    "sys_speed_mbps": 480,
+    "bulk_wMaxPacketSize": 512,
+    "note": "Both are the HIGH-SPEED values. The by-id descriptor says 'in FS Mode' but that string is cosmetic here -- it comes from pdev->dev_speed in usbd_desc.c:115 and does not track what the link negotiated. Confirmed independently by the S30 session on both rigs."
+  },
+  "measurements": [
+    {"method": "mpremote run -> stdout", "mb": 4,  "seconds": 272.47, "MBps": 0.01, "valid": false,
+     "why": "Measures mpremote's raw-REPL escaping, not the link. Off by ~2000x. Do not use."},
+    {"method": "pyserial direct off the CDC port", "mb": 8,  "seconds": 0.39, "MBps": 20.35, "valid": true},
+    {"method": "pyserial direct off the CDC port", "mb": 32, "seconds": 1.70, "MBps": 18.84, "valid": true},
+    {"method": "pyserial direct off the CDC port", "mb": 32, "seconds": 1.63, "MBps": 19.67, "valid": true}
+  ],
+  "sustained_MBps": "19-20 (150-160 Mbps)",
+  "verdict_hd_30fps": [
+    {"encoding": "MJPEG q90",             "needs_MBps": 12.21, "fits": true},
+    {"encoding": "H.264 quality-matched", "needs_MBps":  7.98, "fits": true},
+    {"encoding": "H.264 32 Mbps",         "needs_MBps":  3.87, "fits": true},
+    {"encoding": "H.264 16 Mbps",         "needs_MBps":  1.99, "fits": true},
+    {"encoding": "H.264 8 Mbps",          "needs_MBps":  1.03, "fits": true}
+  ],
+  "caveats": [
+    "Link only. The board sends a precomputed constant buffer -- no capture, no encode, no disk write on the Pi. It answers 'can the wire carry it', not 'does the pipeline sustain it'.",
+    "AE3 was idle. Both boards share one Zero 2 W OTG port through one hub, so a two-camera pipeline contends for this same 19-20 MB/s.",
+    "The S30 session measured this N6 streaming HD q90 at 3.6 fps = ~1.5 MB/s. That is ~13x below the link and is therefore the stream IMPLEMENTATION, not USB."
+  ]
+}
