@@ -1,0 +1,210 @@
+{
+ "name": "rec_20260908T212331",
+ "created": 1788902611.8241694,
+ "created_iso": "2026-09-08T21:23:31",
+ "host": "nereus000",
+ "settings": {
+  "framesize": "HD",
+  "quality": 85,
+  "fps_requested": 30.0,
+  "duration_s": 2700.0,
+  "cameras": [
+   "N6",
+   "AE3"
+  ],
+  "per_camera": {
+   "N6": {
+    "framesize": "HD",
+    "quality": 70
+   },
+   "AE3": {
+    "framesize": "VGA",
+    "quality": 50
+   }
+  }
+ },
+ "cameras": [
+  {
+   "label": "N6",
+   "port": "/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_10003500025043364d343000-if00",
+   "frames": 80870,
+   "bytes": 7163811681,
+   "wall_s": 2700.82,
+   "delivered_fps": 29.94,
+   "mb_per_s": 2.65,
+   "board_fps": 29,
+   "board_frames": 80870,
+   "seq_gaps": 0,
+   "resyncs": 0,
+   "banner": {
+    "board": "N6",
+    "w": 1280,
+    "h": 800,
+    "framesize": "HD",
+    "quality": 70,
+    "pixfmt": "RGB565",
+    "duration_s": 2700,
+    "pace_ms": 33,
+    "fw": "3.4.0; OpenMV v5.0.1; MicroPython v1.28.0-64",
+    "heap": 25600992
+   },
+   "trailer": {
+    "frames": 80870,
+    "bytes": 7163811681,
+    "wall_ms": 2700016,
+    "enc_ms_per_frame": 25,
+    "fps": 29,
+    "heap": 25600080
+   },
+   "error": "",
+   "ring_capacity_bytes": 25165824,
+   "ring_high_water_bytes": 2752548,
+   "ring_dropped_frames": 0,
+   "written_bytes": 7163811681,
+   "written_frames": 80870,
+   "max_write_stall_s": 1.057,
+   "start_offset_s": 0.0,
+   "mjpeg": "N6.mjpeg",
+   "capture_fps": 29.95,
+   "transcode": {
+    "encoder": "libx264",
+    "cmd": "ffmpeg -nostdin -v error -y -f mjpeg -framerate 29.9517 -i /home/pi/recordings/rec_20260908T212331/N6.mjpeg -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -threads 3 -movflags +faststart /home/pi/recordings/rec_20260908T212331/N6.mp4",
+    "rc": 0,
+    "wall_s": 535.69,
+    "stderr": "",
+    "ok": true,
+    "bytes": 969037223,
+    "probe": {
+     "codec_name": "h264",
+     "width": 1280,
+     "height": 800,
+     "pix_fmt": "yuvj420p",
+     "nb_frames": "80870",
+     "duration": "2699.963933",
+     "size": "969037223"
+    }
+   },
+   "mp4": "N6.mp4"
+  },
+  {
+   "label": "AE3",
+   "port": "/dev/serial/by-id/usb-OpenMV_OpenMV_Camera_08602ac000000000-if00",
+   "frames": 31741,
+   "bytes": 553601633,
+   "wall_s": 2700.76,
+   "delivered_fps": 11.75,
+   "mb_per_s": 0.2,
+   "board_fps": 11,
+   "board_frames": 31741,
+   "seq_gaps": 0,
+   "resyncs": 0,
+   "banner": {
+    "board": "AE3",
+    "w": 640,
+    "h": 400,
+    "framesize": "VGA",
+    "quality": 50,
+    "pixfmt": "RGB565",
+    "duration_s": 2700,
+    "pace_ms": 33,
+    "fw": "3.4.0; OpenMV v5.0.1; MicroPython v1.28.0-64",
+    "heap": 4085344
+   },
+   "trailer": {
+    "frames": 31741,
+    "bytes": 553601633,
+    "wall_ms": 2700076,
+    "enc_ms_per_frame": 72,
+    "fps": 11,
+    "heap": 4082448
+   },
+   "error": "",
+   "ring_capacity_bytes": 25165824,
+   "ring_high_water_bytes": 139211,
+   "ring_dropped_frames": 0,
+   "written_bytes": 553601633,
+   "written_frames": 31741,
+   "max_write_stall_s": 0.786,
+   "start_offset_s": 0.046,
+   "mjpeg": "AE3.mjpeg",
+   "capture_fps": 11.76,
+   "transcode": {
+    "encoder": "libx264",
+    "cmd": "ffmpeg -nostdin -v error -y -f mjpeg -framerate 11.7556 -i /home/pi/recordings/rec_20260908T212331/AE3.mjpeg -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -threads 3 -movflags +faststart /home/pi/recordings/rec_20260908T212331/AE3.mp4",
+    "rc": 0,
+    "wall_s": 86.12,
+    "stderr": "",
+    "ok": true,
+    "bytes": 271670047,
+    "probe": {
+     "codec_name": "h264",
+     "width": 640,
+     "height": 400,
+     "pix_fmt": "yuvj420p",
+     "nb_frames": "31727",
+     "duration": "2700.170213",
+     "size": "271670047"
+    }
+   },
+   "mp4": "AE3.mp4"
+  }
+ ],
+ "notes": [],
+ "ring": {
+  "mem_available_bytes": 7983972352
+ },
+ "storage": {
+  "before": {
+   "ring_bytes": 50000000000,
+   "used_bytes": 3319972704,
+   "used_pct": 6.64,
+   "sessions": 17,
+   "need_bytes": 7618015531,
+   "over_budget_bytes": 0,
+   "short_on_free_bytes": 0,
+   "must_free_bytes": 0,
+   "will_free_bytes": 0,
+   "victims": [],
+   "protected": [
+    "rec_20260908T184553",
+    "rec_20260908T185039"
+   ],
+   "shortfall_bytes": 0,
+   "sd_total_bytes": 123174105088,
+   "sd_used_bytes": 13963665408,
+   "sd_free_bytes": 104169091072,
+   "sd_used_pct": 11.34,
+   "dry_run": false,
+   "deleted": [],
+   "failed": [],
+   "when": "2026-09-08T21:23:31",
+   "freed_bytes": 0
+  },
+  "after": {
+   "ring_bytes": 50000000000,
+   "used_bytes": 12278093288,
+   "used_pct": 24.56,
+   "sessions": 18,
+   "need_bytes": 0,
+   "over_budget_bytes": 0,
+   "short_on_free_bytes": 0,
+   "must_free_bytes": 0,
+   "will_free_bytes": 0,
+   "victims": [],
+   "protected": [
+    "rec_20260908T185039",
+    "rec_20260908T212331"
+   ],
+   "shortfall_bytes": 0,
+   "sd_total_bytes": 123174105088,
+   "sd_used_bytes": 22921809920,
+   "sd_free_bytes": 95210946560,
+   "sd_used_pct": 18.61,
+   "dry_run": false,
+   "deleted": [],
+   "failed": [],
+   "when": "2026-09-08T22:18:57",
+   "freed_bytes": 0
+  }
+ }
+}

@@ -126,6 +126,24 @@ redirected the sprint here because nereus002 is offline.
   2.83 / 2.50 GB used" in the same breath as freeing 0.95 GB. Both fixed, both
   now pinned by tests.
 
+- **DIVE-LENGTH SOAK PASSED: 45 minutes continuous, both cameras, 50 GB ring.**
+  N6 **80,870 frames at 29.95 fps**, AE3 31,741 at 11.76, **zero frames lost in
+  flight and zero ring drops on either**, 7.7 GB written, both mp4s probing as
+  real H.264 of the full 2699.96 s. RAM ring peaked at 2.8 MB of 25 while
+  absorbing a 1.06 s card stall. **Board heap moved 912 bytes across 80,870
+  frames** -- no leak in the pump.
+- **The soak's real finding is thermal, and it is the TRANSCODE, not the
+  recording.** Recording held 52-70 C with no throttling at all; the 10 min
+  x264 pass ran 64.8-86.7 C and threw ACTIVE throttle bits (`0xe0006` then
+  `0xe0008` -- ARM capped, throttled, soft temp limit). That matters more in a
+  sealed housing with no airflow: capture has ~30 C of headroom, conversion has
+  none. Left as-is deliberately; the options (fewer threads, or do not transcode
+  in the field at all) are Nick's call and are written up in
+  `bench/s32_recorder/README.md`.
+- **Segmented 5 min clips cost 16 % of a dive**: the measured cycle is 358 s for
+  300 s of video, because the transcode blocks the next clip. Continuous
+  recording has no gap; a background transcode would recover it.
+
 **Next:** Nick replugs the AE3 (or reboots nereus000), then the two-camera leg
 and the AE3's own ceilings can be measured. Owed regardless: **nereus002's SD
 throughput and transcode cost are still unmeasured** — the Pi 5 numbers here do

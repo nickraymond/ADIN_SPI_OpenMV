@@ -169,6 +169,64 @@ in roughly 7 minutes.
 
 ---
 
+## The dive-length soak — 45 minutes continuous, both cameras, 50 GB ring
+
+"Leave it recording" is the field mode, so this is one unbroken clip rather
+than segments. Health sampled every 60 s: `results/dive_soak_samples.csv`.
+
+| | N6 (HD q70) | AE3 (VGA q50) |
+|---|---|---|
+| Frames | **80,870** | 31,741 |
+| Capture rate | **29.95 fps** | 11.76 fps |
+| Written | 7,163.8 MB | 553.6 MB |
+| **Frames lost in flight** | **0** | **0** |
+| **Ring drops** | **0** | **0** |
+| RAM ring high water | 2.8 MB of 25 | 0.1 MB of 25 |
+| Worst SD write stall | 1.06 s (absorbed) | 0.79 s (absorbed) |
+| Board free heap, start → end | 25,600,992 → 25,600,080 | 4,085,344 → 4,082,448 |
+
+Both mp4s probe as real H.264 of the full duration: N6 1280×800, 80,870
+frames, 2699.96 s; AE3 640×400, 2700.17 s. Store ended at 12.28 GB of the
+50 GB ring, card 18.6 % full, nothing evicted.
+
+**Board heap moved by 912 bytes across 80,870 frames.** There is no leak in
+the pump.
+
+### The soak's real finding: the TRANSCODE overheats the Pi, the recording does not
+
+| Phase | Duration | Temp min / mean / **max** | Throttling |
+|---|---|---|---|
+| Recording | 45 min | 52.1 / 55.2 / **70.3 °C** | **none** — only the old sticky bits |
+| Transcode | 10 min | 64.8 / 83.9 / **86.7 °C** | **ACTIVE** — `0xe0006` then `0xe0008` |
+
+`0x2` = ARM frequency capped now, `0x4` = throttled now, `0x8` = soft
+temperature limit now. So x264 on four A76 cores pushes a Pi 5 past its 80 °C
+soft limit and holds it at ~85 °C for the whole conversion, while capture
+itself is thermally trivial at a 55 °C mean.
+
+**This matters more for a dive than the numbers suggest**, because a sealed
+underwater housing has no airflow: the recording phase has ~30 °C of headroom
+and the transcode phase has none. Three options, and the choice is Nick's:
+
+1. **Leave it.** Throttling is protective, not damaging; the transcode just
+   runs slower. 45 min of HD converted in 8.9 min even while throttled.
+2. **Drop to `-threads 2`.** Lower peak temperature, roughly 50 % longer
+   conversion. One line in `transcode.py`.
+3. **Do not transcode in the field at all.** Record only — which is the cheap
+   phase — and convert later on shore, or on demand from the page. This suits
+   "leave it recording" best and keeps the housing cool.
+
+Nothing was changed on the strength of this: option 1 is still the default.
+
+### Segmented mode costs 16 % of the dive
+
+If recording in 5 min clips instead, the measured cycle is **358 s for 300 s of
+video** — the post-recording transcode blocks the next clip, so **84 % duty
+cycle, and a 45 min dive loses ~7.3 min**. Continuous recording has no such gap.
+Making the transcode a background job would recover it.
+
+---
+
 ## The H.264 question, answered against S31's stated trigger
 
 The S31 session set a trigger in advance: *if the SD card cannot sustain
