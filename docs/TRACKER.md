@@ -1,7 +1,25 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-08 later (**S32 — THE VIDEO RECORDER RUNS, AND THE
+*Last updated: 2026-09-08 night (**S33 OPENED — FIELD-READY, 72 HOURS TO A
+5-DAY BOAT TRIP.** 25 dives, and the value is the LOOP: record, review on the
+boat on an iPad, change the next dive. Nick cannot edit software in the field,
+so everything ships as pre-vetted workbench recipes. **Three decisions, risk in
+exactly one:** IMX708 to **H.264 at capture** (free — the Zero's hardware
+encoder is idle, no firmware change); **N6 to attempt H.264** via the unmerged
+draft PR #3247 with a 2-day burn-in and a **Thursday go/no-go against
+thresholds set in advance**; **AE3 carried as a passenger**, no further spend.
+The hardest threshold is **ZERO raw-REPL refusals** — that firmware drew 3
+where stock drew 0, and a board needing a power cycle costs a dive. **Order:
+firmware first (nereus002 is the dev rig), AP mode LAST** — Nick is borrowing
+proven AP code from nereus-vision-dev. **THE BIGGEST RISK IS NOT THE CODEC: there
+is no boat network.** Both rigs are clients of an SSID that will not exist at
+sea, and without AP mode the iPad cannot reach the Pi and the review loop
+simply does not happen. Also measured this session and load-bearing: **the WiFi
+wall is ~0.45 MB/s** off nereus002 (identical over HTTP, scp and raw ssh, so it
+is the link) — 6.27 GB of footage is ~3.9 hours to move, which is why review
+has to be H.264 on the rig rather than raw MJPEG on the Mac. Previous:*
+*2026-09-08 later (**S32 — THE VIDEO RECORDER RUNS, AND THE
 ANSWER IS "PICK TWO".** HD + q90 + 30 fps is NOT available on this hardware:
 measured end to end, **VGA q90 = 30.16 fps** and **HD q70 = 30.06**, while
 **HD q90 = 16.23** and HD q85 = 23.81 — every run with zero dropped frames and
@@ -3451,6 +3469,85 @@ is the route** · the rig's charger was out at handover (VBAT 3209 mV), and
 `power_cycle.py` refuses below 3200 mV.
 
 ---
+
+### S33 — Field-ready for the boat trip  `[ ]`  ← **NEXT, HARD DEADLINE (Nick 2026-09-08)**
+
+**The mission, in Nick's words:** a 5-day boat trip, a maximum of **25 dives**,
+and **72 hours to departure**. Every dive is a chance to learn something about
+how these cameras behave. The value is not the footage — it is the **loop**:
+record a dive, review it on the boat on an iPad, then change the next dive
+(lights, bottom-mount vs swimming transect, orientation). A rig that records
+perfectly but cannot be reviewed until he is home is worth almost nothing here.
+
+**Two consequences that set the whole design:**
+1. **He cannot edit software in the field.** Changes must be pre-vetted
+   **workbench recipes** he can pick between dives. That is the S25 card
+   pattern and it is the delivery vehicle for this sprint.
+2. **Video must be viewable on the boat.** Browsers will not play MJPEG, and
+   the measured WiFi wall (below) means moving raw MJPEG anywhere is hours.
+   So what he reviews has to be H.264 **already** by the time he surfaces.
+
+**Nick's three decisions (2026-09-08), and the risk sits in exactly one:**
+
+| Camera | Decision | Risk |
+|---|---|---|
+| **IMX708** | **H.264 at capture.** His reference sensor: "tells me if ANYthing out there was worth seeing." | **None.** The Zero 2 W's BCM2835 hardware encoder is present and idle (`/dev/video11`). No firmware change. |
+| **N6** | **Attempt H.264 now**, 2-day burn-in on two rigs, **Thursday night go/no-go**, else roll back to MJPEG. | **Real.** Needs the unmerged draft PR openmv/openmv#3247. |
+| **AE3** | Carry it, log what it does, **spend nothing more on it**. | n/a — deliberately a passenger. |
+
+**THE GO/NO-GO THRESHOLDS ARE SET NOW, NOT ON THURSDAY.** Deciding a marginal
+result against a threshold invented on the night is how a "maybe" becomes a
+"yes". All are readable from the burn-in logs:
+
+| Must pass | Threshold | Why this line |
+|---|---|---|
+| Board control | **ZERO** raw-REPL refusals across the whole burn-in | S31 drew **3** on this firmware where stock drew 0. A board needing a power cycle costs a dive. **This is the one to hold hardest.** |
+| Clip integrity | every clip decodes end to end; only the known first-IDR loss | S31: the first IDR after encoder construction is intermittently undecodable (~1 s of a 3 min clip = 0.5%) |
+| Delivered rate | **>= 24 fps** at HD with all three cameras running | MJPEG already gives 26.8 in that combination |
+| Size win | **>= 2x** smaller than MJPEG **on a MOVING scene** | S31's ratios are static-scene ceilings; quality-matched was only **1.5x** |
+| Rollback | byte-verified flash back to stock v5.0.1 **rehearsed at least once before the burn-in** | proven route exists (S31, DFU alt 1) |
+
+**Ordering — Nick's call. AP mode LAST**, because he is borrowing proven code
+from `nereus-vision-dev` (`device/docs/nereus_wlan0_ap_setup.md`, field-proven)
+rather than writing it, and he needs the time now to build the second rig.
+
+1. **Firmware first.** `nereus002` is the DEV RIG until a release candidate.
+2. IMX708 to H.264 at capture, with the codec as a card toggle.
+3. N6 flash on **ONE rig only**; the other stays MJPEG as the control.
+4. Burn-in both rigs against the table above.
+5. **AP mode last** (S29 bite 11) — borrowed, not built.
+
+**GAPS THAT WILL SINK THE MISSION IF UNCLOSED — flagged 2026-09-08:**
+- **There is no boat network.** Both rigs are WiFi clients of an SSID that will
+  not exist on the boat. Without AP mode the iPad cannot reach the Pi and the
+  entire review loop does not happen. Bigger risk than the codec.
+- **The recorder card is not on nereus002's workbench.** Today the server is
+  started by hand and does not survive a reboot. Point 1 above depends on it.
+- **nereus000 has no CSI camera**, so it cannot be an identical rig without a
+  second IMX708.
+
+**MEASURED, DO NOT RE-DERIVE** (this session, `bench/s32_recorder/README.md`):
+- **The WiFi wall: ~0.45 MB/s off nereus002** — identical across HTTP, scp and
+  raw ssh, so it is the LINK, not software (nereus000 manages 1.20). 6.27 GB of
+  15-minute three-camera footage is **~3.9 hours** to download. Nick's read:
+  the Pi is outside, the router inside.
+- **Three cameras record clean on a Zero 2 W**: 15 min, 61,555 frames, 6.27 GB,
+  **zero dropped frames on every camera**, 174-182 MB RAM free, load 2.31/4
+  cores, 38-50 C, `throttled` 0x0 throughout.
+- **Delivered rates depend on the COMBINATION**: N6 28.75 alone / 27.37 with
+  the IMX / **25.12 with both**. IMX 29.9 regardless (CSI, no USB contention).
+  AE3 11.5 regardless (its own software encoder binds first).
+- **Subsampling, measured**: N6 and IMX are already **4:2:0**, so H.264 costs
+  them no chroma resolution. Only the AE3 is 4:2:2.
+- **Conversion is the expensive step, not capture.** nereus002 hardware encoder:
+  5 min of HD in ~205-226 s at 52 C, no throttling. nereus000 software x264:
+  faster but 86.7 C and actively throttling.
+- Segment default is now **3 minutes** (Nick, after the transfer wall).
+
+**Demo (Nick):** on the boat, from an iPad: pick a recipe, dive, surface, open
+the page, watch what the IMX708 and N6 saw that dive, and change the next dive
+because of it.
+
 
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22

@@ -144,6 +144,43 @@ redirected the sprint here because nereus002 is offline.
   300 s of video, because the transcode blocks the next clip. Continuous
   recording has no gap; a background transcode would recover it.
 
+**Later still — the field rig came fully alive, and the mission reframed:**
+- **Nick moved the AE3 to a different USB port and it came back.** All three
+  cameras then recorded together on nereus002: 15 min, **61,555 frames, 6.27 GB,
+  ZERO dropped frames on every camera**, 174-182 MB RAM free, load 2.31 on four
+  cores, 38-50 C, `throttled` 0x0 throughout. The Zero 2 W is not the
+  constraint. A full power cycle had NOT recovered that board on the old port,
+  so the fault was the port or the cable, not the AE3.
+- **Ceilings are now per CAMERA COMBINATION**, because cameras contend: N6
+  28.75 fps alone / 27.37 with the IMX / **25.12 with both**. The IMX is
+  unaffected (CSI, no USB) and the AE3 is bound by its own software encoder.
+  The guard predicted 25.1 and the 15 min run delivered 26.8 -- wrong in the
+  safe direction.
+- **THE TRANSFER WALL, measured three ways: ~0.45 MB/s off nereus002** over
+  HTTP, scp AND raw ssh alike, so it is the WiFi link and not my file server
+  (nereus000 gets 1.20). 6.27 GB is ~3.9 hours. Nick's read: the Pi is outside,
+  the router inside. This is what makes on-rig H.264 necessary rather than
+  merely nice.
+- **Subsampling measured, correcting a concern I had raised speculatively**:
+  the N6 and IMX MJPEG are ALREADY 4:2:0, so moving them to H.264 costs no
+  chroma resolution. Only the AE3 is 4:2:2.
+- **A flicker bug of mine, and it was bad**: the status poll called
+  `location.reload()` whenever it found the recorder idle -- which is almost
+  always -- so the page reloaded every 1.2 s and was unusable on a tablet, the
+  exact device it is for. Now reloads only on the busy->idle edge.
+- Default segment is **3 minutes** (Nick, after the transfer wall): less to
+  lose if the rig is killed mid-dive, and a smaller unit to move.
+
+**Next: S33, field-ready, 72 hours to a 5-day boat trip.** Order is firmware
+first with nereus002 as the dev rig, AP mode last (borrowed from
+nereus-vision-dev). Go/no-go thresholds for the N6 H.264 gamble are set in
+advance in TRACKER S33 -- the hardest is ZERO raw-REPL refusals. **The biggest
+risk is not the codec: there is no boat network yet.**
+
+---
+
+## 2026-09-08 — S32 (earlier) — the video recorder: a fast pump, a recorder page, and "you cannot have all three"
+
 **Next:** Nick replugs the AE3 (or reboots nereus000), then the two-camera leg
 and the AE3's own ceilings can be measured. Owed regardless: **nereus002's SD
 throughput and transcode cost are still unmeasured** — the Pi 5 numbers here do
