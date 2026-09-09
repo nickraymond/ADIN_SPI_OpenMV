@@ -88,17 +88,22 @@ mkdir -p "$BACKUP"
 SAME=0; DIFF=0; DIFF_LIST=""
 
 check_one() {
-  local f="$1" kind="$2" tgt local_sha tgt_sha
+  local f="$1" kind="$2" local_sha tgt_sha
   [ -f "$f" ] || return 0
   mkdir -p "$BACKUP/$(dirname "$f")"
   cp -p "$f" "$BACKUP/$f"
   local_sha="$(sha256sum "$f" | cut -d' ' -f1)"
-  # rc captured explicitly: `git cat-file | sha256sum` would report the
-  # PIPELINE's status and mask a missing blob as success (CLAUDE.md rule 4).
-  if tgt="$(git cat-file blob "$TARGET:$f" 2>/dev/null)"; then
-    tgt_sha="$(printf '%s' "$tgt" | sha256sum | cut -d' ' -f1)"
-    # printf drops a trailing newline the blob may carry; compare sizes too.
-    if [ "$local_sha" = "$tgt_sha" ] || git diff --quiet "$TARGET" -- "$f" 2>/dev/null; then
+  # THE BLOB IS NEVER ROUTED THROUGH A SHELL VARIABLE. Written as
+  # `tgt="$(git cat-file blob ...)"`, command substitution strips every
+  # trailing newline and discards null bytes, so the hash was of something
+  # that was never on disk and NOTHING could ever compare equal: the first
+  # run of this script reported 15 files differing where 12 were provably
+  # byte-identical. CLAUDE.md trap 3 -- a comparison lying about a correct
+  # result -- with the comparison here being the thing that lied. Existence
+  # is checked separately so the pipeline's status means only what it says.
+  if git cat-file -e "$TARGET:$f" 2>/dev/null; then
+    tgt_sha="$(git cat-file blob "$TARGET:$f" | sha256sum | cut -d' ' -f1)"
+    if [ "$local_sha" = "$tgt_sha" ]; then
       SAME=$((SAME + 1)); return 0
     fi
     DIFF=$((DIFF + 1)); DIFF_LIST="$DIFF_LIST  $kind DIFFERS  $f"$'\n'
@@ -131,9 +136,27 @@ fi
 
 # ------------------------------------------------------------------ checkout
 say "== checking out $BRANCH =="
-# The untracked files are backed up above, so removing them is safe and is
-# what lets the checkout succeed rather than abort halfway.
-git ls-files --others --exclude-standard -z | xargs -0 -r rm -f
+# Remove ONLY the untracked files that the target actually tracks -- those are
+# the ones git would refuse to overwrite. An untracked file the target knows
+# nothing about is left exactly where it is.
+#
+# The first version of this line was `git ls-files --others | xargs rm -f`,
+# which deletes everything untracked. That is the same mistake this whole
+# script exists to prevent, one step further down: a rig-only artefact is
+# invisible to the target tree BY DEFINITION, so "the target does not track
+# it" is evidence to keep it, never a licence to delete it. Backed up is not
+# the same as safe.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if git cat-file -e "$TARGET:$f" 2>/dev/null; then rm -f "$f"; fi
+done < <(git ls-files --others --exclude-standard 2>/dev/null || true)
+
+# Tracked-but-modified files block the switch too ("local changes would be
+# overwritten"). They are in the backup and were listed above, so discard them
+# explicitly rather than reaching for `checkout -f`: this way the ONLY things
+# thrown away are the ones the report named.
+git checkout -- . 2>/dev/null || true
+
 git checkout -B "$BRANCH" "$TARGET" || die "checkout failed"
 git reset --hard "$TARGET" >/dev/null || die "reset failed"
 
@@ -152,9 +175,17 @@ NOW="$(git rev-parse HEAD)"; WANT="$(git rev-parse "$TARGET")"
 [ "$NOW" = "$WANT" ] || die "HEAD is $NOW, expected $WANT"
 say "   HEAD after:  $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
 
-DIRT="$(git status --porcelain | wc -l | tr -d ' ')"
-[ "$DIRT" = "0" ] || { git status --short; die "working tree is not clean ($DIRT entries)"; }
-say "   working tree: clean"
+# TRACKED files only. Untracked leftovers are not a failure -- they are the
+# rig-only artefacts the checkout step deliberately preserves -- but they are
+# reported, because an unnoticed one is how a measurement goes stale.
+DIRT="$(git status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
+[ "$DIRT" = "0" ] || { git status --short; die "tracked files are modified ($DIRT) -- the deploy did not take"; }
+say "   tracked files: clean"
+LEFT="$(git ls-files --others --exclude-standard | wc -l | tr -d ' ')"
+if [ "$LEFT" != "0" ]; then
+  say "   $LEFT untracked file(s) kept (not in $TARGET):"
+  git ls-files --others --exclude-standard | sed 's/^/     /'
+fi
 
 ON_DISK="$(find pi/workbench/recipes -maxdepth 1 -name '*.toml' | wc -l | tr -d ' ')"
 SERVED=""
