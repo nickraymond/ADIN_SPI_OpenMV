@@ -732,3 +732,84 @@ board cannot be recovered remotely.
 This supports an underwater test where I swim with the camera or leave
 it recording, so soak it at dive length before you tell me it works.
 ```
+
+## 19 — Ready to paste: S33 — field-ready for the boat trip (written 2026-09-08 night)
+
+```
+Run /agent-entry, then pick up S33 in docs/TRACKER.md — field-ready for the
+boat trip. Branch sprint/33-field-ready off main.
+
+THE MISSION IS THE SPEC. I have 72 hours, then a 5-day boat trip with a max of
+25 dives. Each dive is a chance to learn something about how these cameras
+behave. The value is not the footage, it is the LOOP: record a dive, review it
+on the boat on my iPad, then change the next dive — lights, bottom-mount vs
+swimming transect, orientation. A rig that records perfectly but cannot be
+reviewed until I am home is worth almost nothing to me.
+
+Two consequences that set everything:
+- I CANNOT edit software in the field. Changes ship as pre-vetted workbench
+  recipes I pick between dives. That is the S25 card pattern.
+- Video must be viewable on the boat. Browsers will not play MJPEG, and moving
+  raw MJPEG off the rig is hours (see the wall below). So it has to be H.264
+  already by the time I surface.
+
+MY THREE DECISIONS. The risk is in exactly one:
+1. IMX708 → H.264 AT CAPTURE. My reference sensor; it tells me if anything out
+   there was worth seeing. FREE — the Zero 2 W's hardware encoder is present
+   and idle at /dev/video11. No firmware change. Do this first.
+2. N6 → ATTEMPT H.264 via the unmerged draft PR openmv/openmv#3247. Two days of
+   burn-in on two rigs, then Thursday night we read the logs and decide. The
+   thresholds are ALREADY WRITTEN in TRACKER S33 — do not renegotiate them,
+   just measure against them. The hardest is ZERO raw-REPL refusals.
+3. AE3 → carry it, log what it does, SPEND NOTHING MORE ON IT. It is a
+   passenger, not a dependency.
+
+ORDER, and it is mine: firmware first, AP mode LAST. nereus002 is the DEV RIG
+until we have a release candidate. I am building the second rig now, so you
+work on firmware while I solder. AP mode is BORROWED not written — the proven
+recipe is in my nereus-vision-dev repo at
+device/docs/nereus_wlan0_ap_setup.md, field-tested, NetworkManager AP on
+10.42.0.1. Do not design one from scratch.
+
+READ FIRST AND DO NOT RE-DERIVE — docs/TRACKER.md S33 and
+bench/s32_recorder/README.md carry every number. The short version:
+- Three cameras record clean on a Zero 2 W: 15 min, 61,555 frames, 6.27 GB,
+  ZERO dropped frames, load 2.31/4 cores, 38-50 C, throttled 0x0.
+- THE WIFI WALL: ~0.45 MB/s off nereus002, identical over HTTP, scp and raw
+  ssh — it is the link, not software. 6.27 GB is ~3.9 hours. This is WHY
+  H.264-on-rig is required rather than nice.
+- Delivered rate depends on the CAMERA COMBINATION: N6 28.75 alone / 27.37
+  with the IMX / 25.12 with both. IMX 29.9 regardless. AE3 11.5 regardless.
+- N6 and IMX MJPEG are ALREADY 4:2:0, so H.264 costs them no chroma. The AE3
+  is 4:2:2.
+- Conversion is the expensive step, not capture: on the Zero's hardware encoder
+  5 min of HD takes ~205-226 s at 52 C with no throttling.
+- H.264 at MATCHED QUALITY is only 1.5x smaller, and S31's bigger ratios are
+  static-scene ceilings measured with a bitrate cap. Motion makes them worse.
+  Do not quote 4x at me.
+
+THINGS THAT WILL WASTE YOUR TIME IF YOU ASSUME THEM:
+- The recorder is NOT auto-transcoding any more, by my design: clips stay MJPEG
+  and I press Make playable on the ones I want. Do not "fix" that. Native
+  H.264 at capture is a different thing and is what point 1 is about.
+- mpremote lives in ~/mpv on the field rig (PEP 668). Launch via
+  pi/field/run_recorder.sh, never python3 directly.
+- A firmware flash CHANGES a board's by-id path. Find boards by ROLE.
+- nereus000 has NO CSI camera. It cannot be an identical rig without a second
+  IMX708.
+- The recorder card is not yet on nereus002's workbench — the server is started
+  by hand today and does not survive a reboot. Fix that early; my point about
+  recipes depends on it.
+
+BENCH RULES: one owner per port — check :8088/api/runner before any board
+contact and stop demos from the page; 35 s of port silence after any stream
+stops; boards by ROLE not by-id; never systemctl reboot the field rig, use
+pi/field/power_cycle.py; CHECK THE CHARGER IS IN before you start.
+
+If you flash the N6, rehearse the byte-verified rollback to stock v5.0.1 BEFORE
+the burn-in, not after it fails. Flash ONE rig only — the other stays MJPEG as
+the control.
+
+Nibble 1 = plan first, my gate before code. Short actionable replies.
+```
+
