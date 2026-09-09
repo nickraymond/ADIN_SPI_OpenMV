@@ -173,10 +173,11 @@ def dfu_present():
 
 
 def find_n6_port():
+    """By ROLE, never by_id -- a flash CHANGES the by-id path when the new
+    firmware reports a different UID length (S32, measured)."""
     import discover                                          # noqa: E402
-    found = discover.discover().get("found", {})
-    n6 = found.get("N6") or {}
-    return n6.get("port") or ""
+    found, _problems = discover.discover()      # returns a (found, problems) pair
+    return (found.get("N6") or {}).get("port") or ""
 
 
 def enter_dfu(mpremote, port, settle=5.0):
