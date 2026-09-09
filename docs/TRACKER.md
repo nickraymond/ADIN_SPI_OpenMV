@@ -3300,7 +3300,26 @@ PR firmware drew **three raw-REPL refusals** where stock drew zero.
 
 ---
 
-### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[~]`  ← **RUNNING on nereus000 (Nick moved it there 2026-09-08; nereus002 is offline)**
+### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[x]`  ← **MERGED 2026-09-08 (PR #82). Nick used it live all session — chose q70 from byte-exact frames, set the AE3 to VGA q50, specified the storage ring and the on-demand transcode, and drove the three-camera comparison. Succeeded by S33 (field-ready).**
+
+**Delivered, all measured on hardware:** a fast frame pump (board writes
+length-prefixed frames continuously; the Pi reads big chunks straight to disk),
+all three cameras recording to one session, a capped recordings store with
+oldest-first eviction, per-camera and per-combination measured ceilings, a
+recorder page with WiFi/CPU-temp/storage metrics, thumbnails, on-request
+background conversion, and a synced three-up comparison viewer. 90 host tests,
+green on a Pi 5 and a Pi Zero 2 W.
+
+**The headline answer to the sprint's own question:** HD + q90 + 30 fps is NOT
+available — HD at 30 fps needs q70, q90 at 30 fps needs VGA, and HD q90
+delivers 16.2. **Both original walls were firmware**, not hardware: the boards
+shipped on OpenMV v4.8.1 which encodes JPEG in software (165.9 ms/frame at HD
+q90 vs v5.0.1's 33.3; USB 9.13 MB/s vs 17.64). Flashed both to stock v5.0.1.
+
+**Longest proof:** 15 min, three cameras, 61,555 frames, 6.27 GB, **zero
+dropped frames on every camera** on a Pi Zero 2 W.
+
+*(original sprint definition below)*
 
 **BITE 0 ANSWERED, AND IT CHANGES THE ASK — `bench/s32_recorder/README.md`.**
 Measured end to end through the real recorder on nereus000 (Pi 5), 5 s clips,
