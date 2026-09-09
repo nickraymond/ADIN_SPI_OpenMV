@@ -16,6 +16,7 @@
 
 import http.client
 import json
+import io
 import os
 import shutil
 import signal
@@ -1124,6 +1125,82 @@ class TestShipsWith(unittest.TestCase):
         src = self.read(os.path.join(HERE, "workbench.py"))
         self.assertNotIn("signal.SIGKILL", src)
         self.assertNotIn("kill -9", src)
+
+
+class TestCardGroups(unittest.TestCase):
+    """S33: the menu is sectioned, and the sectioning must not be able to
+    hide a card. Sixteen flat cards is a page you scan rather than use, and
+    the device it has to work on is an iPad on a boat between dives."""
+
+    def test_a_valid_group_is_carried_through(self):
+        out, errs = errs_of(recipe(group="cameras"))
+        self.assertEqual(errs, [])
+        self.assertEqual(out["group"], "cameras")
+
+    def test_an_unknown_group_is_refused_not_silently_accepted(self):
+        """A free-form group would let one typo mint a section of one card and
+        split the menu -- fine on the page, discovered at sea."""
+        out, errs = errs_of(recipe(group="archived"))
+        self.assertTrue(errs)
+        self.assertIn("archived", errs[0])
+        self.assertIsNone(out)
+
+    def test_a_missing_group_lands_in_ungrouped_not_in_a_hidden_section(self):
+        out, errs = errs_of(recipe())
+        self.assertEqual(errs, [])
+        self.assertEqual(out["group"], workbench.UNGROUPED)
+        self.assertNotIn(workbench.UNGROUPED, workbench.GROUP_KEYS)
+
+    def test_guide_cards_can_be_grouped_too(self):
+        out, errs = errs_of({"name": "g", "title": "T", "group": "hil",
+                             "guide": "guides/x.html"})
+        self.assertEqual(errs, [])
+        self.assertEqual(out["group"], "hil")
+
+    def test_every_shipped_recipe_is_grouped(self):
+        """An ungrouped card renders in a section headed 'add a group =' --
+        loud by design, but it should never actually ship that way."""
+        recipes, problems = load_recipes(workbench.RECIPE_DIR)
+        self.assertEqual(problems, [])
+        ungrouped = [r["name"] for r in recipes
+                     if r["group"] == workbench.UNGROUPED]
+        self.assertEqual(ungrouped, [], "these recipes have no group =")
+
+    def test_every_shipped_card_lands_in_exactly_one_section(self):
+        """The page filters by group, so a card whose group is not a rendered
+        section would vanish from the menu entirely while still loading fine
+        -- the failure mode that is invisible from the server side."""
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        rendered = set(workbench.GROUP_KEYS) | {workbench.UNGROUPED}
+        for r in recipes:
+            self.assertIn(r["group"], rendered, r["name"])
+        self.assertEqual(
+            sum(1 for r in recipes if r["group"] in rendered), len(recipes))
+
+    def test_the_page_renders_the_same_sections_the_server_validates(self):
+        """workbench.html carries its own copy of the group list. If the two
+        drift, a group the server happily accepts is filtered into nothing by
+        the page and the card disappears."""
+        html = io.open(os.path.join(os.path.dirname(workbench.__file__),
+                                    "static", "workbench.html"),
+                       encoding="utf-8").read()
+        for key, label, _open in workbench.GROUPS:
+            self.assertIn('"%s"' % key, html, "page has no section for %r" % key)
+            self.assertIn(label, html, "page heading differs for %r" % key)
+        self.assertIn('"%s"' % workbench.UNGROUPED, html)
+
+    def test_the_field_camera_section_holds_the_mission_cards(self):
+        """Nick's call (S33): stills, live streams and record/playback are the
+        cards used between dives, so they are the ones that open."""
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        cams = {r["name"] for r in recipes if r["group"] == "cameras"}
+        for expected in ("field-streams", "video-record",
+                         "field-composite", "field-raw-composite"):
+            self.assertIn(expected, cams)
+        opens = {k: o for k, _l, o in workbench.GROUPS}
+        self.assertTrue(opens["cameras"], "field cameras must be open")
+        self.assertFalse(opens["hil"])
+        self.assertFalse(opens["archive"])
 
 
 if __name__ == "__main__":

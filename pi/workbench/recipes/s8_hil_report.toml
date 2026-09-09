@@ -6,6 +6,7 @@
 #   python3 pi/hil/hil_report.py ~/hil_runs/<vga_run> ~/hil_runs/<hd_run>
 
 name = "s8-hil-report"
+group = "hil"
 title = "S8 report card (urchin HIL)"
 summary = "The accuracy/cost report card from the latest closed-loop HIL runs: scorecard, recall vs pixels-on-target (the T2 money plot), energy per frame, and where each model looks. Regenerated per run by pi/hil/hil_report.py. From sprint S8 bite C."
 guide = "guides/s8-hil-report.html"

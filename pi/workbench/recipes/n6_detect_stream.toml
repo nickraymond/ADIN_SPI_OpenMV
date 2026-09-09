@@ -7,6 +7,7 @@
 # ball scene is the CORRECT artifact, not a broken run (S8 finding).
 
 name = "n6-detect-stream"
+group = "hil"
 title = "N6 detection stream"
 summary = "Single-board live view with the stock person detector (yolov8n_192 on Neural-ART). Zero detections on a non-person scene is correct — the ROM model is person-only. Useful as an N6 camera + NPU liveness check."
 opens = ":8090"

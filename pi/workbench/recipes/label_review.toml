@@ -9,6 +9,7 @@
 # refuses those combinations so a half-runnable recipe cannot exist.
 
 name = "label-review"
+group = "hil"
 title = "Label review (GUI on the Mac)"
 summary = "Correct the training-set boxes by hand and add classes -- the labeler runs on the Mac where the datasets live. This card opens the step-by-step chapter, with a live badge showing whether the labeler is up. From sprint S8 bite B3."
 guide = "guides/label-review.html"

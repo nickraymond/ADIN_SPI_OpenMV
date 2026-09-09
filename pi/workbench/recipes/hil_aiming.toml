@@ -7,6 +7,7 @@
 # (it exists precisely for the moments when the bench is half-assembled).
 
 name = "hil-aiming"
+group = "hil"
 title = "Camera aiming view (HIL framing)"
 summary = "Live view from both cameras with detection and blobs OFF — for aiming the cameras at the HIL screen. Pair with the calib pattern on the playback page. From sprint S8 bite E."
 opens = ":8090"

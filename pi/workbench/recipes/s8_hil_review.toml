@@ -15,6 +15,7 @@
 # noticeably slower than VGA -- that is the board, not a hang.
 
 name = "s8-hil-review"
+group = "hil"
 title = "HIL review — closed loop"
 summary = "One click: playback screen + closed-loop harness in review mode, both boards, 30 px GT floor. Pick the model (nano/tiny) and capture size (VGA/HD) on the card. Review detections + live accuracy at :8092 (Pause/Next/Auto/Abort, click a panel to enlarge); Stop scores what was collected and releases the ports. Artifacts under ~/hil_runs/. From sprint S8 bites E5+E6."
 opens = ":8092"

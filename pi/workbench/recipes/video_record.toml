@@ -24,6 +24,7 @@
 # rig broke that morning.
 
 name = "video-record"
+group = "cameras"
 title = "Video recorder — record, watch, download"
 summary = "Record a clip from the OpenMV boards straight to the Pi, then play it in the browser and download it. Set frame size, quality, fps and duration on the page; it shows each camera's measured limit and refuses an impossible request rather than silently dropping frames. Past recordings stay in a library with the settings that made them. From sprint S32."
 opens = ":8093"

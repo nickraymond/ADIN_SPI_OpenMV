@@ -17,6 +17,7 @@
 # radiance merge, demosaic/WB/gamma -- is the same shared code.
 
 name = "field-raw-composite"
+group = "cameras"
 title = "RAW composite — stack & HDR bracket"
 summary = "Raw capture on all three cameras: STACK averages N locked-exposure frames in linear space (~√N noise win), BRACKET merges -2/0/+2 EV into radiance for 16× dynamic range. Shows single vs stacked vs HDR for IMX708, AE3 and N6. From sprint S29 bite 7."
 opens = ":8095"

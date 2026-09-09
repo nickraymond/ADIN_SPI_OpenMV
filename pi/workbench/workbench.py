@@ -67,7 +67,32 @@ DISK_MIN_FREE_MB = 500
 # ---------------------------------------------------------------------------
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
-            "boards", "run", "health", "guide", "params"}
+            "boards", "run", "health", "guide", "params", "group"}
+
+#: The menu's sections, in display order: (key, heading, open-by-default).
+#:
+#: Sixteen flat cards is a page you scan, not a page you use, and the device
+#: it has to be usable on is an iPad on a boat between dives. So the cards the
+#: mission actually runs on are open, and everything else is one tap away but
+#: out of the way (Nick, S33).
+#:
+#: The vocabulary is CLOSED and validated. A free-form group string would let
+#: one typo -- "archive" vs "archived" -- silently mint a section of one card
+#: and split the menu, which is exactly the kind of failure that looks fine on
+#: the page and is only noticed at sea.
+GROUPS = [
+    ("cameras", "Field cameras", True),
+    ("hil", "HIL, screens & inference", False),
+    ("archive", "Archive & bench", False),
+]
+GROUP_KEYS = {g[0] for g in GROUPS}
+
+#: A recipe with no `group` is NOT quietly filed away. It renders in its own
+#: open section that names the omission, because a new card silently landing
+#: inside a collapsed group is indistinguishable from a card that failed to
+#: load -- and this repo has already paid for a workbench that served fewer
+#: recipes than were on disk without saying so (S31).
+UNGROUPED = "ungrouped"
 BOARD_KEYS = {"label", "by_id", "role", "firmware", "models"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd", "stop_grace"}
@@ -176,6 +201,11 @@ def validate_recipe(obj, source):
         errs.append("%s: thumbnail must look like thumbs/<file> (an image "
                     "shipped in the recipes dir)" % source)
 
+    group = _str(obj, "group", source, errs) or UNGROUPED
+    if group != UNGROUPED and group not in GROUP_KEYS:
+        errs.append("%s: group %r is not one of %s" % (
+            source, group, ", ".join(sorted(GROUP_KEYS))))
+
     services = obj.get("services", [])
     if (not isinstance(services, list)
             or not all(isinstance(s, str) and s.endswith(".service")
@@ -202,7 +232,7 @@ def validate_recipe(obj, source):
         return {"name": name, "title": title, "summary": summary,
                 "opens": None, "thumbnail": thumbnail, "services": [],
                 "boards": [], "run": None, "health": None, "params": {},
-                "guide": guide}, []
+                "guide": guide, "group": group}, []
 
     params = obj.get("params", {})
     if not isinstance(params, dict):
@@ -279,7 +309,7 @@ def validate_recipe(obj, source):
     return {"name": name, "title": title, "summary": summary, "opens": opens,
             "thumbnail": thumbnail, "services": services, "boards": boards,
             "run": run, "health": health, "guide": None,
-            "params": params}, []
+            "params": params, "group": group}, []
 
 
 def resolve_params(recipe, chosen):

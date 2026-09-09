@@ -12,6 +12,7 @@
 # reconciliation must compare against.
 
 name = "s8-two-colour-model"
+group = "archive"
 title = "Two-colour ball detector (custom ML)"
 summary = "Our own trained model counting pink vs purple balls on both NPUs (AE3 5.5 ms, N6 6.4 ms per inference), side by side with the classic-CV blob baseline it must beat. From sprint S8 bite B2."
 opens = ":8090"

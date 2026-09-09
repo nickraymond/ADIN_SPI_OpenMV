@@ -11,6 +11,7 @@
 # time (pi/field/discover.py) -- never in preflight, which opens no ports.
 
 name = "field-streams"
+group = "cameras"
 title = "Field rig — three camera streams"
 summary = "Live video from all three cameras side by side: IMX708, AE3 and N6, VGA class at 15 fps. Boards are found by asking them their role, so swapping in a new AE3 or N6 needs no edit here. From sprint S29 bite 1."
 opens = ":8090"

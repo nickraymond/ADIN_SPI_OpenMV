@@ -11,6 +11,7 @@
 # Boards are named by ROLE so a swap needs no edit here.
 
 name = "field-composite"
+group = "cameras"
 title = "Composite capture — stack & bracket"
 summary = "Multi-frame composites on all three cameras: STACK averages N frames at one locked exposure to cut noise (√N), BRACKET varies exposure for dynamic range. Shows single vs composite side by side with the measured noise ladder. From sprint S29 bite 6."
 opens = ":8094"

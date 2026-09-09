@@ -12,6 +12,7 @@
 # model deployments.
 
 name = "s8-hil-urchin"
+group = "hil"
 title = "Urchin HIL — Monterey playback"
 summary = "Fullscreen urchin footage (loop / stepped stills / calibration pattern) on :8091 for the two-board HIL matrix. Point both cameras at the screen; keys: f fullscreen, l loop, s step, c calib, arrows step. From sprint S8 bite E."
 opens = ":8091"

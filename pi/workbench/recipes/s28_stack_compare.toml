@@ -15,6 +15,7 @@
 # server (boards are released after capture, not held while serving).
 
 name = "s28-stack-compare"
+group = "archive"
 title = "S28 frame-stacking compare (AE3 + N6)"
 summary = "One click: capture a locked RGB565 burst from BOTH boards and show, per board, single vs mean/median/sigma-clip side by side, with the sqrt(N) noise ladder and a flicker check (is the light steady?). Aim both boards at the same static scene under constant light. Report at :8093; artifacts under ~/s28_runs/. From sprint S28 bite 2."
 opens = ":8093"

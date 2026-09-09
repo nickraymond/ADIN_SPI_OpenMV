@@ -7,6 +7,7 @@
 # Bite 3 uses: boards[].firmware (+ models, when a recipe ships any).
 
 name = "s8-two-colour-balls"
+group = "archive"
 title = "Two-colour ball comparison"
 summary = "Both cameras side by side counting pink vs purple balls (classic-CV blob baseline, tuned per board). Ground truth 11 pink / 10 purple converges at 10/7 with one ambiguous merge. From sprint S8."
 opens = ":8090"

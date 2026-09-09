@@ -21,6 +21,7 @@
 # Boards by ROLE, not by_id: this rig's AE3 and N6 get swapped.
 
 name = "video-doe"
+group = "archive"
 title = "Video DOE — rate, size & link budget"
 summary = "Sweeps every camera across QVGA/VGA/HD and six JPEG quality levels, measuring how fast each can capture+encode and what a frame costs. Reports bytes per 5s clip and the sustained bandwidth to send one per hour, then records watchable clips at each camera's fastest sustainable rate. From sprint S30."
 opens = ":8094"
