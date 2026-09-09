@@ -66,6 +66,29 @@ ALT_FIRMWARE = 1
 ALT_NEVER_WRITE = {0: "BOOTLOADER (the only thing that makes this recoverable)",
                    3: "ROMFS0 (a rig's custom models live here)"}
 
+#: The device's DFU transfer size, and the reason backups are trimmed.
+#:
+#: THE PARTITION READS BACK LONGER THAN IT CAN BE WRITTEN. An upload of alt 1
+#: returns 3,670,020 bytes; the partition is 3,670,016 (3584 KB = 896 blocks),
+#: and the last four bytes are a read artefact -- they come back as 00000000
+#: and are not part of any partition. Handing that file straight back to
+#: `dfu-util -D` fails at 96 % with "Cannot program memory due to received
+#: address that is out of range", which is a confusing way to be told your
+#: backup is four bytes too long. Measured on nereus002 (S33), and found by
+#: rehearsing the restore rather than by reading a datasheet.
+DFU_BLOCK = 4096
+
+
+def align_for_write(data, block=DFU_BLOCK):
+    """Trim a partition image to something the bootloader will accept.
+
+    Returns (aligned, dropped). `dropped` is surfaced rather than silently
+    discarded: if it is ever anything but zeros, the assumption above is wrong
+    and the caller needs to know before it writes.
+    """
+    n = (len(data) // block) * block
+    return data[:n], data[n:]
+
 
 def sha(b):
     return hashlib.sha256(b).hexdigest()
@@ -94,12 +117,29 @@ def verify_write(partition, image, baseline=None, whole=False):
     """
     out = {"image_bytes": len(image), "partition_bytes": len(partition)}
     if whole:
+        # The readback is up to DFU_BLOCK-1 bytes longer than anything that
+        # can be written (see DFU_BLOCK). Compare over the image, then require
+        # the excess to be the known artefact rather than waving it through.
         out["mode"] = "whole-partition"
-        out["head_ok"] = partition == image
-        out["head_sha"] = sha(partition)
-        out["rest_ok"] = True          # there is no "rest"
-        out["rest_note"] = "whole partition written; nothing outside it"
-        out["ok"] = out["head_ok"]
+        n = len(image)
+        out["head_ok"] = partition[:n] == image
+        out["head_sha"] = sha(partition[:n])
+        excess = partition[n:]
+        if not excess:
+            out["rest_ok"] = True
+            out["rest_note"] = "whole partition written; nothing outside it"
+        elif len(excess) < DFU_BLOCK and set(excess) <= {0x00}:
+            out["rest_ok"] = True
+            out["rest_note"] = ("%d trailing byte(s) past the writable "
+                                "partition, all zero -- the known read "
+                                "artefact" % len(excess))
+        else:
+            out["rest_ok"] = False
+            out["rest_note"] = ("%d byte(s) past the image and they are NOT "
+                                "the known zero artefact (%s...) -- the "
+                                "partition is larger than this write covered"
+                                % (len(excess), excess[:8].hex()))
+        out["ok"] = out["head_ok"] and out["rest_ok"]
         return out
 
     out["mode"] = "image-at-offset-0"
@@ -285,8 +325,22 @@ def main(argv=None):
         data, err = read_partition(out, a.alt)
         if data is None:
             sys.exit("n6_flash: %s" % err)
-        print("backed up %d bytes -> %s" % (len(data), out))
-        print("sha256: %s" % sha(data))
+        aligned, dropped = align_for_write(data)
+        if dropped and set(dropped) - {0x00}:
+            sys.exit("n6_flash: the partition read back %d bytes with a "
+                     "NON-ZERO %d-byte tail (%s) -- that is not the known read "
+                     "artefact, so this backup is not safe to restore blindly."
+                     % (len(data), len(dropped), dropped.hex()))
+        if dropped:
+            with open(out, "wb") as f:
+                f.write(aligned)
+            print("read %d bytes; stored %d (dropped %d zero byte(s) past the "
+                  "writable partition, so this file can be restored directly)"
+                  % (len(data), len(aligned), len(dropped)))
+        else:
+            print("backed up %d bytes -> %s" % (len(aligned), out))
+        print("file:   %s" % out)
+        print("sha256: %s" % sha(aligned))
         print("\nTHIS FILE IS THE ROLLBACK. Restore it with:")
         print("  python3 pi/field/n6_flash.py write --image %s --whole" % out)
         boot_out_of_dfu()
@@ -312,6 +366,12 @@ def main(argv=None):
     if a.expect_unchanged:
         with open(os.path.expanduser(a.expect_unchanged), "rb") as f:
             baseline = f.read()
+    if a.whole:
+        image, dropped = align_for_write(image)
+        if dropped:
+            print("NOTE: trimmed %d trailing byte(s) (%s) -- the bootloader "
+                  "refuses a write that runs past the partition."
+                  % (len(dropped), dropped.hex()))
     print("image: %s  %d bytes  sha256 %s"
           % (a.image, len(image), sha(image)))
     if baseline is None and not a.whole:

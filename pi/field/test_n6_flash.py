@@ -107,6 +107,49 @@ class VerifyWrite(unittest.TestCase):
         self.assertFalse(F.verify_write(bytes(bad), self.base, whole=True)["ok"])
 
 
+class ReadWriteSizeMismatch(unittest.TestCase):
+    """The partition reads back 4 bytes LONGER than it can be written, and
+    handing the backup straight back to dfu-util fails at 96 % with an
+    out-of-range error. Found by rehearsing the restore on nereus002, not by
+    reading a datasheet -- which is the entire argument for rehearsing it
+    before the flash rather than after one fails."""
+
+    def test_alignment_trims_to_a_whole_number_of_blocks(self):
+        aligned, dropped = F.align_for_write(b"\x00" * 3670020)
+        self.assertEqual(len(aligned), 3670016)
+        self.assertEqual(len(aligned) % F.DFU_BLOCK, 0)
+        self.assertEqual(len(dropped), 4)
+
+    def test_an_already_aligned_image_is_untouched(self):
+        data = b"\xAA" * (F.DFU_BLOCK * 3)
+        aligned, dropped = F.align_for_write(data)
+        self.assertEqual(aligned, data)
+        self.assertEqual(dropped, b"")
+
+    def test_whole_verify_accepts_the_known_zero_artefact(self):
+        image = b"\x5A" * (F.DFU_BLOCK * 4)
+        readback = image + b"\x00\x00\x00\x00"
+        f = F.verify_write(readback, image, whole=True)
+        self.assertTrue(f["ok"])
+        self.assertIn("artefact", f["rest_note"])
+
+    def test_whole_verify_REFUSES_a_non_zero_tail(self):
+        """If the tail is ever real data, the partition is bigger than the
+        write covered and the restore is incomplete. That must fail, not be
+        waved through as 'the usual four bytes'."""
+        image = b"\x5A" * (F.DFU_BLOCK * 4)
+        readback = image + b"\xDE\xAD\xBE\xEF"
+        f = F.verify_write(readback, image, whole=True)
+        self.assertFalse(f["ok"])
+        self.assertIn("NOT the known", f["rest_note"])
+
+    def test_whole_verify_still_catches_a_bad_body(self):
+        image = b"\x5A" * (F.DFU_BLOCK * 4)
+        bad = bytearray(image); bad[17] ^= 0xFF
+        f = F.verify_write(bytes(bad) + b"\x00" * 4, image, whole=True)
+        self.assertFalse(f["ok"])
+
+
 class SafetyRails(unittest.TestCase):
 
     def test_the_never_write_alts_are_named(self):
