@@ -83,6 +83,43 @@ stock `v5.0.0`. Free heap differs ~7.7× (N6 25,393,136 B vs AE3 3,281,488 B,
 both at VGA with yolov8n_192 loaded). Any cross-board comparison carries this
 in addition to the already-known model-binary confound — see S8 bite D.
 
+### Board identity on nereus000 after the S32 flash (verified live 2026-09-08)
+
+**Both boards were found on OpenMV v4.8.1 and were flashed to stock v5.0.1**
+(byte-verified read-back; the pre-flash FIRMWARE partition kept as an exact
+rollback). This is the state the rig is in now:
+
+| Role | `/dev/serial/by-id/…` | firmware |
+|---|---|---|
+| N6 | `usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_10003500025043364d343000-if00` | `OpenMV v5.0.1; MicroPython v1.28.0-64` |
+| AE3 | `usb-OpenMV_OpenMV_Camera_08602ac000000000-if00` | `OpenMV v5.0.1; MicroPython v1.28.0-64` |
+
+**THE N6's by-id PATH CHANGED WHEN IT WAS FLASHED** — from
+`…in_HS_Mode_0065345D3643-if01` to the entry above. v5.0.1 reports the full
+96-bit STM32 chip UID where v4.8.1 reported a shortened form, and the interface
+number moved from `-if01` to `-if00`. The board is the same silicon:
+`omv.board_id()` reads `0030344D3643500200350010`, which is the new serial
+reversed byte-for-byte. **No config may pin a by-id path** (D52); resolve by
+role via `pi/field/discover.py`.
+
+**What v4.8.1 cost, measured, because it explains any older number from this
+rig:** that firmware encodes JPEG in **software**. HD q90 took **165.9 ms/frame
+(6.0 fps)** against v5.0.1's **33.3 ms (29.3 fps)**, and the USB link measured
+**9.13 MB/s** against **17.64**. The signature is the scaling: v4.8.1 was
+*faster* at QVGA (7.9 vs 12.5 ms) and took 21x the time for 16x the pixels,
+while v5.0.1 takes 2.6x — software JPEG versus the VC8000 hardware block that
+D49 documents. **Any measurement taken on this rig before 2026-09-08 is a
+software-JPEG number.**
+
+**The JPEG quality knob is quantized on the VC8000**: at HD, q80 and q85 are
+byte-identical (195,368 B/frame) and so are q90 and q95 (423,200 B). Asking for
+q85 over q80 changes nothing.
+
+**AE3 STATE, 2026-09-08: OFF THE USB BUS.** It fails enumeration with
+`error -71` after refusing both raw and friendly REPL. Recovery per
+`ae3-usb-unstick`: a Pi reboot, else a physical replug. A host-controller
+rebind (`xhci-hcd.1`) did not restore it.
+
 ### Camera SENSOR and ISP: same sensor, different pipeline (verified live 2026-09-02, `print(csi.CSI())` on both)
 
 **Both boards run the SAME sensor — the PixArt PAG7936** (chip id `0x7936`,

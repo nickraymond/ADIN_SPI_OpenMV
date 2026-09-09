@@ -1,7 +1,43 @@
 # TRACKER.md — Sprint Ladder & Rules
 
 *The agent entry point. Newest state lives here.*
-*Last updated: 2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
+*Last updated: 2026-09-08 night (**S33 OPENED — FIELD-READY, 72 HOURS TO A
+5-DAY BOAT TRIP.** 25 dives, and the value is the LOOP: record, review on the
+boat on an iPad, change the next dive. Nick cannot edit software in the field,
+so everything ships as pre-vetted workbench recipes. **Three decisions, risk in
+exactly one:** IMX708 to **H.264 at capture** (free — the Zero's hardware
+encoder is idle, no firmware change); **N6 to attempt H.264** via the unmerged
+draft PR #3247 with a 2-day burn-in and a **Thursday go/no-go against
+thresholds set in advance**; **AE3 carried as a passenger**, no further spend.
+The hardest threshold is **ZERO raw-REPL refusals** — that firmware drew 3
+where stock drew 0, and a board needing a power cycle costs a dive. **Order:
+firmware first (nereus002 is the dev rig), AP mode LAST** — Nick is borrowing
+proven AP code from nereus-vision-dev. **THE BIGGEST RISK IS NOT THE CODEC: there
+is no boat network.** Both rigs are clients of an SSID that will not exist at
+sea, and without AP mode the iPad cannot reach the Pi and the review loop
+simply does not happen. Also measured this session and load-bearing: **the WiFi
+wall is ~0.45 MB/s** off nereus002 (identical over HTTP, scp and raw ssh, so it
+is the link) — 6.27 GB of footage is ~3.9 hours to move, which is why review
+has to be H.264 on the rig rather than raw MJPEG on the Mac. Previous:*
+*2026-09-08 later (**S32 — THE VIDEO RECORDER RUNS, AND THE
+ANSWER IS "PICK TWO".** HD + q90 + 30 fps is NOT available on this hardware:
+measured end to end, **VGA q90 = 30.16 fps** and **HD q70 = 30.06**, while
+**HD q90 = 16.23** and HD q85 = 23.81 — every run with zero dropped frames and
+zero sequence gaps. The pump works: board writes length-prefixed frames
+continuously, Pi reads big chunks to disk. **Both boards were found on OpenMV
+v4.8.1, which does JPEG in SOFTWARE** (HD q90 165.9 ms/frame vs v5.0.1's 33.3;
+USB 9.13 MB/s vs 17.64) — flashed both to stock v5.0.1, byte-verified, and
+BOTH walls lifted. **A flash CHANGES the by-id path** (v5.0.1 reports the full
+96-bit chip UID), so every `by_id`-pinned recipe on this rig broke; find boards
+by ROLE. Two measured constraints shaped the design: the SD card stalls up to
+**3.86 s even at 21% of its ceiling** (hence a RAM ring, sized from
+MemAvailable), and the board's USB write is serialized with its encode loop, so
+**delivered fps is far below the encoder ceiling** at high bitrates (HD q85:
+34.9 encoding, 23.8 delivered) — the card guards on delivered. **THE AE3 IS OFF
+THE BUS and needs a physical replug** (`error -71`; a de-authorize attempted as
+recovery is what took it off, and a host-controller rebind did not restore it).
+Evidence: `bench/s32_recorder/README.md`. Previous:*
+*2026-09-08 (**S31 — TWO RIGS NOW.** `nereus000` carries the
 NEW AE3+N6 (Pi 5, **no CSI camera**); `nereus002` carries the OLD pair plus
 the IMX708. **Nick's boards are cleared: the old AE3/N6 are NOT optically
 damaged** — rectified-card sharpness differs 7% (AE3) / 12% (N6) old-vs-new,
@@ -3264,7 +3300,100 @@ PR firmware drew **three raw-REPL refusals** where stock drew zero.
 
 ---
 
-### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[ ]`  ← **NEXT (Nick 2026-09-07 night)**
+### S32 — Video recorder: N6 → Pi at HD q90 30 fps, with a workbench card  `[~]`  ← **RUNNING on nereus000 (Nick moved it there 2026-09-08; nereus002 is offline)**
+
+**BITE 0 ANSWERED, AND IT CHANGES THE ASK — `bench/s32_recorder/README.md`.**
+Measured end to end through the real recorder on nereus000 (Pi 5), 5 s clips,
+**zero dropped frames and zero sequence gaps in every run**:
+
+| Setting | Delivered fps | Written per 5 s | vs the 30 fps ask |
+|---|---|---|---|
+| VGA q90 | **30.16** | 17.5 MB | meets it |
+| HD q70 | **30.06** | 11.5 MB | meets it |
+| HD q85 | 23.81 | 23.4 MB | 21% short |
+| HD q90 | **16.23** | 34.7 MB | 46% short |
+
+**So HD + q90 + 30 fps is not available: HD at 30 fps needs q70, q90 at 30 fps
+needs VGA.** Also measured: **q80 ≡ q85 and q90 ≡ q95 byte-for-byte** — the
+hardware encoder quantizes the quality knob, so q85 over q80 buys nothing.
+
+**The unblocking find was firmware, not hardware.** Both boards shipped on
+OpenMV **v4.8.1**, which encodes JPEG in **software**: HD q90 at 165.9 ms/frame
+against v5.0.1's 33.3, and a **9.13 MB/s** USB link against **17.64**. The
+shape convicted it (v4.8.1 was FASTER at QVGA and scaled 21x for 16x the
+pixels; v5.0.1 scaled 2.6x) — software JPEG vs the VC8000 block, D49. Both
+boards flashed to stock v5.0.1 with byte-verified read-back and an exact
+rollback kept. **Consequence for every recipe on this rig: a flash CHANGES the
+by-id path** (v5.0.1 reports the full 96-bit chip UID) — find boards by ROLE.
+
+**Two measured facts shaped the design, not preference:**
+- **The SD card stalls up to 3.86 s even at 21% of its sustained ceiling**
+  (paced at the recorder's own 14.5 MB/s, write p50 0.21 ms, three stalls over
+  a second). A recorder writing on the reader thread loses ~115 frames to one.
+  Hence a RAM ring, sized at run time from `MemAvailable` so a 512 MB Zero 2 W
+  is not asked for a Pi 5's ring.
+- **The board's USB write is serialized with its encode loop**, so delivered
+  fps sits far below the encoder ceiling at high bitrates (HD q85: 34.9
+  encoding, 23.8 delivered). The card guards on **delivered**; guarding on the
+  encoder number would promise 30 fps and hand back 24.
+
+**SOAKED AT DIVE LENGTH — 20 min continuous, HD q70: 36,291 frames at
+**30.24 fps sustained**, **zero frames lost in flight**, zero ring drops, zero
+resyncs, 2.715 GB. Ring peaked at 1.36 MB of 25 MB while absorbing a 0.6 s card
+stall; board heap flat. Transcode 186 s → 322 MB playable mp4. The x264 pass
+carried the Pi to 77.9 °C (soft limit 80, not throttling at the time), so
+`transcode.py` now leaves one core free.
+
+**Shipped:** `pi/field/{record_board,recorder,record_run,recorder_web,
+transcode,make_ceilings}.py` + 42 host tests + the `video-record` workbench
+card. The page carries the record form with a LIVE verdict against each
+camera's measured limit, the library of past recordings with the settings that
+produced them, both cameras side by side off ONE scrubber, file sizes,
+in-browser playback and download. Verified in a real browser.
+
+**STORAGE IS BOUNDED (Nick's ask 2026-09-08): the rig can only fill a capped
+recordings store, and the oldest sessions roll off, so video can never fill the
+card and corrupt the OS.** `pi/field/storage.py`. **Correction worth carrying:
+he expected this to already exist in `bm_cam_legacy` -- it does NOT.** That repo
+holds the SPEC (TODO-BM-008) and the reporting half (`collect_storage_health`)
+and states "Ring buffer is intentionally not implemented yet". His rules are
+implemented verbatim here (never touch the active run, never delete outside the
+store, oldest first, keep the newest N, minimum free-space floor, dry-run mode,
+telemetry on cleanup) and the telemetry field names match that repo's so the two
+rigs read alike. **TWO limits, because either alone leaves a hole:** the ring
+budget caps the recordings directory, and a free-space floor catches anything
+ELSE filling the card while the ring sits inside its quota. Room is made BEFORE
+a clip from a measured size estimate, and again afterwards with the new session
+marked active so it can never be evicted for itself. The card shows two meters,
+ring fullness and whole-card fullness. Operating value: **50 GB**, which at
+~0.85 GB per 5-minute two-camera session is ~59 sessions, so filling it by
+recording takes nearly 5 hours.
+
+**Per-camera settings (Nick 2026-09-08):** the N6 and AE3 no longer share one
+framesize, because HD q70 gives the N6 30.24 fps and the AE3 2.29. Defaults are
+**N6 HD q70** and **AE3 VGA q50**, both his picks against byte-exact frames.
+The AE3's VGA ladder is 9.26 / 11.66 / 13.47 / 13.78 fps at q70 / q50 / q30 /
+q10 and PLATEAUS at ~13.8 -- below q30 the colour convert and DCT dominate, not
+entropy coding, so no quality setting buys more. **The one untried lever for the
+AE3 is grayscale** (no colour convert, a third of the DCT work); not tested
+because this repo records an unexplained grayscale-at-HD hang on that board.
+
+**BLOCKED, NEEDS NICK'S HANDS: the AE3 is off the USB bus** (`error -71`,
+enumeration fails). It first refused the REPL after its ceiling sweep hit a
+900 s mpremote timeout; **a USB de-authorize attempted as recovery is what took
+it off the bus entirely**, and rebinding its host controller (`xhci-hcd.1`,
+N6 untouched) did not restore it. `ae3-usb-unstick` step 2 is a Pi reboot
+(not permitted to this session), step 3 is a physical replug. Until then the
+two-camera leg and the AE3's own ceilings are unmeasured, and the card
+declares only the N6 (the workbench refuses to start a recipe whose declared
+board is absent).
+
+**STILL OWED, and it does not transfer:** nereus002 is a **Pi Zero 2 W** and is
+the actual field host. Its **SD throughput and transcode cost are unmeasured** —
+the Pi 5 numbers above do NOT carry over, and unlike the Pi 5 it *does* have a
+hardware H.264 encoder, which `transcode.py` will select automatically.
+
+*(original sprint definition below)*
 
 *The streaming app, but recording. Opened straight off S31's measurements —
 every number below is measured, do not re-derive them.*
@@ -3366,10 +3495,119 @@ is the route** · the rig's charger was out at handover (VBAT 3209 mV), and
 
 ---
 
+### S33 — Field-ready for the boat trip  `[ ]`  ← **NEXT, HARD DEADLINE (Nick 2026-09-08)**
+
+**The mission, in Nick's words:** a 5-day boat trip, a maximum of **25 dives**,
+and **72 hours to departure**. Every dive is a chance to learn something about
+how these cameras behave. The value is not the footage — it is the **loop**:
+record a dive, review it on the boat on an iPad, then change the next dive
+(lights, bottom-mount vs swimming transect, orientation). A rig that records
+perfectly but cannot be reviewed until he is home is worth almost nothing here.
+
+**Two consequences that set the whole design:**
+1. **He cannot edit software in the field.** Changes must be pre-vetted
+   **workbench recipes** he can pick between dives. That is the S25 card
+   pattern and it is the delivery vehicle for this sprint.
+2. **Video must be viewable on the boat.** Browsers will not play MJPEG, and
+   the measured WiFi wall (below) means moving raw MJPEG anywhere is hours.
+   So what he reviews has to be H.264 **already** by the time he surfaces.
+
+**Nick's three decisions (2026-09-08), and the risk sits in exactly one:**
+
+| Camera | Decision | Risk |
+|---|---|---|
+| **IMX708** | **H.264 at capture.** His reference sensor: "tells me if ANYthing out there was worth seeing." | **None.** The Zero 2 W's BCM2835 hardware encoder is present and idle (`/dev/video11`). No firmware change. |
+| **N6** | **Attempt H.264 now**, 2-day burn-in on two rigs, **Thursday night go/no-go**, else roll back to MJPEG. | **Real.** Needs the unmerged draft PR openmv/openmv#3247. |
+| **AE3** | Carry it, log what it does, **spend nothing more on it**. | n/a — deliberately a passenger. |
+
+**THE GO/NO-GO THRESHOLDS ARE SET NOW, NOT ON THURSDAY.** Deciding a marginal
+result against a threshold invented on the night is how a "maybe" becomes a
+"yes". All are readable from the burn-in logs:
+
+| Must pass | Threshold | Why this line |
+|---|---|---|
+| Board control | **ZERO** raw-REPL refusals across the whole burn-in | S31 drew **3** on this firmware where stock drew 0. A board needing a power cycle costs a dive. **This is the one to hold hardest.** |
+| Clip integrity | every clip decodes end to end; only the known first-IDR loss | S31: the first IDR after encoder construction is intermittently undecodable (~1 s of a 3 min clip = 0.5%) |
+| Delivered rate | **>= 24 fps** at HD with all three cameras running | MJPEG already gives 26.8 in that combination |
+| Size win | **>= 2x** smaller than MJPEG **on a MOVING scene** | S31's ratios are static-scene ceilings; quality-matched was only **1.5x** |
+| Rollback | byte-verified flash back to stock v5.0.1 **rehearsed at least once before the burn-in** | proven route exists (S31, DFU alt 1) |
+
+**Ordering — Nick's call. AP mode LAST**, because he is borrowing proven code
+from `nereus-vision-dev` (`device/docs/nereus_wlan0_ap_setup.md`, field-proven)
+rather than writing it, and he needs the time now to build the second rig.
+
+1. **Firmware first.** `nereus002` is the DEV RIG until a release candidate.
+2. IMX708 to H.264 at capture, with the codec as a card toggle.
+3. N6 flash on **ONE rig only**; the other stays MJPEG as the control.
+4. Burn-in both rigs against the table above.
+5. **AP mode last** (S29 bite 11) — borrowed, not built.
+
+**GAPS THAT WILL SINK THE MISSION IF UNCLOSED — flagged 2026-09-08:**
+- **There is no boat network.** Both rigs are WiFi clients of an SSID that will
+  not exist on the boat. Without AP mode the iPad cannot reach the Pi and the
+  entire review loop does not happen. Bigger risk than the codec.
+- **The recorder card is not on nereus002's workbench.** Today the server is
+  started by hand and does not survive a reboot. Point 1 above depends on it.
+- **nereus000 has no CSI camera**, so it cannot be an identical rig without a
+  second IMX708.
+
+**MEASURED, DO NOT RE-DERIVE** (this session, `bench/s32_recorder/README.md`):
+- **The WiFi wall: ~0.45 MB/s off nereus002** — identical across HTTP, scp and
+  raw ssh, so it is the LINK, not software (nereus000 manages 1.20). 6.27 GB of
+  15-minute three-camera footage is **~3.9 hours** to download. Nick's read:
+  the Pi is outside, the router inside.
+- **Three cameras record clean on a Zero 2 W**: 15 min, 61,555 frames, 6.27 GB,
+  **zero dropped frames on every camera**, 174-182 MB RAM free, load 2.31/4
+  cores, 38-50 C, `throttled` 0x0 throughout.
+- **Delivered rates depend on the COMBINATION**: N6 28.75 alone / 27.37 with
+  the IMX / **25.12 with both**. IMX 29.9 regardless (CSI, no USB contention).
+  AE3 11.5 regardless (its own software encoder binds first).
+- **Subsampling, measured**: N6 and IMX are already **4:2:0**, so H.264 costs
+  them no chroma resolution. Only the AE3 is 4:2:2.
+- **Conversion is the expensive step, not capture.** nereus002 hardware encoder:
+  5 min of HD in ~205-226 s at 52 C, no throttling. nereus000 software x264:
+  faster but 86.7 C and actively throttling.
+- Segment default is now **3 minutes** (Nick, after the transfer wall).
+
+**Demo (Nick):** on the boat, from an iPad: pick a recipe, dive, surface, open
+the page, watch what the IMX708 and N6 saw that dive, and change the next dive
+because of it.
+
+
 ## Flagged, not owned by any bite yet
 *(Was "Flagged during S19" — retitled 2026-08-20 when S19 died and S22
 closed; each item now names its own origin. Nothing here is owned by a
 live bite, and nothing here should be assumed benign because it is old.)*
+
+- **H.264 ON THE N6 — Nick's call, re-raised 2026-09-08 by S31 against a
+  trigger it set in advance, and the trigger did NOT fire.** S31's rule was
+  "if the SD card cannot sustain 10.4 MB/s, pivot from MJPEG to H.264".
+  **Measured on nereus000: it can, with ~5x to spare** (68.7 MB/s direct;
+  held 14.5 MB/s exactly when paced; a 20-min soak at 2.26 MB/s with zero
+  drops and the ring under 6%). **So nothing forces a pivot, and MJPEG on
+  stock firmware stays the route.**
+  **But the recommendation survives on a different constraint, which is the
+  one S32 actually found:** the board writes each frame over USB from inside
+  the loop that encodes it, so cost scales with FRAME SIZE. That is precisely
+  what H.264 attacks:
+
+  | HD, 30 fps target | B/frame | Delivered |
+  |---|---|---|
+  | MJPEG q90 | 423,200 | **16.2 fps** (measured) |
+  | MJPEG q70 | 117,564 | **30.2 fps** (measured) |
+  | H.264 16 Mbps | 69,636 (S31) | unmeasured; encoder does 51 fps |
+
+  **The decision is therefore narrow and it is Nick's:** MJPEG reaches HD at
+  30 fps only at q70. H.264 could plausibly hold HD 30 fps at much better
+  compression, but only by accepting a **bitrate target instead of a quality
+  number** — quality-matched H.264 is just 1.5x and gives the advantage back.
+  Costs, from S31: unmerged draft PR firmware (there is no v5.1.0 release),
+  an intermittently undecodable first IDR (~the first second of a clip), and
+  three raw-REPL refusals where stock drew zero.
+  **A pivot costs ~30 lines here and no rework** — the wire format is
+  encoding-agnostic; only the board's `to_jpeg()`, the parser's SOI check and
+  ffmpeg's `-f mjpeg` name JPEG. Detail + S31's muxing/timestamp warnings:
+  `bench/s32_recorder/README.md` §"The H.264 question".
 
 - **THE 720p TIER — Nick's decision, flagged 2026-09-07 (S31). This is the
   only cell where H.264 changes what is POSSIBLE rather than what is

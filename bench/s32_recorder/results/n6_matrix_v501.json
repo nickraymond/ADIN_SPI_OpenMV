@@ -1,0 +1,175 @@
+{
+  "port": "/dev/serial/by-id/usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_10003500025043364d343000-if00",
+  "plan": {
+    "frames": 150,
+    "sizes": [
+      "QVGA",
+      "VGA",
+      "HD"
+    ],
+    "mjpeg_quality": [
+      30,
+      70,
+      90
+    ],
+    "h264_quality": [],
+    "h264_bitrate": [],
+    "keyframe_interval": 30
+  },
+  "info": [
+    {
+      "heap_free": 25604464,
+      "sensor": "CSI {\n  Name                : PAG7936\n  Chip ID             : 0x7936\n  Address             : 0x15\n  Powered On          : true\n  Auxiliary           : false\n  Raw Output          : true\n  MIPI Bitrate        : 800Mbps\n  Frame Rate          : 0\n  Clock Frequency     : 24MHz\n  Framebuffer {\n    Dynamic           : true\n    Raw Buffer Size   : 0\n    Raw Buffer Addr   : 0x0\n    Vbuffer Size      : 0\n    Vbuffer Count     : 0\n    Used Queue Size   : 0\n    Free Queue Size   : 0\n  }\n}\n",
+      "codec_module": false,
+      "uname": "(sysname='pyboard', nodename='pyboard', release='1.28.0', version='v1.28.0-64 on 2026-09-05', machine='OpenMV N6 with STM32N657X0')"
+    },
+    {
+      "max_size_probe": {
+        "QVGA": "no codec module",
+        "VGA": "no codec module",
+        "HD": "no codec module"
+      }
+    },
+    {
+      "done": true
+    }
+  ],
+  "results": [
+    {
+      "encode_ms_per_frame": 12.13338,
+      "h": 200,
+      "frames": 150,
+      "bytes_per_frame": 5528.492,
+      "bytes": 829274,
+      "loop_ms_per_frame": 12.273404,
+      "w": 320,
+      "quality": 30,
+      "achieved_fps": 81.477,
+      "size": "QVGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 12.188204,
+      "h": 200,
+      "frames": 150,
+      "bytes_per_frame": 10728.41,
+      "bytes": 1609262,
+      "loop_ms_per_frame": 12.334004,
+      "w": 320,
+      "quality": 70,
+      "achieved_fps": 81.07666,
+      "size": "QVGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 12.45842,
+      "h": 200,
+      "frames": 150,
+      "bytes_per_frame": 32508.65,
+      "bytes": 4876298,
+      "loop_ms_per_frame": 12.60962,
+      "w": 320,
+      "quality": 90,
+      "achieved_fps": 79.30456,
+      "size": "QVGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 14.170596,
+      "h": 400,
+      "frames": 150,
+      "bytes_per_frame": 15059.2,
+      "bytes": 2258880,
+      "loop_ms_per_frame": 14.453984,
+      "w": 640,
+      "quality": 30,
+      "achieved_fps": 69.1851,
+      "size": "VGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 14.40542,
+      "h": 400,
+      "frames": 150,
+      "bytes_per_frame": 33845.0,
+      "bytes": 5076751,
+      "loop_ms_per_frame": 14.69788,
+      "w": 640,
+      "quality": 70,
+      "achieved_fps": 68.03704,
+      "size": "VGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 15.552984,
+      "h": 400,
+      "frames": 150,
+      "bytes_per_frame": 116094.32,
+      "bytes": 17414148,
+      "loop_ms_per_frame": 15.838588,
+      "w": 640,
+      "quality": 90,
+      "achieved_fps": 63.13696,
+      "size": "VGA",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 24.727952,
+      "h": 800,
+      "frames": 150,
+      "bytes_per_frame": 48152.24,
+      "bytes": 7222835,
+      "loop_ms_per_frame": 25.55484,
+      "w": 1280,
+      "quality": 30,
+      "achieved_fps": 39.13154,
+      "size": "HD",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 26.03742,
+      "h": 800,
+      "frames": 150,
+      "bytes_per_frame": 117673.66,
+      "bytes": 17651047,
+      "loop_ms_per_frame": 26.86247,
+      "w": 1280,
+      "quality": 70,
+      "achieved_fps": 37.22668,
+      "size": "HD",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    },
+    {
+      "encode_ms_per_frame": 33.30715,
+      "h": 800,
+      "frames": 150,
+      "bytes_per_frame": 423400.9,
+      "bytes": 63510132,
+      "loop_ms_per_frame": 34.13364,
+      "w": 1280,
+      "quality": 90,
+      "achieved_fps": 29.2966,
+      "size": "HD",
+      "heap_free_after": 25594736,
+      "codec": "mjpeg",
+      "true_motion": true
+    }
+  ],
+  "errors": []
+}
