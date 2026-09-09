@@ -1,0 +1,30 @@
+{
+  "measured": "2026-09-08 nereus002, N6 on H.264 firmware v5.0.0-58.ga83bc776f5",
+  "scene": "dim room, person at a laptop, gain 24.1 dB, exposure 16648 us -- detailed and noisy, near-static",
+  "size": "HD 1280x800", "frames_per_run": 90, "dup_pct": 0.0,
+  "mjpeg_q70_bytes_per_frame": 115754,
+  "note": "ratio = mjpeg_total / h264_total. Quality matched on INTRA size, since nominal quality means nothing across codecs.",
+  "runs": [
+    {"h264_quality": 50, "intra_mean": 75457,  "inter_mean": 22397,  "per_frame": 24166,  "ratio": 4.79},
+    {"h264_quality": 54, "intra_mean": 104892, "inter_mean": 40152,  "per_frame": 42310,  "ratio": 2.73},
+    {"h264_quality": 55, "intra_mean": 123315, "inter_mean": 52339,  "per_frame": 54705,  "ratio": 2.11},
+    {"h264_quality": 56, "intra_mean": 123135, "inter_mean": 52587,  "per_frame": 54939,  "ratio": 2.11},
+    {"h264_quality": 58, "intra_mean": 146636, "inter_mean": 66394,  "per_frame": 69069,  "ratio": 1.68},
+    {"h264_quality": 62, "intra_mean": 193655, "inter_mean": 101598, "per_frame": 104667, "ratio": 1.11},
+    {"h264_quality": 66, "intra_mean": 250360, "inter_mean": 147571, "per_frame": 150998, "ratio": 0.77},
+    {"h264_quality": 70, "intra_mean": 319615, "inter_mean": 207942, "per_frame": 211665, "ratio": 0.55},
+    {"h264_quality": 90, "intra_mean": 664469, "inter_mean": 552396, "per_frame": 556132, "ratio": 0.21}
+  ],
+  "quality_matched": {
+    "target_intra_bytes": 115754,
+    "brackets": "q54 (104892) .. q55 (123315)",
+    "interpolated_quality": 54.6,
+    "interpolated_ratio": 2.4
+  },
+  "motion_bound": {
+    "explanation": "inter frames cost 52339 B against an intra of 123315 at q55. Heavy motion drives inter toward intra cost.",
+    "static_measured": 2.11,
+    "floor_if_every_frame_costs_an_intra": 0.94
+  },
+  "denoise": "REFUSED by the silicon: the VC8000NanoE in the STM32N657 reports no denoise filter (hwCfg.dnfSupport)."
+}
