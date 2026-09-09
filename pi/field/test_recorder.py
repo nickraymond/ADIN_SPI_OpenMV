@@ -681,10 +681,12 @@ class TestOnDemandTranscode(unittest.TestCase):
         sig = inspect.signature(RR.run_recording)
         self.assertIs(sig.parameters["transcode"].default, False)
 
-    def test_default_duration_is_five_minutes(self):
+    def test_default_duration_is_three_minutes(self):
+        """Nick's call after measuring the transfer wall: shorter segments mean
+        less to lose if the rig is killed, and a smaller unit to move."""
         import inspect
         sig = inspect.signature(RR.run_recording)
-        self.assertEqual(sig.parameters["duration_s"].default, 300.0)
+        self.assertEqual(sig.parameters["duration_s"].default, 180.0)
 
     def test_library_trusts_the_filesystem_for_playability(self):
         """A manifest may name an mp4 that was never made, or predate one."""

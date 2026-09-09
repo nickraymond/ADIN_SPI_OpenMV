@@ -176,7 +176,7 @@ def estimate_bytes(ceilings, chosen, fps, duration_s, combo=None):
     return int(total * 1.15)
 
 
-def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
+def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=180.0,
                   cameras=("N6", "AE3"), transcode=False, log=print,
                   progress=None, stop_event=None, per_camera=None,
                   ring_bytes=ST.DEFAULT_RING_BYTES,

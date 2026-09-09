@@ -497,7 +497,7 @@ def index_page(state, sessions, ceilings):
 <div class=card>
   <div class=row>
     <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
-    <div><label>Duration (s)</label><input id=duration type=number value=300 min=1 max=3600></div>
+    <div><label>Duration (s)</label><input id=duration type=number value=180 min=1 max=3600></div>
     <div><label>Cameras</label><select id=cameras>
       <option value="N6,AE3,IMX">All three</option>
       <option value="N6,AE3">N6 + AE3</option>
