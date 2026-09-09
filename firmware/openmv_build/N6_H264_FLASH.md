@@ -89,19 +89,82 @@ damage the board — re-run the bootloader with the right `firmware.bin`.
 
 This is the route to use unless a headless flash is needed.
 
-## Route B — headless `dfu-util` — **PARTIALLY UNVERIFIED, read the caveat**
+## Route B — headless `dfu-util` — **PROVEN 2026-09-08 (S33), use `n6_flash.py`**
 
 The N6's bootloader exposes named DFU partitions at `37C5:9206`:
-`BOOTLOADER`(0), `FIRMWARE`(1), `FILESYSTEM`(2), `ROMFS0`(3). This repo has
-**proven alt 3** (ROMFS0) end to end with read-back verification
-(`ml/README.md` §"N6 RESOLVED 2026-08-20"). Writing **alt 1 (FIRMWARE) has
-never been done on this bench**, and whether the bootloader wants the raw
-`firmware.bin` there or a wrapped image is **not verified** — do not assume
-it from the ROMFS success.
+`BOOTLOADER`(0), `FIRMWARE`(1), `FILESYSTEM`(2), `ROMFS0`(3). This repo had
+**proven alt 3** (ROMFS0) end to end (`ml/README.md` §"N6 RESOLVED
+2026-08-20"); **alt 1 (FIRMWARE) is now proven too**, rehearsed stock → stock
+on nereus002 *before* any H.264 image went near the board.
 
-Settle that question before using this route, not during. Route A is
-documented by OpenMV and needs no assumption; Route B is worth proving only
-because a headless path is what field rigs need.
+**The answer to the open question: the bootloader wants the RAW
+`firmware.bin` at alt 1, unwrapped.** The partition read back byte-identical
+to the stock image over its first 1,987,840 bytes *before anything was
+written*, which proved the read path at zero risk. A download to alt 1 erases
+and writes only the pages it touches — after writing, the whole partition was
+byte-identical to the pre-write backup.
+
+Do not drive `dfu-util` by hand. Use **`pi/field/n6_flash.py`**, which carries
+the three things the rehearsal discovered:
+
+### 1. The partition is not just the firmware
+
+| Offset | Size | What |
+|---|---|---|
+| `0x00000000` | 1,987,840 B | stock `firmware.bin`, byte for byte |
+| `0x001F0000` | 11,984 B | a 12 KB blob present in `openmv.bin`, **not** in the stock `firmware.bin` |
+| `0x00380000` | 4 B | trailer |
+
+99.3 % of the tail is erased `0xFF`. A whole-file `sha256` over the 3.6 MB
+readback can *never* match a 2.0 MB image, so it would call a perfect flash a
+failure. Verification therefore asks two separate questions — did the image
+land at offset 0, and is everything past it still what the backup says — and
+without a backup it reports the second as **not checked**, never as a pass.
+
+### 2. The partition reads back LONGER than it can be written
+
+An upload of alt 1 returns **3,670,020** bytes; the writable partition is
+**3,670,016** (3584 KB = 896 × 4096). The extra four bytes read as `00000000`
+and belong to nothing. Handing that file straight back to `dfu-util -D` fails
+at 96 % with *"Cannot program memory due to received address that is out of
+range"*. `n6_flash.py backup` stores the block-aligned image so the file it
+writes is directly restorable, and refuses to trim a *non-zero* tail.
+
+### 3. THE ROLLBACK IS A WHOLE-PARTITION RESTORE, NOT A `firmware.bin` WRITE
+
+The H.264 build's `firmware.bin` is **2,043,600 B** and ends at `0x1F2ED0` —
+exactly where the stock 12 KB blob ends — so it covers that region with its
+own content. Writing the stock `firmware.bin` (which stops at `0x1E5000`) to
+roll back would leave **a stale 12 KB region from the H.264 build** in place.
+Restore the whole partition instead.
+
+```bash
+# BEFORE flashing anything: take the artefact that gets you home.
+python3 pi/field/n6_flash.py backup --out ~/fw/n6_stock_v501_partition.bin
+#   nereus002, stock v5.0.1: 3,670,016 B
+#   sha256 45d9cd2123f763de5d94fffa4e7a952151f2847f4378809aa17a5bc19739ae09
+#   also kept off-rig at ~/fw_backups/ on the Mac -- on the SD card alone it
+#   dies with the SD card.
+
+# Flash, byte-verified, with "nothing else was disturbed" actually checked.
+python3 pi/field/n6_flash.py write \
+    --image ~/fw/n6-h264/firmware.bin \
+    --expect-unchanged ~/fw/n6_stock_v501_partition.bin
+
+# ROLL BACK.
+python3 pi/field/n6_flash.py write \
+    --image ~/fw/n6_stock_v501_partition.bin --whole
+```
+
+Both directions verified on hardware; the board boots to `v1.28.0-64` with 19
+ROMFS entries, no `codec` module, and **leg 0 VGA q30 at 68.7 fps** against
+S30's 68.6 baseline.
+
+**`dfu-util`'s exit code is not evidence.** `-R` returns **251** because
+resetting the device is indistinguishable from losing it. The proof the board
+came back is that it re-enumerates and answers `os.uname()`.
+
+### The old hand-driven commands, for reference only
 
 ```bash
 # On the Mac: ship the artifact.
@@ -119,9 +182,12 @@ ssh pi@nereus000 "dfu-util -a 1 -D ~/fw/n6-h264/firmware.bin"
 ssh pi@nereus000 "dfu-util -a 2 -U /tmp/fs.img -R"
 ```
 
-**Alt 0 is never written.** That is what keeps this recoverable: the DFU
-window survives a bad application write, so the board can always be
-re-entered and rewritten.
+**Alt 0 is never written, and neither is alt 3.** Alt 0 is what keeps this
+recoverable: the DFU window survives a bad application write, so the board can
+always be re-entered and rewritten — demonstrated for real when the failed
+whole-partition write above left the board sitting in `dfuERROR` and it read
+back intact. Alt 3 is ROMFS0, where a rig's custom models live.
+`n6_flash.py` refuses both by name.
 
 ---
 
@@ -148,6 +214,13 @@ H.264 number. If VGA q30 does not reproduce at 68.6 fps / 13.7 KB, stop.
 
 ## Rolling back
 
-Flash the release `firmware.bin` recorded in step 2 above by the same route.
-ROMFS0 is untouched by either direction, so the models do not need
-redeploying.
+**Restore the whole partition** — see Route B §3 above for why flashing the
+release `firmware.bin` is NOT sufficient (it would leave the H.264 build's
+12 KB region at `0x1F0000` behind):
+
+```bash
+python3 pi/field/n6_flash.py write \
+    --image ~/fw/n6_stock_v501_partition.bin --whole
+```
+
+ROMFS0 is untouched in either direction, so models never need redeploying.
