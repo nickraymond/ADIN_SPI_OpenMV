@@ -590,11 +590,20 @@ async function startRec(){
   if(!j.ok){alert(j.err||'refused');b.disabled=false;}
   poll();
 }
+// Reload ONLY on the busy->idle edge, i.e. when a recording has just finished
+// and the library needs to gain a row. The first version reloaded whenever it
+// found the recorder idle -- which is almost always -- so the page reloaded
+// every 1.2 s forever and flickered continuously, unusable on a tablet.
+let wasBusy = false;
 async function poll(){
-  const r=await fetch('/api/status'); const j=await r.json();
-  document.getElementById('log').textContent=(j.log||[]).join('\\n')||'idle';
-  document.getElementById('go').disabled=j.busy;
-  if(j.busy){setTimeout(poll,800);} else {setTimeout(()=>location.reload(),1200);}
+  try{
+    const j = await (await fetch('/api/status')).json();
+    document.getElementById('log').textContent=(j.log||[]).join('\n')||'idle';
+    document.getElementById('go').disabled=j.busy;
+    if(!j.busy && wasBusy){ location.reload(); return; }   // the edge, once
+    wasBusy = j.busy;
+    setTimeout(poll, j.busy ? 1000 : 4000);
+  }catch(e){ setTimeout(poll, 5000); }
 }
 poll();
 function gb(b){return (b/1e9).toFixed(2)+' GB';}
