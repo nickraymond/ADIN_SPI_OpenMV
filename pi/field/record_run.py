@@ -27,16 +27,55 @@ import recorder as R                                        # noqa: E402
 import storage as ST                                        # noqa: E402
 import transcode as T                                       # noqa: E402
 
+#: Legacy single-file location, kept only so an old checkout still loads.
 CEILINGS_PATH = os.path.join(_HERE, "camera_ceilings.json")
 
 
-def load_ceilings(path=CEILINGS_PATH):
-    """Measured per-camera ceilings. Missing file = no claims, not a guess."""
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {"cameras": {}, "note": "no measured ceilings on this host"}
+def ceilings_path_for(host=None, here=_HERE):
+    """Where THIS rig's measured ceilings live: camera_ceilings.<host>.json.
+
+    Ceilings are a per-RIG measurement, not source code, and the two rigs
+    disagree in ways that matter: nereus002 measures an IMX708 that nereus000
+    does not physically have, and its N6 delivers 25.12 fps in the
+    three-camera combination against 28.75 alone. A single shared file means
+    whichever rig is deployed last silently overwrites the other's numbers --
+    which is exactly what a `git checkout` did to nereus002 before this split
+    (S33 bite 1), clobbering the only copy of its per-combination rates.
+
+    Per-host and TRACKED, rather than gitignored: a measurement worth guarding
+    on is worth reviewing, and a rebuilt rig gets its numbers back from the
+    repo instead of having to re-measure them.
+    """
+    host = host or os.uname().nodename
+    return os.path.join(here, "camera_ceilings.%s.json" % host)
+
+
+def load_ceilings(path=None, host=None, here=_HERE):
+    """Measured per-camera ceilings for THIS host.
+
+    Missing file = no claims, not a guess. So does a file belonging to a
+    DIFFERENT rig: guarding a recording against another board's ceilings is
+    worse than having none, because it looks authoritative while being wrong
+    in an unknown direction. The page renders "no measured ceilings on this
+    host" and makes no promises, which is the honest state.
+    """
+    host = host or os.uname().nodename
+    candidates = [path] if path else [ceilings_path_for(host, here),
+                                      os.path.join(here, "camera_ceilings.json")]
+    for cand in candidates:
+        try:
+            with open(cand) as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            continue
+        got = doc.get("host")
+        if got and got != host:
+            # Loudly, not silently: the file exists and is being REFUSED.
+            print("ceilings: ignoring %s -- measured on %r, this host is %r"
+                  % (cand, got, host), file=sys.stderr)
+            continue
+        return doc
+    return {"cameras": {}, "note": "no measured ceilings on this host"}
 
 
 def combo_key(cameras):

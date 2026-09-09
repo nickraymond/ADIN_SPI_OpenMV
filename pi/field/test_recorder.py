@@ -823,5 +823,72 @@ class TestPerCombinationCeilings(unittest.TestCase):
         self.assertEqual(kind, "delivered")
 
 
+class PerHostCeilings(unittest.TestCase):
+    """S33 bite 1: ceilings are a per-RIG measurement, not shared source.
+
+    The bug this pins actually happened: nereus002 held the only copy of its
+    per-combination delivered rates (and the only IMX708 numbers anywhere) in
+    an untracked camera_ceilings.json, and the repo's tracked file held
+    nereus000's. A checkout would have replaced one rig's measurements with
+    another's, and the recorder would have gone on guarding confidently
+    against numbers from a board it does not have.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def _write(self, name, doc):
+        path = os.path.join(self.dir, name)
+        with open(path, "w") as f:
+            json.dump(doc, f)
+        return path
+
+    def test_prefers_this_hosts_file(self):
+        self._write("camera_ceilings.rigA.json", {"host": "rigA", "cameras": {"N6": {}}})
+        self._write("camera_ceilings.rigB.json", {"host": "rigB", "cameras": {"AE3": {}}})
+        doc = RR.load_ceilings(host="rigB", here=self.dir)
+        self.assertEqual(doc["host"], "rigB")
+        self.assertEqual(sorted(doc["cameras"]), ["AE3"])
+
+    def test_another_rigs_file_is_refused_not_used(self):
+        """The whole point. A legacy shared file measured elsewhere must NOT
+        be adopted just because it is the only one present."""
+        self._write("camera_ceilings.json", {"host": "someone_else",
+                                             "cameras": {"N6": {"delivered": {"HD_q70": 99.0}}}})
+        doc = RR.load_ceilings(host="rigB", here=self.dir)
+        self.assertEqual(doc["cameras"], {})
+        self.assertIn("no measured ceilings", doc["note"])
+
+    def test_legacy_file_without_a_host_field_is_still_accepted(self):
+        """An old artifact that never recorded where it came from is trusted,
+        because refusing it would silently disarm a guard that used to work."""
+        self._write("camera_ceilings.json", {"cameras": {"N6": {}}})
+        doc = RR.load_ceilings(host="rigB", here=self.dir)
+        self.assertEqual(sorted(doc["cameras"]), ["N6"])
+
+    def test_missing_everything_makes_no_claims(self):
+        doc = RR.load_ceilings(host="rigB", here=self.dir)
+        self.assertEqual(doc["cameras"], {})
+
+    def test_explicit_path_still_wins(self):
+        p = self._write("odd_name.json", {"host": "rigB", "cameras": {"IMX": {}}})
+        doc = RR.load_ceilings(path=p, host="rigB", here=self.dir)
+        self.assertEqual(sorted(doc["cameras"]), ["IMX"])
+
+    def test_the_shipped_files_match_their_own_filenames(self):
+        """A per-host file whose `host` field disagrees with its NAME would be
+        refused on the very rig it was measured on -- silently, and the page
+        would just stop making claims. Cheap to pin, expensive to discover."""
+        import glob
+        found = glob.glob(os.path.join(_HERE, "camera_ceilings.*.json"))
+        self.assertTrue(found, "no per-host ceilings shipped")
+        for path in found:
+            host = os.path.basename(path).split(".")[1]
+            with open(path) as f:
+                doc = json.load(f)
+            self.assertEqual(doc.get("host"), host, path)
+            self.assertEqual(RR.load_ceilings(host=host, here=_HERE).get("host"), host)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

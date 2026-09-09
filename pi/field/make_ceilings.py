@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build camera_ceilings.json from n6_h264_run.py result files.
+"""Build camera_ceilings.<host>.json from n6_h264_run.py result files.
 
 The recorder card shows each camera's ceiling and refuses or warns on an
 impossible request. Those numbers must come from a MEASUREMENT ARTIFACT, never
 from a table someone typed, because a mistyped ceiling turns the guard into a
 liar in whichever direction the typo went.
 
-    python3 make_ceilings.py --out camera_ceilings.json \
+    python3 make_ceilings.py \
         N6=~/s32_bite0/n6_matrix_v501.json N6=~/s32_bite0/n6_rungs_v501.json \
         AE3=~/s32_bite0/ae3_matrix_v501.json
 
@@ -33,8 +33,13 @@ def main(argv=None):
     ap.add_argument("--recordings", default="",
                     help="a recordings root; every manifest there contributes a "
                          "DELIVERED rate, which is what the card must guard on")
+    # Per-HOST by default (S33 bite 1). Ceilings are a rig measurement, and a
+    # shared filename means the last rig deployed silently overwrites the
+    # other's numbers -- which is how nereus002's only copy of its
+    # per-combination delivered rates was nearly lost.
     ap.add_argument("--out", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "camera_ceilings.json"))
+        os.path.dirname(os.path.abspath(__file__)),
+        "camera_ceilings.%s.json" % os.uname().nodename))
     a = ap.parse_args(argv)
 
     doc = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S"),

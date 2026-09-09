@@ -1,0 +1,73 @@
+{
+ "cameras": {
+  "AE3": {
+   "bytes": {},
+   "cells": {},
+   "delivered": {
+    "VGA_q50": 11.47
+   },
+   "delivered_by_combo": {
+    "AE3+IMX+N6": {
+     "VGA_q50": 11.47
+    }
+   },
+   "delivered_bytes": {
+    "VGA_q50": 22232
+   },
+   "firmware": "",
+   "note": "1 delivered cells measured end to end; combinations: AE3+IMX+N6",
+   "sources": []
+  },
+  "IMX": {
+   "bytes": {},
+   "cells": {},
+   "delivered": {
+    "HD_q70": 29.94
+   },
+   "delivered_by_combo": {
+    "AE3+IMX+N6": {
+     "HD_q70": 29.94
+    },
+    "IMX": {
+     "HD_q70": 29.73
+    },
+    "IMX+N6": {
+     "HD_q70": 29.89
+    }
+   },
+   "delivered_bytes": {
+    "HD_q70": 131486
+   },
+   "firmware": "",
+   "note": "1 delivered cells measured end to end; combinations: AE3+IMX+N6, IMX, IMX+N6",
+   "sources": []
+  },
+  "N6": {
+   "bytes": {},
+   "cells": {},
+   "delivered": {
+    "HD_q70": 28.75
+   },
+   "delivered_by_combo": {
+    "AE3+IMX+N6": {
+     "HD_q70": 25.12
+    },
+    "IMX+N6": {
+     "HD_q70": 27.37
+    },
+    "N6": {
+     "HD_q70": 28.75
+    }
+   },
+   "delivered_bytes": {
+    "HD_q70": 112828
+   },
+   "firmware": "",
+   "note": "1 delivered cells measured end to end; combinations: AE3+IMX+N6, IMX+N6, N6",
+   "sources": []
+  }
+ },
+ "generated": "2026-09-08T18:18:42",
+ "host": "nereus002",
+ "how": "measured by pi/field/n6_h264_run.py -> make_ceilings.py; encoder ceiling = capture+encode loop fps on the board, with no USB payload transfer in the path"
+}
