@@ -230,8 +230,12 @@ class TestPerCameraSettings(unittest.TestCase):
                                                  "quality": None}}),
                          ("HD", 70))
 
-    def test_unknown_camera_falls_back_to_the_global_ask(self):
-        self.assertEqual(RR.settings_for("IMX", "VGA", 50), ("VGA", 50))
+    def test_the_imx_has_its_own_default_too(self):
+        self.assertEqual(RR.settings_for("IMX", "QVGA", 10), ("HD", 70))
+
+    def test_a_genuinely_unknown_camera_falls_back_to_the_global_ask(self):
+        self.assertEqual(RR.settings_for("SOMETHING_ELSE", "VGA", 50),
+                         ("VGA", 50))
 
     def test_quality_is_coerced_to_int(self):
         """The form sends strings; a str would break the "%s_q%d" cell key."""
@@ -701,6 +705,67 @@ class TestOnDemandTranscode(unittest.TestCase):
             cam = R.load_sessions(d)[0]["cameras"][0]
             self.assertEqual(cam["mp4"], "N6.mp4")  # now really there
             self.assertEqual(cam["mp4_bytes"], 20)
+
+
+
+class TestCsiRecorder(unittest.TestCase):
+    """The IMX708 path. It shares the ring and the writer with the boards, but
+    it differs in one way that must be reported rather than hidden: rpicam-vid
+    gives no per-frame sequence numbers, so lost frames are UNDETECTABLE there.
+    """
+
+    def test_splitter_finds_concatenated_frames(self):
+        sp = R.JpegSplitter()
+        blob = b"".join(b"\xff\xd8" + bytes([i]) * 20 + b"\xff\xd9"
+                        for i in range(4))
+        got = sp.feed(blob)
+        self.assertEqual([n for n, _ in got], [0, 1, 2, 3])
+        self.assertTrue(all(f.startswith(b"\xff\xd8") and f.endswith(b"\xff\xd9")
+                            for _, f in got))
+
+    def test_splitter_handles_a_frame_split_across_reads(self):
+        sp = R.JpegSplitter()
+        f = b"\xff\xd8" + b"z" * 30 + b"\xff\xd9"
+        self.assertEqual(sp.feed(f[:10]), [])
+        self.assertEqual(sp.feed(f[10:20]), [])
+        self.assertEqual(sp.feed(f[20:]), [(0, f)])
+
+    def test_splitter_skips_leading_junk(self):
+        sp = R.JpegSplitter()
+        f = b"\xff\xd8" + b"a" * 8 + b"\xff\xd9"
+        self.assertEqual(sp.feed(b"noise-before-any-frame" + f), [(0, f)])
+
+    def test_argv_is_bounded_and_writes_to_stdout(self):
+        argv = R.rpicam_record_argv(1280, 720, 30, 70, 5.0, camera=0)
+        self.assertIn("rpicam-vid", argv[0])
+        self.assertIn("--codec", argv)
+        self.assertEqual(argv[argv.index("--codec") + 1], "mjpeg")
+        # bounded in TIME, so a wedged host cannot record forever
+        self.assertEqual(argv[argv.index("-t") + 1], "5000")
+        self.assertEqual(argv[argv.index("-o") + 1], "-")
+        self.assertEqual(argv[argv.index("--width") + 1], "1280")
+
+    def test_csi_sizes_are_not_the_boards_rectangle(self):
+        """The IMX is free to pick any size; the boards letterbox 16:10."""
+        self.assertEqual(R.CSI_SIZES["HD"], (1280, 720))
+        self.assertEqual(R.CSI_SIZES["VGA"], (640, 480))
+
+    def test_seq_gaps_is_unknown_not_zero(self):
+        """rpicam gives no sequence numbers, so 0 would claim a check that was
+        never performed. None means unknown."""
+        rec = R.CsiRecorder("IMX", {"framesize": "VGA", "duration_s": 1}, "/tmp/x")
+        rec.started_at = rec.finished_at = 1.0
+        self.assertIsNone(rec.stats()["seq_gaps"])
+
+    def test_no_frames_reports_an_error_rather_than_a_clean_zero(self):
+        rec = R.CsiRecorder("IMX", {"framesize": "VGA", "duration_s": 1}, "/tmp/x")
+        rec.started_at = rec.finished_at = 1.0
+        self.assertIn("no frames", rec.stats()["error"])
+
+    def test_csi_roles_are_never_probed_as_serial_boards(self):
+        self.assertIn("IMX", RR.CSI_ROLES)
+        self.assertNotIn("N6", RR.CSI_ROLES)
+        self.assertNotIn("AE3", RR.CSI_ROLES)
 
 
 if __name__ == "__main__":

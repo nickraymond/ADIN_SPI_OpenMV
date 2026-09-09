@@ -45,6 +45,7 @@ from collections import deque
 MAGIC = b"\xab\xcd\x12\x34"
 HDR_LEN = 12
 SOI = b"\xff\xd8"
+EOI = b"\xff\xd9"
 
 #: A frame larger than this is a corrupt length field, not a frame. The largest
 #: thing these sensors produce is HD q100 (~840 KB measured, S32 bite 0), so 4 MB
@@ -474,6 +475,208 @@ class BoardRecorder:
             "banner": self.banner,
             "trailer": self.trailer,
             "error": self.error,
+        }
+
+
+class JpegSplitter:
+    """Split a concatenated-MJPEG byte stream into frames.
+
+    The boards send length-prefixed frames; rpicam-vid does not -- it emits raw
+    concatenated JPEGs, so the boundaries have to be found. Kept separate from
+    FrameParser rather than bolted onto it: that class's whole value is that a
+    length field is corroborated by an independent SOI check, and there is no
+    length here to corroborate.
+    """
+
+    def __init__(self):
+        self.buf = bytearray()
+        self.frames = 0
+
+    def feed(self, data):
+        self.buf += data
+        out = []
+        while True:
+            s = self.buf.find(SOI)
+            if s < 0:
+                del self.buf[:max(0, len(self.buf) - 1)]
+                return out
+            e = self.buf.find(EOI, s + 2)
+            if e < 0:
+                del self.buf[:s]          # keep the partial frame
+                return out
+            out.append((self.frames, bytes(self.buf[s:e + 2])))
+            self.frames += 1
+            del self.buf[:e + 2]
+
+
+#: What each framesize means for the IMX708. It is NOT the boards' rectangle:
+#: they letterbox 16:10 (VGA 640x400, HD 1280x800) off a 4608x2592 sensor that
+#: is free to pick anything. Matched to 4:3 / 16:9 standards here and reported
+#: per camera, so the manifest never implies the three cameras framed the same
+#: scene when they did not.
+CSI_SIZES = {"QVGA": (320, 240), "VGA": (640, 480), "HD": (1280, 720)}
+
+
+def rpicam_record_argv(width, height, fps, quality, duration_s, camera=0):
+    """rpicam-vid writing MJPEG to stdout for a bounded time.
+
+    Separated so a test can assert on it without a camera. Output goes to
+    stdout rather than straight to a file so the frames pass through the same
+    ring and writer as the boards' -- which is what gives the IMX708 the same
+    frame counts, the same drop accounting and the same stall protection
+    instead of a second, differently-behaved path.
+    """
+    return ["rpicam-vid", "-n", "--codec", "mjpeg",
+            "--camera", str(camera),
+            "--width", str(width), "--height", str(height),
+            "--framerate", str(fps),
+            "--quality", str(quality),
+            "-t", str(int(duration_s * 1000)),
+            "-o", "-"]
+
+
+def csi_present(camera=0, timeout=15):
+    """Is there a CSI camera at this index? Returns (ok, why_not).
+
+    Asked of the stack rather than assumed from a /dev node: nereus000 has no
+    CSI camera at all, and a recorder that silently produced an empty clip
+    there would be exactly the plausible-but-wrong artifact this repo keeps
+    paying for. rpicam-hello is the same tool the rig's other cards use.
+    """
+    try:
+        p = subprocess.run(["rpicam-hello", "--list-cameras"],
+                           capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, "rpicam-hello unavailable (%s)" % e
+    text = (p.stdout or "") + (p.stderr or "")
+    if "no cameras available" in text.lower():
+        return False, "no CSI camera on this rig"
+    for line in text.splitlines():
+        if line.strip().startswith("%d :" % camera):
+            return True, line.strip()
+    return False, "no CSI camera at index %d" % camera
+
+
+class CsiRecorder:
+    """Record the IMX708 (or any CSI camera) via rpicam-vid.
+
+    Presents the SAME interface as BoardRecorder -- open/start/pump/close/stats
+    -- so record_run drives all three cameras through one code path and the
+    manifest has one shape. What differs is real and is reported rather than
+    papered over: there are no board sequence numbers here, so `seq_gaps` is
+    None (unknown) instead of 0 (verified none). Claiming zero losses on a
+    channel that cannot detect them would be exactly the wrong lie.
+    """
+
+    def __init__(self, label, cfg, out_path, log=print, camera=0):
+        self.label = label
+        self.port = "csi:%d" % camera
+        self.cfg = cfg
+        self.out_path = out_path
+        self.log = log
+        self.camera = camera
+        self.splitter = JpegSplitter()
+        self.frames = 0
+        self.bytes = 0
+        self.banner = {}
+        self.trailer = {}
+        self.error = ""
+        self.started_at = None
+        self.finished_at = None
+        self.first_frame_at = None
+        self.last_frame_at = None
+        self._proc = None
+        self._stderr = b""
+
+    def open(self):
+        return self                      # nothing to open; rpicam owns the ISP
+
+    def start(self, _script_text=None):
+        w, h = CSI_SIZES.get(self.cfg.get("framesize", "VGA"), (640, 480))
+        argv = rpicam_record_argv(w, h, self.cfg.get("fps", 30),
+                                  self.cfg.get("quality", 70),
+                                  self.cfg.get("duration_s", 5), self.camera)
+        try:
+            self._proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE)
+        except (OSError, ValueError) as e:
+            self.error = "rpicam-vid will not start: %s" % e
+            return False
+        self.started_at = time.time()
+        self.banner = {"board": self.label, "w": w, "h": h,
+                       "framesize": self.cfg.get("framesize"),
+                       "quality": self.cfg.get("quality"),
+                       "fw": "rpicam-vid", "camera": self.camera}
+        return True
+
+    def pump(self, ring, stop_event):
+        deadline = time.time() + float(self.cfg.get("duration_s", 5)) + 45
+        out = self._proc.stdout
+        while not stop_event.is_set() and time.time() < deadline:
+            chunk = out.read(65536)
+            if not chunk:
+                break                    # rpicam exited: its -t bound elapsed
+            now = time.time()
+            for seq, jpg in self.splitter.feed(chunk):
+                if self.first_frame_at is None:
+                    self.first_frame_at = now
+                self.last_frame_at = now
+                self.frames += 1
+                self.bytes += len(jpg)
+                ring.put((seq, jpg))
+        self.finished_at = time.time()
+        try:
+            self._stderr = self._proc.stderr.read() or b""
+        except Exception:                                   # noqa: BLE001
+            pass
+        return True
+
+    def close(self):
+        p = self._proc
+        if p is None:
+            return
+        try:
+            if p.poll() is None:
+                # rpicam holds the CSI device and the ISP; orphaning those
+                # leaves the next recording unable to open the camera at all.
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=5)
+            for s in (p.stdout, p.stderr):
+                try:
+                    s.close()
+                except Exception:                           # noqa: BLE001
+                    pass
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def stats(self):
+        if (self.first_frame_at is not None and self.last_frame_at is not None
+                and self.last_frame_at > self.first_frame_at and self.frames > 1):
+            wall = self.last_frame_at - self.first_frame_at
+            fps = (self.frames - 1) / wall
+        else:
+            wall = ((self.finished_at or time.time())
+                    - (self.started_at or time.time()))
+            fps = (self.frames / wall) if wall > 0 else 0.0
+        err = self.error
+        if not self.frames and not err:
+            tail = self._stderr.decode("utf-8", "replace").strip()[-300:]
+            err = "rpicam-vid produced no frames: %s" % (tail or "no output")
+        return {
+            "label": self.label, "port": self.port,
+            "frames": self.frames, "bytes": self.bytes,
+            "wall_s": round(wall, 2), "delivered_fps": round(fps, 2),
+            "mb_per_s": round(self.bytes / wall / 1e6, 2) if wall > 0 else 0.0,
+            "board_fps": None, "board_frames": None,
+            # rpicam-vid gives no per-frame sequence numbers, so a frame lost
+            # between the ISP and here is UNDETECTABLE. None means unknown --
+            # never 0, which would claim a check that was not performed.
+            "seq_gaps": None,
+            "resyncs": 0, "banner": self.banner, "trailer": {}, "error": err,
         }
 
 

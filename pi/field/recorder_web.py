@@ -31,6 +31,7 @@ import os
 import re
 import signal
 import sys
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -125,6 +126,47 @@ class RecorderState:
         finally:
             self.busy = False
 
+
+
+def host_health():
+    """WiFi, CPU temperature, load and throttling for the metrics strip.
+
+    WiFi comes from pi/field/netinfo, which already handles this rig's traps --
+    `iw` lives in /sbin and is not on the pi user's PATH, so a viewer running
+    as pi would otherwise report "unknown" signal forever.
+
+    Temperature is read from sysfs rather than vcgencmd: it needs no subprocess
+    and works on both rigs. `throttled` IS vcgencmd, and is worth having --
+    the 45 min soak found the Pi 5 actively throttling during a transcode while
+    recording never came close.
+    """
+    out = {"temp_c": None, "load1": None, "throttled": None,
+           "throttled_now": None, "wifi": {}}
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            out["temp_c"] = round(int(f.read().strip()) / 1000.0, 1)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open("/proc/loadavg") as f:
+            out["load1"] = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        p = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
+                           text=True, timeout=5)
+        val = (p.stdout or "").strip().split("=")[-1]
+        out["throttled"] = val
+        # Low 4 bits are the NOW bits; the high ones are sticky has-occurred.
+        out["throttled_now"] = bool(int(val, 16) & 0xF) if val.startswith("0x") else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    try:
+        import netinfo
+        out["wifi"] = netinfo.net_status()
+    except Exception:                                       # noqa: BLE001
+        out["wifi"] = {}
+    return out
 
 
 class TranscodeQueue:
@@ -272,6 +314,13 @@ pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
 .vids{display:flex;gap:12px;flex-wrap:wrap}
 .vid{flex:1;min-width:320px} video{width:100%;background:#000;border-radius:6px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.metrics{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.metric{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px}
+.metric .k{font-size:11px;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.05em}
+.metric .v{font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+.metric .s{font-size:11px;color:var(--dim)}
 .thumbs{display:flex;gap:6px;margin:8px 0}
 .thumbs img{width:150px;height:94px;object-fit:cover;border-radius:4px;
   border:1px solid var(--line);background:#000}
@@ -343,7 +392,7 @@ def index_page(state, sessions, ceilings):
         SAME table the recorder uses, so the form cannot drift from what
         actually runs."""
         out = []
-        for role in ("N6", "AE3"):
+        for role in ("N6", "AE3", "IMX"):
             d = RR.CAMERA_DEFAULTS.get(role, {"framesize": "HD",
                                               "quality": DEFAULT_QUALITY})
             fs = "".join("<option%s>%s</option>"
@@ -424,14 +473,26 @@ def index_page(state, sessions, ceilings):
 
     return _shell("Video recorder", _fill("""
 <h1>Video recorder</h1>
+<div class=metrics>
+  <div class=metric><div class=k>WiFi</div><div class=v id=m_wifi>&hellip;</div>
+    <div class=s id=m_wifi_s></div></div>
+  <div class=metric><div class=k>CPU temp</div><div class=v id=m_temp>&hellip;</div>
+    <div class=s id=m_temp_s></div></div>
+  <div class=metric><div class=k>SD card</div><div class=v id=m_sd>&hellip;</div>
+    <div class=s id=m_sd_s></div></div>
+  <div class=metric><div class=k>Recording ring</div><div class=v id=m_ring>&hellip;</div>
+    <div class=s id=m_ring_s></div></div>
+</div>
 <div class=card>
   <div class=row>
     <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
     <div><label>Duration (s)</label><input id=duration type=number value=300 min=1 max=3600></div>
     <div><label>Cameras</label><select id=cameras>
+      <option value="N6,AE3,IMX">All three</option>
       <option value="N6,AE3">N6 + AE3</option>
       <option value="N6">N6 only</option>
-      <option value="AE3">AE3 only</option></select></div>
+      <option value="AE3">AE3 only</option>
+      <option value="IMX">IMX708 only</option></select></div>
   </div>
   <div class=dim style="margin:12px 0 6px;font-size:12px">
     Each camera has its own settings, because they are not equals: HD q70 gives
@@ -550,6 +611,46 @@ async function storage(){
   }catch(e){}
 }
 storage(); setInterval(storage, 5000);
+function tint(el, pct, warn, bad){
+  el.style.color = pct>=bad ? 'var(--bad)' : (pct>=warn ? 'var(--warn)' : 'var(--fg)');
+}
+async function health(){
+  try{
+    const h = await (await fetch('/api/health')).json();
+    const w = h.wifi||{}, st = h.storage||{};
+    const dbm = (w.signal_dbm!==undefined && w.signal_dbm!==null) ? w.signal_dbm : null;
+    const mw=document.getElementById('m_wifi');
+    mw.textContent = dbm!==null ? (dbm+' dBm') : (w.iface? 'no signal' : 'unknown');
+    // -50 excellent, -60 good, -70 fair, below -75 is where this rig drops.
+    mw.style.color = dbm===null? 'var(--dim)'
+        : dbm>=-60? 'var(--ok)' : dbm>=-72? 'var(--warn)' : 'var(--bad)';
+    document.getElementById('m_wifi_s').textContent =
+      [w.iface, w.ssid, (w.grade||''), (w.rx_bitrate_mbps? w.rx_bitrate_mbps+' Mb/s rx':'')]
+      .filter(Boolean).join(' \u00b7 ') || 'no wireless link';
+
+    const mt=document.getElementById('m_temp');
+    mt.textContent = h.temp_c!==null? h.temp_c.toFixed(1)+' \u00b0C' : 'n/a';
+    if(h.temp_c!==null) tint(mt, h.temp_c, 70, 80);
+    document.getElementById('m_temp_s').textContent =
+      (h.load1!==null? 'load '+h.load1.toFixed(2):'') +
+      (h.throttled_now? '  \u00b7 THROTTLING NOW' : (h.throttled? '  \u00b7 '+h.throttled : ''));
+    document.getElementById('m_temp_s').style.color = h.throttled_now? 'var(--bad)':'var(--dim)';
+
+    const sp = st.sd_used_pct||0;
+    const ms=document.getElementById('m_sd');
+    ms.textContent = sp.toFixed(1)+'%'; tint(ms, sp, 75, 90);
+    document.getElementById('m_sd_s').textContent =
+      gb(st.sd_free_bytes)+' free of '+gb(st.sd_total_bytes);
+
+    const rp = st.ring_used_pct||0;
+    const mr=document.getElementById('m_ring');
+    mr.textContent = rp.toFixed(1)+'%'; tint(mr, rp, 75, 90);
+    document.getElementById('m_ring_s').textContent =
+      gb(st.ring_used_bytes)+' of '+gb(st.ring_bytes)+' \u00b7 '+
+      st.sessions+(st.sessions===1?' recording':' recordings');
+  }catch(e){}
+}
+health(); setInterval(health, 5000);
 async function mk(ev, session, camera){
   const b=ev.target; b.disabled=true; b.textContent='queued\u2026';
   const r=await fetch('/api/transcode',{method:'POST',
@@ -883,6 +984,11 @@ def make_handler(state, root, tq):
                 return self._json(200, R.load_sessions(root))
             if path == "/api/transcode":
                 return self._json(200, tq.snapshot())
+            if path == "/api/health":
+                h = host_health()
+                h["storage"] = ST.status(root, state.ring_bytes,
+                                         state.min_free_bytes)
+                return self._json(200, h)
             if path == "/api/storage":
                 st = ST.status(root, state.ring_bytes, state.min_free_bytes)
                 st["keep_latest"] = state.keep_latest
@@ -928,7 +1034,7 @@ def make_handler(state, root, tq):
                     return self._json(400, {"ok": False, "err": str(e)})
                 sess = str(body.get("session", ""))
                 cam = str(body.get("camera", ""))
-                if not (SAFE.match(sess) and cam in ("N6", "AE3")):
+                if not (SAFE.match(sess) and cam in ("N6", "AE3", "IMX")):
                     return self._json(400, {"ok": False, "err": "bad session or camera"})
                 if not os.path.isfile(os.path.join(root, sess, "%s.mjpeg" % cam)):
                     return self._json(404, {"ok": False, "err": "no clip for that camera"})
@@ -949,7 +1055,7 @@ def make_handler(state, root, tq):
             if not (0 < fps <= 200 and 0 < dur <= 3600):
                 return self._json(400, {"ok": False, "err": "value out of range"})
             cams = [c for c in str(body.get("cameras", "N6,AE3")).split(",")
-                    if c in ("N6", "AE3")]
+                    if c in ("N6", "AE3", "IMX")]
             if not cams:
                 return self._json(400, {"ok": False, "err": "no valid camera"})
 
@@ -961,7 +1067,7 @@ def make_handler(state, root, tq):
                 return self._json(400, {"ok": False, "err": "per_camera must be an object"})
             per = {}
             for role, v in raw.items():
-                if role not in ("N6", "AE3") or not isinstance(v, dict):
+                if role not in ("N6", "AE3", "IMX") or not isinstance(v, dict):
                     continue
                 fs_r = v.get("framesize")
                 if fs_r is not None and fs_r not in FRAMESIZES:

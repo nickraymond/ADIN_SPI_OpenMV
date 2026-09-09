@@ -102,10 +102,21 @@ def check_request(ceilings, role, framesize, quality, fps):
 #:          against q30 and visibly removes the blocking in flat wall and floor
 #:          areas. At 11.66 fps it sits just under his stated 12 floor, which he
 #:          chose knowingly.
+#:   IMX -- HD q70 to start with. It is on the CSI bus with a hardware ISP and
+#:          needs no USB pump at all, so it is the least constrained of the
+#:          three; the card will call its cells unmeasured until this rig has
+#:          actually recorded them.
 CAMERA_DEFAULTS = {
     "N6": {"framesize": "HD", "quality": 70},
     "AE3": {"framesize": "VGA", "quality": 50},
+    "IMX": {"framesize": "HD", "quality": 70},
 }
+
+#: Cameras that are NOT serial boards. These are never looked for by
+#: pi/field/discover.py -- asking a CSI camera its role over a raw REPL is
+#: meaningless, and probing a serial port for it would open a board's port for
+#: no reason.
+CSI_ROLES = {"IMX": 0}
 
 
 def settings_for(role, framesize, quality, per_camera=None):
@@ -164,15 +175,33 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
         if progress is not None and progress != log:
             progress(msg)
 
-    note("discovering boards by role...")
-    ports, problems, found = R.find_boards(tuple(cameras))
-    for p in problems:
-        result["warnings"].append(p)
-        note("! %s" % p)
-    missing = [c for c in cameras if c not in ports]
+    serial_want = [c for c in cameras if c not in CSI_ROLES]
+    csi_want = [c for c in cameras if c in CSI_ROLES]
+
+    ports = {}
+    if serial_want:
+        note("discovering boards by role...")
+        ports, problems, found = R.find_boards(tuple(serial_want))
+        for p in problems:
+            result["warnings"].append(p)
+            note("! %s" % p)
+
+    # A CSI camera is not a serial board and must not be probed like one.
+    csi_live = []
+    for role in csi_want:
+        idx = CSI_ROLES[role]
+        ok, why = R.csi_present(idx)
+        if ok:
+            csi_live.append(role)
+        else:
+            result["warnings"].append("%s: %s" % (role, why))
+            note("! %s: %s" % (role, why))
+
+    missing = [c for c in cameras
+               if c not in ports and c not in csi_live]
     if missing:
         result["errors"].append("cameras not found: %s" % ", ".join(missing))
-    live = [c for c in cameras if c in ports]
+    live = [c for c in cameras if c in ports or c in csi_live]
     if not live:
         result["summary"] = "no cameras found; nothing recorded"
         return result
@@ -226,14 +255,20 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
     def bring_up(role):
         cfg = {"framesize": chosen[role]["framesize"],
                "quality": chosen[role]["quality"], "pixfmt": "RGB565",
-               "duration_s": duration_s, "pace_ms": pace,
+               "duration_s": duration_s, "pace_ms": pace, "fps": fps,
                "max_frames": int(duration_s * 200) + 100}
-        rec = R.BoardRecorder(role, ports[role], cfg,
-                              session.path("%s.mjpeg" % role), log=note)
+        out = session.path("%s.mjpeg" % role)
+        if role in CSI_ROLES:
+            rec = R.CsiRecorder(role, cfg, out, log=note,
+                                camera=CSI_ROLES[role])
+            script = None
+        else:
+            rec = R.BoardRecorder(role, ports[role], cfg, out, log=note)
+            script = R.build_board_script(cfg)
         recorders[role] = rec
         try:
             rec.open()
-            if not rec.start(R.build_board_script(cfg)):
+            if not rec.start(script):
                 note("%s FAILED to start: %s" % (role, rec.error))
         except Exception as e:                          # noqa: BLE001
             rec.error = "%s: %s" % (type(e).__name__, e)
