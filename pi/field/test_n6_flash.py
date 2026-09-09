@@ -96,9 +96,16 @@ class VerifyWrite(unittest.TestCase):
         self.assertIn("SHORTER", f["rest_note"])
 
     def test_a_baseline_of_the_wrong_size_is_refused(self):
-        f = F.verify_write(self.base, self.image, self.base[:-100])
-        self.assertFalse(f["rest_ok"])
-        self.assertIn("not the same partition", f["rest_note"])
+        """Refused either way: a small shortfall trips the read-artefact check
+        (the excess is 0xFF, not zeros), a large one trips the size check.
+        What matters is that neither passes."""
+        near = F.verify_write(self.base, self.image, self.base[:-100])
+        self.assertFalse(near["rest_ok"])
+        self.assertFalse(near["ok"])
+        self.assertIn("NOT the known zero artefact", near["rest_note"])
+        far = F.verify_write(self.base, self.image, self.base[:-F.DFU_BLOCK * 2])
+        self.assertFalse(far["rest_ok"])
+        self.assertIn("not the same partition", far["rest_note"])
 
     def test_whole_partition_restore_compares_everything(self):
         f = F.verify_write(self.base, self.base, whole=True)
@@ -142,6 +149,33 @@ class ReadWriteSizeMismatch(unittest.TestCase):
         f = F.verify_write(readback, image, whole=True)
         self.assertFalse(f["ok"])
         self.assertIn("NOT the known", f["rest_note"])
+
+    def test_an_aligned_backup_verifies_against_a_raw_readback(self):
+        """The regression from the first real flash. `backup` stores the
+        block-aligned 3,670,016 while a readback is the raw 3,670,020, so
+        demanding exact equality rejected a flash whose bytes were correct."""
+        image = b"\x11" * F.DFU_BLOCK
+        baseline = image + b"\xFF" * (F.DFU_BLOCK * 2)
+        readback = baseline + b"\x00\x00\x00\x00"
+        f = F.verify_write(readback, image, baseline)
+        self.assertTrue(f["head_ok"])
+        self.assertTrue(f["rest_ok"], f["rest_note"])
+        self.assertTrue(f["ok"])
+
+    def test_an_aligned_backup_still_catches_a_real_change(self):
+        image = b"\x11" * F.DFU_BLOCK
+        baseline = image + b"\xFF" * (F.DFU_BLOCK * 2)
+        bad = bytearray(baseline); bad[F.DFU_BLOCK + 9] = 0x00
+        f = F.verify_write(bytes(bad) + b"\x00" * 4, image, baseline)
+        self.assertFalse(f["rest_ok"])
+        self.assertFalse(f["ok"])
+
+    def test_a_genuinely_different_partition_is_still_refused(self):
+        image = b"\x11" * F.DFU_BLOCK
+        baseline = image + b"\xFF" * (F.DFU_BLOCK * 2)
+        f = F.verify_write(image + b"\xFF" * (F.DFU_BLOCK * 8), image, baseline)
+        self.assertFalse(f["rest_ok"])
+        self.assertIn("not the same partition", f["rest_note"])
 
     def test_whole_verify_still_catches_a_bad_body(self):
         image = b"\x5A" * (F.DFU_BLOCK * 4)

@@ -162,18 +162,34 @@ def verify_write(partition, image, baseline=None, whole=False):
         out["rest_ok"] = None
         out["rest_note"] = ("no baseline given, so 'nothing else was disturbed'"
                             " was NOT checked -- run `backup` before a write")
-    elif len(baseline) != len(partition):
+    elif abs(len(baseline) - len(partition)) >= DFU_BLOCK:
         out["rest_ok"] = False
         out["rest_note"] = ("baseline is %d bytes, partition read back %d -- "
                             "not the same partition" % (len(baseline),
                                                         len(partition)))
     else:
-        out["rest_ok"] = partition[n:] == baseline[n:]
+        # A backup is stored block-ALIGNED (3,670,016) while a readback is the
+        # raw upload (3,670,020), so these two legitimately differ by the
+        # 4-byte read artefact. Compare over what they share, then require the
+        # excess to be that artefact. Demanding exact equality here rejected a
+        # perfectly good flash on the first real use of this tool.
+        common = min(len(partition), len(baseline))
+        out["rest_ok"] = partition[n:common] == baseline[n:common]
         if out["rest_ok"]:
-            out["rest_note"] = "everything past the image is unchanged"
+            excess = partition[common:]
+            if excess and set(excess) - {0x00}:
+                out["rest_ok"] = False
+                out["rest_note"] = ("%d byte(s) past the baseline and NOT the "
+                                    "known zero artefact (%s)"
+                                    % (len(excess), excess[:8].hex()))
+            else:
+                out["rest_note"] = ("everything past the image is unchanged"
+                                    + (" (+%d zero byte(s) of read artefact)"
+                                       % len(excess) if excess else ""))
         else:
             diffs = [i + n for i, (a, b) in
-                     enumerate(zip(partition[n:], baseline[n:])) if a != b]
+                     enumerate(zip(partition[n:common], baseline[n:common]))
+                     if a != b]
             out["rest_note"] = ("%d byte(s) outside the image CHANGED, first "
                                 "at 0x%08X" % (len(diffs), diffs[0]))
             out["rest_first_diff"] = diffs[0]
