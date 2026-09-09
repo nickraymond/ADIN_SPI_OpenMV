@@ -442,6 +442,17 @@ def index_page(state, sessions, ceilings):
                 acts.append("<button class=sec style='padding:4px 10px;font-size:12px'"
                             " onclick=\"mk(event,'%s','%s')\">Make %s playable</button>"
                             % (html.escape(m["name"]), lbl, lbl))
+        # Comparing cameras means watching them together, so offer the whole
+        # session in one press rather than one press per camera.
+        unconverted = [c.get("label") for c in m.get("cameras", [])
+                       if not c.get("mp4") and c.get("mjpeg")]
+        if len(unconverted) > 1:
+            acts.insert(0, "<button style='padding:4px 10px;font-size:12px'"
+                           " onclick=\"mkAll(event,'%s',%s)\">"
+                           "Make all %d playable</button>"
+                           % (html.escape(m["name"]),
+                              html.escape(json.dumps(unconverted)),
+                              len(unconverted)))
         per_cam = (s.get("per_camera") or {})
         setting_chips = "".join(
             "<span class=chip>%s %s q%s</span>"
@@ -657,6 +668,14 @@ async function mk(ev, session, camera){
     body:JSON.stringify({session:session,camera:camera})});
   const j=await r.json();
   if(!j.ok){ alert(j.err||'refused'); b.disabled=false; b.textContent='retry'; return; }
+  tqPoll();
+}
+async function mkAll(ev, session, cams){
+  const b=ev.target; b.disabled=true; b.textContent='queued '+cams.length+'\u2026';
+  for(const c of cams){
+    await fetch('/api/transcode',{method:'POST',
+      body:JSON.stringify({session:session,camera:c})});
+  }
   tqPoll();
 }
 async function tqPoll(){

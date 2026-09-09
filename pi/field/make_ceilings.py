@@ -105,6 +105,14 @@ def main(argv=None):
                 q = own.get("quality", s.get("quality"))
                 if not fs or q is None:
                     continue
+                # Which cameras recorded TOGETHER. Delivered rates are only
+                # comparable within one combination: measured on nereus002 the
+                # N6 gave 28.75 fps alone, 26.8 beside the IMX and 25.1 with
+                # both others. Older manifests predate this field, so fall back
+                # to the camera list they do carry.
+                combo = s.get("combo") or "+".join(
+                    sorted(c2.get("label", "") for c2 in man.get("cameras", [])
+                           if c2.get("label")))
                 cam = doc["cameras"].setdefault(
                     role, {"cells": {}, "bytes": {}, "sources": [],
                            "firmware": "", "note": ""})
@@ -117,6 +125,11 @@ def main(argv=None):
                     d[key] = round(float(cf), 2)
                     cam.setdefault("delivered_bytes", {})[key] = int(
                         c.get("written_bytes", 0) / max(1, c.get("written_frames", 1)))
+                # And keep it per combination, which is what the card guards on.
+                if combo:
+                    byc = cam.setdefault("delivered_by_combo", {}).setdefault(combo, {})
+                    if cf > byc.get(key, 0):
+                        byc[key] = round(float(cf), 2)
 
     for role, cam in doc["cameras"].items():
         cells, deliv = cam.get("cells") or {}, cam.get("delivered") or {}
@@ -127,6 +140,9 @@ def main(argv=None):
                         % (len(cells), best[0], best[1]))
         if deliv:
             bits.append("%d delivered cells measured end to end" % len(deliv))
+        combos = cam.get("delivered_by_combo") or {}
+        if combos:
+            bits.append("combinations: " + ", ".join(sorted(combos)))
         cam["note"] = "; ".join(bits) or "nothing measured"
 
     with open(a.out, "w") as f:

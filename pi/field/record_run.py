@@ -39,19 +39,37 @@ def load_ceilings(path=CEILINGS_PATH):
         return {"cameras": {}, "note": "no measured ceilings on this host"}
 
 
-def ceiling_for(ceilings, role, framesize, quality):
+def combo_key(cameras):
+    """Canonical name for a set of cameras recording together.
+
+    Sorted, so "N6,IMX" and "IMX,N6" are the same measurement rather than two.
+    """
+    return "+".join(sorted(c for c in cameras if c))
+
+
+def ceiling_for(ceilings, role, framesize, quality, combo=None):
     """Measured fps for this cell as (value, kind), or (None, "").
 
-    DELIVERED beats ENCODER wherever we have it. The two differ a lot and the
-    encoder number is the flattering one: on nereus000 the N6 encodes HD q85 at
-    34.9 fps but delivers 23.8 end to end, because the board writes each 195 KB
-    frame over USB inside the same loop that encodes it. Guarding on 34.9 would
-    promise 30 fps and quietly hand back 24.
+    Three sources, best first:
+
+      1. DELIVERED FOR THIS EXACT CAMERA COMBINATION. Cameras contend, and the
+         effect is large enough to matter: on nereus002 the N6 delivered 28.75
+         fps alone, 26.8 beside the IMX and 25.1 with both others. A ceiling
+         measured solo therefore OVERSTATES what a three-camera session gets,
+         which is exactly the direction that turns a guard into a liar.
+      2. Delivered in any combination -- better than nothing, and flagged as
+         such so the message can say which.
+      3. The encoder ceiling, which excludes the board's own USB write and is
+         always the most optimistic of the three.
     """
     cam = (ceilings.get("cameras") or {}).get(role)
     if not cam:
         return None, ""
     key = "%s_q%d" % (framesize, quality)
+    if combo:
+        byc = (cam.get("delivered_by_combo") or {}).get(combo) or {}
+        if byc.get(key):
+            return byc[key], "delivered together"
     d = (cam.get("delivered") or {}).get(key)
     if d:
         return d, "delivered"
@@ -61,7 +79,7 @@ def ceiling_for(ceilings, role, framesize, quality):
     return None, ""
 
 
-def check_request(ceilings, role, framesize, quality, fps):
+def check_request(ceilings, role, framesize, quality, fps, combo=None):
     """Compare the ask against the measurement. Returns (verdict, message).
 
     Verdicts: "ok" | "tight" | "impossible" | "unmeasured".
@@ -69,13 +87,15 @@ def check_request(ceilings, role, framesize, quality, fps):
     under-deliver, which is Nick's explicit requirement: the cameras are not
     equals and the UI must not pretend they are.
     """
-    ceil, kind = ceiling_for(ceilings, role, framesize, quality)
+    ceil, kind = ceiling_for(ceilings, role, framesize, quality, combo)
     if ceil is None:
         return "unmeasured", ("%s at %s q%d has never been measured on this "
                               "rig -- it will record at whatever it manages"
                               % (role, framesize, quality))
-    what = ("delivers" if kind == "delivered" else "encodes (link cost not "
-            "included, so the real rate is lower)")
+    what = {"delivered together": "delivers, with these cameras together,",
+            "delivered": "delivers alone (more cameras will lower this)",
+            }.get(kind, "encodes (link cost not included, so the real rate is "
+                        "lower)")
     if fps > ceil:
         return "impossible", ("%s %s %s q%d at %.1f fps; %.0f fps is above that, "
                               "so expect ~%.1f"
@@ -135,7 +155,7 @@ def settings_for(role, framesize, quality, per_camera=None):
     return got.get("framesize", framesize), int(got.get("quality", quality))
 
 
-def estimate_bytes(ceilings, chosen, fps, duration_s):
+def estimate_bytes(ceilings, chosen, fps, duration_s, combo=None):
     """Roughly how much disk this recording will want, so the ring can make room
     BEFORE it starts rather than discovering the problem mid-write.
 
@@ -150,7 +170,8 @@ def estimate_bytes(ceilings, chosen, fps, duration_s):
         cam = (ceilings.get("cameras") or {}).get(role, {})
         bpf = (cam.get("delivered_bytes", {}).get(key)
                or cam.get("bytes", {}).get(key) or 450000)
-        rate = ceiling_for(ceilings, role, s["framesize"], s["quality"])[0] or fps
+        rate = ceiling_for(ceilings, role, s["framesize"], s["quality"],
+                           combo)[0] or fps
         total += bpf * min(fps, rate) * duration_s
     return int(total * 1.15)
 
@@ -206,19 +227,22 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
         result["summary"] = "no cameras found; nothing recorded"
         return result
 
-    # Resolve each camera's own settings first, then judge each against ITS cell.
+    # Resolve each camera's own settings first, then judge each against ITS cell
+    # AS PART OF THIS COMBINATION -- cameras contend, and a solo number would
+    # promise more than a three-camera session can deliver.
+    combo = combo_key(live)
     chosen = {}
     for role in live:
         fs_r, q_r = settings_for(role, framesize, quality, per_camera)
         chosen[role] = {"framesize": fs_r, "quality": q_r}
-        verdict, msg = check_request(ceilings, role, fs_r, q_r, fps)
+        verdict, msg = check_request(ceilings, role, fs_r, q_r, fps, combo)
         note("%s: %s" % (verdict.upper(), msg))
         if verdict in ("impossible", "tight", "unmeasured"):
             result["warnings"].append(msg)
 
     # Make room BEFORE recording. The ring evicts oldest-first so a rig left
     # running cannot reach the filesystem; the OS is what this protects.
-    need = estimate_bytes(ceilings, chosen, fps, duration_s)
+    need = estimate_bytes(ceilings, chosen, fps, duration_s, combo)
     note("storage: this clip needs ~%.2f GB" % (need / 1e9))
     pre = ST.enforce(root, ring_bytes=ring_bytes, min_free_bytes=min_free_bytes,
                      keep_latest=keep_latest, need_bytes=need, log=note)
@@ -239,6 +263,9 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
         # what the operator asked for globally; these are what ran, and they
         # differ per camera on purpose.
         "per_camera": chosen,
+        # The set that recorded TOGETHER. Delivered rates are only comparable
+        # within the same combination, because the cameras contend.
+        "combo": combo,
     }
     note("session %s" % session.name)
 
@@ -297,7 +324,7 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
     for role in started:
         rec = recorders[role]
         fs_r, q_r = chosen[role]["framesize"], chosen[role]["quality"]
-        ceil = ceiling_for(ceilings, role, fs_r, q_r)[0] or fps
+        ceil = ceiling_for(ceilings, role, fs_r, q_r, combo)[0] or fps
         cam_c = ceilings.get("cameras", {}).get(role, {})
         key = "%s_q%d" % (fs_r, q_r)
         est_bpf = (cam_c.get("delivered_bytes", {}).get(key)

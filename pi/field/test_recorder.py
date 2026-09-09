@@ -768,5 +768,58 @@ class TestCsiRecorder(unittest.TestCase):
         self.assertNotIn("AE3", RR.CSI_ROLES)
 
 
+
+class TestPerCombinationCeilings(unittest.TestCase):
+    """Cameras contend, so a ceiling measured solo overstates a group session.
+
+    Measured on nereus002: the N6 delivered 28.75 fps alone, 26.8 beside the
+    IMX708 and 25.12 with both others. Guarding a three-camera request against
+    28.75 promises 3.6 fps that will not arrive.
+    """
+
+    CEIL = {"cameras": {"N6": {
+        "cells": {"HD_q70": 37.2},
+        "delivered": {"HD_q70": 28.75},
+        "delivered_by_combo": {"AE3+IMX+N6": {"HD_q70": 25.12},
+                               "IMX+N6": {"HD_q70": 26.8}},
+    }}}
+
+    def test_combo_key_is_order_independent(self):
+        self.assertEqual(RR.combo_key(["N6", "IMX", "AE3"]),
+                         RR.combo_key(["AE3", "N6", "IMX"]))
+        self.assertEqual(RR.combo_key(["N6", "AE3"]), "AE3+N6")
+
+    def test_exact_combination_wins(self):
+        val, kind = RR.ceiling_for(self.CEIL, "N6", "HD", 70, "AE3+IMX+N6")
+        self.assertAlmostEqual(val, 25.12)
+        self.assertEqual(kind, "delivered together")
+
+    def test_a_different_combination_is_used_when_measured(self):
+        val, _ = RR.ceiling_for(self.CEIL, "N6", "HD", 70, "IMX+N6")
+        self.assertAlmostEqual(val, 26.8)
+
+    def test_unmeasured_combination_falls_back_to_solo_and_says_so(self):
+        val, kind = RR.ceiling_for(self.CEIL, "N6", "HD", 70, "N6+SOMETHING")
+        self.assertAlmostEqual(val, 28.75)
+        self.assertEqual(kind, "delivered")
+        _, msg = RR.check_request(self.CEIL, "N6", "HD", 70, 20, "N6+SOMETHING")
+        self.assertIn("alone", msg)
+
+    def test_the_regression_this_exists_for(self):
+        """26 fps passes against the solo 28.75 but is NOT achievable with all
+        three running. The solo verdict lets it through; the combination one
+        refuses it and names the real number."""
+        solo = RR.check_request(self.CEIL, "N6", "HD", 70, 26, None)
+        self.assertIn(solo[0], ("ok", "tight"))       # not refused
+        combo = RR.check_request(self.CEIL, "N6", "HD", 70, 26, "AE3+IMX+N6")
+        self.assertEqual(combo[0], "impossible")
+        self.assertIn("25.1", combo[1])
+
+    def test_no_combo_given_behaves_as_before(self):
+        val, kind = RR.ceiling_for(self.CEIL, "N6", "HD", 70)
+        self.assertAlmostEqual(val, 28.75)
+        self.assertEqual(kind, "delivered")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
