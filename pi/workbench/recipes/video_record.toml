@@ -35,7 +35,10 @@ role = "N6"
 
 [run]
 argv = [
-  "python3", "-u", "pi/field/recorder_web.py",
+  # Launcher, not python3 directly: the field rig keeps mpremote in a venv
+  # (PEP 668), and started under the system python the recorder finds no
+  # boards at all. The launcher picks a working interpreter or fails loudly.
+  "bash", "pi/field/run_recorder.sh",
   "--bind", "0.0.0.0", "--http-port", "8093",
   "--root", "/home/pi/recordings",
   # The recordings store is CAPPED. Oldest sessions are evicted first, so video

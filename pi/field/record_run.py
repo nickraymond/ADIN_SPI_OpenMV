@@ -144,8 +144,8 @@ def estimate_bytes(ceilings, chosen, fps, duration_s):
     return int(total * 1.15)
 
 
-def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
-                  cameras=("N6", "AE3"), transcode=True, log=print,
+def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=300.0,
+                  cameras=("N6", "AE3"), transcode=False, log=print,
                   progress=None, stop_event=None, per_camera=None,
                   ring_bytes=ST.DEFAULT_RING_BYTES,
                   min_free_bytes=ST.DEFAULT_MIN_FREE_BYTES,
@@ -328,6 +328,19 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=5.0,
             result["warnings"].append(
                 "%s sent no trailer; the mp4 timebase falls back to the host "
                 "arrival rate and may play at the wrong speed" % role)
+
+        # A THUMBNAIL ALWAYS, a transcode only on request.
+        #
+        # Nick's rule, and the reasoning is his: do not spend energy converting
+        # something the ring may delete unseen, and if the camera is killed
+        # mid-dive lose the last 5 min rather than a half-written 45 min file.
+        # A thumbnail costs a read and a write -- one frame copied verbatim,
+        # no decode -- so it is always worth having, and it is what makes the
+        # library browsable without converting anything.
+        if st["written_frames"] > 0:
+            tn = R.write_thumbnail(rec.out_path, session.path("%s_thumb.jpg" % role))
+            if tn:
+                st["thumb"] = "%s_thumb.jpg" % role
 
         if transcode and st["written_frames"] > 0:
             note("%s transcoding %d frames at %.2f fps ..."

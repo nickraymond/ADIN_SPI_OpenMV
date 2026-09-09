@@ -194,6 +194,70 @@ class RingBuffer:
             return self._bytes
 
 
+def read_frame(mjpeg_path, n, max_scan_bytes=64 * 1024 * 1024):
+    """Return the nth JPEG from a .mjpeg, BYTE-EXACT, or None.
+
+    Scanned in 1 MB chunks: a 45 minute recording is 7 GB and must never be
+    read into RAM to fetch one frame. `max_scan_bytes` bounds the walk so a
+    huge file cannot turn a page load into a disk crawl -- frame indexes used
+    here are small, near the head of the file.
+    """
+    soi, eoi = b"\xff\xd8", b"\xff\xd9"
+    buf = bytearray()
+    idx = 0
+    scanned = 0
+    try:
+        with open(mjpeg_path, "rb") as f:
+            while scanned < max_scan_bytes:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    return None
+                scanned += len(chunk)
+                buf += chunk
+                while True:
+                    s = buf.find(soi)
+                    if s < 0:
+                        del buf[:max(0, len(buf) - 1)]
+                        break
+                    e = buf.find(eoi, s + 2)
+                    if e < 0:
+                        del buf[:s]
+                        break
+                    if idx == n:
+                        return bytes(buf[s:e + 2])
+                    del buf[:e + 2]
+                    idx += 1
+    except OSError:
+        return None
+    return None
+
+
+#: Which frame to lift as a recording's thumbnail. Not frame 0: the board runs
+#: 8 warm-up frames but AE/AWB can still be settling, and S31 measured that a
+#: not-yet-converged frame comes back BLACK while remaining a valid JPEG -- a
+#: thumbnail that looks like a failure when the clip is fine.
+THUMB_FRAME = 20
+
+
+def write_thumbnail(mjpeg_path, out_path, n=THUMB_FRAME):
+    """Copy one frame out as the recording's thumbnail. No decode, no re-encode.
+
+    Deliberately verbatim: Nick's rule for this rig is that energy is only spent
+    on conversion when he asks for it, so a thumbnail must cost a read and a
+    write, not a transcode. Falls back to earlier frames for a very short clip.
+    """
+    for idx in (n, 5, 0):
+        data = read_frame(mjpeg_path, idx)
+        if data:
+            try:
+                with open(out_path, "wb") as f:
+                    f.write(data)
+                return len(data)
+            except OSError:
+                return 0
+    return 0
+
+
 def build_board_script(cfg, board_src=None):
     """record_board.py with a _CFG literal prepended -- the host owns the knobs."""
     if board_src is None:
@@ -613,6 +677,19 @@ def load_sessions(root):
                     p = os.path.join(root, name, rel)
                     cam[key + "_bytes"] = (os.path.getsize(p)
                                            if os.path.exists(p) else 0)
+            # The mp4 is now made ON REQUEST, so the manifest may name one that
+            # does not exist yet, or a file may exist that the manifest predates.
+            # Trust the filesystem for "is it playable", not the manifest.
+            mp4p = os.path.join(root, name, "%s.mp4" % cam.get("label", ""))
+            if os.path.isfile(mp4p):
+                cam["mp4"] = os.path.basename(mp4p)
+                cam["mp4_bytes"] = os.path.getsize(mp4p)
+            else:
+                cam.pop("mp4", None)
+                cam["mp4_bytes"] = 0
+            thumb = os.path.join(root, name, "%s_thumb.jpg" % cam.get("label", ""))
+            cam["thumb"] = (os.path.basename(thumb) if os.path.isfile(thumb)
+                            else None)
         out.append(m)
     return out
 

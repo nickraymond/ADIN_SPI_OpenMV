@@ -415,14 +415,15 @@ class TestStorageRing(unittest.TestCase):
         """Nick's spec: dry-run mode first."""
         with tempfile.TemporaryDirectory() as d:
             self._store(d, ["r1", "r2", "r3"])
-            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0, dry_run=True)
+            rep = ST.enforce(d, ring_bytes=1500, min_free_bytes=0, keep_latest=0,
+                             dry_run=True)
             self.assertTrue(rep["deleted"])
             self.assertEqual(sorted(os.listdir(d)), ["r1", "r2", "r3"])
 
     def test_enforce_actually_frees_and_reports(self):
         with tempfile.TemporaryDirectory() as d:
             self._store(d, ["r1", "r2", "r3"])
-            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0)
+            rep = ST.enforce(d, ring_bytes=1500, min_free_bytes=0, keep_latest=0)
             self.assertIn("r1", rep["deleted"])
             self.assertNotIn("r1", os.listdir(d))
             self.assertIn("r3", os.listdir(d))       # newest survives
@@ -436,7 +437,7 @@ class TestStorageRing(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as d:
             self._store(d, ["r1", "r2", "r3"])
-            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0)
+            rep = ST.enforce(d, ring_bytes=1500, min_free_bytes=0, keep_latest=0)
             on_disk = sum(ST.dir_size_bytes(os.path.join(d, n))
                           for n in os.listdir(d))
             self.assertEqual(rep["used_bytes"], on_disk)
@@ -446,9 +447,22 @@ class TestStorageRing(unittest.TestCase):
         """A dry run frees nothing, so it must not claim to have."""
         with tempfile.TemporaryDirectory() as d:
             before = self._store(d, ["r1", "r2", "r3"])
-            rep = ST.enforce(d, ring_bytes=1500, keep_latest=0, dry_run=True)
+            rep = ST.enforce(d, ring_bytes=1500, min_free_bytes=0, keep_latest=0,
+                             dry_run=True)
             self.assertEqual(rep["freed_bytes"], 0)
             self.assertEqual(rep["used_bytes"], sum(s["bytes"] for s in before))
+
+    def test_a_full_filesystem_evicts_even_when_the_budget_is_fine(self):
+        """Found by running the suite on nereus002, whose /tmp is a small
+        tmpfs: the 2 GB free-space floor dominated and evicted everything.
+        That is CORRECT -- the floor exists to protect the OS -- so pin it."""
+        with tempfile.TemporaryDirectory() as d:
+            ss = self._store(d, ["r1", "r2", "r3"])
+            _, rep = ST.plan_eviction(ss, ring_bytes=10 ** 12, free_bytes=1000,
+                                      min_free_bytes=2 * 10 ** 9, keep_latest=0)
+            self.assertEqual(len(rep["victims"]), 3)
+            self.assertEqual(rep["over_budget_bytes"], 0)
+            self.assertGreater(rep["short_on_free_bytes"], 0)
 
     def test_nothing_outside_the_root_is_ever_deletable(self):
         with tempfile.TemporaryDirectory() as outer:
@@ -532,21 +546,34 @@ class TestPagesRender(unittest.TestCase):
         self.assertIn("No recordings yet", page)
         self.assertNotIn("@@", page)
 
-    def test_viewer_renders_both_cameras_and_one_scrubber(self):
+    def test_viewer_renders_a_player_per_converted_camera(self):
         import recorder_web as W
         page = W.viewer_page(self.SESSION)
         self.assertNotIn("@@", page)
-        self.assertEqual(page.count("<video"), 2)          # both cameras
+        # Only the converted camera gets a <video>; the other gets an offer.
+        self.assertEqual(page.count("<video"), 1)
         self.assertEqual(page.count('id=scrub'), 1)        # ONE scrubber
         self.assertIn("22.3 MB", page)                     # file size shown
         self.assertIn("HD", page)                          # settings shown
-        self.assertIn("data-offset='0.42'", page)          # alignment carried
+        self.assertIn("data-offset='0.0'", page)
 
-    def test_viewer_flags_a_camera_with_no_mp4(self):
-        """A clip the browser cannot play must say so, not fail silently."""
+    def test_viewer_renders_two_players_when_both_are_converted(self):
+        import recorder_web as W
+        import copy
+        sess = copy.deepcopy(self.SESSION)
+        sess["cameras"][1]["mp4"] = "AE3.mp4"
+        sess["cameras"][1]["mp4_bytes"] = 900000
+        page = W.viewer_page(sess)
+        self.assertEqual(page.count("<video"), 2)
+        self.assertEqual(page.count('id=scrub'), 1)
+        self.assertIn("data-offset='0.42'", page)
+
+    def test_viewer_offers_conversion_for_an_unconverted_clip(self):
+        """Not an error state: clips are kept as MJPEG until asked for."""
         import recorder_web as W
         page = W.viewer_page(self.SESSION)
-        self.assertIn("no mp4", page)
+        self.assertIn("Not converted yet", page)
+        self.assertIn("Make playable", page)
 
 
 class TestMediaPathSafety(unittest.TestCase):
@@ -567,7 +594,7 @@ class TestMediaPathSafety(unittest.TestCase):
                 f.write(b"x")
             with open(os.path.join(d, "secret.txt"), "w") as f:
                 f.write("no")
-            H = W.make_handler(W.RecorderState(d), d)
+            H = W.make_handler(W.RecorderState(d), d, None)
             # _safe_path never touches `self`, so an unbound call is a fair test
             # and avoids standing up a socket server to check a path rule.
             sp = H._safe_path
@@ -580,6 +607,100 @@ class TestMediaPathSafety(unittest.TestCase):
         import recorder_web as W
         for good in ("rec_20260908T014500", "N6.mp4", "AE3.mjpeg"):
             self.assertIsNotNone(W.SAFE.match(good))
+
+
+
+class TestThumbnails(unittest.TestCase):
+    """A thumbnail must cost a read and a write, never a transcode.
+
+    Nick's rule for this rig is that energy is spent on conversion only when he
+    asks for it, so the thumbnail is one frame copied verbatim out of the
+    .mjpeg -- no decode, no re-encode.
+    """
+
+    def _mjpeg(self, path, n):
+        with open(path, "wb") as f:
+            for i in range(n):
+                f.write(b"\xff\xd8" + bytes([i]) * 40 + b"\xff\xd9")
+
+    def test_reads_the_nth_frame_byte_exact(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "N6.mjpeg")
+            self._mjpeg(p, 30)
+            got = R.read_frame(p, 7)
+            self.assertEqual(got, b"\xff\xd8" + bytes([7]) * 40 + b"\xff\xd9")
+
+    def test_past_the_end_is_none_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "N6.mjpeg")
+            self._mjpeg(p, 3)
+            self.assertIsNone(R.read_frame(p, 99))
+
+    def test_missing_file_is_none(self):
+        self.assertIsNone(R.read_frame("/nonexistent/x.mjpeg", 0))
+
+    def test_thumbnail_is_a_verbatim_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "N6.mjpeg")
+            self._mjpeg(p, 40)
+            out = os.path.join(d, "N6_thumb.jpg")
+            n = R.write_thumbnail(p, out)
+            self.assertGreater(n, 0)
+            with open(out, "rb") as f:
+                data = f.read()
+            self.assertEqual(data, R.read_frame(p, R.THUMB_FRAME))
+            self.assertTrue(data.startswith(b"\xff\xd8"))
+
+    def test_short_clip_falls_back_to_an_earlier_frame(self):
+        """A 3 frame clip has no frame 20; it must still get a thumbnail."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "N6.mjpeg")
+            self._mjpeg(p, 3)
+            out = os.path.join(d, "t.jpg")
+            self.assertGreater(R.write_thumbnail(p, out), 0)
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), R.read_frame(p, 0))
+
+    def test_no_frames_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "empty.mjpeg")
+            open(p, "wb").close()
+            out = os.path.join(d, "t.jpg")
+            self.assertEqual(R.write_thumbnail(p, out), 0)
+            self.assertFalse(os.path.exists(out))
+
+
+class TestOnDemandTranscode(unittest.TestCase):
+    def test_recording_does_not_transcode_by_default(self):
+        """Nick's rule: do not spend energy on a clip the ring may delete."""
+        import inspect
+        sig = inspect.signature(RR.run_recording)
+        self.assertIs(sig.parameters["transcode"].default, False)
+
+    def test_default_duration_is_five_minutes(self):
+        import inspect
+        sig = inspect.signature(RR.run_recording)
+        self.assertEqual(sig.parameters["duration_s"].default, 300.0)
+
+    def test_library_trusts_the_filesystem_for_playability(self):
+        """A manifest may name an mp4 that was never made, or predate one."""
+        with tempfile.TemporaryDirectory() as d:
+            sd = os.path.join(d, "rec_x")
+            os.makedirs(sd)
+            for n in ("N6.mjpeg", "N6_thumb.jpg"):
+                with open(os.path.join(sd, n), "wb") as f:
+                    f.write(b"x" * 10)
+            with open(os.path.join(sd, "manifest.json"), "w") as f:
+                json.dump({"name": "rec_x", "cameras": [
+                    {"label": "N6", "mjpeg": "N6.mjpeg", "mp4": "N6.mp4"}]}, f)
+            cam = R.load_sessions(d)[0]["cameras"][0]
+            self.assertNotIn("mp4", cam)           # claimed but absent
+            self.assertEqual(cam["thumb"], "N6_thumb.jpg")
+            with open(os.path.join(sd, "N6.mp4"), "wb") as f:
+                f.write(b"y" * 20)
+            cam = R.load_sessions(d)[0]["cameras"][0]
+            self.assertEqual(cam["mp4"], "N6.mp4")  # now really there
+            self.assertEqual(cam["mp4_bytes"], 20)
 
 
 if __name__ == "__main__":

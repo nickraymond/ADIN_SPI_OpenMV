@@ -49,8 +49,14 @@ def _v4l2_encoder_present():
                 name = f.read().strip().lower()
         except OSError:
             continue
-        # The Pi's hardware codec block enumerates as bcm2835-codec-encode.
-        if "codec-encode" in name or ("h264" in name and "enc" in name):
+        # The Pi's H.264 block enumerates as bcm2835-codec-encode. Its JPEG
+        # block is bcm2835-codec-encode_IMAGE and must NOT match: on nereus002
+        # the sloppy substring test picked /dev/video31 (the image encoder)
+        # over /dev/video11 (the video one), which is the wrong device to
+        # claim H.264 support from.
+        if name.endswith("encode_image") or "image" in name:
+            continue
+        if name.endswith("codec-encode") or ("h264" in name and "enc" in name):
             return "/dev/" + os.path.basename(os.path.dirname(path))
     return None
 

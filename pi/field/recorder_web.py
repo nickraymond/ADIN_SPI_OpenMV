@@ -42,6 +42,7 @@ sys.path.insert(0, _HERE)
 import recorder as R                                        # noqa: E402
 import record_run as RR                                     # noqa: E402
 import storage as ST                                        # noqa: E402
+import transcode as T                                       # noqa: E402
 
 FRAMESIZES = ("QVGA", "VGA", "HD")
 #: The AE3 needs the low rungs -- its VGA ladder plateaus at ~13.8 fps and q30
@@ -53,7 +54,8 @@ QUALITIES = (10, 30, 50, 70, 80, 85, 90, 95)
 #: and costs 3.6x fewer bytes.
 DEFAULT_QUALITY = 70
 CTYPES = {".mp4": "video/mp4", ".mjpeg": "video/x-motion-jpeg",
-          ".json": "application/json"}
+          ".json": "application/json", ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg"}
 
 
 class RecorderState:
@@ -124,6 +126,118 @@ class RecorderState:
             self.busy = False
 
 
+
+class TranscodeQueue:
+    """On-demand, one-at-a-time conversion of a recorded clip to playable mp4.
+
+    Recording no longer transcodes automatically. Nick's reasoning, and it is
+    sound on both counts: converting a clip the storage ring may delete unseen
+    wastes energy, and if the rig is killed mid-dive he would rather lose the
+    last 5 minutes than half of a 45 minute file. So the .mjpeg is the
+    deliverable, and conversion is something he ASKS for on the clips he wants
+    to watch -- paying the energy cost deliberately.
+
+    The soak measured why that matters: capture held 52-70 C with no throttling,
+    while a 10 minute x264 pass ran 64.8-86.7 C and threw active throttle bits.
+    Recording is thermally cheap; converting is not.
+
+    ONE worker, so two conversions can never compete for the same cores, and it
+    runs as a daemon thread that a shutdown does not wait on -- a queued
+    transcode is always redoable, unlike a recording.
+    """
+
+    def __init__(self, root):
+        self.root = root
+        self._q = []
+        self._lock = threading.Lock()
+        self._wake = threading.Condition(self._lock)
+        self.current = None
+        self.done = []
+        self.failed = []
+        self._worker = threading.Thread(target=self._run)
+        self._worker.daemon = True
+        self._worker.start()
+
+    def submit(self, session, camera):
+        key = "%s/%s" % (session, camera)
+        with self._wake:
+            if key == self.current or key in self._q:
+                return False, "already queued"
+            self._q.append(key)
+            self._wake.notify()
+        return True, "queued"
+
+    def snapshot(self):
+        with self._lock:
+            return {"current": self.current, "queued": list(self._q),
+                    "done": self.done[-20:], "failed": self.failed[-20:]}
+
+    def _run(self):
+        while True:
+            with self._wake:
+                while not self._q:
+                    self._wake.wait(60)
+                self.current = self._q.pop(0)
+            try:
+                self._convert(self.current)
+            except Exception as e:                      # noqa: BLE001
+                with self._lock:
+                    self.failed.append({"job": self.current, "err": str(e)})
+            finally:
+                with self._lock:
+                    self.current = None
+
+    def _convert(self, key):
+        session, camera = key.split("/", 1)
+        sdir = os.path.join(self.root, session)
+        mjpeg = os.path.join(sdir, "%s.mjpeg" % camera)
+        mp4 = os.path.join(sdir, "%s.mp4" % camera)
+        if not os.path.isfile(mjpeg):
+            with self._lock:
+                self.failed.append({"job": key, "err": "no .mjpeg for that camera"})
+            return
+
+        # The CAPTURE cadence is the timebase, exactly as the automatic path
+        # used: the board timestamps nothing, so converting at anything else
+        # plays the clip at the wrong speed.
+        fps = 30.0
+        man_path = os.path.join(sdir, "manifest.json")
+        man = None
+        try:
+            with open(man_path) as f:
+                man = json.load(f)
+            for c in man.get("cameras", []):
+                if c.get("label") == camera and c.get("capture_fps"):
+                    fps = float(c["capture_fps"])
+        except (OSError, ValueError, TypeError):
+            pass
+
+        print("transcode: %s at %.2f fps" % (key, fps), flush=True)
+        res = T.transcode(mjpeg, mp4, fps)
+
+        if res.get("ok") and man is not None:
+            # Record it in the manifest so the library shows the mp4 without
+            # having to guess from the filesystem.
+            for c in man.get("cameras", []):
+                if c.get("label") == camera:
+                    c["mp4"] = "%s.mp4" % camera
+                    c["transcode"] = res
+            try:
+                tmp = man_path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(man, f, indent=1)
+                os.replace(tmp, man_path)
+            except OSError:
+                pass
+        with self._lock:
+            (self.done if res.get("ok") else self.failed).append(
+                {"job": key, "wall_s": res.get("wall_s"),
+                 "bytes": res.get("bytes"), "encoder": res.get("encoder"),
+                 "err": None if res.get("ok") else res.get("stderr", "")[:200]})
+        print("transcode: %s %s" % (key, "OK" if res.get("ok") else "FAILED"),
+              flush=True)
+
+
 # --------------------------------------------------------------------------
 # pages
 # --------------------------------------------------------------------------
@@ -158,6 +272,12 @@ pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
 .vids{display:flex;gap:12px;flex-wrap:wrap}
 .vid{flex:1;min-width:320px} video{width:100%;background:#000;border-radius:6px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.thumbs{display:flex;gap:6px;margin:8px 0}
+.thumbs img{width:150px;height:94px;object-fit:cover;border-radius:4px;
+  border:1px solid var(--line);background:#000}
+.thumbwrap{position:relative}
+.thumbwrap b{position:absolute;left:4px;bottom:3px;font-size:10px;
+  background:#000a;padding:1px 5px;border-radius:3px}
 .chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;
   background:#22262e;color:var(--dim);margin-right:6px}
 input[type=range]{width:100%}
@@ -256,21 +376,49 @@ def index_page(state, sessions, ceilings):
                              % (c.get("label", "?"), c.get("written_frames", 0),
                                 c.get("delivered_fps", 0))
                              for c in m.get("cameras", []))
+        thumbs = "".join(
+            "<div class=thumbwrap><img loading=lazy src='/media/%s/%s' alt='%s'>"
+            "<b>%s</b></div>"
+            % (urllib.parse.quote(m["name"]), urllib.parse.quote(c["thumb"]),
+               html.escape(c.get("label", "")), html.escape(c.get("label", "")))
+            for c in m.get("cameras", []) if c.get("thumb"))
+        # Per camera: is it playable yet, and a button to make it so.
+        acts = []
+        for c in m.get("cameras", []):
+            lbl = html.escape(c.get("label", "?"))
+            if c.get("mp4"):
+                acts.append("<span class=chip style='color:var(--ok)'>%s mp4 %s</span>"
+                            % (lbl, _fmt_bytes(c.get("mp4_bytes", 0))))
+            else:
+                acts.append("<button class=sec style='padding:4px 10px;font-size:12px'"
+                            " onclick=\"mk(event,'%s','%s')\">Make %s playable</button>"
+                            % (html.escape(m["name"]), lbl, lbl))
+        per_cam = (s.get("per_camera") or {})
+        setting_chips = "".join(
+            "<span class=chip>%s %s q%s</span>"
+            % (html.escape(r), html.escape(str(v.get("framesize", "?"))),
+               html.escape(str(v.get("quality", "?"))))
+            for r, v in sorted(per_cam.items())) or (
+            "<span class=chip>%s</span><span class=chip>q%s</span>"
+            % (html.escape(str(s.get("framesize", "?"))),
+               html.escape(str(s.get("quality", "?")))))
         lib.append(
             "<div class=card><a href='/view/%s'><b>%s</b></a>"
             "<div class=dim>%s</div>"
-            "<div style='margin-top:6px'>"
-            "<span class=chip>%s</span><span class=chip>q%s</span>"
+            "<div class=thumbs>%s</div>"
+            "<div style='margin-top:2px'>%s"
             "<span class=chip>%s fps asked</span><span class=chip>%ss</span>"
             "<span class=chip>%s</span></div>"
-            "<div class=dim style='margin-top:6px'>%s</div></div>"
+            "<div class=dim style='margin-top:6px'>%s</div>"
+            "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap'>%s</div>"
+            "</div>"
             % (urllib.parse.quote(m["name"]), html.escape(m["name"]),
                html.escape(m.get("created_iso", "?")),
-               html.escape(str(s.get("framesize", "?"))),
-               html.escape(str(s.get("quality", "?"))),
+               thumbs or "<span class=dim style='font-size:12px'>no thumbnail</span>",
+               setting_chips,
                html.escape(str(s.get("fps_requested", "?"))),
                html.escape(str(s.get("duration_s", "?"))),
-               _fmt_bytes(total), html.escape(cams_txt)))
+               _fmt_bytes(total), html.escape(cams_txt), "".join(acts)))
     if not lib:
         lib = ["<div class=card class=dim>No recordings yet.</div>"]
 
@@ -279,7 +427,7 @@ def index_page(state, sessions, ceilings):
 <div class=card>
   <div class=row>
     <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
-    <div><label>Duration (s)</label><input id=duration type=number value=5 min=1 max=3600></div>
+    <div><label>Duration (s)</label><input id=duration type=number value=300 min=1 max=3600></div>
     <div><label>Cameras</label><select id=cameras>
       <option value="N6,AE3">N6 + AE3</option>
       <option value="N6">N6 only</option>
@@ -317,6 +465,14 @@ encoder number because the board writes each frame over USB inside the same
 single-threaded loop that encodes it, so a bigger frame costs twice. The guard
 above uses delivered wherever it exists.</div></div>
 <h2>Recordings</h2>
+<div class=card style="padding:10px 14px">
+  <div class=dim style="font-size:12px">Clips are kept as MJPEG and are <b>not</b>
+  converted automatically &mdash; conversion is the expensive step (it drove this
+  Pi to 86.7&nbsp;C and throttled it, where recording stayed at 55&nbsp;C), and a
+  clip the ring later deletes should never have cost that. Press
+  <b>Make&nbsp;playable</b> on the ones you want to watch.</div>
+  <div id=tq style="margin-top:6px;font-size:12px"></div>
+</div>
 @@LIB@@
 <script>
 const CEIL = @@CEIL@@;
@@ -394,6 +550,35 @@ async function storage(){
   }catch(e){}
 }
 storage(); setInterval(storage, 5000);
+async function mk(ev, session, camera){
+  const b=ev.target; b.disabled=true; b.textContent='queued\u2026';
+  const r=await fetch('/api/transcode',{method:'POST',
+    body:JSON.stringify({session:session,camera:camera})});
+  const j=await r.json();
+  if(!j.ok){ alert(j.err||'refused'); b.disabled=false; b.textContent='retry'; return; }
+  tqPoll();
+}
+async function tqPoll(){
+  const r=await fetch('/api/transcode'); const j=await r.json();
+  const el=document.getElementById('tq');
+  const busy = j.current || (j.queued && j.queued.length);
+  if(busy){
+    el.innerHTML = '<b>Converting:</b> '+(j.current||'-')+
+      (j.queued.length? '  &middot; queued: '+j.queued.join(', '):'')+
+      '  <span class=dim>(this is the energy-expensive step; recording is not)</span>';
+    setTimeout(tqPoll, 3000);
+  } else {
+    const last=(j.done||[]).slice(-1)[0];
+    el.innerHTML = last ? ('<span class=ok>Last converted:</span> '+last.job+
+        ' &mdash; '+(last.wall_s||0).toFixed(1)+' s, '+((last.bytes||0)/1e6).toFixed(0)+' MB'+
+        ' <a href="/">refresh to play it</a>') : '';
+    if((j.failed||[]).length){
+      const f=j.failed.slice(-1)[0];
+      el.innerHTML += ' <span class=bad>Last failure: '+f.job+' &mdash; '+(f.err||'')+'</span>';
+    }
+  }
+}
+tqPoll();
 </script>
 """,
         CAMS=cam_html,
@@ -410,18 +595,34 @@ def viewer_page(m):
         src = c.get("mp4")
         note = ""
         if not src:
+            # Not an error: clips are kept as MJPEG and converted only on
+            # request. Offer the conversion rather than a player that cannot
+            # play, and show the thumbnail so the clip is still identifiable.
             src = c.get("mjpeg")
-            note = ("<div class=warn style='font-size:12px'>no mp4 &mdash; the "
-                    "transcode failed, so this is raw MJPEG and your browser "
-                    "probably will not play it. Download it instead.</div>")
-        vids.append(
-            "<div class=vid><b>%s</b> <span class=dim>%s</span>%s"
-            "<video id=v%d preload=metadata src='/media/%s/%s' "
-            "data-offset='%s'></video></div>"
-            % (label, html.escape("%dx%d" % (c.get("banner", {}).get("w", 0),
-                                             c.get("banner", {}).get("h", 0))),
-               note, i, urllib.parse.quote(m["name"]),
-               urllib.parse.quote(src), c.get("start_offset_s", 0)))
+            th = ("<img src='/media/%s/%s' style='width:100%%;border-radius:6px'>"
+                  % (urllib.parse.quote(m["name"]),
+                     urllib.parse.quote(c.get("thumb") or ""))
+                  if c.get("thumb") else "")
+            note = ("%s<div class=warn style='font-size:12px;margin:8px 0'>"
+                    "Not converted yet &mdash; this clip is MJPEG, which the "
+                    "browser will not play. Converting costs real energy and "
+                    "heat, so it happens only when you ask."
+                    "</div><button onclick=\"mkv(event,'%s','%s')\">"
+                    "Make playable</button>"
+                    % (th, html.escape(m["name"]),
+                       html.escape(c.get("label", ""))))
+        geom = html.escape("%dx%d" % (c.get("banner", {}).get("w", 0),
+                                      c.get("banner", {}).get("h", 0)))
+        if c.get("mp4"):
+            body = ("<video id=v%d preload=metadata src='/media/%s/%s' "
+                    "data-offset='%s'></video>"
+                    % (i, urllib.parse.quote(m["name"]),
+                       urllib.parse.quote(src), c.get("start_offset_s", 0)))
+        else:
+            body = note
+            note = ""
+        vids.append("<div class=vid><b>%s</b> <span class=dim>%s</span>%s%s</div>"
+                    % (label, geom, note, body))
         gaps = c.get("seq_gaps")
         rows.append(
             "<tr><td class=mono>%s</td><td>%d</td><td>%.2f</td><td>%.2f</td>"
@@ -516,6 +717,21 @@ function toggle(){
   vs.forEach(v=>{ playing? v.play().catch(()=>{}) : v.pause(); });
 }
 refresh();
+async function mkv(ev, session, camera){
+  const b=ev.target; b.disabled=true; b.textContent='converting\u2026';
+  const r=await fetch('/api/transcode',{method:'POST',
+    body:JSON.stringify({session:session,camera:camera})});
+  const j=await r.json();
+  if(!j.ok){ alert(j.err||'refused'); b.disabled=false; b.textContent='retry'; return; }
+  (async function wait(){
+    const q=await (await fetch('/api/transcode')).json();
+    const key=session+'/'+camera;
+    if(q.current===key || (q.queued||[]).includes(key)){ setTimeout(wait,3000); return; }
+    if((q.done||[]).some(d=>d.job===key)){ location.reload(); return; }
+    const f=(q.failed||[]).find(d=>d.job===key);
+    b.disabled=false; b.textContent = f? ('failed: '+(f.err||'').slice(0,60)) : 'retry';
+  })();
+}
 </script>
 """ % (html.escape(m["name"]),
        html.escape(str(s.get("framesize", "?"))),
@@ -540,7 +756,7 @@ refresh();
 SAFE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
-def make_handler(state, root):
+def make_handler(state, root, tq):
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -665,6 +881,8 @@ def make_handler(state, root):
                 return self._json(200, state.snapshot())
             if path == "/api/sessions":
                 return self._json(200, R.load_sessions(root))
+            if path == "/api/transcode":
+                return self._json(200, tq.snapshot())
             if path == "/api/storage":
                 st = ST.status(root, state.ring_bytes, state.min_free_bytes)
                 st["keep_latest"] = state.keep_latest
@@ -702,6 +920,20 @@ def make_handler(state, root):
 
         def do_POST(self):
             path = urllib.parse.urlparse(self.path).path
+            if path == "/api/transcode":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    body = json.loads(self.rfile.read(n) or b"{}")
+                except (ValueError, OSError) as e:
+                    return self._json(400, {"ok": False, "err": str(e)})
+                sess = str(body.get("session", ""))
+                cam = str(body.get("camera", ""))
+                if not (SAFE.match(sess) and cam in ("N6", "AE3")):
+                    return self._json(400, {"ok": False, "err": "bad session or camera"})
+                if not os.path.isfile(os.path.join(root, sess, "%s.mjpeg" % cam)):
+                    return self._json(404, {"ok": False, "err": "no clip for that camera"})
+                ok, msg = tq.submit(sess, cam)
+                return self._json(200, {"ok": ok, "err": None if ok else msg})
             if path != "/api/record":
                 return self._send(404, "not found", "text/plain")
             try:
@@ -788,7 +1020,8 @@ def main(argv=None):
           % (a.ring_gb, a.min_free_gb, a.keep_latest), flush=True)
     # Serve FIRST, touch hardware later: the workbench health-gates LIVE on this
     # page answering within 60 s, and board discovery can take longer (D48).
-    srv = QuietServer((a.bind, a.http_port), make_handler(state, a.root))
+    tq = TranscodeQueue(a.root)
+    srv = QuietServer((a.bind, a.http_port), make_handler(state, a.root, tq))
     print("recorder on http://%s:%d/  root=%s" % (a.bind, a.http_port, a.root),
           flush=True)
 
