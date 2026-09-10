@@ -211,6 +211,34 @@ class DiveRecorder:
         a = self.args
         return os.path.join(a.root, "%s_s%04d" % (a.session_prefix, index))
 
+    def _counting_output(self, path):
+        """FileOutput that counts frames as they pass, not afterwards.
+
+        WHY: closing a segment used to re-read the whole science file to count
+        JPEG SOI markers -- 1.5 GB per 5-minute segment. That added tens of
+        seconds to every IMX segment while the board recorder marched on at a
+        flat 300 s, so the two drifted: measured over 2.5 h, 26 board segments
+        against 22 IMX ones, which silently paired cameras from different
+        moments inside one session directory. The encoder hands us exactly one
+        buffer per frame, so counting costs nothing.
+        """
+        from picamera2.outputs import FileOutput
+
+        class _Counting(FileOutput):
+            frames = 0
+
+            def outputframe(self, frame, keyframe=True, timestamp=None,
+                            packet=None, audio=False):
+                self.frames += 1
+                try:
+                    return super().outputframe(frame, keyframe, timestamp,
+                                               packet, audio)
+                except TypeError:
+                    # Older picamera2 signature; never lose a frame over it.
+                    return super().outputframe(frame, keyframe, timestamp)
+
+        return _Counting(path)
+
     def _encoders(self, index):
         from picamera2.encoders import H264Encoder, JpegEncoder
         from picamera2.outputs import FileOutput
@@ -231,7 +259,8 @@ class DiveRecorder:
         pxy_path = os.path.join(seg_dir, "IMX_proxy.h264")
         sci = JpegEncoder(q=a.jpeg_q, num_threads=a.jpeg_threads)
         pxy = H264Encoder(bitrate=a.proxy_bitrate)
-        self.cam.start_encoder(sci, FileOutput(sci_path), name="main")
+        self._sci_out = self._counting_output(sci_path)
+        self.cam.start_encoder(sci, self._sci_out, name="main")
         self.cam.start_encoder(pxy, FileOutput(pxy_path), name="lores")
         return sci, pxy, sci_path, pxy_path
 
@@ -265,6 +294,17 @@ class DiveRecorder:
             with open(tmp, "w") as f:
                 json.dump(st, f)
             os.replace(tmp, os.path.join(d, "status.json"))
+            # ONE CLOCK FOR BOTH RECORDERS. The board loop reads this to learn
+            # which segment is open and when it ends, instead of counting its
+            # own. Two independent 300 s timers drifted four segments apart
+            # over 2.5 h; a follower cannot drift.
+            cur = os.path.join(a.root, "%s_current.json" % a.session_prefix)
+            tmp2 = cur + ".tmp"
+            with open(tmp2, "w") as f:
+                json.dump({"segment": index, "session": st["session"],
+                           "ends_unix": st["ends_unix"],
+                           "closing": st["closing"]}, f)
+            os.replace(tmp2, cur)
         except OSError:
             pass          # a countdown is a convenience; never fail a dive for it
 
@@ -321,7 +361,13 @@ class DiveRecorder:
             d = {"path": os.path.basename(path), "bytes": size,
                  "MB_s": round(size / elapsed / 1e6, 2) if elapsed else None}
             if label == "science":
-                d["frames"] = _count_soi(path)
+                # Counted in flight; the file scan stays only as a fallback
+                # for an output that never reported, and the manifest records
+                # which of the two produced the number.
+                counted = getattr(self, "_sci_out", None)
+                in_flight = counted.frames if counted is not None else 0
+                d["frames"] = in_flight or _count_soi(path)
+                d["frames_counted_in_flight"] = bool(in_flight)
                 d["fps"] = round(d["frames"] / elapsed, 2) if elapsed else None
                 if not d["frames"]:
                     man["problems"].append("science segment has NO frames")

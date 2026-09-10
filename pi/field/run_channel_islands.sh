@@ -87,17 +87,37 @@ IMX_PID=$!
 # use $SEGMENT_S, so they stay together to within about a second over a dive.
 # Both manifest writers merge rather than overwrite, so even if a boundary
 # slips neither camera can be dropped from the page.
+#
+# THE BOARDS FOLLOW THE IMX'S CLOCK. They used to count their own segments on
+# their own 300 s timer, which drifted: measured over 2.5 h, 26 board segments
+# against 22 IMX ones, so a session directory ended up holding cameras from
+# different moments and the last four had no IMX at all. Now each pass asks
+# the IMX which segment is open and how long is left, and records exactly that
+# remainder -- a follower cannot drift from what it is following.
+CURRENT="$ROOTDIR/${PREFIX}_current.json"
 (
-  SEG=0
   while kill -0 "$IMX_PID" 2>/dev/null; do
+    read -r SEG LEFT <<<"$("$SYS_PY" - "$CURRENT" <<'PY' 2>/dev/null
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    print("", ""); raise SystemExit
+left = float(d.get("ends_unix", 0)) - time.time()
+print(d.get("segment", ""), "%.0f" % max(0.0, left))
+PY
+)"
+    if [ -z "${SEG:-}" ]; then sleep 2; continue; fi
+    # Too little of the segment left to be worth a board start-up; wait for
+    # the next one rather than writing a two-second stub.
+    if [ "${LEFT:-0}" -lt 20 ]; then sleep 3; continue; fi
     SESSION="$(printf '%s_s%04d' "$PREFIX" "$SEG")"
     LOG="$ROOTDIR/$SESSION/boards.log"
     mkdir -p "$ROOTDIR/$SESSION"
     "$VENV_PY" "$ROOT/pi/field/recorder.py" \
       --root "$ROOTDIR" --session "$SESSION" --cameras "$BOARDS" --fps 30 \
-      --duration "$SEGMENT_S" --no-transcode >> "$LOG" 2>&1 \
+      --duration "$LEFT" --no-transcode >> "$LOG" 2>&1 \
       || echo "channel-islands: board segment $SEG failed (see $LOG)" >&2
-    SEG=$((SEG + 1))
   done
 ) &
 CHILDREN+=($!)

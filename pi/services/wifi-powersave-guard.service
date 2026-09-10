@@ -1,0 +1,33 @@
+# wifi-powersave-guard.service — re-assert wifi power_save off, and SAY when
+# it had to.
+#
+# WHY THIS EXISTS ON TOP OF wifi-powersave-off.service: that unit is a
+# one-shot at boot with RemainAfterExit, so it wins once and never again.
+# NetworkManager's own setting on this rig is `802-11-wireless.powersave: 0
+# (default)`, which leaves NM free to re-enable power save on any reconnect or
+# roam -- and nothing puts it back. On 2026-09-10 nereus002 twice dropped off
+# the network for hours while the Pi itself kept running and recording
+# (uptime continuous to 8,983 s, throttled 0x0, 60-64 C), which is exactly
+# what a dozing radio looks like from the outside.
+#
+# It is also an INSTRUMENT. It only logs when it actually had to change
+# something, so a line here is evidence that power save came back on -- which
+# is the fact we could not establish during those blackouts.
+#
+# THE PROPER FIX IS STILL THE NM SETTING (needs root, Nick):
+#   nmcli connection modify "<wifi connection>" 802-11-wireless.powersave 2
+# This guard is the belt to that braces, and it is cheap: one ioctl a minute.
+[Unit]
+Description=Re-assert wifi power_save off (guards against NM re-enabling it)
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for i in wlan0 wlan1; do \
+  [ -e /sys/class/net/$i ] || continue; \
+  state=$(/sbin/iw dev $i get power_save 2>/dev/null | awk "{print \$3}"); \
+  if [ "$state" != "off" ]; then \
+    echo "wifi-powersave-guard: $i power_save was $state -- forcing off"; \
+    /sbin/iw dev $i set power_save off || true; \
+  fi; \
+done'
