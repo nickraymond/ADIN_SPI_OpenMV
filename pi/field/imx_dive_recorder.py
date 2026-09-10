@@ -206,12 +206,29 @@ class DiveRecorder:
         return self.locked
 
     # -- segments ---------------------------------------------------------
+    def segment_dir(self, index):
+        """<root>/<prefix>_s0000 -- the name the boards are given too."""
+        a = self.args
+        return os.path.join(a.root, "%s_s%04d" % (a.session_prefix, index))
+
     def _encoders(self, index):
         from picamera2.encoders import H264Encoder, JpegEncoder
         from picamera2.outputs import FileOutput
         a = self.args
-        base = os.path.join(a.out_dir, "seg_%04d" % index)
-        sci_path, pxy_path = base + "_science.mjpeg", base + "_proxy.h264"
+        # ONE SESSION DIRECTORY PER SEGMENT, SHARED WITH THE BOARDS.
+        # Nick reads the library as timestamped events, and a dive is one
+        # event with three cameras in it -- not an IMX tree beside a separate
+        # board tree. The launcher hands both recorders the same session name
+        # per segment, so N6.mjpeg, AE3.mjpeg and IMX.mjpeg land together and
+        # the page shows them side by side.
+        #
+        # The camera is called IMX for the same reason: the label the library
+        # displays IS the file stem, and "seg_0000_science" told Nick nothing
+        # about which camera he was looking at.
+        seg_dir = self.segment_dir(index)
+        os.makedirs(seg_dir, exist_ok=True)
+        sci_path = os.path.join(seg_dir, "IMX.mjpeg")
+        pxy_path = os.path.join(seg_dir, "IMX_proxy.h264")
         sci = JpegEncoder(q=a.jpeg_q, num_threads=a.jpeg_threads)
         pxy = H264Encoder(bitrate=a.proxy_bitrate)
         self.cam.start_encoder(sci, FileOutput(sci_path), name="main")
@@ -228,7 +245,7 @@ class DiveRecorder:
         """
         a = self.args
         st = {
-            "session": os.path.basename(a.out_dir.rstrip("/")),
+            "session": os.path.basename(self.segment_dir(index)),
             "segment": index,
             "segment_s": a.segment_s,
             "started_unix": t_start,
@@ -242,10 +259,12 @@ class DiveRecorder:
             "updated_utc": now_iso(),
         }
         try:
-            tmp = os.path.join(a.out_dir, "status.json.tmp")
+            d = self.segment_dir(index)
+            os.makedirs(d, exist_ok=True)
+            tmp = os.path.join(d, "status.json.tmp")
             with open(tmp, "w") as f:
                 json.dump(st, f)
-            os.replace(tmp, os.path.join(a.out_dir, "status.json"))
+            os.replace(tmp, os.path.join(d, "status.json"))
         except OSError:
             pass          # a countdown is a convenience; never fail a dive for it
 
@@ -253,6 +272,8 @@ class DiveRecorder:
         a = self.args
         t_start = time.time()
         started_iso = now_iso()
+        seg_dir = self.segment_dir(index)
+        os.makedirs(seg_dir, exist_ok=True)
         self.write_status(index, t_start)
         depth_start = dict(self.depth.read()) if self.depth else None
         # Re-read the LIVE gains at the top of every segment. Copying the
@@ -331,14 +352,14 @@ class DiveRecorder:
             else:
                 man["problems"].append("proxy not muxed to mp4: %s" % why)
 
-        with open(os.path.join(a.out_dir, "seg_%04d.json" % index), "w") as f:
+        with open(os.path.join(seg_dir, "imx_segment.json"), "w") as f:
             json.dump(man, f, indent=2)
         self.segments.append(man)
         # Rewritten after EVERY segment, so a dive interrupted at any point is
         # still a complete, listable session rather than one that only becomes
         # reviewable if the run ends tidily.
         try:
-            write_session_manifest(a.out_dir, self.segments, self.locked, a)
+            merge_session_manifest(seg_dir, man, self.locked, a)
         except OSError as exc:
             man["problems"].append("session manifest not written: %s" % exc)
         if hasattr(os, "sync"):
@@ -371,7 +392,7 @@ class DiveRecorder:
     def run(self):
         a = self.args
         self.install_signal_handlers()
-        os.makedirs(a.out_dir, exist_ok=True)
+        os.makedirs(a.root, exist_ok=True)
         self.configure()
         self.start_camera()
         if a.wb == "lock":
@@ -444,67 +465,72 @@ def mux_h264_to_mp4(h264_path, mp4_path, fps):
     return True, None
 
 
-def write_session_manifest(out_dir, segments, locked, args):
-    """Write the manifest the EXISTING recorder library already understands.
+def merge_session_manifest(seg_dir, man, locked, args):
+    """Fold this segment's IMX cameras into the SHARED session manifest.
 
-    recorder.load_sessions() picks up any directory under the recordings root
-    holding a manifest.json with a `cameras` list, and the page's play and
-    transcode-on-request paths key on the camera label matching the file
-    stem. Writing that shape is what makes a dive show up at :8093 next to
-    the board recordings, instead of needing a second review page nobody has
-    time to build two days before a boat leaves.
+    The board recorder writes the same manifest.json in the same directory,
+    and either process may finish first. So this is a read-modify-write that
+    keeps every camera it does not own -- exactly the mirror of Session.save()
+    on the board side. A plain overwrite would silently drop whichever camera
+    finished first, leaving its file on disk and absent from the page.
     """
-    cams = []
-    for m in segments:
-        sci = m["delivered"].get("science") or {}
-        pxy = m["delivered"].get("proxy") or {}
-        fps = sci.get("fps") or args.fps
-        if sci.get("path"):
-            cams.append({
-                "label": sci["path"].rsplit(".", 1)[0],
-                "mjpeg": sci["path"], "capture_fps": fps,
-                "frames": sci.get("frames"), "bytes": sci.get("bytes"),
-                "delivered_fps": fps, "mb_per_s": sci.get("MB_s"),
-                "segment": m["segment"], "started_utc": m["started_utc"],
-                "kind": "science (JPEG q%d)" % args.jpeg_q,
-            })
-        if pxy.get("mp4"):
-            cams.append({
-                "label": pxy["mp4"].rsplit(".", 1)[0],
-                "mp4": pxy["mp4"], "capture_fps": fps,
-                "bytes": pxy.get("bytes"), "mb_per_s": pxy.get("MB_s"),
-                "segment": m["segment"], "started_utc": m["started_utc"],
-                "kind": "iPad proxy (H.264)",
-            })
-    session_name = os.path.basename(out_dir.rstrip("/"))
-    man = {
-        # BOTH keys, deliberately. recorder.load_sessions() returns the
-        # manifest VERBATIM to the page, and the library keys off "name" --
-        # writing only "session" (which is what the board recorder happens to
-        # call it) produced a manifest that parsed fine, listed as a session,
-        # and then blew up the page with a KeyError. Measured 2026-09-09.
-        "name": session_name,
-        "session": session_name,
-        "created_iso": segments[0]["started_utc"] if segments else now_iso(),
-        "settings": {
-            "recipe": args.recipe, "science_size": args.science_size,
-            "jpeg_q": args.jpeg_q, "proxy_size": args.proxy_size,
-            "fps": args.fps, "segment_s": args.segment_s,
-            "wb_mode": args.wb, "focus_mode": args.focus,
-            "lens_position": args.lens_position,
-        },
-        "white_balance": locked,
-        "cameras": cams,
-        "segments": len(segments),
-        "summary": "%s: %d segment(s), %s"
-                   % (session_name, len(segments),
-                      "wb locked" if args.wb == "lock" else "AWB auto"),
+    path = os.path.join(seg_dir, "manifest.json")
+    try:
+        with open(path) as f:
+            existing = json.load(f)
+    except (OSError, ValueError):
+        existing = None
+    if not isinstance(existing, dict):
+        existing = {}
+
+    sci = man["delivered"].get("science") or {}
+    pxy = man["delivered"].get("proxy") or {}
+    fps = sci.get("fps") or args.fps
+    mine = []
+    if sci.get("bytes"):
+        mine.append({
+            "label": "IMX", "mjpeg": os.path.basename(sci["path"]),
+            "capture_fps": fps, "delivered_fps": fps,
+            "frames": sci.get("frames"), "bytes": sci.get("bytes"),
+            "mb_per_s": sci.get("MB_s"),
+            "w": args.science_size[0], "h": args.science_size[1],
+            "kind": "science (JPEG q%d)" % args.jpeg_q,
+        })
+    if pxy.get("mp4"):
+        mine.append({
+            "label": "IMX_proxy", "mp4": pxy["mp4"], "capture_fps": fps,
+            "bytes": pxy.get("mp4_bytes") or pxy.get("bytes"),
+            "mb_per_s": pxy.get("MB_s"),
+            "w": args.proxy_size[0], "h": args.proxy_size[1],
+            "kind": "iPad proxy (H.264, plays as-is)",
+        })
+
+    ours = {c["label"] for c in mine}
+    keep = [c for c in existing.get("cameras", [])
+            if c.get("label") not in ours]
+    name = os.path.basename(seg_dir.rstrip("/"))
+    out = dict(existing)
+    out.setdefault("name", name)
+    out.setdefault("session", name)
+    out.setdefault("created_iso", man["started_utc"])
+    out["cameras"] = keep + mine
+    out["white_balance"] = locked
+    out["dive"] = {
+        "recipe": args.recipe, "segment": man["segment"],
+        "segment_s": args.segment_s, "wb_mode": args.wb,
+        "focus_mode": args.focus, "lens_position": args.lens_position,
+        "started_utc": man["started_utc"], "ended_utc": man["ended_utc"],
+        "elapsed_s": man["elapsed_s"], "problems": man["problems"],
     }
-    tmp = os.path.join(out_dir, "manifest.json.tmp")
+    out.setdefault("settings", {}).update({
+        "science_size": args.science_size, "jpeg_q": args.jpeg_q,
+        "proxy_size": args.proxy_size, "fps": args.fps,
+    })
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(man, f, indent=1)
-    os.replace(tmp, os.path.join(out_dir, "manifest.json"))
-    return man
+        json.dump(out, f, indent=1)
+    os.replace(tmp, path)
+    return out
 
 
 def _gains_match(a, b, tol=1e-3):
@@ -536,8 +562,13 @@ def _count_soi(path):
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--out-dir", default=None,
-                   help="default: ~/recordings/dive_<UTC timestamp>")
+    p.add_argument("--root", default=os.path.expanduser("~/recordings"),
+                   help="recordings root; each segment becomes its own "
+                        "timestamped session directory inside it")
+    p.add_argument("--session-prefix", default=None,
+                   help="session dirs are <prefix>_s0000, _s0001 ... The "
+                        "launcher passes the SAME prefix to the board "
+                        "recorder so a dive is one event with all cameras.")
     p.add_argument("--recipe", default="imx-dive-default")
     p.add_argument("--science-size", type=int, nargs=2, default=[1280, 800])
     p.add_argument("--jpeg-q", type=int, default=90,
@@ -566,14 +597,14 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    if not a.out_dir:
-        a.out_dir = os.path.expanduser(
-            "~/recordings/dive_%s" % time.strftime("%Y%m%dT%H%M%SZ",
-                                                   time.gmtime()))
+    if not a.session_prefix:
+        a.session_prefix = "dive_%s" % time.strftime("%Y%m%dT%H%M%SZ",
+                                                     time.gmtime())
     rec = DiveRecorder(a)
     segs = rec.run()
     bad = [s for s in segs if s["problems"]]
-    print(json.dumps({"out_dir": a.out_dir, "segments": len(segs),
+    print(json.dumps({"root": a.root, "session_prefix": a.session_prefix,
+                      "segments": len(segs),
                       "with_problems": len(bad)}, indent=2))
     return 1 if bad or not segs else 0
 

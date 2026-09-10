@@ -1,0 +1,38 @@
+# video-review.service — the always-on dive review page on :8093.
+#
+# WHY IT IS A SERVICE AND NOT A CARD: between dives Nick wants ONE tap to see
+# what the last dive looked like. Expanding a section, starting a recipe and
+# waiting for it to go LIVE is three steps and a board lock, on an iPad, on a
+# boat. The library is just files on the card, so serving it costs nothing and
+# should always be there.
+#
+# WHY --review-only: this runs at the same time as a dive recording, and two
+# processes recording the same boards is the failure this rig knows best
+# (SPEC: one owner per board port, ever). This instance REFUSES /api/record
+# outright, so the always-on page cannot become a second recorder. Recording
+# is started from the workbench card, which owns the board lock.
+#
+# Install: sudo pi/install_stream_service.sh review
+# Open:    http://nereus002:8093/
+# Watch:   journalctl -u video-review -f
+[Unit]
+Description=Dive review library (read-only recorder page on :8093)
+After=network.target
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/field/recorder_web.py
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+SyslogIdentifier=video-review
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/run_recorder.sh \
+  --bind 0.0.0.0 --http-port 8093 \
+  --root /home/pi/recordings \
+  --ring-gb 85 --min-free-gb 2 --keep-latest 2 \
+  --review-only
+
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

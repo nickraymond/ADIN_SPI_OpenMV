@@ -55,9 +55,9 @@ SYS_PY="$(command -v python3)"
 }
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT="$ROOTDIR/dive_$STAMP"
-mkdir -p "$OUT" || { echo "channel-islands: cannot create $OUT" >&2; exit 1; }
-echo "channel-islands: out=$OUT segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS q=$JPEG_Q" >&2
+PREFIX="dive_$STAMP"
+mkdir -p "$ROOTDIR" || { echo "channel-islands: cannot create $ROOTDIR" >&2; exit 1; }
+echo "channel-islands: prefix=$PREFIX segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS q=$JPEG_Q" >&2
 
 CHILDREN=()
 cleanup() {
@@ -65,26 +65,39 @@ cleanup() {
   for pid in "${CHILDREN[@]:-}"; do kill -INT "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
   sync
-  echo "channel-islands: stopped; files under $OUT" >&2
+  echo "channel-islands: stopped; sessions ${PREFIX}_s* under $ROOTDIR" >&2
 }
 trap cleanup INT TERM
 
 # IMX: one long-lived process; it rolls its own segments internally so the
 # WB/focus lock is never re-taken.
 "$SYS_PY" "$HERE/imx_dive_recorder.py" \
-  --out-dir "$OUT" --recipe channel-islands \
+  --root "$ROOTDIR" --session-prefix "$PREFIX" --recipe channel-islands \
   --segment-s "$SEGMENT_S" --jpeg-q "$JPEG_Q" \
   --wb "$WB" --focus "$FOCUS" --lens-position "$LENS" &
 CHILDREN+=($!)
 IMX_PID=$!
 
-# Boards: re-run per segment. Each pass writes its own session directory.
+# Boards: re-run per segment, into the SAME session directory the IMX is
+# writing for that segment -- "${PREFIX}_s0000", "_s0001", and so on. That is
+# what makes a dive ONE timestamped event holding all three cameras instead
+# of an IMX tree beside a separate board tree (Nick, 2026-09-09).
+#
+# The two are aligned by CLOCK, not handshaked: both start together and both
+# use $SEGMENT_S, so they stay together to within about a second over a dive.
+# Both manifest writers merge rather than overwrite, so even if a boundary
+# slips neither camera can be dropped from the page.
 (
+  SEG=0
   while kill -0 "$IMX_PID" 2>/dev/null; do
+    SESSION="$(printf '%s_s%04d' "$PREFIX" "$SEG")"
+    LOG="$ROOTDIR/$SESSION/boards.log"
+    mkdir -p "$ROOTDIR/$SESSION"
     "$VENV_PY" "$ROOT/pi/field/recorder.py" \
-      --root "$ROOTDIR" --cameras "$BOARDS" --fps 30 \
-      --duration "$SEGMENT_S" --no-transcode >> "$OUT/boards.log" 2>&1 \
-      || echo "channel-islands: board segment failed (see $OUT/boards.log)" >&2
+      --root "$ROOTDIR" --session "$SESSION" --cameras "$BOARDS" --fps 30 \
+      --duration "$SEGMENT_S" --no-transcode >> "$LOG" 2>&1 \
+      || echo "channel-islands: board segment $SEG failed (see $LOG)" >&2
+    SEG=$((SEG + 1))
   done
 ) &
 CHILDREN+=($!)

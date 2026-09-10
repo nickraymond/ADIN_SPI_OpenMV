@@ -218,6 +218,7 @@ def estimate_bytes(ceilings, chosen, fps, duration_s, combo=None):
 def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=180.0,
                   cameras=("N6", "AE3"), transcode=False, log=print,
                   progress=None, stop_event=None, per_camera=None,
+                  session_name=None,
                   ring_bytes=ST.DEFAULT_RING_BYTES,
                   min_free_bytes=ST.DEFAULT_MIN_FREE_BYTES,
                   keep_latest=ST.DEFAULT_KEEP_LATEST):
@@ -294,7 +295,7 @@ def run_recording(root, framesize="HD", quality=85, fps=30.0, duration_s=180.0,
             "the newest %d sessions and the active one are never deleted"
             % (pre["shortfall_bytes"] / 1e9, keep_latest))
 
-    session = R.Session(root)
+    session = R.Session(root, name=session_name)
     session.manifest["settings"] = {
         "framesize": framesize, "quality": quality, "fps_requested": fps,
         "duration_s": duration_s, "cameras": list(live),
