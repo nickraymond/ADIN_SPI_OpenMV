@@ -203,8 +203,18 @@ class TranscodeQueue:
         self.current = None
         self.current_started = None
         self.current_estimate_s = None
-        self.factor = self.DEFAULT_FACTOR
-        self._observed = []
+        # PER CAMERA, not one global number. Measured 2026-09-10: converting
+        # the N6 (HD, 29 fps) took 29.8 s for a 40 s clip while the AE3 (VGA,
+        # 12 fps) took 3.5 s for the same 40 s -- an 8x spread. A single
+        # rolling average across both lands between them and is wrong for
+        # each, which is worse than the seed it replaced.
+        self._observed = {}
+        # Learned rates outlive a restart. Without this the first convert
+        # after every service restart is quoted from the seed again -- and the
+        # seed is 8x wrong for the AE3 (measured: 3.5 s for a clip it quoted
+        # at 23 s), which makes the estimate worse than useless on a boat.
+        self._rates_path = os.path.join(root, ".transcode_rates.json")
+        self._load_rates()
         self.done = []
         self.failed = []
         self._worker = threading.Thread(target=self._run)
@@ -239,17 +249,45 @@ class TranscodeQueue:
             return None
         return None
 
+    def _load_rates(self):
+        try:
+            with open(self._rates_path) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict):
+            self._observed = {k: [float(x) for x in v][-10:]
+                              for k, v in data.items()
+                              if isinstance(v, list) and v}
+
+    def _save_rates(self):
+        # Best effort: a rate file that cannot be written must never fail a
+        # conversion that already succeeded.
+        try:
+            tmp = self._rates_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._observed, f)
+            os.replace(tmp, self._rates_path)
+        except OSError:
+            pass
+
+    def factor_for(self, camera):
+        """Learned seconds-per-second for THIS camera, else the seed."""
+        with self._lock:
+            obs = self._observed.get(camera) or []
+            return ((sum(obs) / len(obs)) if obs else self.DEFAULT_FACTOR,
+                    len(obs))
+
     def estimate(self, session, camera):
         """(seconds, basis). None when the clip cannot be measured -- the page
         says 'unknown' rather than inventing a number."""
         secs = self.clip_seconds(session, camera)
-        with self._lock:
-            factor = self.factor
-            samples = len(self._observed)
+        factor, samples = self.factor_for(camera)
         if secs is None:
-            return None, {"factor": factor, "samples": samples,
+            return None, {"factor": round(factor, 3), "samples": samples,
+                          "camera": camera,
                           "why": "no frame count in the manifest"}
-        return secs * factor, {"factor": round(factor, 3),
+        return secs * factor, {"factor": round(factor, 3), "camera": camera,
                                "samples": samples, "clip_s": round(secs, 1)}
 
     def _learn(self, session, camera, elapsed):
@@ -257,9 +295,10 @@ class TranscodeQueue:
         if not secs or elapsed <= 0:
             return
         with self._lock:
-            self._observed.append(elapsed / secs)
-            self._observed = self._observed[-10:]
-            self.factor = sum(self._observed) / len(self._observed)
+            obs = self._observed.setdefault(camera, [])
+            obs.append(elapsed / secs)
+            self._observed[camera] = obs[-10:]
+        self._save_rates()
 
     def snapshot(self):
         with self._lock:
@@ -274,8 +313,8 @@ class TranscodeQueue:
                                           if started else None),
                     "current_fraction": (round(frac, 3) if frac is not None
                                          else None),
-                    "factor": round(self.factor, 3),
-                    "factor_samples": len(self._observed),
+                    "factors": {k: round(sum(v) / len(v), 3)
+                                for k, v in self._observed.items() if v},
                     "done": self.done[-20:], "failed": self.failed[-20:]}
 
     def _run(self):
@@ -993,8 +1032,9 @@ async function mkv(ev, session, camera){
     est=e.seconds; basis=e.basis||{};
   }catch(err){ /* fall through and ask anyway */ }
   const how = basis.samples
-    ? ' (from '+basis.samples+' previous conversion'+(basis.samples===1?'':'s')+' on this rig)'
-    : ' (estimated; not yet measured on this rig)';
+    ? ' (from '+basis.samples+' previous '+(basis.camera||'')+' conversion'
+      +(basis.samples===1?'':'s')+' on this rig)'
+    : ' (estimated; this camera not yet measured on this rig)';
   const msg = est==null
     ? 'Cannot estimate how long this will take'+(basis.why?' — '+basis.why:'')
       +'.\\n\\nConvert anyway?'
