@@ -651,7 +651,7 @@ class TestImxIsOneCamera(unittest.TestCase):
         # The N6 is unconverted and keeps its button; the IMX never gets one.
         self.assertEqual(page.count("Make playable"), 1)
         self.assertIn("mkv(event,'dive_20260910T190137Z_s0000','N6')", page)
-        self.assertNotIn("'IMX')", page)
+        self.assertNotIn("mkv(event,'dive_20260910T190137Z_s0000','IMX')", page)
 
     def test_viewer_offers_the_science_file_as_a_download(self):
         import recorder_web as W
@@ -671,7 +671,7 @@ class TestImxIsOneCamera(unittest.TestCase):
         self.assertEqual(page.count("<video"), 0)
         self.assertIn("no playable proxy", page)
         self.assertIn("IMX_thumb.jpg", page)
-        self.assertNotIn("'IMX')", page)
+        self.assertNotIn("mkv(event,'dive_20260910T190137Z_s0000','IMX')", page)
 
     def test_index_never_offers_to_convert_the_imx(self):
         import recorder_web as W
@@ -685,6 +685,19 @@ class TestImxIsOneCamera(unittest.TestCase):
         self.assertIn("Make N6 playable", page)
         self.assertNotIn("Make all", page)     # only one convertible camera
         self.assertIn("IMX_thumb.jpg", page)
+
+    def test_viewer_offers_a_toggle_per_camera_all_on_by_default(self):
+        """Nick, 2026-09-10: choose which streams are being compared; default
+        all three; switching the AE3 off lets the N6 and IMX grow."""
+        import recorder_web as W
+        page = W.viewer_page(self.DIVE)
+        for cam in ("IMX", "N6"):
+            self.assertIn("data-cam='%s'" % cam, page)
+            self.assertIn("togCam('%s')" % cam, page)
+        self.assertNotIn("togCam('IMX_proxy')", page)
+        self.assertEqual(page.count("class='sec camtog'"), 2)
+        self.assertNotIn("class=vid data-cam='IMX' hidden", page)  # default on
+        self.assertIn("never hide the last one", page)
 
     def test_server_refuses_to_convert_the_imx(self):
         """A stale page or a hand-typed request must not start the transcode."""

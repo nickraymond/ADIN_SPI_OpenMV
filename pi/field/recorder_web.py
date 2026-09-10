@@ -425,6 +425,7 @@ pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
   padding:10px;overflow:auto;max-height:240px;font-size:12px;margin:0}
 .vids{display:flex;gap:12px;flex-wrap:wrap}
 .vid{flex:1;min-width:320px} video{width:100%;background:#000;border-radius:6px}
+.camtog{margin:0 6px 8px 0;padding:6px 14px} .camtog.off{opacity:.45;text-decoration:line-through}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .metrics{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .metric{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);
@@ -937,7 +938,7 @@ def viewer_page(m):
     cams = [c for c in fold_imx(m.get("cameras", []))
             if c.get("mp4") or c.get("mjpeg")]
     cams.sort(key=lambda c: _cam_rank(c.get("label", "")))
-    vids, rows = [], []
+    vids, rows, togs = [], [], []
     for i, c in enumerate(cams):
         label = html.escape(c.get("label", "?"))
         src = c.get("mp4")
@@ -989,8 +990,10 @@ def viewer_page(m):
         else:
             body = note
             note = ""
-        vids.append("<div class=vid><b>%s</b> <span class=dim>%s</span>%s%s</div>"
-                    % (label, geom, note, body))
+        vids.append("<div class=vid data-cam='%s'><b>%s</b> <span class=dim>%s</span>%s%s</div>"
+                    % (label, label, geom, note, body))
+        togs.append("<button class='sec camtog' data-cam='%s' "
+                    "onclick=\"togCam('%s')\">%s</button>" % (label, label, label))
         gaps = c.get("seq_gaps")
         qn = urllib.parse.quote
         dl = []
@@ -1031,6 +1034,7 @@ def viewer_page(m):
   <span class=chip>%s</span><span class=chip>%s</span>
 </div>
 <div class=card>
+  <div id=camtogs><span class=dim style="font-size:12px;margin-right:8px">Compare:</span>%s</div>
   <div class=vids>%s</div>
   <div style="margin-top:12px">
     <input id=scrub type=range min=0 max=1000 value=0 step=1>
@@ -1067,13 +1071,40 @@ function refresh(){
   dur=Math.max(0,...vs.map(v=>(isFinite(v.duration)?v.duration+offs(v):0)));
   tlab.textContent=(master()).toFixed(2)+' / '+dur.toFixed(2)+' s';
 }
+function shown(v){ const t=v.closest('.vid'); return !(t && t.hidden); }
+function lead(){ return vs.find(shown) || vs[0]; }   // the clip the scrubber follows
 function master(){ // wall-clock time of the session, not of any one clip
-  const v=vs[0]; return v? v.currentTime+offs(v):0;
+  const v=lead(); return v? v.currentTime+offs(v):0;
 }
+// CHOOSE WHAT YOU ARE COMPARING (Nick, 2026-09-10). Every camera is shown by
+// default; switch one off and the others grow to fill the row, so two clips
+// can be compared side by side at a useful size. The choice is remembered in
+// this browser only -- it is a viewing preference, not a property of the dive.
+const TOG_KEY='hideCams';
+function hiddenSet(){
+  try{ return new Set(JSON.parse(localStorage.getItem(TOG_KEY)||'[]')); }catch(e){ return new Set(); }
+}
+function applyCams(hide){
+  document.querySelectorAll('.vid[data-cam]').forEach(t=>{
+    const off=hide.has(t.dataset.cam); t.hidden=off;
+    if(off){ const v=t.querySelector('video'); if(v) v.pause(); }
+  });
+  document.querySelectorAll('.camtog').forEach(b=>b.classList.toggle('off',hide.has(b.dataset.cam)));
+  refresh();
+}
+function togCam(c){
+  const hide=hiddenSet();
+  const tiles=[...document.querySelectorAll('.vid[data-cam]')].map(t=>t.dataset.cam);
+  if(hide.has(c)) hide.delete(c);
+  else if(tiles.filter(t=>!hide.has(t)).length>1) hide.add(c);   // never hide the last one
+  try{ localStorage.setItem(TOG_KEY, JSON.stringify([...hide])); }catch(e){}
+  applyCams(hide);
+}
+applyCams(hiddenSet());
 vs.forEach(v=>{
   v.addEventListener('loadedmetadata',refresh);
   v.addEventListener('timeupdate',()=>{
-    if(v!==vs[0])return; refresh();
+    if(v!==lead())return; refresh();
     if(dur>0)scrub.value=Math.round(1000*master()/dur);
   });
   v.addEventListener('ended',()=>{playing=false;document.getElementById('play').innerHTML='&#9654; Play';});
@@ -1090,7 +1121,7 @@ function seekBy(d){ seekAll(Math.max(0,Math.min(dur,master()+d))); }
 function toggle(){
   playing=!playing;
   document.getElementById('play').innerHTML=playing?'&#10073;&#10073; Pause':'&#9654; Play';
-  vs.forEach(v=>{ playing? v.play().catch(()=>{}) : v.pause(); });
+  vs.forEach(v=>{ (playing && shown(v))? v.play().catch(()=>{}) : v.pause(); });
 }
 refresh();
 function goFull(v){
@@ -1181,6 +1212,7 @@ async function mkv(ev, session, camera){
        html.escape(str(s.get("duration_s", "?"))),
        html.escape(m.get("created_iso", "?")),
        html.escape(m.get("host", "?")),
+       "".join(togs),
        "".join(vids) or "<div class=dim>no playable files</div>",
        "".join(rows),
        html.escape(json.dumps(m, indent=1))))
