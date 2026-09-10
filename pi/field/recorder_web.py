@@ -188,12 +188,23 @@ class TranscodeQueue:
     transcode is always redoable, unlike a recording.
     """
 
+    #: Seconds of CPU per second of video, seeded from the S33 soak on this
+    #: rig class (5 min of HD in ~205-226 s => ~0.71x realtime) and then
+    #: LEARNED from real conversions, because the seed is one resolution on
+    #: one rig and an estimate that never updates is a guess with a decimal
+    #: point on it.
+    DEFAULT_FACTOR = 0.71
+
     def __init__(self, root):
         self.root = root
         self._q = []
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self.current = None
+        self.current_started = None
+        self.current_estimate_s = None
+        self.factor = self.DEFAULT_FACTOR
+        self._observed = []
         self.done = []
         self.failed = []
         self._worker = threading.Thread(target=self._run)
@@ -209,9 +220,62 @@ class TranscodeQueue:
             self._wake.notify()
         return True, "queued"
 
+    def clip_seconds(self, session, camera):
+        """How long the clip actually runs, from the manifest it was written
+        with. Frames over capture fps -- never wall time, which includes the
+        gaps a dropped-frame run leaves behind."""
+        try:
+            with open(os.path.join(self.root, session, "manifest.json")) as f:
+                man = json.load(f)
+        except (OSError, ValueError):
+            return None
+        for c in man.get("cameras", []):
+            if c.get("label") != camera:
+                continue
+            fps = c.get("capture_fps") or c.get("delivered_fps")
+            frames = c.get("written_frames") or c.get("frames")
+            if fps and frames:
+                return float(frames) / float(fps)
+            return None
+        return None
+
+    def estimate(self, session, camera):
+        """(seconds, basis). None when the clip cannot be measured -- the page
+        says 'unknown' rather than inventing a number."""
+        secs = self.clip_seconds(session, camera)
+        with self._lock:
+            factor = self.factor
+            samples = len(self._observed)
+        if secs is None:
+            return None, {"factor": factor, "samples": samples,
+                          "why": "no frame count in the manifest"}
+        return secs * factor, {"factor": round(factor, 3),
+                               "samples": samples, "clip_s": round(secs, 1)}
+
+    def _learn(self, session, camera, elapsed):
+        secs = self.clip_seconds(session, camera)
+        if not secs or elapsed <= 0:
+            return
+        with self._lock:
+            self._observed.append(elapsed / secs)
+            self._observed = self._observed[-10:]
+            self.factor = sum(self._observed) / len(self._observed)
+
     def snapshot(self):
         with self._lock:
+            started, est = self.current_started, self.current_estimate_s
+            frac = None
+            if started and est:
+                frac = min(0.99, max(0.0, (time.time() - started) / est))
             return {"current": self.current, "queued": list(self._q),
+                    "current_started": started,
+                    "current_estimate_s": (round(est, 1) if est else None),
+                    "current_elapsed_s": (round(time.time() - started, 1)
+                                          if started else None),
+                    "current_fraction": (round(frac, 3) if frac is not None
+                                         else None),
+                    "factor": round(self.factor, 3),
+                    "factor_samples": len(self._observed),
                     "done": self.done[-20:], "failed": self.failed[-20:]}
 
     def _run(self):
@@ -220,14 +284,23 @@ class TranscodeQueue:
                 while not self._q:
                     self._wake.wait(60)
                 self.current = self._q.pop(0)
+            sess, _, cam = self.current.partition("/")
+            est, _ = self.estimate(sess, cam)
+            t0 = time.time()
+            with self._lock:
+                self.current_started = t0
+                self.current_estimate_s = est
             try:
                 self._convert(self.current)
+                self._learn(sess, cam, time.time() - t0)
             except Exception as e:                      # noqa: BLE001
                 with self._lock:
                     self.failed.append({"job": self.current, "err": str(e)})
             finally:
                 with self._lock:
                     self.current = None
+                    self.current_started = None
+                    self.current_estimate_s = None
 
     def _convert(self, key):
         session, camera = key.split("/", 1)
@@ -372,7 +445,42 @@ def _fill(tpl, **kw):
     return tpl
 
 
-def index_page(state, sessions, ceilings):
+#: The record controls, kept verbatim so the recording server is unchanged.
+RECORD_CARD = """<div class=card>
+  <div class=row>
+    <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
+    <div><label>Duration (s)</label><input id=duration type=number value=180 min=1 max=3600></div>
+    <div><label>Cameras</label><select id=cameras>
+      <option value="N6,AE3,IMX">All three</option>
+      <option value="N6,AE3">N6 + AE3</option>
+      <option value="N6">N6 only</option>
+      <option value="AE3">AE3 only</option>
+      <option value="IMX">IMX708 only</option></select></div>
+  </div>
+  <div class=dim style="margin:12px 0 6px;font-size:12px">
+    Each camera has its own settings, because they are not equals: HD q70 gives
+    the N6 30.2 fps and the AE3 2.3. Defaults below are the measured picks.
+  </div>
+  <div class=row>@@CAMS@@</div>
+  <div id=verdict class=dim style="margin:10px 0"></div>
+  <button id=go onclick=startRec()>&#9679; Record</button>
+  <a href="/" class=dim style="margin-left:10px">refresh</a>
+</div>"""
+
+#: Shown where the record controls would be on the review-only server. It
+#: names WHERE recording lives rather than just hiding the panel -- a viewer
+#: with no explanation reads as a page that has lost its buttons.
+REVIEW_ONLY_PANEL = """<div class=card>
+  <div class=dim style="font-size:13px;line-height:1.5">
+    <b>Review only.</b> This page plays, converts and downloads what the rig
+    has already recorded. Recording is started from the <b>workbench card</b>
+    on port 8088 &mdash; that page owns the board lock, and two recorders on
+    one board is the failure this rig knows best.
+  </div>
+</div>"""
+
+
+def index_page(state, sessions, ceilings, review_only=False):
     cams = (ceilings.get("cameras") or {})
     rows = []
     for role, cam in sorted(cams.items()):
@@ -494,26 +602,7 @@ def index_page(state, sessions, ceilings):
   <div class=metric><div class=k>Recording ring</div><div class=v id=m_ring>&hellip;</div>
     <div class=s id=m_ring_s></div></div>
 </div>
-<div class=card>
-  <div class=row>
-    <div><label>Target fps</label><input id=fps type=number value=30 min=1 max=120></div>
-    <div><label>Duration (s)</label><input id=duration type=number value=180 min=1 max=3600></div>
-    <div><label>Cameras</label><select id=cameras>
-      <option value="N6,AE3,IMX">All three</option>
-      <option value="N6,AE3">N6 + AE3</option>
-      <option value="N6">N6 only</option>
-      <option value="AE3">AE3 only</option>
-      <option value="IMX">IMX708 only</option></select></div>
-  </div>
-  <div class=dim style="margin:12px 0 6px;font-size:12px">
-    Each camera has its own settings, because they are not equals: HD q70 gives
-    the N6 30.2 fps and the AE3 2.3. Defaults below are the measured picks.
-  </div>
-  <div class=row>@@CAMS@@</div>
-  <div id=verdict class=dim style="margin:10px 0"></div>
-  <button id=go onclick=startRec()>&#9679; Record</button>
-  <a href="/" class=dim style="margin-left:10px">refresh</a>
-</div>
+@@RECORD@@
 <h2>Storage</h2>
 <div class=card>
   <div style="margin-bottom:12px">
@@ -549,7 +638,9 @@ above uses delivered wherever it exists.</div></div>
 <script>
 const CEIL = @@CEIL@@;
 function camSettings(){
-  const cams=document.getElementById('cameras').value.split(',');
+  const csel=document.getElementById('cameras');
+  if(!csel) return {};
+  const cams=csel.value.split(',');
   const out={};
   for(const c of cams){
     const fs=document.getElementById('fs_'+c), q=document.getElementById('q_'+c);
@@ -558,6 +649,7 @@ function camSettings(){
   return out;
 }
 function verdict(){
+  if(!document.getElementById('fps')) return;   // review-only: no record form
   const fps=+document.getElementById('fps').value, per=camSettings();
   let out=[];
   for(const c of Object.keys(per)){
@@ -576,7 +668,11 @@ function verdict(){
   }
   document.getElementById('verdict').innerHTML=out.join('<br>');
 }
-for(const id of ['fps','cameras']) document.getElementById(id).addEventListener('change',verdict);
+// Review-only builds ship no record form, so every one of these lookups
+// returns null. Guarding here rather than shipping two scripts.
+const RECORDING_UI = !!document.getElementById('go');
+if(RECORDING_UI)
+  for(const id of ['fps','cameras']) document.getElementById(id).addEventListener('change',verdict);
 for(const el of document.querySelectorAll('.camctl')) el.addEventListener('change',verdict);
 verdict();
 async function startRec(){
@@ -599,7 +695,7 @@ async function poll(){
   try{
     const j = await (await fetch('/api/status')).json();
     document.getElementById('log').textContent=(j.log||[]).join('\n')||'idle';
-    document.getElementById('go').disabled=j.busy;
+    { const go=document.getElementById('go'); if(go) go.disabled=j.busy; }
     if(!j.busy && wasBusy){ location.reload(); return; }   // the edge, once
     wasBusy = j.busy;
     setTimeout(poll, j.busy ? 1000 : 4000);
@@ -710,14 +806,31 @@ async function tqPoll(){
 tqPoll();
 </script>
 """,
-        CAMS=cam_html,
+        RECORD=(REVIEW_ONLY_PANEL if review_only
+                else _fill(RECORD_CARD, CAMS=cam_html)),
+        CAMS="",
         ROWS="".join(rows) or "<tr><td colspan=3 class=dim>none measured</td></tr>",
         LIB="".join(lib), CEIL=json.dumps(ceilings)))
+
+
+#: Display order in the viewer. Nick, 2026-09-09: "IMX should be at the top
+#: since that is my reference video for the dive." The proxy sits directly
+#: under its own science stream, and anything unknown falls to the end rather
+#: than being hidden -- a camera missing from this list must still appear.
+CAMERA_ORDER = ("IMX", "IMX_proxy", "N6", "AE3")
+
+
+def _cam_rank(label):
+    try:
+        return CAMERA_ORDER.index(label)
+    except ValueError:
+        return len(CAMERA_ORDER)
 
 
 def viewer_page(m):
     s = m.get("settings", {})
     cams = [c for c in m.get("cameras", []) if c.get("mp4") or c.get("mjpeg")]
+    cams.sort(key=lambda c: _cam_rank(c.get("label", "")))
     vids, rows = [], []
     for i, c in enumerate(cams):
         label = html.escape(c.get("label", "?"))
@@ -743,8 +856,14 @@ def viewer_page(m):
         geom = html.escape("%dx%d" % (c.get("banner", {}).get("w", 0),
                                       c.get("banner", {}).get("h", 0)))
         if c.get("mp4"):
+            # Click to go full screen. On an iPad the tiled view is small,
+            # and the point of the review loop is actually LOOKING at the
+            # footage. title= says so, because a video that silently does
+            # something on click is a video nobody clicks.
             body = ("<video id=v%d preload=metadata src='/media/%s/%s' "
-                    "data-offset='%s'></video>"
+                    "data-offset='%s' onclick='goFull(this)' "
+                    "style='cursor:zoom-in' "
+                    "title='Click for full screen'></video>"
                     % (i, urllib.parse.quote(m["name"]),
                        urllib.parse.quote(src), c.get("start_offset_s", 0)))
         else:
@@ -846,17 +965,81 @@ function toggle(){
   vs.forEach(v=>{ playing? v.play().catch(()=>{}) : v.pause(); });
 }
 refresh();
+function goFull(v){
+  // Click any clip to fill the screen. Safari on iOS exposes only the
+  // webkit entry point, and it is the browser this has to work in.
+  if(v.requestFullscreen) v.requestFullscreen().catch(()=>{});
+  else if(v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+  else if(v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+}
+
+function humanT(sec){
+  if(sec==null || !isFinite(sec)) return 'unknown';
+  const s=Math.round(sec);
+  if(s<90) return s+' s';
+  const m=Math.round(s/60);
+  return m<90 ? m+' min' : (s/3600).toFixed(1)+' h';
+}
+
 async function mkv(ev, session, camera){
-  const b=ev.target; b.disabled=true; b.textContent='converting\u2026';
+  const b=ev.target;
+  // ASK BEFORE SPENDING THE HEAT. Converting is the expensive operation on
+  // this rig -- capture holds 52-70 C, an x264 pass throws throttle bits --
+  // so the cost is stated up front and the answer is the operator's.
+  let est=null, basis={};
+  try{
+    const e=await (await fetch('/api/transcode/estimate?session='
+      +encodeURIComponent(session)+'&camera='+encodeURIComponent(camera))).json();
+    est=e.seconds; basis=e.basis||{};
+  }catch(err){ /* fall through and ask anyway */ }
+  const how = basis.samples
+    ? ' (from '+basis.samples+' previous conversion'+(basis.samples===1?'':'s')+' on this rig)'
+    : ' (estimated; not yet measured on this rig)';
+  const msg = est==null
+    ? 'Cannot estimate how long this will take'+(basis.why?' — '+basis.why:'')
+      +'.\n\nConvert anyway?'
+    : 'This will take about '+humanT(est)+how+'.\n\nConvert '+camera+' now?';
+  if(!window.confirm(msg)) return;
+
+  b.disabled=true; b.textContent='converting\u2026';
+  const bar=document.createElement('div');
+  bar.style.cssText='margin:8px 0;height:10px;border-radius:5px;background:#222;overflow:hidden';
+  const fill=document.createElement('i');
+  fill.style.cssText='display:block;height:100%%;width:0%%;background:#2c6e49;transition:width 1s linear';
+  bar.appendChild(fill);
+  const lab=document.createElement('div');
+  lab.className='dim'; lab.style.fontSize='12px';
+  lab.textContent='queued\u2026';
+  b.parentNode.insertBefore(bar,b.nextSibling);
+  b.parentNode.insertBefore(lab,bar.nextSibling);
+
   const r=await fetch('/api/transcode',{method:'POST',
     body:JSON.stringify({session:session,camera:camera})});
   const j=await r.json();
-  if(!j.ok){ alert(j.err||'refused'); b.disabled=false; b.textContent='retry'; return; }
+  if(!j.ok){ alert(j.err||'refused'); b.disabled=false; b.textContent='retry';
+             bar.remove(); lab.remove(); return; }
   (async function wait(){
     const q=await (await fetch('/api/transcode')).json();
     const key=session+'/'+camera;
-    if(q.current===key || (q.queued||[]).includes(key)){ setTimeout(wait,3000); return; }
-    if((q.done||[]).some(d=>d.job===key)){ location.reload(); return; }
+    if(q.current===key){
+      const f=q.current_fraction;
+      // The bar is time-against-estimate, and it says so rather than
+      // pretending to know how many frames ffmpeg has actually written.
+      fill.style.width=((f==null?0:f)*100).toFixed(1)+'%%';
+      const left=(q.current_estimate_s!=null && q.current_elapsed_s!=null)
+        ? Math.max(0,q.current_estimate_s-q.current_elapsed_s) : null;
+      lab.textContent='converting \u2014 '+humanT(q.current_elapsed_s)+' elapsed'
+        +(left!=null? ', about '+humanT(left)+' left (estimate)':'');
+      setTimeout(wait,1000); return;
+    }
+    if((q.queued||[]).includes(key)){
+      lab.textContent='queued behind '+(q.current||'another clip')+'\u2026';
+      setTimeout(wait,2000); return;
+    }
+    if((q.done||[]).some(d=>d.job===key)){
+      fill.style.width='100%%'; lab.textContent='done \u2014 reloading\u2026';
+      location.reload(); return;
+    }
     const f=(q.failed||[]).find(d=>d.job===key);
     b.disabled=false; b.textContent = f? ('failed: '+(f.err||'').slice(0,60)) : 'retry';
   })();
@@ -885,7 +1068,7 @@ async function mkv(ev, session, camera){
 SAFE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
-def make_handler(state, root, tq):
+def make_handler(state, root, tq, review_only=False):
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1012,6 +1195,16 @@ def make_handler(state, root, tq):
                 return self._json(200, R.load_sessions(root))
             if path == "/api/transcode":
                 return self._json(200, tq.snapshot())
+            if path == "/api/transcode/estimate":
+                q = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query)
+                sess = (q.get("session") or [""])[0]
+                cam = (q.get("camera") or [""])[0]
+                if not SAFE.match(sess or ""):
+                    return self._json(400, {"ok": False, "err": "bad session"})
+                secs, basis = tq.estimate(sess, cam)
+                return self._json(200, {"ok": True, "seconds": secs,
+                                        "basis": basis})
             if path == "/api/health":
                 h = host_health()
                 h["storage"] = ST.status(root, state.ring_bytes,
@@ -1023,7 +1216,8 @@ def make_handler(state, root, tq):
                 return self._json(200, st)
             if path == "/" or path == "/index.html":
                 return self._send(200, index_page(state, R.load_sessions(root),
-                                                  RR.load_ceilings()),
+                                                  RR.load_ceilings(),
+                                                  review_only),
                                   "text/html; charset=utf-8")
             parts = [urllib.parse.unquote(p) for p in path.strip("/").split("/")]
             if len(parts) == 2 and parts[0] == "view":
@@ -1070,6 +1264,16 @@ def make_handler(state, root, tq):
                 return self._json(200, {"ok": ok, "err": None if ok else msg})
             if path != "/api/record":
                 return self._send(404, "not found", "text/plain")
+            if review_only:
+                # This instance runs ALONGSIDE a dive recording so the library
+                # is always reachable. Two processes recording the same boards
+                # is the failure this rig knows best (SPEC: one owner per board
+                # port, ever), so the always-on page cannot become a second
+                # recorder -- the UI is gone AND the endpoint refuses.
+                return self._json(403, {
+                    "ok": False,
+                    "err": "this is the review-only server -- recording is "
+                           "started from the workbench card, not here"})
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
@@ -1144,6 +1348,9 @@ def main(argv=None):
                     default=ST.DEFAULT_MIN_FREE_BYTES / 1e9,
                     help="free space floor enforced on the card itself, "
                          "independently of the ring budget")
+    ap.add_argument("--review-only", action="store_true",
+                    help="serve the library for playback/convert/download but "
+                         "REFUSE to record (the always-on review server)")
     ap.add_argument("--keep-latest", type=int, default=ST.DEFAULT_KEEP_LATEST,
                     help="newest N recordings are never evicted")
     a = ap.parse_args(argv)
@@ -1155,7 +1362,8 @@ def main(argv=None):
     # Serve FIRST, touch hardware later: the workbench health-gates LIVE on this
     # page answering within 60 s, and board discovery can take longer (D48).
     tq = TranscodeQueue(a.root)
-    srv = QuietServer((a.bind, a.http_port), make_handler(state, a.root, tq))
+    srv = QuietServer((a.bind, a.http_port),
+                      make_handler(state, a.root, tq, a.review_only))
     print("recorder on http://%s:%d/  root=%s" % (a.bind, a.http_port, a.root),
           flush=True)
 
