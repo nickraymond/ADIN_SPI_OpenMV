@@ -43,9 +43,21 @@ import stat
 import time
 
 #: Default budget for the recordings directory. Chosen so a rig recording
-#: continuously cannot reach the filesystem: at HD q70 the N6 writes ~2.3 MB/s,
-#: so 50 GB is ~6 hours of continuous video before the oldest starts rolling off.
-DEFAULT_RING_BYTES = 50 * 1000 ** 3
+#: continuously cannot reach the filesystem.
+#:
+#: RAISED 50 -> 85 GB (Nick, 2026-09-09, Channel Islands trip): 50 GB was sized
+#: for the N6 alone at ~2.3 MB/s. The trip records four streams at once --
+#: IMX science 4.94 + N6 2.86 + proxy 0.35 + AE3 0.15 = 8.30 MB/s measured --
+#: and there is no bigger card, so leaving 46 GB of a 96 GB card unused would
+#: throw away roughly 1.5 hours of dive footage for nothing.
+#:
+#: The arithmetic, on this rig's 116 GB card with ~16 GB of OS: a full 85 GB
+#: ring still leaves ~11 GB free, comfortably clear of the independent
+#: min-free floor below. At 8.30 MB/s the ring holds ~2.8 hours of recording,
+#: which is about 8 dives of 20 minutes -- and it lands within minutes of the
+#: rig's measured ~3 h battery endurance (S29), so storage and power now run
+#: out together rather than one wasting the other.
+DEFAULT_RING_BYTES = 85 * 1000 ** 3
 
 #: Never let the filesystem go below this, regardless of the ring's own usage.
 #: Nick's spec named 2 GB; kept, because the failure it prevents (a full root)
@@ -248,6 +260,58 @@ def enforce(root, ring_bytes=DEFAULT_RING_BYTES,
             report["used_pct"] = round(report["used_bytes"] / ring_bytes * 100.0, 2)
     else:
         report["freed_bytes"] = 0
+    return report
+
+
+def wipe_all(root, active=None, dry_run=False, log=None):
+    """Delete EVERY recording session under `root`. Nick's clean-slate button.
+
+    Deliberately separate from enforce(): eviction protects the newest
+    sessions and the active one because its job is to make room without
+    losing work. This one is the opposite intent -- the operator has decided
+    the card should be empty -- so keep-latest does NOT apply.
+
+    What it will still refuse, because these are mistakes and not choices:
+      * the session currently being RECORDED, which would delete a file that
+        is open and leave a half-written clip claiming to be a recording;
+      * anything that does not resolve to a directory under `root`, checked
+        with the same realpath guard eviction uses.
+
+    Returns the same shape of report as enforce(), so the page can render one
+    and the operator sees exactly what went and what did not.
+    """
+    log = log or (lambda _m: None)
+    sessions = list_sessions(root)
+    report = {"when": time.strftime("%Y-%m-%dT%H:%M:%S"),
+              "dry_run": bool(dry_run), "deleted": [], "failed": [],
+              "skipped": [], "freed_bytes": 0,
+              "candidates": len(sessions)}
+    for s in sessions:
+        if active and s["name"] == active:
+            log("storage: NOT wiping %s -- it is being recorded" % s["name"])
+            report["skipped"].append({"name": s["name"],
+                                      "why": "currently recording"})
+            continue
+        if not _safe_under(root, s["path"]):
+            report["failed"].append({"name": s["name"],
+                                     "err": "outside the root"})
+            continue
+        if dry_run:
+            report["deleted"].append(s["name"])
+            report["freed_bytes"] += s["bytes"]
+            continue
+        try:
+            shutil.rmtree(s["path"])
+            log("storage: wiped %s (%.2f GB)" % (s["name"], s["bytes"] / 1e9))
+            report["deleted"].append(s["name"])
+            report["freed_bytes"] += s["bytes"]
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                report["deleted"].append(s["name"])
+            else:
+                log("storage: FAILED to wipe %s: %s" % (s["name"], e))
+                report["failed"].append({"name": s["name"], "err": str(e)})
+    report.update(disk_health(root))
     return report
 
 

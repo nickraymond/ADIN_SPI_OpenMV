@@ -24,7 +24,9 @@
 # rig broke that morning.
 
 name = "video-record"
-group = "cameras"
+# Nick 2026-09-09: filed to archive for the trip -- the Channel
+# Islands card is the one that records now.
+group = "archive"
 title = "Video recorder — record, watch, download"
 summary = "Record a clip from the OpenMV boards straight to the Pi, then play it in the browser and download it. Set frame size, quality, fps and duration on the page; it shows each camera's measured limit and refuses an impossible request rather than silently dropping frames. Past recordings stay in a library with the settings that made them. From sprint S32."
 opens = ":8093"
@@ -48,7 +50,10 @@ argv = [
   # not implement it). A 2 GB free-space floor is enforced on the card itself
   # as well, because something OTHER than video can fill it while the ring sits
   # politely inside its quota.
-  "--ring-gb", "50",
+  # RAISED 50 -> 85 (Nick, 2026-09-09): the trip records four streams at
+  # once (8.30 MB/s measured), not the N6 alone, and there is no bigger
+  # card. 85 GB still leaves ~11 GB free on this 116 GB card.
+  "--ring-gb", "85",
   "--min-free-gb", "2",
   "--keep-latest", "2",
 ]

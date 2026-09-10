@@ -39,7 +39,13 @@ case "$ROLE" in
   powersave) UNIT=wifi-powersave-off.service; AUTOSTART=yes ;;
   usb-msc)   UNIT=field-usb-msc-off.service;  AUTOSTART=yes ;;
   power-log) UNIT=field-power-log.service;    AUTOSTART=yes ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log" >&2; exit 1 ;;
+  # Always-on, review-only library on :8093 so the workbench can offer a
+  # one-tap "Review dives" link instead of a start-a-recipe dance.
+  review)    UNIT=video-review.service;       AUTOSTART=yes ;;
+  # Belt to the powersave braces: re-asserts power_save off every minute and
+  # logs only when it had to, so a re-enable leaves evidence.
+  ps-guard)  UNIT=wifi-powersave-guard.timer; AUTOSTART=yes ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

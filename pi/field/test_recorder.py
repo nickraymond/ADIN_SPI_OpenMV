@@ -11,6 +11,8 @@ outside the recordings directory.
 
 import json
 import os
+import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -21,6 +23,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 import recorder as R            # noqa: E402
+import recorder_web as RW      # noqa: E402
 import record_run as RR         # noqa: E402
 import storage as ST            # noqa: E402
 import transcode as T           # noqa: E402
@@ -573,11 +576,18 @@ class TestPagesRender(unittest.TestCase):
         self.assertIn("data-offset='0.42'", page)
 
     def test_viewer_offers_conversion_for_an_unconverted_clip(self):
-        """Not an error state: clips are kept as MJPEG until asked for."""
+        """Not an error state: clips are kept as MJPEG until asked for.
+
+        The standing "Not converted yet ..." paragraph was dropped on
+        2026-09-09 (Nick): it repeated under every unconverted clip, three
+        times a page, and the cost it explained is now stated once in the
+        confirm dialog that names the actual minutes. The BUTTON is the part
+        that must not disappear, so that is what this asserts.
+        """
         import recorder_web as W
         page = W.viewer_page(self.SESSION)
-        self.assertIn("Not converted yet", page)
         self.assertIn("Make playable", page)
+        self.assertNotIn("Not converted yet", page)
 
 
 class TestMediaPathSafety(unittest.TestCase):
@@ -889,6 +899,143 @@ class PerHostCeilings(unittest.TestCase):
             self.assertEqual(doc.get("host"), host, path)
             self.assertEqual(RR.load_ceilings(host=host, here=_HERE).get("host"), host)
 
+
+
+class TestWipeAll(unittest.TestCase):
+    """Nick's clean-slate button. Destructive, so its refusals are tested."""
+
+    def _rig(self):
+        root = tempfile.mkdtemp()
+        for name in ("rec_a", "rec_b", "dive_c"):
+            d = os.path.join(root, name)
+            os.makedirs(d)
+            with open(os.path.join(d, "N6.mjpeg"), "wb") as f:
+                f.write(b"x" * 1024)
+        return root
+
+    def test_wipes_every_session(self):
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root)
+            self.assertEqual(3, len(rep["deleted"]))
+            self.assertEqual([], rep["failed"])
+            self.assertEqual([], os.listdir(root))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_refuses_the_session_being_recorded(self):
+        """Deleting the open session would leave a half-written clip that
+        still looks like a recording."""
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root, active="rec_b")
+            self.assertNotIn("rec_b", rep["deleted"])
+            self.assertEqual(["rec_b"], [s["name"] for s in rep["skipped"]])
+            self.assertTrue(os.path.isdir(os.path.join(root, "rec_b")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_dry_run_deletes_nothing(self):
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root, dry_run=True)
+            self.assertEqual(3, len(rep["deleted"]))
+            self.assertEqual(3, len(os.listdir(root)))
+            self.assertGreater(rep["freed_bytes"], 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_never_follows_a_symlink_out_of_the_root(self):
+        """A ring that can delete outside its root is worse than a full disk."""
+        root = self._rig()
+        outside = tempfile.mkdtemp()
+        keep = os.path.join(outside, "precious")
+        os.makedirs(keep)
+        with open(os.path.join(keep, "data.bin"), "wb") as f:
+            f.write(b"keep me")
+        try:
+            os.symlink(outside, os.path.join(root, "escape"))
+            ST.wipe_all(root)
+            self.assertTrue(os.path.isfile(os.path.join(keep, "data.bin")),
+                            "wipe followed a symlink out of the root")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
+
+
+class TestRenderedPageScripts(unittest.TestCase):
+    """The page's JavaScript must actually PARSE.
+
+    Twice now a Python-side change has emitted broken JS and every Python test
+    still passed: once literal % characters in a %-formatted template, and
+    once a "\\n" that Python decoded into a REAL newline, splitting a JS
+    string literal across two lines. The second one took the whole <script>
+    block down, so "Make playable", the player controls and full-screen were
+    all silently dead while the page looked perfectly normal -- exactly the
+    plausible-but-wrong artifact this repo keeps paying for.
+
+    A quote that opens and never closes on a line is the signature of both.
+    """
+
+    def _scripts(self, html_text):
+        return re.findall(r"<script>(.*?)</script>", html_text, re.S)
+
+    def _assert_parses(self, html_text, where):
+        scripts = self._scripts(html_text)
+        self.assertTrue(scripts, "%s has no script block" % where)
+        for js in scripts:
+            for n, line in enumerate(js.splitlines(), 1):
+                if line.strip().startswith("//"):
+                    continue
+                for q in ("'", '"'):
+                    self.assertEqual(
+                        0, line.count(q) % 2,
+                        "%s line %d has an unterminated %s string -- the whole "
+                        "script will fail to parse: %r" % (where, n, q, line[:120]))
+
+    def test_viewer_script_parses(self):
+        man = {"name": "t", "created_iso": "x", "settings": {},
+               "cameras": [
+                   {"label": "IMX", "mjpeg": "IMX.mjpeg",
+                    "written_frames": 10, "delivered_fps": 30,
+                    "capture_fps": 30},
+                   {"label": "IMX_proxy", "mp4": "IMX_proxy.mp4"}]}
+        self._assert_parses(RW.viewer_page(man), "viewer_page")
+
+    def test_index_script_parses_in_both_modes(self):
+        class _S:
+            def snapshot(self):
+                return {"busy": False, "log": "", "last": {}}
+        for review_only in (False, True):
+            html_text = RW.index_page(_S(), [], {"cameras": {}},
+                                      review_only=review_only)
+            self._assert_parses(html_text,
+                                "index_page(review_only=%s)" % review_only)
+
+    def test_review_only_page_has_no_record_button(self):
+        class _S:
+            def snapshot(self):
+                return {"busy": False, "log": "", "last": {}}
+        ro = RW.index_page(_S(), [], {"cameras": {}}, review_only=True)
+        rec = RW.index_page(_S(), [], {"cameras": {}}, review_only=False)
+        self.assertNotIn("id=go", ro)
+        self.assertIn("Review only", ro)
+        self.assertIn("id=go", rec, "the recording page must keep its button")
+
+    def test_imx_sorts_above_the_boards(self):
+        """Nick: the IMX is his reference video, so it leads the session."""
+        man = {"name": "t", "created_iso": "x", "settings": {}, "cameras": [
+            {"label": "AE3", "mjpeg": "AE3.mjpeg"},
+            {"label": "N6", "mjpeg": "N6.mjpeg"},
+            {"label": "IMX_proxy", "mp4": "IMX_proxy.mp4"},
+            {"label": "IMX", "mjpeg": "IMX.mjpeg"},
+            {"label": "MYSTERY", "mjpeg": "MYSTERY.mjpeg"}]}
+        html_text = RW.viewer_page(man)
+        pos = [html_text.index("<b>%s</b>" % lbl)
+               for lbl in ("IMX", "IMX_proxy", "N6", "AE3")]
+        self.assertEqual(pos, sorted(pos), "camera order is not IMX-first")
+        self.assertIn("MYSTERY", html_text,
+                      "an unlisted camera must still be shown, not dropped")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -17,6 +17,65 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-10 — S33 — Channel Islands recording: dive card, rig dashboard, review loop
+
+**Branch:** `claude/ci-dashboard` (off `sprint/33-field-ready`) · rig: **nereus002**
+
+**Scope changed mid-session (Nick):** N6 and AE3 stay MJPEG on stock firmware
+— the unmerged-PR H.264 gamble is off. nereus000 was abandoned; nereus002 is
+the rig. New first question: can the Zero 2 W dual-stream?
+
+**Done:**
+- **Dual-stream ANSWERED: yes, at no cost.** Science alone 29.70 fps; science +
+  H.264 proxy together **29.70 fps**, `throttled 0x0`. `rpicam-vid --codec`
+  takes one value, so this is picamera2 main+lores with two encoders.
+  Pinned: **IMX sw JPEG q90 @1280x800 (4.94 MB/s) + H.264 640x400 (0.35)**,
+  N6 HD q70 (2.86), AE3 VGA q50 (0.15) = **8.30 MB/s**.
+- **Both boards rolled to stock v5.0.1** — N6 flashed via DFU alt 1 from a
+  binary first proven byte-identical to OpenMV's release, read back and
+  sha256-matched, and confirmed stock the only way that counts: `import codec`
+  now fails on it. AE3 was already stock.
+- **The SD bus, not the card, is the write limit: 21.31 MB/s sustained**
+  (1% spread over 2 GB, no stalls) — `new high speed SDXC`, never UHS-I. A
+  faster card cannot help; only a bigger one. Ring raised 50 -> 85 GB.
+- Workbench became a dashboard: card ring + battery + **dives remaining**;
+  Channel Islands card group; erase-all button; always-on review-only server.
+
+**Broke/surprised us:**
+- **"The rig crashed" twice — IT DID NOT.** The power log shows continuous
+  uptime to **8,983 s**, `throttled 0x0`, 60-64 C, recording throughout. It
+  fell off the NETWORK. **Nick called it**: `wifi-powersave-off` is a one-shot
+  at boot and NM's own `802-11-wireless.powersave` is `0 (default)`, so a
+  reconnect can re-enable power save with nothing to put it back. Guard timer
+  added; the NM setting is still the proper fix and needs root.
+- **The two recorders drifted four segments apart over 2.5 h** (26 board vs 22
+  IMX), silently pairing cameras from different moments and leaving four
+  directories with no IMX. Cause: closing a segment re-read the whole **1.5 GB**
+  science file to count frames. Now counted in flight, and the boards follow
+  the IMX's published clock instead of their own timer.
+- **Stop was losing data, twice.** SIGINT unwound past the code that closes a
+  segment: 576 MB of video with no manifest, and board sessions as bare
+  .mjpeg with no settings. `run_recording` always took a `stop_event` and
+  recorder_web always passed one — the CLI never wired it up.
+- **A dead `<script>` block made every viewer button inert** while the page
+  looked normal: a `\n` in a non-raw template became a real newline inside a
+  JS string. **The same bug was already in the record page** and older than
+  this session. Python tests all passed through both; `TestRenderedPageScripts`
+  now renders the pages and fails on an unterminated string.
+- **I overwrote the concurrent S33 session's card-grouping** on the rig before
+  noticing the branch had moved. Nothing lost; rebased onto their design,
+  which is better (closed vocabulary, `<details>` state that survives polls).
+
+**Next:**
+- **AP mode is the gap that decides the trip** — both rigs are wifi clients of
+  an SSID that will not exist on the boat.
+- Locked-WB card and the AprilTag trigger are unbuilt; today's card is AWB
+  auto with focus pinned at 1.82 dioptres (bmcam000's value, in air).
+- Storage: 85 GB ring is **~8 dives of 20 min** at the pinned rate, and the
+  WiFi wall (0.45 MB/s) rules out offloading — a card reader is the plan.
+
+---
+
 ## 2026-09-08 — S32 — the video recorder: a fast pump, a recorder page, and "you cannot have all three"
 
 **Branch:** `sprint/32-video-recorder`. **Rig: nereus000 (Pi 5)** — Nick

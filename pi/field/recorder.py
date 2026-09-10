@@ -35,6 +35,7 @@ import argparse
 import glob
 import json
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -851,9 +852,41 @@ class Session:
         return os.path.join(self.dir, *parts)
 
     def save(self):
+        """Write the manifest, PRESERVING cameras written by another recorder.
+
+        A dive session is written by TWO processes: this one pumps the USB
+        boards, and imx_dive_recorder.py drives the CSI camera through
+        picamera2 (they cannot share an interpreter -- one needs the mpremote
+        venv, the other the system picamera2). Both land in the same
+        timestamped directory so the library shows one event with all three
+        cameras, which is how Nick reads it.
+
+        A plain overwrite therefore loses whichever camera finished first, and
+        which one that is depends on timing -- the worst kind of bug: the page
+        looks fine and one camera's footage is simply absent from the manifest
+        while its file sits on disk. So the on-disk manifest is merged in, and
+        entries whose label we do not own are kept.
+        """
+        merged = dict(self.manifest)
+        ours = {c.get("label") for c in merged.get("cameras", [])}
+        try:
+            with open(self.path("manifest.json")) as f:
+                existing = json.load(f)
+        except (OSError, ValueError):
+            existing = None
+        if isinstance(existing, dict):
+            foreign = [c for c in existing.get("cameras", [])
+                       if c.get("label") not in ours]
+            if foreign:
+                merged["cameras"] = list(merged.get("cameras", [])) + foreign
+            # Keep any section this writer does not produce (the dive's white
+            # balance block, for one) rather than dropping it on the floor.
+            for key in ("white_balance", "segments", "dive"):
+                if key in existing and key not in merged:
+                    merged[key] = existing[key]
         tmp = self.path("manifest.json.tmp")
         with open(tmp, "w") as f:
-            json.dump(self.manifest, f, indent=1)
+            json.dump(merged, f, indent=1)
         os.replace(tmp, self.path("manifest.json"))
 
 
@@ -862,7 +895,18 @@ def load_sessions(root):
     out = []
     if not os.path.isdir(root):
         return out
-    for name in sorted(os.listdir(root), reverse=True):
+    # NEWEST FIRST BY TIME, not by name. Sorting names in reverse put every
+    # "rec_" session above every "dive_" one for all eternity, so the IMX
+    # footage sat below twenty-odd board recordings and read as missing --
+    # Nick could not find his own dives (2026-09-09). Directory mtime is also
+    # what the eviction ring orders by, so the library and the ring now agree
+    # about which recording is oldest.
+    def _mtime(n):
+        try:
+            return os.path.getmtime(os.path.join(root, n))
+        except OSError:
+            return 0.0
+    for name in sorted(os.listdir(root), key=_mtime, reverse=True):
         mpath = os.path.join(root, name, "manifest.json")
         if not os.path.isfile(mpath):
             continue
@@ -905,14 +949,41 @@ def main(argv=None):
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--duration", type=float, default=5.0)
     ap.add_argument("--cameras", default="N6,AE3")
+    ap.add_argument("--session", default=None,
+                    help="write into this session directory instead of a "
+                         "generated rec_<time> one, so a dive's boards and "
+                         "its IMX land in the SAME timestamped event")
     ap.add_argument("--no-transcode", action="store_true")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     from record_run import run_recording          # noqa: E402
+
+    # Stop must END the recording, not unwind out of it.
+    #
+    # MEASURED FAILURE this fixes (2026-09-09): interrupting a CLI recording
+    # left rec_*/N6.mjpeg and AE3.mjpeg on the card with NO manifest.json and
+    # no thumbnails -- footage with no record of the framesize, quality, fps
+    # or delivered rate that produced it. run_recording already takes a
+    # stop_event and recorder_web has always passed one, which is why the
+    # page's Stop button never had this bug; the CLI simply never wired it up.
+    stop = threading.Event()
+
+    def _stop(signum, _frame):
+        print("recorder: signal %d -- finishing and writing the manifest"
+              % signum, file=sys.stderr, flush=True)
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _stop)
+        except (ValueError, OSError):
+            pass
+
     res = run_recording(root=a.root, framesize=a.framesize, quality=a.quality,
                         fps=a.fps, duration_s=a.duration,
                         cameras=[c for c in a.cameras.split(",") if c],
-                        transcode=not a.no_transcode)
+                        transcode=not a.no_transcode, stop_event=stop,
+                        session_name=a.session)
     print(json.dumps(res, indent=1) if a.json else res["summary"])
     return 0
 

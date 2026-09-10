@@ -1,0 +1,13 @@
+# Runs the guard every minute. A minute is well inside the several-minutes an
+# AP takes to age out an association, so a radio that dozes gets corrected
+# before the link is lost.
+[Unit]
+Description=Re-assert wifi power_save off every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

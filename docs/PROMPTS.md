@@ -822,3 +822,73 @@ the control.
 Nibble 1 = plan first, my gate before code. Short actionable replies.
 ```
 
+
+---
+
+## 20 — Ready to paste: S33 continued — AP mode, then the locked-WB dive card (written 2026-09-10, straight off PR #84)
+
+```
+Continue S33 on nereus002. PR #84 is on branch claude/ci-dashboard (based on
+sprint/33-field-ready) and gives me a working dive recorder: one card records
+IMX + N6 + AE3 in 5-minute segments, and I review them one tap away on :8093.
+Read that PR first — it carries the measurements, and none of them should be
+re-derived.
+
+MY PRIORITIES, IN ORDER:
+
+1. AP MODE. This is the one that decides whether the trip works at all. Both
+   rigs are wifi clients of an SSID that will not exist on the boat, so without
+   it the iPad cannot reach the Pi and the whole review loop — record, review,
+   change the next dive — simply does not happen. BORROW, DO NOT BUILD: the
+   recipe is field-proven in my nereus-vision-dev repo at
+   device/docs/nereus_wlan0_ap_setup.md (NetworkManager AP on 10.42.0.1).
+   The unsettled part is the trade-off, and I want your recommendation before
+   you build: a rig in AP mode is no longer a wifi client, so Tailscale access
+   is lost. I suspect that wants AP as a toggle or a second interface, not a
+   replacement. Whatever you pick must survive a power cycle and must not need
+   me to type anything at sea.
+
+2. THE LOCKED-WB DIVE CARD. Today's card is AWB auto with focus pinned — good
+   for ordinary recording, WRONG for the colour dataset, because an AWB that
+   tracks partially cancels the depth colour shift I am going out there to
+   measure. imx_dive_recorder.py already supports --wb lock; it needs its own
+   card, and the two must be impossible to confuse on the page.
+
+3. THE APRILTAG TRIGGER, if there is time. The lock currently fires after a
+   fixed converge window, which is wrong: the rig powers up on deck, in air,
+   hours before the water. It should lock on a valid, steady tag held for
+   1-2 s — i.e. when the reference card is actually in frame at depth. If the
+   tag disappears the lock holds for the rest of the dive.
+
+DO NOT SPEND TIME ON: N6/AE3 H.264 (dead — both boards stay MJPEG on stock
+v5.0.1), nereus000 (abandoned), or the Bar30 (not installed; depth.py is the
+integration point and its second-I2C pin choice is mine to make).
+
+TWO ROOT COMMANDS I STILL OWE — ask me to run them, do not work around them:
+  sudo nmcli connection modify netplan-wlan0-Ford 802-11-wireless.powersave 2
+  (the durable wifi fix; the guard timer is only belt-and-braces)
+And I have NOT decided on the Pi+ hardware watchdog (WATCHDOG_CFG is 0) —
+leave it alone until I say.
+
+STANDING FACTS, MEASURED — do not re-derive:
+- Pinned rates: IMX q90@1280x800 4.94 MB/s + H.264 640x400 proxy 0.35 +
+  N6 HD q70 2.86 + AE3 VGA q50 0.15 = 8.30 MB/s.
+- The SD BUS, not the card, is the write ceiling: 21.31 MB/s sustained. A
+  faster card cannot help. The 85 GB ring is ~8 dives of 20 min.
+- WiFi moves 0.45 MB/s off this rig — offloading footage is hours. Card reader.
+- Both boards are on stock OpenMV v5.0.1 and `import codec` fails on the N6.
+- Conversion cost is PER CAMERA: 40 s of footage is 29.8 s for the N6 and
+  3.5 s for the AE3.
+- "The rig crashed" has twice actually been the WIFI dropping while the Pi kept
+  running and recording. Check the power log's uptime column before you believe
+  a crash — /home/pi/power_logs/ persists, the journal now does too.
+
+BENCH RULES: one owner per port — check :8088/api/runner before any board
+contact, stop demos from the page; 35 s of port silence after a stream stops;
+boards by ROLE, never by-id; never systemctl reboot the field rig; check the
+charger is in before you start. Verify through the PAGE, not the API under it —
+a dead <script> block made every button on the review page inert this week
+while the page looked perfectly healthy, and Python tests all passed.
+
+Nibble 1 = plan first, my gate before code. Short actionable replies.
+```

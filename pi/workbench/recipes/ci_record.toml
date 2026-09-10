@@ -1,0 +1,42 @@
+# ci_record.toml -- Channel Islands: the everyday dive recording card.
+#
+# WHAT IT DOES: records all four streams at once, in 5-minute segments --
+# IMX708 science (software JPEG q90 at 1280x800) + an H.264 640x400 proxy the
+# iPad can play natively, plus the N6 at HD q70 and the AE3 at VGA q50.
+# Measured end to end on nereus002 2026-09-09: 8.30 MB/s total, every camera
+# at its full delivered rate, throttled 0x0 across a 10-minute four-stream run.
+#
+# WHITE BALANCE IS *AUTO* ON THIS CARD, ON PURPOSE. This is the ordinary
+# "just record" recipe: focus is pinned but colour is allowed to track. That
+# makes it the wrong card for the depth-vs-colour dataset -- an AWB that
+# tracks partially CANCELS the colour shift the study exists to measure. The
+# locked-WB variant is a separate card so the two can never be confused, and
+# every segment manifest records which mode produced it.
+#
+# FOCUS IS LOCKED at lens_position 1.82 dioptres (~55 cm), carried over from
+# bm_cam_legacy's bmcam000 profile so both of Nick's rigs focus the same way.
+# NOTE, from that repo's own comment and NOT re-derived here: it is an IN-AIR
+# value, and water shifts the effective focus behind a flat port (n~1.33).
+#
+# BOARDS: only the N6 is declared, for the same reason video_record.toml gives
+# -- the workbench refuses to start a recipe whose declared board is missing,
+# and the AE3 has been off the bus before. The launcher discovers the AE3 at
+# run time and logs its absence instead of failing the whole dive.
+
+name = "ci-record"
+title = "Dive record — 4 streams, 5-min segments (AWB auto, focus locked)"
+group = "channelislands"
+summary = "The everyday dive card. Records the IMX708 science stream (JPEG q90, 1280x800) plus an iPad-playable H.264 proxy, and the N6 and AE3, in 5-minute segments that are closed and described before the next one opens. Auto white balance; IMX focus locked at 1.82 dioptres to match bmcam000. Measured 8.30 MB/s — about 8 dives of 20 min on the 85 GB ring."
+thumbnail = "thumbs/video_record.jpg"
+
+[[boards]]
+label = "N6"
+role = "N6"
+
+[run]
+argv = ["bash", "pi/field/run_channel_islands.sh"]
+cwd = "."
+# A dive in flight is mid-write to a segment. SIGINT closes the current
+# segment, writes its manifest and syncs; give it room rather than leaving a
+# truncated clip and no manifest behind.
+stop_grace = 45
