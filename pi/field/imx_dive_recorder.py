@@ -55,6 +55,15 @@ try:
 except ImportError:
     depth_mod = None
 
+# The board recorder's byte-exact thumbnail (one JPEG lifted out of the
+# MJPEG, no decode). The science stream is the same container, so the IMX
+# gets its index-page thumbnail the same way and at the same cost: a read
+# and a write, never a transcode (Nick's rule for this rig).
+try:
+    from recorder import write_thumbnail as _write_thumbnail
+except ImportError:
+    _write_thumbnail = None
+
 #: Seconds of AWB/AE convergence before the lock is taken. The reference card
 #: must be in frame for this whole window.
 DEFAULT_CONVERGE_S = 8.0
@@ -398,6 +407,20 @@ class DiveRecorder:
             else:
                 man["problems"].append("proxy not muxed to mp4: %s" % why)
 
+        # One frame of the science stream as the thumbnail the review index
+        # shows beside the N6's and AE3's. Without it the IMX -- Nick's
+        # reference camera -- was the only tile on the index with no picture.
+        sci = man["delivered"].get("science") or {}
+        if sci.get("frames") and _write_thumbnail is not None:
+            th_path = os.path.join(seg_dir, "IMX_thumb.jpg")
+            try:
+                if _write_thumbnail(sci_path, th_path) > 0:
+                    sci["thumb"] = os.path.basename(th_path)
+                else:
+                    man["problems"].append("IMX thumbnail not written")
+            except OSError as exc:
+                man["problems"].append("IMX thumbnail not written: %s" % exc)
+
         with open(os.path.join(seg_dir, "imx_segment.json"), "w") as f:
             json.dump(man, f, indent=2)
         self.segments.append(man)
@@ -536,6 +559,7 @@ def merge_session_manifest(seg_dir, man, locked, args):
     if sci.get("bytes"):
         mine.append({
             "label": "IMX", "mjpeg": os.path.basename(sci["path"]),
+            "thumb": sci.get("thumb"),
             "capture_fps": fps, "delivered_fps": fps,
             "frames": sci.get("frames"), "bytes": sci.get("bytes"),
             "mb_per_s": sci.get("MB_s"),

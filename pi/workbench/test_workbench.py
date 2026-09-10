@@ -987,9 +987,16 @@ class TestHTTP(unittest.TestCase):
         cls.runner = Runner(repo=cls.tmp,
                             pidfile=os.path.join(cls.tmp, "run.json"),
                             logpath=os.path.join(cls.tmp, "run.log"))
+        # A recordings root of its own, so the wipe endpoint below has
+        # something real to delete and can never reach the default path.
+        cls.recs = os.path.join(cls.tmp, "recordings")
+        os.makedirs(os.path.join(cls.recs, "dive_20260910T000000Z_s0000"))
+        with open(os.path.join(cls.recs, "dive_20260910T000000Z_s0000",
+                               "N6.mjpeg"), "wb") as fh:
+            fh.write(b"\xff\xd8" + b"x" * 1000)
         cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
-               "disk_path": cls.fake.root}
+               "disk_path": cls.fake.root, "recordings_root": cls.recs}
         cls.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0), workbench.make_handler(cfg, cls.runner))
         cls.port = cls.httpd.server_address[1]
@@ -1028,6 +1035,26 @@ class TestHTTP(unittest.TestCase):
                          ["good-one", "how-to"])
         self.assertEqual([p["file"] for p in obj["problems"]],
                          ["broken.toml"])
+
+    def test_wipe_refuses_without_the_token_then_erases(self):
+        """The erase-all button must actually erase.
+
+        Found 2026-09-10 by pressing the button on nereus002's page: the
+        handler raised NameError (`sys` was never imported) and the page
+        reported "Not erased". Every Python test passed, because nothing
+        drove the endpoint. This does.
+        """
+        sess = os.path.join(self.recs, "dive_20260910T000000Z_s0000")
+        self.assertTrue(os.path.isdir(sess))
+        code, body = self.req("POST", "/api/wipe", {"confirm": "no"})
+        self.assertEqual(code, 400)
+        self.assertTrue(os.path.isdir(sess))          # refused = untouched
+        code, body = self.req("POST", "/api/wipe", {"confirm": "ERASE"})
+        self.assertEqual(code, 200, body)
+        rep = json.loads(body)
+        self.assertTrue(rep["ok"], rep)
+        self.assertIn("dive_20260910T000000Z_s0000", rep["report"]["deleted"])
+        self.assertFalse(os.path.exists(sess))        # the artifact is gone
 
     def test_guide_served_and_confined(self):
         code, body = self.req("GET", "/guides/how.html")

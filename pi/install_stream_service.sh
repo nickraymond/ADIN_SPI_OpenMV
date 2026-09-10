@@ -45,7 +45,10 @@ case "$ROLE" in
   # Belt to the powersave braces: re-asserts power_save off every minute and
   # logs only when it had to, so a re-enable leaves evidence.
   ps-guard)  UNIT=wifi-powersave-guard.timer; AUTOSTART=yes ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard" >&2; exit 1 ;;
+  # Power on = record. Presses the dive card's Start once the workbench and
+  # the N6 are up; opt out on the bench with ~/.no_dive_autostart.
+  autostart) UNIT=dive-autostart.service;     AUTOSTART=yes ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard|autostart" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

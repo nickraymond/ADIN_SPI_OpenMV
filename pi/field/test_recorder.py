@@ -590,6 +590,136 @@ class TestPagesRender(unittest.TestCase):
         self.assertNotIn("Not converted yet", page)
 
 
+class TestImxIsOneCamera(unittest.TestCase):
+    """The IMX is one camera on the page, and its science file is download-only.
+
+    Nick, 2026-09-10: the viewer drew "IMX" (an empty tile with a Make
+    playable button) beside "IMX_proxy" (the tile that actually played), and
+    the index offered to convert the 1.5 GB science JPEG. One tile, playing
+    the proxy; the science file stays a download; nothing on either page or
+    in the server converts it.
+    """
+
+    DIVE = {
+        "name": "dive_20260910T190137Z_s0000",
+        "created_iso": "2026-09-10T12:01:45", "host": "nereus002",
+        "settings": {"framesize": "HD", "quality": 85, "fps_requested": 30,
+                     "duration_s": 178, "cameras": ["N6", "AE3"],
+                     "per_camera": {"N6": {"framesize": "HD", "quality": 70}}},
+        "cameras": [
+            {"label": "N6", "written_frames": 5387, "delivered_fps": 30.26,
+             "mb_per_s": 2.86, "seq_gaps": 0, "ring_dropped_frames": 0,
+             "mjpeg": "N6.mjpeg", "thumb": "N6_thumb.jpg",
+             "mjpeg_bytes": 511000000, "mp4_bytes": 0,
+             "start_offset_s": 0.0, "banner": {"w": 1280, "h": 800}},
+            {"label": "IMX", "mjpeg": "IMX.mjpeg", "thumb": "IMX_thumb.jpg",
+             "capture_fps": 29.94, "delivered_fps": 29.94, "frames": 5407,
+             "bytes": 890000000, "mb_per_s": 4.94, "w": 1280, "h": 800,
+             "kind": "science (JPEG q90)"},
+            {"label": "IMX_proxy", "mp4": "IMX_proxy.mp4", "capture_fps": 29.94,
+             "bytes": 63000000, "mb_per_s": 0.35, "w": 640, "h": 400,
+             "kind": "iPad proxy (H.264, plays as-is)"},
+        ],
+    }
+
+    def test_fold_gives_one_imx_that_plays_the_proxy(self):
+        import recorder_web as W
+        cams = W.fold_imx(self.DIVE["cameras"])
+        labels = [c["label"] for c in cams]
+        self.assertEqual(labels.count("IMX"), 1)
+        self.assertNotIn("IMX_proxy", labels)
+        imx = next(c for c in cams if c["label"] == "IMX")
+        self.assertEqual(imx["mp4"], "IMX_proxy.mp4")
+        self.assertEqual(imx["mjpeg"], "IMX.mjpeg")
+        self.assertEqual(imx["thumb"], "IMX_thumb.jpg")
+        self.assertTrue(imx["download_only"])
+        self.assertEqual(W._frames(imx), 5407)
+
+    def test_fold_leaves_a_board_only_session_alone(self):
+        import recorder_web as W
+        cams = [c for c in self.DIVE["cameras"] if c["label"] == "N6"]
+        self.assertEqual(W.fold_imx(cams), cams)
+
+    def test_viewer_has_one_imx_tile_and_it_is_a_player(self):
+        import recorder_web as W
+        page = W.viewer_page(self.DIVE)
+        self.assertNotIn("@@", page)
+        self.assertEqual(page.count("<video"), 1)             # the proxy
+        self.assertIn("IMX_proxy.mp4", page)
+        self.assertEqual(page.count("<b>IMX</b>"), 1)          # ONE tile
+        self.assertNotIn("<b>IMX_proxy</b>", page)
+        # The N6 is unconverted and keeps its button; the IMX never gets one.
+        self.assertEqual(page.count("Make playable"), 1)
+        self.assertIn("mkv(event,'dive_20260910T190137Z_s0000','N6')", page)
+        self.assertNotIn("'IMX')", page)
+
+    def test_viewer_offers_the_science_file_as_a_download(self):
+        import recorder_web as W
+        page = W.viewer_page(self.DIVE)
+        self.assertIn("/download/dive_20260910T190137Z_s0000/IMX.mjpeg", page)
+        self.assertIn("science mjpeg", page)
+        self.assertIn("/download/dive_20260910T190137Z_s0000/IMX_proxy.mp4", page)
+        self.assertIn("proxy mp4", page)
+        self.assertIn("1280x800 science", page)
+
+    def test_viewer_without_a_proxy_still_never_offers_conversion(self):
+        import recorder_web as W
+        import copy
+        sess = copy.deepcopy(self.DIVE)
+        sess["cameras"] = [c for c in sess["cameras"] if c["label"] != "IMX_proxy"]
+        page = W.viewer_page(sess)
+        self.assertEqual(page.count("<video"), 0)
+        self.assertIn("no playable proxy", page)
+        self.assertIn("IMX_thumb.jpg", page)
+        self.assertNotIn("'IMX')", page)
+
+    def test_index_never_offers_to_convert_the_imx(self):
+        import recorder_web as W
+        with tempfile.TemporaryDirectory() as d:
+            page = W.index_page(W.RecorderState(d), [self.DIVE], {})
+        self.assertNotIn("Make IMX playable", page)
+        self.assertNotIn("IMX_proxy", page.split("<h2>Recordings</h2>")[1]
+                         .split("<script>")[0])
+        self.assertIn("IMX mp4", page)                         # plays as-is
+        self.assertIn("IMX 5407 fr @ 29.9 fps", page)          # not "0 fr"
+        self.assertIn("Make N6 playable", page)
+        self.assertNotIn("Make all", page)     # only one convertible camera
+        self.assertIn("IMX_thumb.jpg", page)
+
+    def test_server_refuses_to_convert_the_imx(self):
+        """A stale page or a hand-typed request must not start the transcode."""
+        import recorder_web as W
+        import http.client
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "dive_a"))
+            for n in ("IMX.mjpeg", "N6.mjpeg"):
+                with open(os.path.join(d, "dive_a", n), "wb") as f:
+                    f.write(b"\xff\xd8x\xff\xd9")
+            state = W.RecorderState(d)
+            tq = W.TranscodeQueue(d)
+            httpd = W.ThreadingHTTPServer(
+                ("127.0.0.1", 0), W.make_handler(state, d, tq, review_only=True))
+            port = httpd.server_address[1]
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            try:
+                def post(cam):
+                    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    c.request("POST", "/api/transcode",
+                              body=json.dumps({"session": "dive_a", "camera": cam}))
+                    r = c.getresponse()
+                    return r.status, json.loads(r.read())
+                code, body = post("IMX")
+                self.assertEqual(code, 409)
+                self.assertFalse(body["ok"])
+                self.assertIn("download-only", body["err"])
+                code, body = post("IMX_proxy")
+                self.assertEqual(code, 409)
+                self.assertEqual(tq.snapshot().get("queued"), [])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+
+
 class TestMediaPathSafety(unittest.TestCase):
     """The media route takes user-supplied names; traversal must be refused."""
 
@@ -1031,9 +1161,12 @@ class TestRenderedPageScripts(unittest.TestCase):
             {"label": "IMX", "mjpeg": "IMX.mjpeg"},
             {"label": "MYSTERY", "mjpeg": "MYSTERY.mjpeg"}]}
         html_text = RW.viewer_page(man)
+        # Since 2026-09-10 the proxy is folded INTO the IMX tile (one camera,
+        # one tile), so IMX_proxy is no longer a heading of its own.
         pos = [html_text.index("<b>%s</b>" % lbl)
-               for lbl in ("IMX", "IMX_proxy", "N6", "AE3")]
+               for lbl in ("IMX", "N6", "AE3")]
         self.assertEqual(pos, sorted(pos), "camera order is not IMX-first")
+        self.assertNotIn("<b>IMX_proxy</b>", html_text)
         self.assertIn("MYSTERY", html_text,
                       "an unlisted camera must still be shown, not dropped")
 

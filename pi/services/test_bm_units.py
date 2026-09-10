@@ -237,6 +237,61 @@ class TestInstallerKeepsThemDisabled(unittest.TestCase):
                              path)
 
 
+AUTOSTART = os.path.join(HERE, "dive-autostart.service")
+AUTOSTART_SH = os.path.join(PI, "field", "dive_autostart.sh")
+
+
+class TestDiveAutostart(unittest.TestCase):
+    """Power on = record (S33, Nick 2026-09-10).
+
+    The unit must press the workbench's own Start -- never touch a board --
+    and it must be installable and enabled at boot through the same
+    installer as every other field fixture.
+    """
+
+    def test_unit_parses_and_is_a_oneshot_run_as_pi(self):
+        entries = parse_unit(AUTOSTART)
+        self.assertEqual({"Unit", "Service", "Install"},
+                         {s for s, _, _ in entries})
+        self.assertEqual(["oneshot"], values(entries, "Type"))
+        self.assertEqual(["pi"], values(entries, "User"))
+        self.assertEqual(["multi-user.target"],
+                         values(entries, "WantedBy", "Install"))
+
+    def test_unit_orders_itself_after_the_workbench(self):
+        entries = parse_unit(AUTOSTART)
+        after = " ".join(values(entries, "After", "Unit"))
+        self.assertIn("workbench.service", after)
+        self.assertIn("workbench.service",
+                      " ".join(values(entries, "Wants", "Unit")))
+
+    def test_unit_runs_the_script_the_installer_documents(self):
+        entries = parse_unit(AUTOSTART)
+        execs = values(entries, "ExecStart")
+        self.assertEqual(1, len(execs))
+        self.assertIn("pi/field/dive_autostart.sh", execs[0])
+        self.assertTrue(os.path.isfile(AUTOSTART_SH))
+        self.assertTrue(os.stat(AUTOSTART_SH).st_mode & stat.S_IXUSR)
+
+    def test_script_presses_start_and_waits_for_live(self):
+        text = read(AUTOSTART_SH)
+        self.assertIn("/api/start", text)
+        self.assertIn("ci-record", text)
+        self.assertIn("live)", text)           # exit 0 only on LIVE
+        self.assertIn("no_dive_autostart", text)  # bench opt-out
+        self.assertNotIn("mpremote", text)     # never touches a board
+        self.assertNotIn("/dev/serial", text)
+        self.assertNotIn("/dev/tty", text)
+
+    def test_installer_enables_it_at_boot(self):
+        text = read(INSTALLER)
+        m = re.search(r"^\s*autostart\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)",
+                      text, re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("dive-autostart.service", m.group(1))
+        self.assertEqual("yes", m.group(2))
+
+
 class TestShellTooling(unittest.TestCase):
     def test_scripts_are_executable(self):
         for path in (CMD, STATUS, CTL):
