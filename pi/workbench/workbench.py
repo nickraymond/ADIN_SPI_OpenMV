@@ -80,8 +80,12 @@ TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
 #: one typo -- "archive" vs "archived" -- silently mint a section of one card
 #: and split the menu, which is exactly the kind of failure that looks fine on
 #: the page and is only noticed at sea.
+#: Nick, 2026-09-09: with the trip 48 h out, only the Channel Islands section
+#: opens. Everything else is one tap away -- on an iPad between dives, a page
+#: you scan is a page you are not using.
 GROUPS = [
-    ("cameras", "Field cameras", True),
+    ("channelislands", "Channel Islands Testing", True),
+    ("cameras", "Field cameras", False),
     ("hil", "HIL, screens & inference", False),
     ("archive", "Archive & bench", False),
 ]
@@ -1057,6 +1061,7 @@ class Runner:
 
 def make_handler(cfg, runner: Runner):
     recipe_dir = cfg["recipe_dir"]
+    recordings_root = cfg.get("recordings_root", RECORDINGS_ROOT)
 
     def fresh_preflight():
         recipes, _ = load_recipes(recipe_dir)
@@ -1115,6 +1120,19 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, pf)
             if path == "/api/runner":
                 return self._json(200, runner.snapshot())
+            if path == "/api/dashboard":
+                # Never let a battery read take the menu down with it: the
+                # page must still start demos when the Pi+ is unreadable.
+                try:
+                    import dashboard as DASH
+                    return self._json(200, DASH.snapshot(recordings_root))
+                except Exception as exc:
+                    return self._json(200, {
+                        "battery": {"available": False,
+                                    "error": "%s: %s" % (type(exc).__name__, exc)},
+                        "ring": {"available": False,
+                                 "error": "dashboard unavailable"},
+                        "assumptions": {}})
             if path.startswith("/thumbs/"):
                 return self._thumb(path[len("/thumbs/"):])
             if path.startswith("/guides/"):
@@ -1216,9 +1234,16 @@ def make_handler(cfg, runner: Runner):
     return Handler
 
 
-def default_cfg(recipe_dir=RECIPE_DIR):
+#: Where the recorder lands sessions. The dashboard reports ring occupancy for
+#: this directory; it is the SAME path video_record.toml passes as --root, and
+#: if the two ever disagree the page reports a ring nothing writes to.
+RECORDINGS_ROOT = os.path.expanduser("~/recordings")
+
+
+def default_cfg(recipe_dir=RECIPE_DIR, recordings_root=RECORDINGS_ROOT):
     return {"recipe_dir": recipe_dir, "dev_dir": BY_ID_DIR, "proc": "/proc",
-            "runner": _systemctl_state, "disk_path": REPO}
+            "runner": _systemctl_state, "disk_path": REPO,
+            "recordings_root": recordings_root}
 
 
 def main(argv=None):
@@ -1228,12 +1253,15 @@ def main(argv=None):
                          "call: LAN-visible, loud banner, no auth)")
     ap.add_argument("--port", type=int, default=8088)
     ap.add_argument("--recipes", default=RECIPE_DIR)
+    ap.add_argument("--recordings", default=RECORDINGS_ROOT,
+                    help="recording root the dashboard reports ring usage for")
     args = ap.parse_args(argv)
 
     recipes, problems = load_recipes(args.recipes)
     runner = Runner()
     httpd = ThreadingHTTPServer((args.bind, args.port),
-                                make_handler(default_cfg(args.recipes),
+                                make_handler(default_cfg(args.recipes,
+                                                         args.recordings),
                                              runner))
     print("workbench: http://%s:%d/  (%d recipe(s), %d problem(s), dir %s)"
           % (args.bind, args.port, len(recipes), len(problems), args.recipes),

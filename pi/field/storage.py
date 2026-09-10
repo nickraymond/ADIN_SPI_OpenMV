@@ -43,9 +43,21 @@ import stat
 import time
 
 #: Default budget for the recordings directory. Chosen so a rig recording
-#: continuously cannot reach the filesystem: at HD q70 the N6 writes ~2.3 MB/s,
-#: so 50 GB is ~6 hours of continuous video before the oldest starts rolling off.
-DEFAULT_RING_BYTES = 50 * 1000 ** 3
+#: continuously cannot reach the filesystem.
+#:
+#: RAISED 50 -> 85 GB (Nick, 2026-09-09, Channel Islands trip): 50 GB was sized
+#: for the N6 alone at ~2.3 MB/s. The trip records four streams at once --
+#: IMX science 4.94 + N6 2.86 + proxy 0.35 + AE3 0.15 = 8.30 MB/s measured --
+#: and there is no bigger card, so leaving 46 GB of a 96 GB card unused would
+#: throw away roughly 1.5 hours of dive footage for nothing.
+#:
+#: The arithmetic, on this rig's 116 GB card with ~16 GB of OS: a full 85 GB
+#: ring still leaves ~11 GB free, comfortably clear of the independent
+#: min-free floor below. At 8.30 MB/s the ring holds ~2.8 hours of recording,
+#: which is about 8 dives of 20 minutes -- and it lands within minutes of the
+#: rig's measured ~3 h battery endurance (S29), so storage and power now run
+#: out together rather than one wasting the other.
+DEFAULT_RING_BYTES = 85 * 1000 ** 3
 
 #: Never let the filesystem go below this, regardless of the ring's own usage.
 #: Nick's spec named 2 GB; kept, because the failure it prevents (a full root)

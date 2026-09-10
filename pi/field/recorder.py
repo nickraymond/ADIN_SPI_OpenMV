@@ -35,6 +35,7 @@ import argparse
 import glob
 import json
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -909,10 +910,32 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     from record_run import run_recording          # noqa: E402
+
+    # Stop must END the recording, not unwind out of it.
+    #
+    # MEASURED FAILURE this fixes (2026-09-09): interrupting a CLI recording
+    # left rec_*/N6.mjpeg and AE3.mjpeg on the card with NO manifest.json and
+    # no thumbnails -- footage with no record of the framesize, quality, fps
+    # or delivered rate that produced it. run_recording already takes a
+    # stop_event and recorder_web has always passed one, which is why the
+    # page's Stop button never had this bug; the CLI simply never wired it up.
+    stop = threading.Event()
+
+    def _stop(signum, _frame):
+        print("recorder: signal %d -- finishing and writing the manifest"
+              % signum, file=sys.stderr, flush=True)
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _stop)
+        except (ValueError, OSError):
+            pass
+
     res = run_recording(root=a.root, framesize=a.framesize, quality=a.quality,
                         fps=a.fps, duration_s=a.duration,
                         cameras=[c for c in a.cameras.split(",") if c],
-                        transcode=not a.no_transcode)
+                        transcode=not a.no_transcode, stop_event=stop)
     print(json.dumps(res, indent=1) if a.json else res["summary"])
     return 0
 

@@ -1189,18 +1189,38 @@ class TestCardGroups(unittest.TestCase):
             self.assertIn(label, html, "page heading differs for %r" % key)
         self.assertIn('"%s"' % workbench.UNGROUPED, html)
 
-    def test_the_field_camera_section_holds_the_mission_cards(self):
-        """Nick's call (S33): stills, live streams and record/playback are the
-        cards used between dives, so they are the ones that open."""
+    def test_only_the_channel_islands_section_opens(self):
+        """Nick's call, 2026-09-09, 48 h from departure -- SUPERSEDES the
+        earlier S33 rule that opened the whole 'Field cameras' section.
+
+        The trip card is the only one he touches between dives, so it is the
+        only one that opens; `video-record` moved to the archive with the
+        rest. Kept as an assertion rather than a comment because "which
+        section opens" is a decision the owner makes, and a later edit that
+        quietly re-opens three sections should fail here rather than on a
+        boat.
+        """
         recipes, _ = load_recipes(workbench.RECIPE_DIR)
-        cams = {r["name"] for r in recipes if r["group"] == "cameras"}
-        for expected in ("field-streams", "video-record",
-                         "field-composite", "field-raw-composite"):
-            self.assertIn(expected, cams)
+        by_group = {}
+        for r in recipes:
+            by_group.setdefault(r["group"], set()).add(r["name"])
+        self.assertIn("ci-record", by_group.get("channelislands", set()))
+        self.assertIn("video-record", by_group.get("archive", set()))
         opens = {k: o for k, _l, o in workbench.GROUPS}
-        self.assertTrue(opens["cameras"], "field cameras must be open")
-        self.assertFalse(opens["hil"])
-        self.assertFalse(opens["archive"])
+        self.assertTrue(opens["channelislands"],
+                        "the trip section must be the one that opens")
+        for closed in ("cameras", "hil", "archive"):
+            self.assertFalse(opens[closed], "%s must start collapsed" % closed)
+
+    def test_every_recipe_has_a_real_group(self):
+        """No card may be orphaned. An ungrouped card renders in a section
+        that names the omission, which is correct but is not a state to ship
+        -- and one WAS orphaned during this session by an overwritten file.
+        """
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        orphans = [r["name"] for r in recipes
+                   if r["group"] == workbench.UNGROUPED]
+        self.assertEqual([], orphans, "ungrouped recipes: %s" % orphans)
 
 
 if __name__ == "__main__":
