@@ -694,7 +694,7 @@ let wasBusy = false;
 async function poll(){
   try{
     const j = await (await fetch('/api/status')).json();
-    document.getElementById('log').textContent=(j.log||[]).join('\n')||'idle';
+    document.getElementById('log').textContent=(j.log||[]).join('\\n')||'idle';
     { const go=document.getElementById('go'); if(go) go.disabled=j.busy; }
     if(!j.busy && wasBusy){ location.reload(); return; }   // the edge, once
     wasBusy = j.busy;
@@ -845,11 +845,11 @@ def viewer_page(m):
                   % (urllib.parse.quote(m["name"]),
                      urllib.parse.quote(c.get("thumb") or ""))
                   if c.get("thumb") else "")
-            note = ("%s<div class=warn style='font-size:12px;margin:8px 0'>"
-                    "Not converted yet &mdash; this clip is MJPEG, which the "
-                    "browser will not play. Converting costs real energy and "
-                    "heat, so it happens only when you ask."
-                    "</div><button onclick=\"mkv(event,'%s','%s')\">"
+            # Thumbnail and button only (Nick, 2026-09-09). The standing
+            # paragraph appeared under every unconverted clip, three times
+            # a page; the cost is now stated once, at the moment it
+            # matters, in the confirm dialog that names the real minutes.
+            note = ("%s<button onclick=\"mkv(event,'%s','%s')\">"
                     "Make playable</button>"
                     % (th, html.escape(m["name"]),
                        html.escape(c.get("label", ""))))
@@ -997,8 +997,8 @@ async function mkv(ev, session, camera){
     : ' (estimated; not yet measured on this rig)';
   const msg = est==null
     ? 'Cannot estimate how long this will take'+(basis.why?' — '+basis.why:'')
-      +'.\n\nConvert anyway?'
-    : 'This will take about '+humanT(est)+how+'.\n\nConvert '+camera+' now?';
+      +'.\\n\\nConvert anyway?'
+    : 'This will take about '+humanT(est)+how+'.\\n\\nConvert '+camera+' now?';
   if(!window.confirm(msg)) return;
 
   b.disabled=true; b.textContent='converting\u2026';
