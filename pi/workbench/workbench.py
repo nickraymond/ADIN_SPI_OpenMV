@@ -1192,6 +1192,30 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200 if state in ("idle",) else 409,
                                   {"ok": state == "idle", "state": state,
                                    "err": runner.error})
+            if path == "/api/wipe":
+                # DESTRUCTIVE. Refused outright while a demo is running: the
+                # card that records is the card that would be deleting its own
+                # open files, and "it was recording" is not a state the
+                # operator can see from a confirm dialog.
+                if runner.state in ("starting", "live", "reconciling",
+                                    "stopping"):
+                    return self._json(409, {
+                        "ok": False,
+                        "err": "a demo is running (%s) -- stop it first; "
+                               "wiping while recording would delete a file "
+                               "that is still open" % runner.state})
+                if not body.get("confirm") == "ERASE":
+                    return self._json(400, {
+                        "ok": False,
+                        "err": "refused: confirmation token missing"})
+                try:
+                    sys.path.insert(0, os.path.join(REPO, "pi", "field"))
+                    import storage as ST
+                    rep = ST.wipe_all(recordings_root, log=lambda m: print(m, flush=True))
+                except Exception as exc:
+                    return self._json(500, {"ok": False,
+                                            "err": "%s: %s" % (type(exc).__name__, exc)})
+                return self._json(200, {"ok": not rep["failed"], "report": rep})
             if path == "/api/devmode":
                 return self._devmode()
             self.send_error(404)

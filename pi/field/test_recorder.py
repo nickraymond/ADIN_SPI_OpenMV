@@ -11,6 +11,7 @@ outside the recordings directory.
 
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -889,6 +890,68 @@ class PerHostCeilings(unittest.TestCase):
             self.assertEqual(doc.get("host"), host, path)
             self.assertEqual(RR.load_ceilings(host=host, here=_HERE).get("host"), host)
 
+
+
+class TestWipeAll(unittest.TestCase):
+    """Nick's clean-slate button. Destructive, so its refusals are tested."""
+
+    def _rig(self):
+        root = tempfile.mkdtemp()
+        for name in ("rec_a", "rec_b", "dive_c"):
+            d = os.path.join(root, name)
+            os.makedirs(d)
+            with open(os.path.join(d, "N6.mjpeg"), "wb") as f:
+                f.write(b"x" * 1024)
+        return root
+
+    def test_wipes_every_session(self):
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root)
+            self.assertEqual(3, len(rep["deleted"]))
+            self.assertEqual([], rep["failed"])
+            self.assertEqual([], os.listdir(root))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_refuses_the_session_being_recorded(self):
+        """Deleting the open session would leave a half-written clip that
+        still looks like a recording."""
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root, active="rec_b")
+            self.assertNotIn("rec_b", rep["deleted"])
+            self.assertEqual(["rec_b"], [s["name"] for s in rep["skipped"]])
+            self.assertTrue(os.path.isdir(os.path.join(root, "rec_b")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_dry_run_deletes_nothing(self):
+        root = self._rig()
+        try:
+            rep = ST.wipe_all(root, dry_run=True)
+            self.assertEqual(3, len(rep["deleted"]))
+            self.assertEqual(3, len(os.listdir(root)))
+            self.assertGreater(rep["freed_bytes"], 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_never_follows_a_symlink_out_of_the_root(self):
+        """A ring that can delete outside its root is worse than a full disk."""
+        root = self._rig()
+        outside = tempfile.mkdtemp()
+        keep = os.path.join(outside, "precious")
+        os.makedirs(keep)
+        with open(os.path.join(keep, "data.bin"), "wb") as f:
+            f.write(b"keep me")
+        try:
+            os.symlink(outside, os.path.join(root, "escape"))
+            ST.wipe_all(root)
+            self.assertTrue(os.path.isfile(os.path.join(keep, "data.bin")),
+                            "wipe followed a symlink out of the root")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

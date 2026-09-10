@@ -263,6 +263,58 @@ def enforce(root, ring_bytes=DEFAULT_RING_BYTES,
     return report
 
 
+def wipe_all(root, active=None, dry_run=False, log=None):
+    """Delete EVERY recording session under `root`. Nick's clean-slate button.
+
+    Deliberately separate from enforce(): eviction protects the newest
+    sessions and the active one because its job is to make room without
+    losing work. This one is the opposite intent -- the operator has decided
+    the card should be empty -- so keep-latest does NOT apply.
+
+    What it will still refuse, because these are mistakes and not choices:
+      * the session currently being RECORDED, which would delete a file that
+        is open and leave a half-written clip claiming to be a recording;
+      * anything that does not resolve to a directory under `root`, checked
+        with the same realpath guard eviction uses.
+
+    Returns the same shape of report as enforce(), so the page can render one
+    and the operator sees exactly what went and what did not.
+    """
+    log = log or (lambda _m: None)
+    sessions = list_sessions(root)
+    report = {"when": time.strftime("%Y-%m-%dT%H:%M:%S"),
+              "dry_run": bool(dry_run), "deleted": [], "failed": [],
+              "skipped": [], "freed_bytes": 0,
+              "candidates": len(sessions)}
+    for s in sessions:
+        if active and s["name"] == active:
+            log("storage: NOT wiping %s -- it is being recorded" % s["name"])
+            report["skipped"].append({"name": s["name"],
+                                      "why": "currently recording"})
+            continue
+        if not _safe_under(root, s["path"]):
+            report["failed"].append({"name": s["name"],
+                                     "err": "outside the root"})
+            continue
+        if dry_run:
+            report["deleted"].append(s["name"])
+            report["freed_bytes"] += s["bytes"]
+            continue
+        try:
+            shutil.rmtree(s["path"])
+            log("storage: wiped %s (%.2f GB)" % (s["name"], s["bytes"] / 1e9))
+            report["deleted"].append(s["name"])
+            report["freed_bytes"] += s["bytes"]
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                report["deleted"].append(s["name"])
+            else:
+                log("storage: FAILED to wipe %s: %s" % (s["name"], e))
+                report["failed"].append({"name": s["name"], "err": str(e)})
+    report.update(disk_health(root))
+    return report
+
+
 def status(root, ring_bytes=DEFAULT_RING_BYTES,
            min_free_bytes=DEFAULT_MIN_FREE_BYTES):
     """Everything the dashboard needs, with no side effects at all."""

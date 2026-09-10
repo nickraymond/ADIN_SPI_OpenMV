@@ -32,6 +32,7 @@ the whole point of showing it.
 import os
 import subprocess
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _FIELD = os.path.join(os.path.dirname(_HERE), "field")
@@ -212,12 +213,66 @@ def ring(root, ring_bytes=None, min_free_bytes=None):
     }
 
 
+#: A status file older than this is from a dead run, not a live one. Without
+#: the guard a crashed recorder would leave the card counting down forever.
+STATUS_STALE_S = 30.0
+
+
+def recording(root, now=None):
+    """Progress of the segment being recorded right now, if there is one."""
+    import glob
+    import json
+    now = time.time() if now is None else now
+    best, best_mtime = None, -1.0
+    for path in glob.glob(os.path.join(root, "*", "status.json")):
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if mtime > best_mtime:
+            best, best_mtime = path, mtime
+    if best is None:
+        return {"active": False, "reason": "no recording status on disk"}
+    try:
+        with open(best) as f:
+            st = json.load(f)
+    except (OSError, ValueError) as exc:
+        return {"active": False, "reason": "unreadable status: %s" % exc}
+    age = now - best_mtime
+    ends = st.get("ends_unix")
+    # Live means: the file is fresh, OR the segment it describes has not run
+    # out yet. A 5-minute segment only touches the file at its ends, so
+    # freshness alone would blink the countdown off mid-segment.
+    live = (age <= STATUS_STALE_S
+            or (ends is not None and now < ends + STATUS_STALE_S))
+    if st.get("closing") and age > STATUS_STALE_S:
+        live = False
+    if not live:
+        return {"active": False, "reason": "last status is %.0f s old" % age}
+    left = None if ends is None else max(0.0, ends - now)
+    return {
+        "active": True,
+        "session": st.get("session"),
+        "segment": st.get("segment"),
+        "segment_s": st.get("segment_s"),
+        "seconds_left": None if left is None else round(left, 1),
+        "closing": bool(st.get("closing")),
+        "recipe": st.get("recipe"),
+        "wb_mode": st.get("wb_mode"),
+    }
+
+
 def snapshot(root, ring_bytes=None, min_free_bytes=None, runner=None):
     b = battery(runner=runner)
     r = ring(root, ring_bytes, min_free_bytes)
+    try:
+        rec = recording(root)
+    except Exception as exc:
+        rec = {"active": False, "reason": "%s: %s" % (type(exc).__name__, exc)}
     return {
         "battery": b,
         "ring": r,
+        "recording": rec,
         "assumptions": {
             "dive_minutes": DIVE_MINUTES,
             "rate_bytes_s": PINNED_RATE_BYTES_S,
