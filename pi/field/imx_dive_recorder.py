@@ -61,8 +61,23 @@ except ImportError:
 # and a write, never a transcode (Nick's rule for this rig).
 try:
     from recorder import write_thumbnail as _write_thumbnail
+    from recorder import write_json_durable as _write_json
 except ImportError:
     _write_thumbnail = None
+    _write_json = None
+
+
+def _write_json_fallback(path, obj, indent=None):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, indent=indent)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+if _write_json is None:
+    _write_json = _write_json_fallback
 
 #: Seconds of AWB/AE convergence before the lock is taken. The reference card
 #: must be in frame for this whole window.
@@ -299,21 +314,15 @@ class DiveRecorder:
         try:
             d = self.segment_dir(index)
             os.makedirs(d, exist_ok=True)
-            tmp = os.path.join(d, "status.json.tmp")
-            with open(tmp, "w") as f:
-                json.dump(st, f)
-            os.replace(tmp, os.path.join(d, "status.json"))
+            _write_json(os.path.join(d, "status.json"), st)
             # ONE CLOCK FOR BOTH RECORDERS. The board loop reads this to learn
             # which segment is open and when it ends, instead of counting its
             # own. Two independent 300 s timers drifted four segments apart
             # over 2.5 h; a follower cannot drift.
             cur = os.path.join(a.root, "%s_current.json" % a.session_prefix)
-            tmp2 = cur + ".tmp"
-            with open(tmp2, "w") as f:
-                json.dump({"segment": index, "session": st["session"],
-                           "ends_unix": st["ends_unix"],
-                           "closing": st["closing"]}, f)
-            os.replace(tmp2, cur)
+            _write_json(cur, {"segment": index, "session": st["session"],
+                              "ends_unix": st["ends_unix"],
+                              "closing": st["closing"]})
         except OSError:
             pass          # a countdown is a convenience; never fail a dive for it
 
@@ -596,10 +605,9 @@ def merge_session_manifest(seg_dir, man, locked, args):
         "science_size": args.science_size, "jpeg_q": args.jpeg_q,
         "proxy_size": args.proxy_size, "fps": args.fps,
     })
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(out, f, indent=1)
-    os.replace(tmp, path)
+    # fsync before the rename: a hard reset on 2026-09-10 left a segment's
+    # manifest.json at zero bytes with the plain tmp+rename this replaced.
+    _write_json(path, out, indent=1)
     return out
 
 

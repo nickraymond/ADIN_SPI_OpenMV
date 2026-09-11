@@ -767,6 +767,36 @@ class TestMediaPathSafety(unittest.TestCase):
 
 
 
+class TestDurableJson(unittest.TestCase):
+    """A manifest is either the old one or the new one, never empty.
+
+    2026-09-10: a hard reset seconds after a segment closed left
+    manifest.json at zero bytes. The writer now fsyncs before the rename.
+    """
+
+    def test_writes_the_file_and_leaves_no_tmp(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "manifest.json")
+            R.write_json_durable(p, {"a": 1, "cameras": []}, indent=1)
+            with open(p) as f:
+                self.assertEqual(json.load(f), {"a": 1, "cameras": []})
+            self.assertEqual(sorted(os.listdir(d)), ["manifest.json"])
+
+    def test_replaces_an_existing_file_whole(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "manifest.json")
+            R.write_json_durable(p, {"v": 1})
+            R.write_json_durable(p, {"v": 2})
+            with open(p) as f:
+                self.assertEqual(json.load(f), {"v": 2})
+
+    def test_session_save_uses_it(self):
+        src = open(os.path.join(_HERE, "recorder.py")).read()
+        save = src[src.index("    def save(self):"):]
+        self.assertIn("write_json_durable(self.path(\"manifest.json\")", save)
+        self.assertNotIn("os.replace(tmp, self.path(\"manifest.json\"))", save)
+
+
 class TestThumbnails(unittest.TestCase):
     """A thumbnail must cost a read and a write, never a transcode.
 
