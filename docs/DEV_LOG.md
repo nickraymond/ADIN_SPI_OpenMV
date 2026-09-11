@@ -17,6 +17,59 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-10 (later) — S33 — trip tune-up: one IMX tile, erase-all fixed, record on boot, 60-min burn-in
+
+**Branch:** `claude/scuba-trip-tuneup-784b0a` (off `sprint/33-field-ready`) · rig: **nereus002**
+
+**Scope (Nick, 18 h to departure):** no AWB work, no AprilTag, no cards.
+ONE recipe, AWB auto with focus pinned at 1.82. Locked-WB card and the tag
+trigger are out. Depth sensor and AP mode are Nick's, tonight, after the
+housing pressure test.
+
+**Done:**
+- **Review page: the IMX is one camera.** The viewer drew "IMX" as an empty
+  tile with a Make-playable button beside "IMX_proxy", the tile that played.
+  Now one tile called IMX plays the proxy; the science JPEG is a download link
+  only, never offered for conversion on any page, and `/api/transcode` returns
+  409 if asked. The IMX gets a byte-exact thumbnail (recorder.write_thumbnail
+  reused on the science MJPEG) so the index shows a picture for every camera.
+- **Compare toggles** on the viewer: default all cameras, switch one off and
+  the flex row lets the rest grow; scrubber follows the first visible clip;
+  the last visible camera cannot be hidden; remembered per browser.
+- **Record on boot** (`dive-autostart.service`, installer role `autostart`):
+  waits for the workbench and the N6, presses the card's own `/api/start`,
+  exits 0 only when the runner reports LIVE. Opt out with
+  `~/.no_dive_autostart`. First live run: installed at 15:14, LIVE within a
+  minute, then ran 60 minutes of clean segments (below).
+- **Burn-in, 13 segments (12 from the autostart), 60 min:** every segment
+  held N6 30.2 / AE3 12.0 / IMX 30.0 fps with all four streams, its manifest
+  and thumbnails, `problems=[]`, throttled 0x0, peak 66 C on external power,
+  21 GB written. Stop from the page closed the last segment cleanly.
+
+**Broke/surprised us:**
+- **The erase-all button never worked.** `/api/wipe` raised
+  `NameError: name 'sys' is not defined` and the page reported "Not erased".
+  Found by pressing the button; all 207 Python tests had passed because
+  nothing drove the endpoint. Now `TestHTTP.test_wipe_refuses_without_the_token_then_erases`
+  does (CLAUDE.md rule 4, again: verify through the PAGE).
+- The rig was on `sprint/33-field-ready@299e2db` with PR #84 sitting as an
+  untracked/modified working tree, byte-identical to the branch head. Deployed
+  as a tracked checkout of this branch.
+- `wipe_all` leaves the loose `dive_<stamp>_current.json` clock files behind
+  (directories only). Cosmetic; not fixed.
+- Preflight lists each board twice (role entry + by-id entry), so the
+  autostart logs "ready: N6,AE3,AE3,N6". Harmless.
+- The in-app browser auto-cancels `window.confirm`, so page buttons that
+  confirm had to be pressed with confirm stubbed to true.
+
+**Not done / owed:**
+- A real power-cycle proof of record-on-boot (Nick, tonight, Pi+ button).
+- `nmcli ... powersave 2` reads `disable` on the rig already -- that root
+  command is done. AP profile does not exist yet.
+- Battery endurance under the full four-stream load is being measured next.
+
+---
+
 ## 2026-09-10 — S33 — Channel Islands recording: dive card, rig dashboard, review loop
 
 **Branch:** `claude/ci-dashboard` (off `sprint/33-field-ready`) · rig: **nereus002**
