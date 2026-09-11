@@ -52,6 +52,22 @@ ensure_profile() {
     connection.autoconnect no 802-11-wireless-security.key-mgmt "" 2>/dev/null || true
 }
 
+# The client profile to hand wlan0 back to: the first wifi profile that is
+# not an AP and would autoconnect. `nmcli device connect` was tried first
+# and picked the AP profile again as "best available" (measured 2026-09-10),
+# so the choice is made here, explicitly, and printed.
+client_profile() {
+  local n
+  while IFS=: read -r n t; do
+    [ "$t" = "802-11-wireless" ] || continue
+    [ "$n" = "$AP_CON" ] && continue
+    [ "$(nmcli -g 802-11-wireless.mode con show "$n" 2>/dev/null)" = "ap" ] && continue
+    [ "$(nmcli -g connection.autoconnect con show "$n" 2>/dev/null)" = "yes" ] || continue
+    echo "$n"; return 0
+  done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null)
+  return 1
+}
+
 active_on_iface() {
   nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | awk -F: -v i="$IFACE" '$2==i {print $1; exit}'
 }
@@ -112,11 +128,15 @@ case "${1:-status}" in
     status
     ;;
   down)
-    say "dropping $AP_CON; $IFACE rejoins its client profile"
-    nmcli con down "$AP_CON" >/dev/null 2>&1 || true
-    # `device connect` activates the best autoconnect-able profile for the
-    # interface -- whatever the home wifi is called on this rig.
-    nmcli dev connect "$IFACE" >/dev/null 2>&1 || say "note: no client profile came up on $IFACE"
+    say "dropping $AP_CON on $IFACE"
+    nmcli con down "$AP_CON" >/dev/null 2>&1 || say "note: $AP_CON was not active"
+    CLIENT="$(client_profile || true)"
+    if [ -n "$CLIENT" ]; then
+      say "handing $IFACE back to client profile '$CLIENT'"
+      nmcli con up "$CLIENT" >/dev/null 2>&1 || say "note: '$CLIENT' did not come up (no such wifi here?)"
+    else
+      say "note: no client wifi profile on this rig; the fallback will restore the AP"
+    fi
     # Re-arm the fallback so "switch to home wifi" tapped at sea, where there
     # is no home wifi, brings the AP back by itself in $AP_FALLBACK_S s.
     if command -v systemctl >/dev/null 2>&1; then

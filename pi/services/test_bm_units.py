@@ -376,6 +376,40 @@ class TestApSwitch(unittest.TestCase):
         made = open(calls).read() if os.path.exists(calls) else ""
         return r.returncode, r.stdout, made
 
+    def test_down_hands_wlan0_to_the_client_profile_by_name(self):
+        """`nmcli device connect` re-picked the AP as best available
+        (2026-09-10), so down must name the client profile it activates."""
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "bin"))
+            calls = os.path.join(d, "calls")
+            fake_nmcli = (
+                "#!/bin/sh\necho \"nmcli $*\" >> %s\n"
+                "case \"$*\" in\n"
+                "  '-t -f NAME,TYPE con show') printf 'rigx-ap:802-11-wireless\\nwlan0-Ford:802-11-wireless\\nlo:loopback\\n' ;;\n"
+                "  *'802-11-wireless.mode con show rigx-ap'*) echo ap ;;\n"
+                "  *'802-11-wireless.mode con show wlan0-Ford'*) echo infrastructure ;;\n"
+                "  *'connection.autoconnect con show wlan0-Ford'*) echo yes ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n" % calls)
+            for name, body in (("nmcli", fake_nmcli),
+                               ("ip", "#!/bin/sh\ntrue\n"),
+                               ("systemctl", "#!/bin/sh\nexit 0\n")):
+                pth = os.path.join(d, "bin", name)
+                with open(pth, "w") as f:
+                    f.write(body)
+                os.chmod(pth, 0o755)
+            env = dict(os.environ, PATH=os.path.join(d, "bin") + ":" + os.environ["PATH"],
+                       AP_SSID="rigx")
+            r = subprocess.run(["bash", AP_SH, "down"], env=env, capture_output=True,
+                               text=True, timeout=30)
+            made = open(calls).read()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("nmcli con down rigx-ap", made)
+        self.assertIn("nmcli con up wlan0-Ford", made)
+        self.assertNotIn("dev connect", made)
+        self.assertIn("client profile 'wlan0-Ford'", r.stdout)
+
     def test_auto_stays_a_client_when_home_wifi_is_up(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
