@@ -509,6 +509,11 @@ def service_states(units, runner=_systemctl_state):
 #: pi/field/ap_mode.sh behind the unit; the workbench only calls systemctl,
 #: which is the one command the pi user may sudo without a password.
 AP_UNIT = "nereus-ap"
+#: Home wifi first, AP if none within AP_FALLBACK_S: runs at boot and after
+#: every "switch to home wifi", so the rig is never stranded hunting for a
+#: network that is not there (Nick, 2026-09-10).
+AP_FALLBACK_UNIT = "nereus-ap-fallback"
+AP_FALLBACK_S = 60
 AP_STATUS_SCRIPT = os.path.join(REPO, "pi", "field", "ap_mode.sh")
 
 
@@ -545,6 +550,7 @@ def ap_state(runner=_systemctl_state, enabled=_systemctl_enabled,
              status=_ap_status):
     active = runner(AP_UNIT)
     en = enabled(AP_UNIT)
+    fb = enabled(AP_FALLBACK_UNIT)
     st = status() or {}
     return {
         "unit": AP_UNIT,
@@ -553,6 +559,9 @@ def ap_state(runner=_systemctl_state, enabled=_systemctl_enabled,
         "unit_state": active,
         "enabled": en == "enabled",
         "enabled_state": en,
+        "fallback_unit": AP_FALLBACK_UNIT,
+        "fallback_enabled": fb == "enabled",
+        "fallback_s": AP_FALLBACK_S,
         "ssid": st.get("ssid") or socket.gethostname(),
         "ap_ip": "10.42.0.1",
         "wlan": st,

@@ -1004,7 +1004,8 @@ class TestHTTP(unittest.TestCase):
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
                "disk_path": cls.fake.root, "recordings_root": cls.recs,
                "ap_ctl": fake_ctl,
-               "ap_enabled": lambda u: cls.ap_enabled["v"],
+               "ap_enabled": lambda u: ("enabled" if u == "nereus-ap-fallback"
+                                        else cls.ap_enabled["v"]),
                "ap_status": lambda: {"iface": "wlan0", "mode": "client",
                                      "active": "wlan0-Ford", "ip": "192.168.1.35",
                                      "ssid": "nereus002", "ap_profile": "nereus002-ap"}}
@@ -1120,6 +1121,8 @@ class TestHTTP(unittest.TestCase):
         self.assertEqual(st["ssid"], "nereus002")
         self.assertEqual(st["ap_ip"], "10.42.0.1")
         self.assertEqual(st["wlan"]["mode"], "client")
+        self.assertTrue(st["fallback_enabled"])
+        self.assertEqual(st["fallback_s"], 60)
 
     def test_ap_toggle_enables_now_and_at_boot_together(self):
         """One switch, both halves: what wlan0 does now and at the next boot."""

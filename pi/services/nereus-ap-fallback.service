@@ -1,0 +1,30 @@
+# nereus-ap-fallback.service -- never stranded hunting for a wifi that is
+# not there.
+#
+# At boot (and again after every "switch to home wifi"), give the home
+# network AP_FALLBACK_S seconds (60). If wlan0 has not become a connected
+# client by then, start nereus-ap so the rig is reachable as its own network
+# at 10.42.0.1. At home this does nothing but log "home wifi ok"; on the
+# boat it is what makes the iPad review loop happen with no typing.
+#
+# The forced switch (nereus-ap enabled) still wins: if the AP is already
+# up when this runs, it stands down.
+#
+# Install: sudo pi/install_stream_service.sh ap-fallback    (enabled at boot)
+# Watch:   journalctl -u nereus-ap-fallback -b
+[Unit]
+Description=AP fallback: home wifi first, rig AP if none within 60 s
+After=NetworkManager.service network.target
+Wants=NetworkManager.service
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/field/ap_mode.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+SyslogIdentifier=nereus-ap-fallback
+Environment=AP_FALLBACK_S=60
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/ap_mode.sh auto
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -337,6 +337,61 @@ class TestApSwitch(unittest.TestCase):
         self.assertEqual("nereus-ap.service", m.group(1))
         self.assertEqual("no", m.group(2))
 
+    # -- the fallback: home wifi first, AP if none (Nick, 2026-09-10) --------
+    FALLBACK = os.path.join(HERE, "nereus-ap-fallback.service")
+
+    def test_fallback_unit_runs_auto_at_boot(self):
+        entries = parse_unit(self.FALLBACK)
+        self.assertIn("ap_mode.sh auto", values(entries, "ExecStart")[0])
+        self.assertEqual(["multi-user.target"], values(entries, "WantedBy", "Install"))
+        self.assertIn("AP_FALLBACK_S=60", " ".join(values(entries, "Environment")))
+        m = re.search(r"^\s*ap-fallback\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)", read(INSTALLER), re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("nereus-ap-fallback.service", m.group(1))
+        self.assertEqual("yes", m.group(2))
+
+    def _run_auto(self, client_up, tmp):
+        """Drive `ap_mode.sh auto` with a fake nmcli/ip/systemctl on PATH."""
+        import subprocess
+        os.makedirs(os.path.join(tmp, "bin"), exist_ok=True)
+        calls = os.path.join(tmp, "calls")
+        fake_nmcli = (
+            "#!/bin/sh\n"
+            "case \"$*\" in\n"
+            "  *'con show --active'*) %s ;;\n"
+            "  *'802-11-wireless.mode con show'*) echo infrastructure ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n" % ("echo 'wlan0-Ford:wlan0'" if client_up else "true"))
+        fake_ip = ("#!/bin/sh\n%s\n" % ("echo '2: wlan0 inet 192.168.1.35/24 brd'" if client_up else "true"))
+        fake_sysctl = "#!/bin/sh\necho \"systemctl $*\" >> %s\nexit 0\n" % calls
+        for name, body in (("nmcli", fake_nmcli), ("ip", fake_ip), ("systemctl", fake_sysctl)):
+            pth = os.path.join(tmp, "bin", name)
+            with open(pth, "w") as f:
+                f.write(body)
+            os.chmod(pth, 0o755)
+        env = dict(os.environ, PATH=os.path.join(tmp, "bin") + ":" + os.environ["PATH"],
+                   AP_FALLBACK_S="1", AP_SSID="rigx")
+        r = subprocess.run(["bash", AP_SH, "auto"], env=env, capture_output=True,
+                           text=True, timeout=30)
+        made = open(calls).read() if os.path.exists(calls) else ""
+        return r.returncode, r.stdout, made
+
+    def test_auto_stays_a_client_when_home_wifi_is_up(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, calls = self._run_auto(True, d)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("home wifi ok", out)
+        self.assertNotIn("systemctl start nereus-ap", calls)
+
+    def test_auto_raises_the_ap_when_no_client_appears(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, calls = self._run_auto(False, d)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("FALLING BACK to AP", out)
+        self.assertIn("systemctl start nereus-ap\n", calls)
+
 
 class TestShellTooling(unittest.TestCase):
     def test_scripts_are_executable(self):

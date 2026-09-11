@@ -3,6 +3,11 @@
 #
 #   ap_mode.sh up      bring the AP up on wlan0 (creates the profile if missing)
 #   ap_mode.sh down    drop the AP and let wlan0 rejoin the best client profile
+#   ap_mode.sh auto    THE FALLBACK: give the home wifi AP_FALLBACK_S seconds;
+#                      if wlan0 is not a connected client by then, start the
+#                      nereus-ap unit. Runs at boot (nereus-ap-fallback.service)
+#                      and after every `down`, so a rig at sea is never left
+#                      hunting for a wifi that is not there (Nick, 2026-09-10).
 #   ap_mode.sh status  one line of JSON about wlan0, safe for any user
 #
 # BORROWED, NOT BUILT: this is Nick's field-proven recipe from
@@ -28,6 +33,9 @@ IFACE="${AP_IFACE:-wlan0}"
 SSID="${AP_SSID:-$(hostname)}"
 AP_CON="${AP_CON:-${SSID}-ap}"
 AP_ADDR="10.42.0.1"          # what ipv4.method=shared assigns; verified below
+AP_FALLBACK_S="${AP_FALLBACK_S:-60}"
+AP_UNIT="${AP_UNIT:-nereus-ap}"
+FALLBACK_UNIT="${FALLBACK_UNIT:-nereus-ap-fallback}"
 
 say() { printf 'ap-mode: %s\n' "$*"; }
 
@@ -50,6 +58,25 @@ active_on_iface() {
 
 iface_ip() {
   ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1
+}
+
+mode_now() {
+  local act
+  act="$(active_on_iface)"
+  [ -z "$act" ] && { echo off; return; }
+  if [ "$(nmcli -g 802-11-wireless.mode con show "$act" 2>/dev/null)" = "ap" ]; then echo ap; else echo client; fi
+}
+
+# Wait up to $1 seconds for wlan0 to be a client WITH an address.
+wait_client() {
+  local t0 now
+  t0=$(date +%s)
+  while :; do
+    if [ "$(mode_now)" = "client" ] && [ -n "$(iface_ip)" ]; then return 0; fi
+    now=$(date +%s)
+    [ $((now - t0)) -ge "$1" ] && return 1
+    sleep 2
+  done
 }
 
 status() {
@@ -90,11 +117,34 @@ case "${1:-status}" in
     # `device connect` activates the best autoconnect-able profile for the
     # interface -- whatever the home wifi is called on this rig.
     nmcli dev connect "$IFACE" >/dev/null 2>&1 || say "note: no client profile came up on $IFACE"
+    # Re-arm the fallback so "switch to home wifi" tapped at sea, where there
+    # is no home wifi, brings the AP back by itself in $AP_FALLBACK_S s.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl start --no-block "$FALLBACK_UNIT" >/dev/null 2>&1 || true
+    fi
     status
+    ;;
+  auto)
+    case "$(mode_now)" in
+      ap) say "already AP; nothing to do"; status; exit 0 ;;
+    esac
+    say "giving the home wifi ${AP_FALLBACK_S}s on $IFACE"
+    if wait_client "$AP_FALLBACK_S"; then
+      say "home wifi ok: $(active_on_iface) at $(iface_ip); staying a client"
+      status; exit 0
+    fi
+    say "no client connection on $IFACE after ${AP_FALLBACK_S}s -- FALLING BACK to AP"
+    # Through the unit, not `up` directly, so the switch's state (active)
+    # tells the truth on the dashboard.
+    if systemctl start "$AP_UNIT"; then
+      say "AP fallback up: join '$SSID', open http://$AP_ADDR:8088/"
+      status; exit 0
+    fi
+    say "FAIL: could not start $AP_UNIT"; status; exit 1
     ;;
   status)
     status
     ;;
   *)
-    echo "usage: $0 up|down|status" >&2; exit 2 ;;
+    echo "usage: $0 up|down|auto|status" >&2; exit 2 ;;
 esac
