@@ -84,11 +84,16 @@ mode_now() {
 }
 
 # Wait up to $1 seconds for wlan0 to be a client WITH an address.
+# Returns 0 = client up, 1 = timed out, 2 = the AP appeared meanwhile (the
+# forced switch runs in parallel with the fallback at boot, and the fallback
+# must not sit out its whole window on a radio that is already the AP).
 wait_client() {
-  local t0 now
+  local t0 now m
   t0=$(date +%s)
   while :; do
-    if [ "$(mode_now)" = "client" ] && [ -n "$(iface_ip)" ]; then return 0; fi
+    m="$(mode_now)"
+    if [ "$m" = "client" ] && [ -n "$(iface_ip)" ]; then return 0; fi
+    [ "$m" = "ap" ] && return 2
     now=$(date +%s)
     [ $((now - t0)) -ge "$1" ] && return 1
     sleep 2
@@ -149,8 +154,12 @@ case "${1:-status}" in
       ap) say "already AP; nothing to do"; status; exit 0 ;;
     esac
     say "giving the home wifi ${AP_FALLBACK_S}s on $IFACE"
-    if wait_client "$AP_FALLBACK_S"; then
+    wait_client "$AP_FALLBACK_S"; rc=$?
+    if [ "$rc" -eq 0 ]; then
       say "home wifi ok: $(active_on_iface) at $(iface_ip); staying a client"
+      status; exit 0
+    elif [ "$rc" -eq 2 ]; then
+      say "the AP came up meanwhile (forced switch); standing down"
       status; exit 0
     fi
     say "no client connection on $IFACE after ${AP_FALLBACK_S}s -- FALLING BACK to AP"
