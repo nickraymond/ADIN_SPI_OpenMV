@@ -785,7 +785,14 @@ class TestImxStallGuard(unittest.TestCase):
         self.assertEqual(got, "gave up")
         self.assertLess(_t.time() - t0, 2.0)
         self.assertEqual(self.M.call_with_timeout(lambda: 7, 1.0), 7)
-        self.assertIsNone(self.M.call_with_timeout(lambda: 1 / 0, 1.0))
+        self.assertIs(self.M.call_with_timeout(lambda: 1 / 0, 1.0), self.M.TIMEOUT)
+        self.assertIs(self.M.call_with_timeout(lambda: _t.sleep(5), 0.2), self.M.TIMEOUT)
+
+    def test_a_function_that_returns_none_is_not_a_timeout(self):
+        """split_output() and stop_encoder() return None on success; that
+        was read as a stall and relaunched the recorder ten times in 90 s."""
+        self.assertIsNone(self.M.call_with_timeout(lambda: None, 1.0))
+        self.assertIsNot(self.M.call_with_timeout(lambda: None, 1.0), self.M.TIMEOUT)
 
     def test_stall_watch_fires_only_after_frames_stop(self):
         w = self.M.StallWatch(stall_s=20)

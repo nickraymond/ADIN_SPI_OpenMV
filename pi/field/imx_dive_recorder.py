@@ -111,7 +111,15 @@ def _jsonable(v):
 EXIT_STALLED = 3
 
 
-def call_with_timeout(fn, timeout, default=None):
+#: What call_with_timeout returns when fn() did not finish (or raised). A
+#: distinct object, because "fn returned None" is a normal outcome:
+#: split_output() and stop_encoder() both return None, and comparing the
+#: result with None declared a stall on every successful file switch
+#: (measured 2026-09-10 22:52: ten relaunches in 90 s, 9 KB each).
+TIMEOUT = object()
+
+
+def call_with_timeout(fn, timeout, default=TIMEOUT):
     """Run fn() on a helper thread; give up after `timeout` s.
 
     Measured 2026-09-10 on nereus002: 55 s after boot libcamera reported
@@ -172,8 +180,8 @@ class DiveRecorder:
 
     def _meta(self, timeout=5.0):
         """capture_metadata() that cannot hang the dive (see call_with_timeout)."""
-        md = call_with_timeout(self.cam.capture_metadata, timeout, None)
-        if md is None:
+        md = call_with_timeout(self.cam.capture_metadata, timeout)
+        if md is TIMEOUT or md is None:
             print("WARNING: no camera metadata within %.0fs" % timeout,
                   file=sys.stderr, flush=True)
             return {}
@@ -440,7 +448,7 @@ class DiveRecorder:
         # WB lock and the sensor's state survive into the next segment.
         gains_at_end = _jsonable(self._meta().get("ColourGains"))
         live = [e for e in (sci, pxy) if e is not None]
-        if call_with_timeout(lambda: self.cam.stop_encoder(live), 15, "ok") is None:
+        if call_with_timeout(lambda: self.cam.stop_encoder(live), 15) is TIMEOUT:
             print("WARNING: stop_encoder did not return in 15 s", file=sys.stderr, flush=True)
         elapsed = time.time() - t_start
         self.write_status(index, t_start, elapsed=elapsed, closing=True)
@@ -624,7 +632,7 @@ class DiveRecorder:
                 out = self._counting_output(h264_path)
                 # Switch the file at the next keyframe. Bounded: a dead
                 # frontend never produces one, and that is a stall, not a hang.
-                if call_with_timeout(lambda: split.split_output(out), 10, "ok") is None:
+                if call_with_timeout(lambda: split.split_output(out), 10) is TIMEOUT:
                     self.stalled = "no keyframe within 10 s to open segment %d" % i
                     print("IMX STALL: %s" % self.stalled, file=sys.stderr, flush=True)
                     break
