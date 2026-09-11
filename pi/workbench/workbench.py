@@ -1304,12 +1304,24 @@ def make_handler(cfg, runner: Runner):
                                             "err": "body must be {\"on\": true|false}"})
                 ctl = cfg.get("ap_ctl", _ap_ctl)
                 args = ["enable", "--now", AP_UNIT] if on else ["disable", "--now", AP_UNIT]
-                rc, text = ctl(args)
+                # ANSWER FIRST, FLIP SECOND. The phone asking for this is on
+                # the radio that is about to change, so a synchronous switch
+                # killed the connection before the reply left: Safari showed
+                # "TypeError: Load failed" for a switch that had in fact
+                # worked (measured 2026-09-10). The reply goes out now; the
+                # switch runs a moment later on its own thread, and the
+                # outcome is readable from /api/ap on the other network.
+                delay = float(cfg.get("ap_switch_delay_s", 2.0))
+                def flip():
+                    time.sleep(delay)
+                    rc, text = ctl(args)
+                    print("ap: %s -> rc=%s %s" % (" ".join(args), rc, text), flush=True)
+                threading.Thread(target=flip, name="ap-switch", daemon=True).start()
                 state = ap_state(runner=cfg["runner"],
                                  enabled=cfg.get("ap_enabled", _systemctl_enabled),
                                  status=cfg.get("ap_status", _ap_status))
-                return self._json(200 if rc == 0 else 500, {
-                    "ok": rc == 0, "err": None if rc == 0 else (text or "systemctl failed"),
+                return self._json(202, {
+                    "ok": True, "scheduled": True, "in_s": delay,
                     "asked": "ap" if on else "client", "state": state})
             self.send_error(404)
 

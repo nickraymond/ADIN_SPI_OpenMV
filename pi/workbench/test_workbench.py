@@ -1003,7 +1003,7 @@ class TestHTTP(unittest.TestCase):
         cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
                "disk_path": cls.fake.root, "recordings_root": cls.recs,
-               "ap_ctl": fake_ctl,
+               "ap_ctl": fake_ctl, "ap_switch_delay_s": 0.05,
                "ap_enabled": lambda u: ("enabled" if u == "nereus-ap-fallback"
                                         else cls.ap_enabled["v"]),
                "ap_status": lambda: {"iface": "wlan0", "mode": "client",
@@ -1126,15 +1126,27 @@ class TestHTTP(unittest.TestCase):
 
     def test_ap_toggle_enables_now_and_at_boot_together(self):
         """One switch, both halves: what wlan0 does now and at the next boot."""
+        import time as _t
+        def settle():
+            for _ in range(40):
+                _t.sleep(0.05)
+                if self.ap_calls:
+                    return
         self.ap_calls.clear()
         code, body = self.req("POST", "/api/ap", {"on": True})
-        self.assertEqual(code, 200, body)
+        # 202: the reply leaves BEFORE the radio flips (a phone on that radio
+        # saw "Load failed" from a synchronous switch that had worked).
+        self.assertEqual(code, 202, body)
+        self.assertTrue(json.loads(body)["scheduled"])
+        settle()
         self.assertEqual(self.ap_calls, [["enable", "--now", "nereus-ap"]])
-        self.assertTrue(json.loads(body)["state"]["enabled"])
+        self.assertEqual(self.ap_enabled["v"], "enabled")
+        self.ap_calls.clear()
         code, body = self.req("POST", "/api/ap", {"on": False})
-        self.assertEqual(code, 200, body)
-        self.assertEqual(self.ap_calls[-1], ["disable", "--now", "nereus-ap"])
-        self.assertFalse(json.loads(body)["state"]["enabled"])
+        self.assertEqual(code, 202, body)
+        settle()
+        self.assertEqual(self.ap_calls, [["disable", "--now", "nereus-ap"]])
+        self.assertEqual(self.ap_enabled["v"], "disabled")
 
     def test_ap_toggle_refuses_a_non_boolean(self):
         self.ap_calls.clear()
