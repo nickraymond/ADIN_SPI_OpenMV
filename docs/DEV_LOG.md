@@ -92,6 +92,27 @@ housing pressure test.
   below `MIN_VBAT_MV` (3250) and says why. Driven against a fake workbench
   in all four battery states.
 
+**AP MODE SHIPPED (same night, Nick's spec: dashboard toggle, SSID =
+hostname, no password, and "never stranded hunting for a wifi that is not
+there"):**
+- `pi/field/ap_mode.sh` = the borrowed nereus-vision-dev recipe (NM AP,
+  `ipv4.method shared` -> 10.42.0.1). `nereus-ap.service` is the switch:
+  active = AP now, enabled = AP at every boot; the dashboard's Network tile
+  flips both with `systemctl enable/disable --now` through the existing
+  sudo rule, because pi gets "Insufficient privileges" from nmcli directly.
+- `nereus-ap-fallback.service` (enabled at boot, and re-armed after every
+  switch-off): gives wlan0 60 s to become a connected client, then starts
+  the AP. Both branches unit-tested with a fake nmcli/ip/systemctl on PATH.
+- Verified on the rig over the ethernet lifeline: AP up at 10.42.0.1 with
+  dnsmasq serving, open profile, page reachable; down hands wlan0 back to
+  `wlan0-Ford`; fallback logs "home wifi ok".
+- Two bites of my own: `nmcli device connect` re-picked the AP profile as
+  "best available", so `down` now activates the client profile BY NAME; and
+  a unit installed with `systemctl link` is DELETED by `systemctl disable`,
+  which is exactly what the page's switch-off runs -- Nick's first tap from
+  the phone unlinked the unit before its stop script ran. Units must be
+  installed as real copies (`install_stream_service.sh ap` / `ap-fallback`).
+
 **Not done / owed:**
 - A real power-cycle proof of record-on-boot (Nick, tonight, Pi+ button).
 - `nmcli ... powersave 2` reads `disable` on the rig already -- that root
