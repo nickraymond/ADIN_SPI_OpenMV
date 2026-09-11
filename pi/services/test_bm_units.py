@@ -300,6 +300,44 @@ class TestDiveAutostart(unittest.TestCase):
         self.assertEqual("yes", m.group(2))
 
 
+AP_UNIT_FILE = os.path.join(HERE, "nereus-ap.service")
+AP_SH = os.path.join(PI, "field", "ap_mode.sh")
+
+
+class TestApSwitch(unittest.TestCase):
+    """The rig as its own wifi network, as a systemd switch (S33)."""
+
+    def test_unit_is_a_root_oneshot_that_stays_active(self):
+        entries = parse_unit(AP_UNIT_FILE)
+        self.assertEqual(["oneshot"], values(entries, "Type"))
+        self.assertEqual(["yes"], values(entries, "RemainAfterExit"))
+        self.assertEqual([], values(entries, "User"))      # nmcli needs root
+        self.assertEqual(["multi-user.target"],
+                         values(entries, "WantedBy", "Install"))
+
+    def test_start_and_stop_are_the_two_halves_of_the_script(self):
+        entries = parse_unit(AP_UNIT_FILE)
+        self.assertIn("ap_mode.sh up", values(entries, "ExecStart")[0])
+        self.assertIn("ap_mode.sh down", values(entries, "ExecStop")[0])
+        self.assertTrue(os.stat(AP_SH).st_mode & stat.S_IXUSR)
+
+    def test_script_is_the_borrowed_recipe_with_nicks_two_changes(self):
+        text = read(AP_SH)
+        self.assertIn("ipv4.method shared", text)         # 10.42.0.1 + DHCP
+        self.assertIn("mode ap", text)
+        self.assertIn('SSID="${AP_SSID:-$(hostname)}"', text)   # SSID = hostname
+        self.assertNotIn("wifi-sec.psk", text)            # no password
+        self.assertIn("connection.autoconnect no", text)  # systemd owns boot
+        self.assertIn('10.42.0.1', text)                  # verified, not assumed
+
+    def test_installer_installs_it_disabled(self):
+        text = read(INSTALLER)
+        m = re.search(r"^\s*ap\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)", text, re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("nereus-ap.service", m.group(1))
+        self.assertEqual("no", m.group(2))
+
+
 class TestShellTooling(unittest.TestCase):
     def test_scripts_are_executable(self):
         for path in (CMD, STATUS, CTL):

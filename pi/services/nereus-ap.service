@@ -1,0 +1,33 @@
+# nereus-ap.service -- the rig as its own wifi network, as a switch.
+#
+#   active   = wlan0 is the open AP named after the hostname, at 10.42.0.1
+#   inactive = wlan0 is the home-wifi client (Tailscale works again)
+#   enabled  = AP at every boot (the boat); disabled = home wifi at boot
+#
+# The workbench dashboard's AP toggle is `systemctl enable --now` /
+# `disable --now` on this unit, which is what the existing sudo rule for
+# systemctl allows the pi user. Everything that needs root (nmcli) lives in
+# pi/field/ap_mode.sh, which this unit runs as root.
+#
+# Install: sudo pi/install_stream_service.sh ap     (installs, does NOT enable)
+# Toggle:  the Network tile on http://<rig>:8088/, or
+#          sudo systemctl enable --now nereus-ap  /  sudo systemctl disable --now nereus-ap
+# Watch:   journalctl -u nereus-ap -b
+[Unit]
+Description=Rig access point on wlan0 (open SSID = hostname, 10.42.0.1)
+After=NetworkManager.service
+Wants=NetworkManager.service
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/field/ap_mode.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+SyslogIdentifier=nereus-ap
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/ap_mode.sh up
+ExecStop=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/ap_mode.sh down
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

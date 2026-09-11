@@ -41,6 +41,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -497,6 +498,65 @@ def _systemctl_state(unit):
 
 def service_states(units, runner=_systemctl_state):
     return {u: runner(u) for u in units}
+
+
+# ---------------------------------------------------------------------------
+# AP mode -- the rig as its own wifi network (S33, Nick 2026-09-10)
+# ---------------------------------------------------------------------------
+#: The unit that IS the switch: active = AP up now, enabled = AP at next
+#: boot. The page toggles both together (enable --now / disable --now), so
+#: what you see is what the next power-on does. Everything root lives in
+#: pi/field/ap_mode.sh behind the unit; the workbench only calls systemctl,
+#: which is the one command the pi user may sudo without a password.
+AP_UNIT = "nereus-ap"
+AP_STATUS_SCRIPT = os.path.join(REPO, "pi", "field", "ap_mode.sh")
+
+
+def _systemctl_enabled(unit):
+    try:
+        out = subprocess.run(["systemctl", "is-enabled", unit],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip()          # enabled / disabled / not-found
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+
+
+def _ap_ctl(args):
+    """sudo systemctl <args>. Returns (rc, text)."""
+    try:
+        out = subprocess.run(["sudo", "-n", "systemctl"] + list(args),
+                             capture_output=True, text=True, timeout=150)
+        return out.returncode, (out.stderr or out.stdout).strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "%s: %s" % (type(exc).__name__, exc)
+
+
+def _ap_status():
+    """What wlan0 is doing right now, from ap_mode.sh status (no root)."""
+    try:
+        out = subprocess.run(["bash", AP_STATUS_SCRIPT, "status"],
+                             capture_output=True, text=True, timeout=10)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as exc:                      # noqa: BLE001 -- shown on the page
+        return {"error": "%s: %s" % (type(exc).__name__, exc)}
+
+
+def ap_state(runner=_systemctl_state, enabled=_systemctl_enabled,
+             status=_ap_status):
+    active = runner(AP_UNIT)
+    en = enabled(AP_UNIT)
+    st = status() or {}
+    return {
+        "unit": AP_UNIT,
+        "installed": en not in ("not-found", "unavailable", ""),
+        "active": active == "active",
+        "unit_state": active,
+        "enabled": en == "enabled",
+        "enabled_state": en,
+        "ssid": st.get("ssid") or socket.gethostname(),
+        "ap_ip": "10.42.0.1",
+        "wlan": st,
+    }
 
 
 def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
@@ -1121,6 +1181,11 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, pf)
             if path == "/api/runner":
                 return self._json(200, runner.snapshot())
+            if path == "/api/ap":
+                return self._json(200, ap_state(
+                    runner=cfg["runner"],
+                    enabled=cfg.get("ap_enabled", _systemctl_enabled),
+                    status=cfg.get("ap_status", _ap_status)))
             if path == "/api/dashboard":
                 # Never let a battery read take the menu down with it: the
                 # page must still start demos when the Pi+ is unreadable.
@@ -1219,6 +1284,24 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, {"ok": not rep["failed"], "report": rep})
             if path == "/api/devmode":
                 return self._devmode()
+            if path == "/api/ap":
+                # ONE switch, both halves at once: what wlan0 does now AND
+                # what it does at the next boot. A page that could set one
+                # without the other would leave a rig that says "AP" and
+                # boots onto a wifi that is not there.
+                on = body.get("on")
+                if not isinstance(on, bool):
+                    return self._json(400, {"ok": False,
+                                            "err": "body must be {\"on\": true|false}"})
+                ctl = cfg.get("ap_ctl", _ap_ctl)
+                args = ["enable", "--now", AP_UNIT] if on else ["disable", "--now", AP_UNIT]
+                rc, text = ctl(args)
+                state = ap_state(runner=cfg["runner"],
+                                 enabled=cfg.get("ap_enabled", _systemctl_enabled),
+                                 status=cfg.get("ap_status", _ap_status))
+                return self._json(200 if rc == 0 else 500, {
+                    "ok": rc == 0, "err": None if rc == 0 else (text or "systemctl failed"),
+                    "asked": "ap" if on else "client", "state": state})
             self.send_error(404)
 
         def _start(self, body):

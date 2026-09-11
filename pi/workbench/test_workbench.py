@@ -994,9 +994,20 @@ class TestHTTP(unittest.TestCase):
         with open(os.path.join(cls.recs, "dive_20260910T000000Z_s0000",
                                "N6.mjpeg"), "wb") as fh:
             fh.write(b"\xff\xd8" + b"x" * 1000)
+        cls.ap_calls = []
+        cls.ap_enabled = {"v": "disabled"}
+        def fake_ctl(args):
+            cls.ap_calls.append(list(args))
+            cls.ap_enabled["v"] = "enabled" if args[0] == "enable" else "disabled"
+            return 0, ""
         cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
-               "disk_path": cls.fake.root, "recordings_root": cls.recs}
+               "disk_path": cls.fake.root, "recordings_root": cls.recs,
+               "ap_ctl": fake_ctl,
+               "ap_enabled": lambda u: cls.ap_enabled["v"],
+               "ap_status": lambda: {"iface": "wlan0", "mode": "client",
+                                     "active": "wlan0-Ford", "ip": "192.168.1.35",
+                                     "ssid": "nereus002", "ap_profile": "nereus002-ap"}}
         cls.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0), workbench.make_handler(cfg, cls.runner))
         cls.port = cls.httpd.server_address[1]
@@ -1099,6 +1110,40 @@ class TestHTTP(unittest.TestCase):
         code, body = self.req("POST", "/api/stop")
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["state"], "idle")
+
+    def test_ap_state_is_readable(self):
+        code, body = self.req("GET", "/api/ap")
+        self.assertEqual(code, 200)
+        st = json.loads(body)
+        self.assertTrue(st["installed"])
+        self.assertFalse(st["active"])
+        self.assertEqual(st["ssid"], "nereus002")
+        self.assertEqual(st["ap_ip"], "10.42.0.1")
+        self.assertEqual(st["wlan"]["mode"], "client")
+
+    def test_ap_toggle_enables_now_and_at_boot_together(self):
+        """One switch, both halves: what wlan0 does now and at the next boot."""
+        self.ap_calls.clear()
+        code, body = self.req("POST", "/api/ap", {"on": True})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.ap_calls, [["enable", "--now", "nereus-ap"]])
+        self.assertTrue(json.loads(body)["state"]["enabled"])
+        code, body = self.req("POST", "/api/ap", {"on": False})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.ap_calls[-1], ["disable", "--now", "nereus-ap"])
+        self.assertFalse(json.loads(body)["state"]["enabled"])
+
+    def test_ap_toggle_refuses_a_non_boolean(self):
+        self.ap_calls.clear()
+        code, body = self.req("POST", "/api/ap", {"on": "yes"})
+        self.assertEqual(code, 400)
+        self.assertEqual(self.ap_calls, [])
+
+    def test_page_carries_the_ap_tile(self):
+        code, body = self.req("GET", "/")
+        self.assertIn(b"/api/ap", body)
+        self.assertIn(b"toggleAp", body)
+        self.assertIn(b"Switch to AP mode", body)
 
     def test_devmode_reports_boards(self):
         code, body = self.req("POST", "/api/devmode")

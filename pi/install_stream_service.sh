@@ -48,7 +48,10 @@ case "$ROLE" in
   # Power on = record. Presses the dive card's Start once the workbench and
   # the N6 are up; opt out on the bench with ~/.no_dive_autostart.
   autostart) UNIT=dive-autostart.service;     AUTOSTART=yes ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard|autostart" >&2; exit 1 ;;
+  # The rig as its own wifi network. Installed DISABLED: enable/disable is
+  # the dashboard's AP toggle, and installing must not flip it.
+  ap)        UNIT=nereus-ap.service;          AUTOSTART=no  ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard|autostart|ap" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
