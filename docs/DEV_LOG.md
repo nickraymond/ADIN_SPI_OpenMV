@@ -62,6 +62,30 @@ housing pressure test.
 - The in-app browser auto-cancels `window.confirm`, so page buttons that
   confirm had to be pressed with confirm stubbed to true.
 
+**LATER THE SAME NIGHT -- the rig vanished for two hours, and the story is on the card:**
+- 17:40:11 PDT: charger out, cell resting 3.23 V, Start pressed for the
+  battery run. Load 4.1 W / 834 mA; the power log STOPS at 17:40:23 with
+  uptime continuous -- the Pi RESET 12 s into the load. The next two boots
+  died at 32 s and 42 s of uptime on the boot load alone (no recording yet).
+- One of those resets landed while NetworkManager was rewriting its netplan
+  profiles: BOTH `/etc/netplan/90-NM-*.yaml` are now 0 bytes, mtime 17:40:34
+  and 17:40:37. So `netplan-wlan0-Ford` no longer exists, wlan0 sits
+  "disconnected" with a healthy driver, and no boot since could join the
+  home wifi. Found only once Nick put a USB-ethernet adapter on the rig.
+- Meanwhile the rig was NOT dead: `dive-autostart` fired on every boot that
+  survived and recorded on its own -- 004424Z (2 seg), 005201Z (7 seg,
+  34 min), 012630Z (8 seg, 40 min), 020821Z -- with the charger back in from
+  ~18:25. **Record-on-boot is proven on real power cycles.**
+- The journal is NOT persistent despite PR #84's note: `/var/log/journal`
+  exists but holds nothing and `journalctl --list-boots` shows one boot, so
+  the crash boots left no journal. The power log was the only witness.
+- The dashboard's battery figure on the charger is the CHARGE voltage
+  (3.62 V shown while the cell rested at 3.18 V), so "dives remaining" is
+  meaningless while plugged in. Not fixed; flagged.
+- Guard added: `dive_autostart.sh` refuses to start the load on battery
+  below `MIN_VBAT_MV` (3250) and says why. Driven against a fake workbench
+  in all four battery states.
+
 **Not done / owed:**
 - A real power-cycle proof of record-on-boot (Nick, tonight, Pi+ button).
 - `nmcli ... powersave 2` reads `disable` on the rig already -- that root

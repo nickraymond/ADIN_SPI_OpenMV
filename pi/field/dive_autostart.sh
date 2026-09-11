@@ -22,6 +22,16 @@ set -uo pipefail
 RECIPE="${DIVE_RECIPE:-ci-record}"
 WB="${WORKBENCH_URL:-http://127.0.0.1:8088}"
 OFF_FLAG="${DIVE_AUTOSTART_OFF:-$HOME/.no_dive_autostart}"
+# LOW-BATTERY GUARD. Measured 2026-09-10 on nereus002: with the charger out
+# and the cell resting at 3.23 V, starting the four-stream load (4.1 W,
+# 834 mA) reset the Pi within 12 s, and the next two boots died at 32 s and
+# 42 s of uptime on the boot load alone. One of those resets landed while
+# NetworkManager was rewriting its netplan profiles and left both files
+# zero bytes -- the rig lost its wifi profile and was unreachable for two
+# hours. A recorder must never be the thing that drives that loop, so on
+# battery below this level it stands down and says so. On the charger the
+# Pi+ reports the charge voltage, so the guard only applies with VIN absent.
+MIN_VBAT_MV="${MIN_VBAT_MV:-3250}"
 WAIT_WB_S="${WAIT_WB_S:-120}"        # workbench answering
 WAIT_BOARD_S="${WAIT_BOARD_S:-120}"  # declared board enumerated and ready
 WAIT_LIVE_S="${WAIT_LIVE_S:-90}"     # runner reaches live after Start
@@ -59,6 +69,15 @@ case "$STATE" in
   idle|failed) ;;
   *) say "a demo is already running ($STATE) -- leaving it alone"; exit 0 ;;
 esac
+
+# 1b. Enough battery to carry the load? Same numbers the dashboard shows.
+BATT="$(jget "$WB/api/dashboard" '"%s %s" % (d.get("battery",{}).get("on_external_power"), d.get("battery",{}).get("vbat_mv"))')"
+read -r EXT VBAT <<<"${BATT:-unknown unknown}"
+if [ "$EXT" = "False" ] && [ "${VBAT:-0}" -gt 0 ] 2>/dev/null && [ "$VBAT" -lt "$MIN_VBAT_MV" ]; then
+  say "FAIL: on battery at ${VBAT} mV (< ${MIN_VBAT_MV}) -- NOT starting the load; charge or plug in the charger. A 4 W load on a cell this low reset this Pi five times on 2026-09-10."
+  exit 1
+fi
+say "battery: external=${EXT} vbat_mv=${VBAT} (guard ${MIN_VBAT_MV})"
 
 # 2. The recipe's declared board has to have enumerated. USB boards come up a
 #    few seconds after the workbench on a Zero 2 W; the workbench refuses a

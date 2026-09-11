@@ -283,6 +283,14 @@ class TestDiveAutostart(unittest.TestCase):
         self.assertNotIn("/dev/serial", text)
         self.assertNotIn("/dev/tty", text)
 
+    def test_script_refuses_a_low_battery(self):
+        """2026-09-10: 4 W on a 3.23 V cell with the charger out reset the Pi
+        in 12 s and a following reset zeroed the netplan wifi profile."""
+        text = read(AUTOSTART_SH)
+        self.assertIn("MIN_VBAT_MV", text)
+        self.assertIn("/api/dashboard", text)
+        self.assertIn("NOT starting the load", text)
+
     def test_installer_enables_it_at_boot(self):
         text = read(INSTALLER)
         m = re.search(r"^\s*autostart\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)",
