@@ -714,6 +714,12 @@ class DiveRecorder:
 
     def run(self):
         a = self.args
+        if a.science == "none":
+            # The H.264-only loop opens and starts the camera itself; it
+            # must be chosen BEFORE this method does (a second Picamera2()
+            # on an open camera is "Device or resource busy" -- measured
+            # 2026-09-10 22:46, twice).
+            return self.run_h264_only()
         self.install_signal_handlers()
         os.makedirs(a.root, exist_ok=True)
         self.configure()
@@ -731,9 +737,6 @@ class DiveRecorder:
                  json.dumps(lock.get("observed_colour_gains"))), flush=True)
         if "warning" in lock:
             print("WARNING: %s" % lock["warning"], file=sys.stderr, flush=True)
-
-        if a.science == "none":
-            return self.run_h264_only()
 
         i = int(a.first_segment)
         t0 = time.time()

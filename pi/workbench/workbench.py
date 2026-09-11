@@ -1108,6 +1108,20 @@ class Runner:
 
     def snapshot(self):
         with self._lk:
+            # SELF-HEAL FROM "stuck". 2026-09-10 night, twice: a recorder
+            # wedged inside the camera library ignored SIGINT and SIGTERM,
+            # the runner went "stuck" (it never SIGKILLs, by design), and
+            # once the process had been killed by hand the runner STAYED
+            # stuck until a workbench restart -- on a boat that is a dead
+            # page. The process being gone is the one fact that ends the
+            # hazard, so once it is gone the runner goes back to idle and
+            # says what happened.
+            if self.state == "stuck" and not self._alive():
+                self.state = "idle"
+                self.error = ("previous demo was stuck and has now exited; "
+                              "boards released")
+                self._clear_pidfile()
+                print("runner: stuck demo has exited -> idle", flush=True)
             r = self.recipe
             return {"state": self.state,
                     "settle_s": max(0, int(self.settle_until

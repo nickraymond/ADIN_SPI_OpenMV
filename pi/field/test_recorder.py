@@ -913,6 +913,14 @@ class TestNoScienceMode(unittest.TestCase):
             self.assertEqual(m["dive"]["segment"], 3)
             self.assertIn("not muxed", " ".join(m["dive"]["problems"]))
 
+    def test_run_dispatches_to_the_h264_loop_before_opening_the_camera(self):
+        """A second Picamera2() on an open camera is 'Device or resource
+        busy' (2026-09-10 22:46, twice): the dispatch must come first."""
+        src = open(os.path.join(_HERE, "imx_dive_recorder.py")).read()
+        run = src[src.index("    def run(self):"):]
+        self.assertLess(run.index("return self.run_h264_only()"),
+                        run.index("self.configure()"))
+
     def test_h264_loop_never_stops_the_encoder_between_segments(self):
         src = open(os.path.join(_HERE, "imx_dive_recorder.py")).read()
         loop = src[src.index("def run_h264_only"):src.index("    def run(self):")]
