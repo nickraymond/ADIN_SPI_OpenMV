@@ -767,6 +767,56 @@ class TestMediaPathSafety(unittest.TestCase):
 
 
 
+class TestImxStallGuard(unittest.TestCase):
+    """2026-09-10: 'Camera frontend has timed out!' 55 s after boot; the
+    sensor stopped and the recorder hung in capture_metadata() forever with
+    problems=[] while the boards recorded on. Every camera wait is bounded,
+    a stall closes the segment with a PROBLEM and exits 3, and the launcher
+    relaunches at the next segment."""
+
+    def setUp(self):
+        import importlib
+        self.M = importlib.import_module("imx_dive_recorder")
+
+    def test_call_with_timeout_gives_up_on_a_hang(self):
+        import time as _t
+        t0 = _t.time()
+        got = self.M.call_with_timeout(lambda: _t.sleep(5), 0.2, "gave up")
+        self.assertEqual(got, "gave up")
+        self.assertLess(_t.time() - t0, 2.0)
+        self.assertEqual(self.M.call_with_timeout(lambda: 7, 1.0), 7)
+        self.assertIsNone(self.M.call_with_timeout(lambda: 1 / 0, 1.0))
+
+    def test_stall_watch_fires_only_after_frames_stop(self):
+        w = self.M.StallWatch(stall_s=20)
+        self.assertIsNone(w.update(0, 0))         # starting up
+        self.assertIsNone(w.update(0, 10))        # still inside the grace
+        self.assertIsNone(w.update(30, 21))       # frames arriving
+        self.assertIsNone(w.update(60, 30))
+        self.assertIsNone(w.update(60, 45))       # 15 s quiet: not yet
+        why = w.update(60, 51)                    # 21 s quiet: stalled
+        self.assertIn("no IMX frame for 21 s after 60 frames", why)
+
+    def test_stall_watch_reports_a_camera_that_never_started(self):
+        w = self.M.StallWatch(stall_s=20)
+        w.update(0, 0)
+        self.assertIsNotNone(w.update(0, 25))
+
+    def test_parser_takes_first_segment_and_stall_window(self):
+        a = self.M.build_parser().parse_args(["--first-segment", "7", "--stall-s", "12"])
+        self.assertEqual(a.first_segment, 7)
+        self.assertEqual(a.stall_s, 12.0)
+        self.assertEqual(self.M.build_parser().parse_args([]).first_segment, 0)
+        self.assertEqual(self.M.EXIT_STALLED, 3)
+
+    def test_launcher_relaunches_on_the_stall_exit_code(self):
+        src = open(os.path.join(_HERE, "run_channel_islands.sh")).read()
+        self.assertIn('--first-segment "$next"', src)
+        self.assertIn('[ "$rc" -eq 3 ]', src)
+        self.assertIn("relaunching at segment", src)
+        self.assertIn('kill -INT "$pid"', src)      # Stop still reaches the recorder
+
+
 class TestDurableJson(unittest.TestCase):
     """A manifest is either the old one or the new one, never empty.
 

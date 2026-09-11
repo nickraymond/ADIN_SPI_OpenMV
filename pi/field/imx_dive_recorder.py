@@ -101,6 +101,59 @@ def _jsonable(v):
     return str(v)
 
 
+#: Exit status when the sensor stopped delivering frames. The launcher
+#: (run_channel_islands.sh) relaunches on exactly this code, at the next
+#: segment, so a dead frontend costs seconds of footage rather than the dive.
+EXIT_STALLED = 3
+
+
+def call_with_timeout(fn, timeout, default=None):
+    """Run fn() on a helper thread; give up after `timeout` s.
+
+    Measured 2026-09-10 on nereus002: 55 s after boot libcamera reported
+    "Camera frontend has timed out!", the sensor stopped, and the recorder
+    then sat forever inside capture_metadata() at the top of the next
+    segment -- boards recording, manifests saying nothing, IMX silently
+    absent. Every call that waits on the camera is bounded now.
+    """
+    box = {}
+
+    def run():
+        try:
+            box["v"] = fn()
+        except Exception as exc:                  # noqa: BLE001
+            box["e"] = exc
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive() or "e" in box:
+        return default
+    return box.get("v", default)
+
+
+class StallWatch:
+    """Frames stopped arriving? Pure bookkeeping, tested without a camera."""
+
+    def __init__(self, stall_s, grace_s=None):
+        self.stall_s = float(stall_s)
+        self.grace_s = float(grace_s if grace_s is not None else stall_s)
+        self.frames = 0
+        self.t_change = None
+        self.t_first = None
+
+    def update(self, frames, now):
+        if self.t_first is None:
+            self.t_first, self.t_change = now, now
+        if frames != self.frames:
+            self.frames, self.t_change = frames, now
+            return None
+        if now - self.t_first < self.grace_s:
+            return None                     # still starting up
+        if now - self.t_change >= self.stall_s:
+            return "no IMX frame for %.0f s after %d frames" % (now - self.t_change, frames)
+        return None
+
+
 class DiveRecorder:
     def __init__(self, args):
         self.args = args
@@ -108,9 +161,19 @@ class DiveRecorder:
         self.locked = {}
         self.segments = []
         self.stop = threading.Event()
+        self.stalled = None
         self.depth = None
         if depth_mod is not None:
             self.depth = depth_mod.open_sensor()
+
+    def _meta(self, timeout=5.0):
+        """capture_metadata() that cannot hang the dive (see call_with_timeout)."""
+        md = call_with_timeout(self.cam.capture_metadata, timeout, None)
+        if md is None:
+            print("WARNING: no camera metadata within %.0fs" % timeout,
+                  file=sys.stderr, flush=True)
+            return {}
+        return md
 
     # -- setup ------------------------------------------------------------
     def configure(self):
@@ -172,7 +235,7 @@ class DiveRecorder:
             # that tracks will partially cancel the depth colour shift, so a
             # dive recorded this way cannot serve the colour dataset.
             time.sleep(min(a.converge_s, 3.0))
-            md = self.cam.capture_metadata()
+            md = self._meta()
             self.locked = {
                 "mode": "awb-auto",
                 "locked_at_utc": None,
@@ -189,9 +252,9 @@ class DiveRecorder:
         deadline = time.time() + a.converge_s
         md = {}
         while time.time() < deadline and not self.stop.is_set():
-            md = self.cam.capture_metadata()
+            md = self._meta()
         if self.stop.is_set() and not md:
-            md = self.cam.capture_metadata()
+            md = self._meta()
         gains = md.get("ColourGains")
         lock = {"AwbEnable": False}
         if gains:
@@ -208,7 +271,7 @@ class DiveRecorder:
         # Read back what actually took effect. A control that was set is not a
         # control that is in force (CLAUDE.md rule 4).
         time.sleep(0.5)
-        after = self.cam.capture_metadata()
+        after = self._meta()
         self.locked = {
             "mode": "wb-locked",
             "focus_mode": a.focus,
@@ -338,17 +401,26 @@ class DiveRecorder:
         # lock dict forward would make each manifest agree with itself and
         # prove nothing; this is the check that would actually catch AWB
         # having crept back on across a segment boundary (rule 1).
-        gains_at_start = _jsonable(self.cam.capture_metadata().get("ColourGains"))
+        gains_at_start = _jsonable(self._meta().get("ColourGains"))
         sci, pxy, sci_path, pxy_path = self._encoders(index)
 
         end = t_start + a.segment_s
+        watch = StallWatch(a.stall_s)
         while time.time() < end and not self.stop.is_set():
             time.sleep(0.25)
+            counted = getattr(self, "_sci_out", None)
+            why = watch.update(counted.frames if counted is not None else 0, time.time())
+            if why:
+                self.stalled = why
+                print("IMX STALL: %s -- closing this segment and exiting %d "
+                      "for relaunch" % (why, EXIT_STALLED), file=sys.stderr, flush=True)
+                break
 
         # Rule 2: only the encoders stop. The camera keeps running, so the
         # WB lock and the sensor's state survive into the next segment.
-        gains_at_end = _jsonable(self.cam.capture_metadata().get("ColourGains"))
-        self.cam.stop_encoder([sci, pxy])
+        gains_at_end = _jsonable(self._meta().get("ColourGains"))
+        if call_with_timeout(lambda: self.cam.stop_encoder([sci, pxy]), 15, "ok") is None:
+            print("WARNING: stop_encoder did not return in 15 s", file=sys.stderr, flush=True)
         elapsed = time.time() - t_start
         self.write_status(index, t_start, elapsed=elapsed, closing=True)
         depth_end = dict(self.depth.read()) if self.depth else None
@@ -392,6 +464,10 @@ class DiveRecorder:
             man["delivered"][label] = d
         if not man["problems"] and man["delivered"]["proxy"]["bytes"] == 0:
             man["problems"].append("proxy segment is empty")
+        if self.stalled:
+            man["problems"].append("IMX STALLED: %s (camera frontend stopped; "
+                                   "recorder relaunched)" % self.stalled)
+            man["imx_stalled"] = True
 
         # A drifting gain means the lock did not hold, which silently ruins the
         # colour dataset -- so it is a PROBLEM, not a footnote.
@@ -487,13 +563,13 @@ class DiveRecorder:
         if "warning" in lock:
             print("WARNING: %s" % lock["warning"], file=sys.stderr, flush=True)
 
-        i = 0
+        i = int(a.first_segment)
         t0 = time.time()
         try:
             while not self.stop.is_set():
                 if a.max_seconds and (time.time() - t0) >= a.max_seconds:
                     break
-                if a.max_segments and i >= a.max_segments:
+                if a.max_segments and (i - a.first_segment) >= a.max_segments:
                     break
                 man = self.record_segment(i)
                 print("seg %04d: %.1fs  science %s fr %.2f MB/s  proxy %.2f MB/s  %s"
@@ -503,14 +579,19 @@ class DiveRecorder:
                          man["delivered"]["proxy"].get("MB_s") or 0,
                          man["problems"] or "ok"), flush=True)
                 i += 1
+                if self.stalled:
+                    break
         except KeyboardInterrupt:
             print("interrupted -- closing current segment", flush=True)
         finally:
-            try:
-                self.cam.stop()
-                self.cam.close()
-            except Exception:
-                pass
+            # A dead frontend can hang stop()/close() too; bound them, and on
+            # a stall exit hard so a stuck libcamera thread cannot keep the
+            # process alive and block the relaunch.
+            call_with_timeout(self.cam.stop, 5)
+            call_with_timeout(self.cam.close, 5)
+        if self.stalled:
+            sys.stdout.flush(); sys.stderr.flush()
+            os._exit(EXIT_STALLED)
         return self.segments
 
 
@@ -670,6 +751,13 @@ def build_parser():
     p.add_argument("--buffers", type=int, default=4)
     p.add_argument("--max-seconds", type=float, default=0.0)
     p.add_argument("--max-segments", type=int, default=0)
+    p.add_argument("--first-segment", type=int, default=0,
+                   help="segment index to start at (the launcher passes the "
+                        "next index when relaunching after a stall)")
+    p.add_argument("--stall-s", type=float, default=20.0,
+                   help="no science frame for this long = the frontend is "
+                        "dead: close the segment, record the problem, exit %d"
+                        % EXIT_STALLED)
     return p
 
 
