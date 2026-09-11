@@ -881,6 +881,47 @@ class TestNoScienceMode(unittest.TestCase):
         self.assertIn("IMX mp4", idx)
         self.assertIn("IMX 8990 fr @ 30.0 fps", idx)
 
+    def test_finalizer_describes_a_closed_segment_without_ffmpeg(self):
+        """mux/thumb are ffmpeg; without it the segment is still described,
+        with the problems saying why, and the manifest names the IMX."""
+        import shutil as _sh
+        with tempfile.TemporaryDirectory() as d:
+            seg = os.path.join(d, "dive_x_s0003")
+            os.makedirs(seg)
+            h = os.path.join(seg, "IMX.h264")
+            with open(h, "wb") as f:
+                f.write(b"\x00" * 5000)
+            man = {"segment": 3, "started_utc": "s", "ended_utc": "e", "elapsed_s": 300.0,
+                   "requested": {}, "white_balance": {}, "delivered": {
+                       "science": {"disabled": True, "bytes": 0},
+                       "proxy": {"path": "IMX.h264", "frames": 9000,
+                                 "frames_counted_in_flight": True, "fps": None}},
+                   "problems": []}
+            saved = _sh.which
+            _sh.which = lambda name: None          # no ffmpeg on this host
+            try:
+                out = self.M.finalize_h264_segment(seg, man, h, self._args("none"), {})
+            finally:
+                _sh.which = saved
+            self.assertEqual(out["delivered"]["proxy"]["bytes"], 5000)
+            self.assertEqual(out["delivered"]["proxy"]["fps"], 30.0)
+            self.assertTrue(any("not muxed" in p for p in out["problems"]))
+            self.assertTrue(os.path.isfile(os.path.join(seg, "imx_segment.json")))
+            self.assertTrue(os.path.isfile(os.path.join(seg, "manifest.json")))
+            m = json.load(open(os.path.join(seg, "manifest.json")))
+            # No mp4 => no IMX camera entry yet, but the dive block records it.
+            self.assertEqual(m["dive"]["segment"], 3)
+            self.assertIn("not muxed", " ".join(m["dive"]["problems"]))
+
+    def test_h264_loop_never_stops_the_encoder_between_segments(self):
+        src = open(os.path.join(_HERE, "imx_dive_recorder.py")).read()
+        loop = src[src.index("def run_h264_only"):src.index("    def run(self):")]
+        self.assertIn("SplittableOutput", loop)
+        self.assertIn("split.split_output(out)", loop)
+        self.assertIn("repeat=True", loop)
+        self.assertNotIn("self.cam.stop_encoder(", loop[:loop.index("finally:")])
+        self.assertIn("finalize_h264_segment", loop)
+
     def test_launcher_defaults_to_no_science(self):
         src = open(os.path.join(_HERE, "run_channel_islands.sh")).read()
         self.assertIn('SCIENCE="${SCIENCE_MODE:-none}"', src)

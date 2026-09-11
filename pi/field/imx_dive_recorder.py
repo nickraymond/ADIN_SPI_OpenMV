@@ -92,6 +92,10 @@ def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def now_iso_at(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
 def _jsonable(v):
     """libcamera hands back tuples/enums; make them survive json.dump."""
     if isinstance(v, (list, tuple)):
@@ -575,6 +579,139 @@ class DiveRecorder:
             except (ValueError, OSError):
                 pass            # not the main thread; caller handles it
 
+    def run_h264_only(self):
+        """--science none: ONE hardware H.264 encoder, started once, whose
+        output file is SWITCHED at every segment boundary (SplittableOutput,
+        at the next keyframe, <= 1 s with iperiod = fps). The encoder is
+        never stopped between segments, so there is no stop_encoder wait and
+        no mux gap; a closed segment is finalized on a worker thread.
+        """
+        from picamera2.encoders import H264Encoder
+        from picamera2.outputs import SplittableOutput
+        a = self.args
+        self.install_signal_handlers()
+        os.makedirs(a.root, exist_ok=True)
+        self.configure()
+        self.start_camera()
+        print("AWB left AUTO -- ordinary recording, not reference data"
+              if a.wb == "auto" else
+              "converging %.1fs -- KEEP THE REFERENCE CARD IN FRAME" % a.converge_s,
+              flush=True)
+        lock = self.converge_and_lock()
+        print("wb=%s focus=%s lens=%s gains=%s"
+              % (lock.get("mode"), lock.get("focus_mode"),
+                 lock.get("observed_lens_position"),
+                 json.dumps(lock.get("observed_colour_gains"))), flush=True)
+        if "warning" in lock:
+            print("WARNING: %s" % lock["warning"], file=sys.stderr, flush=True)
+
+        enc = H264Encoder(bitrate=a.proxy_bitrate, repeat=True, iperiod=int(a.fps))
+        split = SplittableOutput()
+        self.cam.start_encoder(enc, split, name="main")
+        workers = []
+        pending = None            # (seg_dir, man, h264_path) awaiting finalize
+        i = int(a.first_segment)
+        t0 = time.time()
+        try:
+            while not self.stop.is_set():
+                if a.max_seconds and (time.time() - t0) >= a.max_seconds:
+                    break
+                if a.max_segments and (i - a.first_segment) >= a.max_segments:
+                    break
+                seg_dir = self.segment_dir(i)
+                os.makedirs(seg_dir, exist_ok=True)
+                h264_path = os.path.join(seg_dir, "IMX.h264")
+                out = self._counting_output(h264_path)
+                # Switch the file at the next keyframe. Bounded: a dead
+                # frontend never produces one, and that is a stall, not a hang.
+                if call_with_timeout(lambda: split.split_output(out), 10, "ok") is None:
+                    self.stalled = "no keyframe within 10 s to open segment %d" % i
+                    print("IMX STALL: %s" % self.stalled, file=sys.stderr, flush=True)
+                    break
+                t_start = time.time()
+                self._sci_out = out
+                self.write_status(i, t_start)
+                if pending is not None:
+                    # The previous file closed at this keyframe; describe it
+                    # off the recording path.
+                    pend_dir, pend_man, pend_path = pending
+                    pend_man["ended_utc"] = now_iso()
+                    pend_man["elapsed_s"] = round(t_start - pend_man["_t_start"], 2)
+                    pend_man.pop("_t_start", None)
+                    w = threading.Thread(target=finalize_h264_segment,
+                                         args=(pend_dir, pend_man, pend_path, a, self.locked),
+                                         name="finalize-%04d" % pend_man["segment"], daemon=True)
+                    w.start(); workers.append(w)
+                    pending = None
+                depth_start = dict(self.depth.read()) if self.depth else None
+                gains_at_start = _jsonable(self._meta().get("ColourGains"))
+                end = t_start + a.segment_s
+                watch = StallWatch(a.stall_s)
+                while time.time() < end and not self.stop.is_set():
+                    time.sleep(0.25)
+                    why = watch.update(out.frames, time.time())
+                    if why:
+                        self.stalled = why
+                        print("IMX STALL: %s -- exiting %d for relaunch"
+                              % (why, EXIT_STALLED), file=sys.stderr, flush=True)
+                        break
+                gains_at_end = _jsonable(self._meta().get("ColourGains"))
+                man = {
+                    "segment": i, "started_utc": now_iso_at(t_start), "_t_start": t_start,
+                    "requested": {"science": "none", "science_size": a.science_size,
+                                  "proxy_bitrate": a.proxy_bitrate, "fps": a.fps,
+                                  "segment_s": a.segment_s, "recipe": a.recipe,
+                                  "wb_mode": a.wb, "focus_mode": a.focus,
+                                  "lens_position": a.lens_position},
+                    "white_balance": self.locked,
+                    "wb_observed_at_segment_start": gains_at_start,
+                    "wb_observed_at_segment_end": gains_at_end,
+                    "depth_start": depth_start,
+                    "depth_end": dict(self.depth.read()) if self.depth else None,
+                    "delivered": {"science": {"disabled": True, "bytes": 0,
+                                              "frames": None, "MB_s": None},
+                                  "proxy": {"path": "IMX.h264", "frames": out.frames,
+                                            "frames_counted_in_flight": True,
+                                            "fps": None}},
+                    "problems": [],
+                }
+                self.write_status(i, t_start, elapsed=time.time() - t_start, closing=True)
+                if self.stalled:
+                    man["problems"].append("IMX STALLED: %s (camera frontend "
+                                           "stopped; recorder relaunched)" % self.stalled)
+                    man["imx_stalled"] = True
+                pending = (seg_dir, man, h264_path)
+                self.segments.append(man)
+                i += 1
+                if self.stalled:
+                    break
+        except KeyboardInterrupt:
+            print("interrupted -- closing current segment", flush=True)
+        finally:
+            # Stop the one encoder (bounded), which closes the last file, then
+            # finalize it here rather than on a worker so a Stop returns only
+            # once the last segment is described.
+            call_with_timeout(lambda: self.cam.stop_encoder([enc]), 30)
+            if pending is not None:
+                pend_dir, pend_man, pend_path = pending
+                pend_man["ended_utc"] = now_iso()
+                pend_man["elapsed_s"] = round(time.time() - pend_man["_t_start"], 2)
+                pend_man.pop("_t_start", None)
+                pend_man["delivered"]["proxy"]["frames"] = self._sci_out.frames
+                pend_man["delivered"]["proxy"]["fps"] = (
+                    round(self._sci_out.frames / pend_man["elapsed_s"], 2)
+                    if pend_man["elapsed_s"] else None)
+                call_with_timeout(lambda: finalize_h264_segment(
+                    pend_dir, pend_man, pend_path, a, self.locked), 240)
+            for w in workers:
+                w.join(120)
+            call_with_timeout(self.cam.stop, 5)
+            call_with_timeout(self.cam.close, 5)
+        if self.stalled:
+            sys.stdout.flush(); sys.stderr.flush()
+            os._exit(EXIT_STALLED)
+        return self.segments
+
     def run(self):
         a = self.args
         self.install_signal_handlers()
@@ -594,6 +731,9 @@ class DiveRecorder:
                  json.dumps(lock.get("observed_colour_gains"))), flush=True)
         if "warning" in lock:
             print("WARNING: %s" % lock["warning"], file=sys.stderr, flush=True)
+
+        if a.science == "none":
+            return self.run_h264_only()
 
         i = int(a.first_segment)
         t0 = time.time()
@@ -625,6 +765,56 @@ class DiveRecorder:
             sys.stdout.flush(); sys.stderr.flush()
             os._exit(EXIT_STALLED)
         return self.segments
+
+
+def finalize_h264_segment(seg_dir, man, h264_path, args, locked):
+    """Everything that happens to a CLOSED segment: mux, thumbnail, the
+    segment record and the shared manifest. Runs on a worker thread so the
+    next segment records while this one is described.
+
+    Measured 2026-09-10 23:38 on nereus002: done inline, the mux of a
+    300 MB H.264 (+faststart = two passes over the SD bus) plus the
+    thumbnail took ~70 s per segment, during which nothing was recorded --
+    a 23% hole in every 5-minute segment.
+    """
+    pxy = man["delivered"]["proxy"]
+    try:
+        pxy["bytes"] = os.path.getsize(h264_path)
+    except OSError:
+        pxy["bytes"] = 0
+    el = man.get("elapsed_s") or 0
+    if not pxy.get("fps") and pxy.get("frames") and el:
+        pxy["fps"] = round(pxy["frames"] / el, 2)
+    pxy["MB_s"] = round(pxy["bytes"] / el / 1e6, 2) if el else None
+    if not pxy.get("frames"):
+        man["problems"].append("IMX segment has NO frames")
+    if pxy["bytes"]:
+        mp4_path = h264_path.rsplit(".", 1)[0] + ".mp4"
+        ok, why = mux_h264_to_mp4(h264_path, mp4_path, pxy.get("fps") or args.fps)
+        if ok:
+            pxy["mp4"] = os.path.basename(mp4_path)
+            pxy["mp4_bytes"] = os.path.getsize(mp4_path)
+            th_path = os.path.join(seg_dir, "IMX_thumb.jpg")
+            if thumb_from_mp4(mp4_path, th_path):
+                pxy["thumb"] = os.path.basename(th_path)
+            else:
+                man["problems"].append("IMX thumbnail not written")
+        else:
+            man["problems"].append("proxy not muxed to mp4: %s" % why)
+    else:
+        man["problems"].append("proxy segment is empty")
+    try:
+        _write_json(os.path.join(seg_dir, "imx_segment.json"), man, indent=2)
+        merge_session_manifest(seg_dir, man, locked, args)
+    except OSError as exc:
+        man["problems"].append("session manifest not written: %s" % exc)
+        print("WARNING: %s" % man["problems"][-1], file=sys.stderr, flush=True)
+    if hasattr(os, "sync"):
+        os.sync()
+    print("seg %04d: %.1fs  IMX %s fr %.2f MB/s  %s"
+          % (man["segment"], el, pxy.get("frames"), pxy.get("MB_s") or 0,
+             man["problems"] or "ok"), flush=True)
+    return man
 
 
 def thumb_from_mp4(mp4_path, thumb_path, at_s=1.0):
