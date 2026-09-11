@@ -1,0 +1,28 @@
+# dive-autostart.service -- power on the rig and it records.
+#
+# Nick, 2026-09-10: "turn on the camera and it start recording video from all
+# three cameras." This unit presses the workbench card's own Start once at
+# boot (POST /api/start for the dive recipe), so the page shows the run,
+# Stop on the page still works and the workbench still owns the board lock.
+# It never touches a board itself.
+#
+# Stand down on the bench:  touch ~/.no_dive_autostart
+# Install:                  sudo pi/install_stream_service.sh autostart
+# Watch:                    journalctl -u dive-autostart -b
+[Unit]
+Description=Start the dive recording card at boot
+After=network.target workbench.service
+Wants=workbench.service
+Documentation=file:/home/pi/ADIN_SPI_OpenMV/pi/field/dive_autostart.sh
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/ADIN_SPI_OpenMV
+SyslogIdentifier=dive-autostart
+ExecStart=/bin/bash /home/pi/ADIN_SPI_OpenMV/pi/field/dive_autostart.sh
+# The script bounds its own waits (~5.5 min worst case); this is the backstop.
+TimeoutStartSec=420
+
+[Install]
+WantedBy=multi-user.target

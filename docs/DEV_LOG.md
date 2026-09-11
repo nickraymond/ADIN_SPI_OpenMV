@@ -17,6 +17,143 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-09-10 (later) — S33 — trip tune-up: one IMX tile, erase-all fixed, record on boot, 60-min burn-in
+
+**Branch:** `claude/scuba-trip-tuneup-784b0a` (off `sprint/33-field-ready`) · rig: **nereus002**
+
+**Scope (Nick, 18 h to departure):** no AWB work, no AprilTag, no cards.
+ONE recipe, AWB auto with focus pinned at 1.82. Locked-WB card and the tag
+trigger are out. Depth sensor and AP mode are Nick's, tonight, after the
+housing pressure test.
+
+**Done:**
+- **Review page: the IMX is one camera.** The viewer drew "IMX" as an empty
+  tile with a Make-playable button beside "IMX_proxy", the tile that played.
+  Now one tile called IMX plays the proxy; the science JPEG is a download link
+  only, never offered for conversion on any page, and `/api/transcode` returns
+  409 if asked. The IMX gets a byte-exact thumbnail (recorder.write_thumbnail
+  reused on the science MJPEG) so the index shows a picture for every camera.
+- **Compare toggles** on the viewer: default all cameras, switch one off and
+  the flex row lets the rest grow; scrubber follows the first visible clip;
+  the last visible camera cannot be hidden; remembered per browser.
+- **Record on boot** (`dive-autostart.service`, installer role `autostart`):
+  waits for the workbench and the N6, presses the card's own `/api/start`,
+  exits 0 only when the runner reports LIVE. Opt out with
+  `~/.no_dive_autostart`. First live run: installed at 15:14, LIVE within a
+  minute, then ran 60 minutes of clean segments (below).
+- **Burn-in, 13 segments (12 from the autostart), 60 min:** every segment
+  held N6 30.2 / AE3 12.0 / IMX 30.0 fps with all four streams, its manifest
+  and thumbnails, `problems=[]`, throttled 0x0, peak 66 C on external power,
+  21 GB written. Stop from the page closed the last segment cleanly.
+
+**Broke/surprised us:**
+- **The erase-all button never worked.** `/api/wipe` raised
+  `NameError: name 'sys' is not defined` and the page reported "Not erased".
+  Found by pressing the button; all 207 Python tests had passed because
+  nothing drove the endpoint. Now `TestHTTP.test_wipe_refuses_without_the_token_then_erases`
+  does (CLAUDE.md rule 4, again: verify through the PAGE).
+- The rig was on `sprint/33-field-ready@299e2db` with PR #84 sitting as an
+  untracked/modified working tree, byte-identical to the branch head. Deployed
+  as a tracked checkout of this branch.
+- `wipe_all` leaves the loose `dive_<stamp>_current.json` clock files behind
+  (directories only). Cosmetic; not fixed.
+- Preflight lists each board twice (role entry + by-id entry), so the
+  autostart logs "ready: N6,AE3,AE3,N6". Harmless.
+- The in-app browser auto-cancels `window.confirm`, so page buttons that
+  confirm had to be pressed with confirm stubbed to true.
+
+**LATER THE SAME NIGHT -- the rig vanished for two hours, and the story is on the card:**
+- 17:40:11 PDT: charger out, cell resting 3.23 V, Start pressed for the
+  battery run. Load 4.1 W / 834 mA; the power log STOPS at 17:40:23 with
+  uptime continuous -- the Pi RESET 12 s into the load. The next two boots
+  died at 32 s and 42 s of uptime on the boot load alone (no recording yet).
+- One of those resets landed while NetworkManager was rewriting its netplan
+  profiles: BOTH `/etc/netplan/90-NM-*.yaml` are now 0 bytes, mtime 17:40:34
+  and 17:40:37. So `netplan-wlan0-Ford` no longer exists, wlan0 sits
+  "disconnected" with a healthy driver, and no boot since could join the
+  home wifi. Found only once Nick put a USB-ethernet adapter on the rig.
+- Meanwhile the rig was NOT dead: `dive-autostart` fired on every boot that
+  survived and recorded on its own -- 004424Z (2 seg), 005201Z (7 seg,
+  34 min), 012630Z (8 seg, 40 min), 020821Z -- with the charger back in from
+  ~18:25. **Record-on-boot is proven on real power cycles.**
+- The journal is NOT persistent despite PR #84's note: `/var/log/journal`
+  exists but holds nothing and `journalctl --list-boots` shows one boot, so
+  the crash boots left no journal. The power log was the only witness.
+- The dashboard's battery figure on the charger is the CHARGE voltage
+  (3.62 V shown while the cell rested at 3.18 V), so "dives remaining" is
+  meaningless while plugged in. Not fixed; flagged.
+- Wifi restored: Nick recreated the profile with `nmcli --ask dev wifi
+  connect` (now a keyfile under `/etc/NetworkManager/system-connections/`,
+  not netplan); verified over wifi alone with the ethernet adapter pulled.
+- Journal now persistent: `Storage=persistent` drop-in + `journalctl
+  --flush` (the flush is the step that was missing; the bringup skill now
+  says so). Manifests now fsync before rename (`write_json_durable`).
+- Guard added: `dive_autostart.sh` refuses to start the load on battery
+  below `MIN_VBAT_MV` (3250) and says why. Driven against a fake workbench
+  in all four battery states.
+
+**AP MODE SHIPPED (same night, Nick's spec: dashboard toggle, SSID =
+hostname, no password, and "never stranded hunting for a wifi that is not
+there"):**
+- `pi/field/ap_mode.sh` = the borrowed nereus-vision-dev recipe (NM AP,
+  `ipv4.method shared` -> 10.42.0.1). `nereus-ap.service` is the switch:
+  active = AP now, enabled = AP at every boot; the dashboard's Network tile
+  flips both with `systemctl enable/disable --now` through the existing
+  sudo rule, because pi gets "Insufficient privileges" from nmcli directly.
+- `nereus-ap-fallback.service` (enabled at boot, and re-armed after every
+  switch-off): gives wlan0 60 s to become a connected client, then starts
+  the AP. Both branches unit-tested with a fake nmcli/ip/systemctl on PATH.
+- Verified on the rig over the ethernet lifeline: AP up at 10.42.0.1 with
+  dnsmasq serving, open profile, page reachable; down hands wlan0 back to
+  `wlan0-Ford`; fallback logs "home wifi ok".
+- Two bites of my own: `nmcli device connect` re-picked the AP profile as
+  "best available", so `down` now activates the client profile BY NAME; and
+  a unit installed with `systemctl link` is DELETED by `systemctl disable`,
+  which is exactly what the page's switch-off runs -- Nick's first tap from
+  the phone unlinked the unit before its stop script ran. Units must be
+  installed as real copies (`install_stream_service.sh ap` / `ap-fallback`).
+
+**LATE NIGHT -- the battery, the camera stall, and the recorder that came
+out of it (22:10 - 23:03 PDT):**
+- Battery run #1 (charger out at 3.31 V under load, four streams): the rig
+  left the LAN within 4 min. It was NOT down -- the USB ethernet adapter
+  dropped and the AP kept broadcasting; Nick read 3.26 V on the phone via
+  10.42.0.1. Nick's call: drop the IMX science JPEG (software, ~1 W).
+- **Camera stall found:** 55 s after a boot libcamera logged "Camera
+  frontend has timed out!", the sensor stopped, and the recorder hung in
+  capture_metadata() forever with problems=[] while the boards recorded on.
+  Fixed: bounded camera waits, a StallWatch that closes the segment with
+  "IMX STALLED" and exits 3, and the launcher relaunches at the next
+  segment. A wedged recorder ignored SIGINT/SIGTERM and left the runner
+  "stuck" until a workbench restart; the runner now returns to idle by
+  itself once the process is gone.
+- **`--science none`** (the trip recipe): ONE hardware H.264 of the full
+  1280x800 main stream at 8 Mbps, labelled IMX, played as-is. First form
+  stopped the encoder per segment: stop + a two-pass mux of 300 MB +
+  thumbnail took ~70 s with nothing recorded (23% of every segment). Now
+  a SplittableOutput switches the file at the next keyframe (iperiod=fps,
+  repeat=True) and a worker thread does the mux/thumb/manifest. Measured
+  23:00:57-58: next file born 1 s before the old one ended; segment 0 =
+  8983 frames @ 29.87 fps, 300 MB mp4, thumb, manifest, no problems, while
+  segment 1 recorded through the mux.
+- Two of my own "plausible artefact" bugs on the way: the H.264 loop was
+  dispatched AFTER run() had opened the camera (second Picamera2() ->
+  "Device or resource busy", twice); and call_with_timeout returned None
+  for both "timed out" and "returned None", so every successful file switch
+  read as a stall (ten relaunches in 90 s). Fixed with a TIMEOUT sentinel.
+- Draw with the JPEG gone: 3.3-4.0 W (was 4.4-4.6). The saving is ~0.5 W,
+  not the ~1 W estimated; the cell, not the recipe, decides runtime.
+- Dashboard: CPU temperature tile (yellow >= 70 C, red >= 80 C or when the
+  firmware reports throttling now).
+
+**Not done / owed:**
+- A real power-cycle proof of record-on-boot (Nick, tonight, Pi+ button).
+- `nmcli ... powersave 2` reads `disable` on the rig already -- that root
+  command is done. AP profile does not exist yet.
+- Battery endurance under the full four-stream load is being measured next.
+
+---
+
 ## 2026-09-10 — S33 — Channel Islands recording: dive card, rig dashboard, review loop
 
 **Branch:** `claude/ci-dashboard` (off `sprint/33-field-ready`) · rig: **nereus002**

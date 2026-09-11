@@ -45,7 +45,16 @@ case "$ROLE" in
   # Belt to the powersave braces: re-asserts power_save off every minute and
   # logs only when it had to, so a re-enable leaves evidence.
   ps-guard)  UNIT=wifi-powersave-guard.timer; AUTOSTART=yes ;;
-  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard" >&2; exit 1 ;;
+  # Power on = record. Presses the dive card's Start once the workbench and
+  # the N6 are up; opt out on the bench with ~/.no_dive_autostart.
+  autostart) UNIT=dive-autostart.service;     AUTOSTART=yes ;;
+  # The rig as its own wifi network. Installed DISABLED: enable/disable is
+  # the dashboard's AP toggle, and installing must not flip it.
+  ap)        UNIT=nereus-ap.service;          AUTOSTART=no  ;;
+  # Home wifi first, rig AP if none within 60 s. Enabled at boot: this is
+  # the "never stranded at sea" guarantee (Nick, 2026-09-10).
+  ap-fallback) UNIT=nereus-ap-fallback.service; AUTOSTART=yes ;;
+  *) echo "usage: $0 receiver|sender|shim|light|telemetry|bench-web|workbench|powersave|usb-msc|power-log|review|ps-guard|autostart|ap|ap-fallback" >&2; exit 1 ;;
 esac
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

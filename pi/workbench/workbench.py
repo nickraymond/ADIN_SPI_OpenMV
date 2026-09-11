@@ -41,7 +41,9 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -496,6 +498,74 @@ def _systemctl_state(unit):
 
 def service_states(units, runner=_systemctl_state):
     return {u: runner(u) for u in units}
+
+
+# ---------------------------------------------------------------------------
+# AP mode -- the rig as its own wifi network (S33, Nick 2026-09-10)
+# ---------------------------------------------------------------------------
+#: The unit that IS the switch: active = AP up now, enabled = AP at next
+#: boot. The page toggles both together (enable --now / disable --now), so
+#: what you see is what the next power-on does. Everything root lives in
+#: pi/field/ap_mode.sh behind the unit; the workbench only calls systemctl,
+#: which is the one command the pi user may sudo without a password.
+AP_UNIT = "nereus-ap"
+#: Home wifi first, AP if none within AP_FALLBACK_S: runs at boot and after
+#: every "switch to home wifi", so the rig is never stranded hunting for a
+#: network that is not there (Nick, 2026-09-10).
+AP_FALLBACK_UNIT = "nereus-ap-fallback"
+AP_FALLBACK_S = 60
+AP_STATUS_SCRIPT = os.path.join(REPO, "pi", "field", "ap_mode.sh")
+
+
+def _systemctl_enabled(unit):
+    try:
+        out = subprocess.run(["systemctl", "is-enabled", unit],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip()          # enabled / disabled / not-found
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+
+
+def _ap_ctl(args):
+    """sudo systemctl <args>. Returns (rc, text)."""
+    try:
+        out = subprocess.run(["sudo", "-n", "systemctl"] + list(args),
+                             capture_output=True, text=True, timeout=150)
+        return out.returncode, (out.stderr or out.stdout).strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "%s: %s" % (type(exc).__name__, exc)
+
+
+def _ap_status():
+    """What wlan0 is doing right now, from ap_mode.sh status (no root)."""
+    try:
+        out = subprocess.run(["bash", AP_STATUS_SCRIPT, "status"],
+                             capture_output=True, text=True, timeout=10)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as exc:                      # noqa: BLE001 -- shown on the page
+        return {"error": "%s: %s" % (type(exc).__name__, exc)}
+
+
+def ap_state(runner=_systemctl_state, enabled=_systemctl_enabled,
+             status=_ap_status):
+    active = runner(AP_UNIT)
+    en = enabled(AP_UNIT)
+    fb = enabled(AP_FALLBACK_UNIT)
+    st = status() or {}
+    return {
+        "unit": AP_UNIT,
+        "installed": en not in ("not-found", "unavailable", ""),
+        "active": active == "active",
+        "unit_state": active,
+        "enabled": en == "enabled",
+        "enabled_state": en,
+        "fallback_unit": AP_FALLBACK_UNIT,
+        "fallback_enabled": fb == "enabled",
+        "fallback_s": AP_FALLBACK_S,
+        "ssid": st.get("ssid") or socket.gethostname(),
+        "ap_ip": "10.42.0.1",
+        "wlan": st,
+    }
 
 
 def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
@@ -1038,6 +1108,20 @@ class Runner:
 
     def snapshot(self):
         with self._lk:
+            # SELF-HEAL FROM "stuck". 2026-09-10 night, twice: a recorder
+            # wedged inside the camera library ignored SIGINT and SIGTERM,
+            # the runner went "stuck" (it never SIGKILLs, by design), and
+            # once the process had been killed by hand the runner STAYED
+            # stuck until a workbench restart -- on a boat that is a dead
+            # page. The process being gone is the one fact that ends the
+            # hazard, so once it is gone the runner goes back to idle and
+            # says what happened.
+            if self.state == "stuck" and not self._alive():
+                self.state = "idle"
+                self.error = ("previous demo was stuck and has now exited; "
+                              "boards released")
+                self._clear_pidfile()
+                print("runner: stuck demo has exited -> idle", flush=True)
             r = self.recipe
             return {"state": self.state,
                     "settle_s": max(0, int(self.settle_until
@@ -1120,6 +1204,11 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, pf)
             if path == "/api/runner":
                 return self._json(200, runner.snapshot())
+            if path == "/api/ap":
+                return self._json(200, ap_state(
+                    runner=cfg["runner"],
+                    enabled=cfg.get("ap_enabled", _systemctl_enabled),
+                    status=cfg.get("ap_status", _ap_status)))
             if path == "/api/dashboard":
                 # Never let a battery read take the menu down with it: the
                 # page must still start demos when the Pi+ is unreadable.
@@ -1218,6 +1307,36 @@ def make_handler(cfg, runner: Runner):
                 return self._json(200, {"ok": not rep["failed"], "report": rep})
             if path == "/api/devmode":
                 return self._devmode()
+            if path == "/api/ap":
+                # ONE switch, both halves at once: what wlan0 does now AND
+                # what it does at the next boot. A page that could set one
+                # without the other would leave a rig that says "AP" and
+                # boots onto a wifi that is not there.
+                on = body.get("on")
+                if not isinstance(on, bool):
+                    return self._json(400, {"ok": False,
+                                            "err": "body must be {\"on\": true|false}"})
+                ctl = cfg.get("ap_ctl", _ap_ctl)
+                args = ["enable", "--now", AP_UNIT] if on else ["disable", "--now", AP_UNIT]
+                # ANSWER FIRST, FLIP SECOND. The phone asking for this is on
+                # the radio that is about to change, so a synchronous switch
+                # killed the connection before the reply left: Safari showed
+                # "TypeError: Load failed" for a switch that had in fact
+                # worked (measured 2026-09-10). The reply goes out now; the
+                # switch runs a moment later on its own thread, and the
+                # outcome is readable from /api/ap on the other network.
+                delay = float(cfg.get("ap_switch_delay_s", 2.0))
+                def flip():
+                    time.sleep(delay)
+                    rc, text = ctl(args)
+                    print("ap: %s -> rc=%s %s" % (" ".join(args), rc, text), flush=True)
+                threading.Thread(target=flip, name="ap-switch", daemon=True).start()
+                state = ap_state(runner=cfg["runner"],
+                                 enabled=cfg.get("ap_enabled", _systemctl_enabled),
+                                 status=cfg.get("ap_status", _ap_status))
+                return self._json(202, {
+                    "ok": True, "scheduled": True, "in_s": delay,
+                    "asked": "ap" if on else "client", "state": state})
             self.send_error(404)
 
         def _start(self, body):

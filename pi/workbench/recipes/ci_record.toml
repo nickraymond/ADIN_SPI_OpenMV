@@ -24,9 +24,9 @@
 # run time and logs its absence instead of failing the whole dive.
 
 name = "ci-record"
-title = "Dive record — 4 streams, 5-min segments (AWB auto, focus locked)"
+title = "Dive record — IMX H.264 + N6 + AE3, 5-min segments (AWB auto, focus locked)"
 group = "channelislands"
-summary = "The everyday dive card. Records the IMX708 science stream (JPEG q90, 1280x800) plus an iPad-playable H.264 proxy, and the N6 and AE3, in 5-minute segments that are closed and described before the next one opens. Auto white balance; IMX focus locked at 1.82 dioptres to match bmcam000. Measured 8.30 MB/s — about 8 dives of 20 min on the 85 GB ring."
+summary = "The everyday dive card. Records the IMX708 as hardware H.264 (1280x800, 8 Mbps, plays as-is on the iPad), plus the N6 (HD q70) and AE3 (VGA q50), in 5-minute segments that are closed and described before the next one opens. No software JPEG: about 1 W less than the 4-stream form, which the battery could not carry. Auto white balance; IMX focus locked at 1.82 dioptres. About 4 MB/s — roughly 17 dives of 20 min on the 85 GB ring."
 thumbnail = "thumbs/video_record.jpg"
 
 [[boards]]

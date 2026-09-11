@@ -987,9 +987,28 @@ class TestHTTP(unittest.TestCase):
         cls.runner = Runner(repo=cls.tmp,
                             pidfile=os.path.join(cls.tmp, "run.json"),
                             logpath=os.path.join(cls.tmp, "run.log"))
+        # A recordings root of its own, so the wipe endpoint below has
+        # something real to delete and can never reach the default path.
+        cls.recs = os.path.join(cls.tmp, "recordings")
+        os.makedirs(os.path.join(cls.recs, "dive_20260910T000000Z_s0000"))
+        with open(os.path.join(cls.recs, "dive_20260910T000000Z_s0000",
+                               "N6.mjpeg"), "wb") as fh:
+            fh.write(b"\xff\xd8" + b"x" * 1000)
+        cls.ap_calls = []
+        cls.ap_enabled = {"v": "disabled"}
+        def fake_ctl(args):
+            cls.ap_calls.append(list(args))
+            cls.ap_enabled["v"] = "enabled" if args[0] == "enable" else "disabled"
+            return 0, ""
         cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
                "proc": cls.fake.proc, "runner": lambda u: "inactive",
-               "disk_path": cls.fake.root}
+               "disk_path": cls.fake.root, "recordings_root": cls.recs,
+               "ap_ctl": fake_ctl, "ap_switch_delay_s": 0.05,
+               "ap_enabled": lambda u: ("enabled" if u == "nereus-ap-fallback"
+                                        else cls.ap_enabled["v"]),
+               "ap_status": lambda: {"iface": "wlan0", "mode": "client",
+                                     "active": "wlan0-Ford", "ip": "192.168.1.35",
+                                     "ssid": "nereus002", "ap_profile": "nereus002-ap"}}
         cls.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0), workbench.make_handler(cfg, cls.runner))
         cls.port = cls.httpd.server_address[1]
@@ -1028,6 +1047,26 @@ class TestHTTP(unittest.TestCase):
                          ["good-one", "how-to"])
         self.assertEqual([p["file"] for p in obj["problems"]],
                          ["broken.toml"])
+
+    def test_wipe_refuses_without_the_token_then_erases(self):
+        """The erase-all button must actually erase.
+
+        Found 2026-09-10 by pressing the button on nereus002's page: the
+        handler raised NameError (`sys` was never imported) and the page
+        reported "Not erased". Every Python test passed, because nothing
+        drove the endpoint. This does.
+        """
+        sess = os.path.join(self.recs, "dive_20260910T000000Z_s0000")
+        self.assertTrue(os.path.isdir(sess))
+        code, body = self.req("POST", "/api/wipe", {"confirm": "no"})
+        self.assertEqual(code, 400)
+        self.assertTrue(os.path.isdir(sess))          # refused = untouched
+        code, body = self.req("POST", "/api/wipe", {"confirm": "ERASE"})
+        self.assertEqual(code, 200, body)
+        rep = json.loads(body)
+        self.assertTrue(rep["ok"], rep)
+        self.assertIn("dive_20260910T000000Z_s0000", rep["report"]["deleted"])
+        self.assertFalse(os.path.exists(sess))        # the artifact is gone
 
     def test_guide_served_and_confined(self):
         code, body = self.req("GET", "/guides/how.html")
@@ -1072,6 +1111,77 @@ class TestHTTP(unittest.TestCase):
         code, body = self.req("POST", "/api/stop")
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["state"], "idle")
+
+    def test_ap_state_is_readable(self):
+        code, body = self.req("GET", "/api/ap")
+        self.assertEqual(code, 200)
+        st = json.loads(body)
+        self.assertTrue(st["installed"])
+        self.assertFalse(st["active"])
+        self.assertEqual(st["ssid"], "nereus002")
+        self.assertEqual(st["ap_ip"], "10.42.0.1")
+        self.assertEqual(st["wlan"]["mode"], "client")
+        self.assertTrue(st["fallback_enabled"])
+        self.assertEqual(st["fallback_s"], 60)
+
+    def test_ap_toggle_enables_now_and_at_boot_together(self):
+        """One switch, both halves: what wlan0 does now and at the next boot."""
+        import time as _t
+        def settle():
+            for _ in range(40):
+                _t.sleep(0.05)
+                if self.ap_calls:
+                    return
+        self.ap_calls.clear()
+        code, body = self.req("POST", "/api/ap", {"on": True})
+        # 202: the reply leaves BEFORE the radio flips (a phone on that radio
+        # saw "Load failed" from a synchronous switch that had worked).
+        self.assertEqual(code, 202, body)
+        self.assertTrue(json.loads(body)["scheduled"])
+        settle()
+        self.assertEqual(self.ap_calls, [["enable", "--now", "nereus-ap"]])
+        self.assertEqual(self.ap_enabled["v"], "enabled")
+        self.ap_calls.clear()
+        code, body = self.req("POST", "/api/ap", {"on": False})
+        self.assertEqual(code, 202, body)
+        settle()
+        self.assertEqual(self.ap_calls, [["disable", "--now", "nereus-ap"]])
+        self.assertEqual(self.ap_enabled["v"], "disabled")
+
+    def test_ap_toggle_refuses_a_non_boolean(self):
+        self.ap_calls.clear()
+        code, body = self.req("POST", "/api/ap", {"on": "yes"})
+        self.assertEqual(code, 400)
+        self.assertEqual(self.ap_calls, [])
+
+    def test_page_carries_the_ap_tile(self):
+        code, body = self.req("GET", "/")
+        self.assertIn(b"/api/ap", body)
+        self.assertIn(b"toggleAp", body)
+        self.assertIn(b"Switch to AP mode", body)
+
+    def test_thermal_levels(self):
+        """CPU temperature with a warning band (Nick, 2026-09-10 night)."""
+        import dashboard as D
+        ok = D.thermal(read_temp=lambda: 61.2, read_throttled=lambda: "0x0")
+        self.assertEqual((ok["level"], ok["temp_c"], ok["throttled_now"]), ("ok", 61.2, False))
+        warn = D.thermal(read_temp=lambda: 72.0, read_throttled=lambda: "0x0")
+        self.assertEqual(warn["level"], "warn")
+        bad = D.thermal(read_temp=lambda: 81.0, read_throttled=lambda: "0x0")
+        self.assertEqual(bad["level"], "bad")
+        # bit 2 = throttled NOW: red even at a mild temperature
+        now = D.thermal(read_temp=lambda: 65.0, read_throttled=lambda: "0x4")
+        self.assertEqual((now["level"], now["throttled_now"]), ("bad", True))
+        # bit 18 = throttling HAS happened since boot: not now, so not red
+        past = D.thermal(read_temp=lambda: 65.0, read_throttled=lambda: "0x40000")
+        self.assertEqual((past["level"], past["throttled_now"]), ("ok", False))
+        gone = D.thermal(read_temp=lambda: 1 / 0)
+        self.assertFalse(gone["available"])
+
+    def test_page_carries_the_temperature_tile(self):
+        code, body = self.req("GET", "/")
+        self.assertIn(b"CPU temperature", body)
+        self.assertIn(b"THROTTLING", body)
 
     def test_devmode_reports_boards(self):
         code, body = self.req("POST", "/api/devmode")

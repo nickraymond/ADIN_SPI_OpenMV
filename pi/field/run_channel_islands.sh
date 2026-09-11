@@ -28,6 +28,11 @@ WB="${WB_MODE:-auto}"                 # auto = ordinary recording (card 1)
 FOCUS="${FOCUS_MODE:-manual}"
 LENS="${LENS_POSITION:-1.82}"         # dioptres; bm_cam_legacy bmcam000
 JPEG_Q="${JPEG_Q:-90}"
+# IMX as ONE hardware H.264 of the full 1280x800 main stream, no software
+# JPEG (Nick, 2026-09-10 night: the JPEG was ~1 W of the 4.6 W total and the
+# battery could not carry it). SCIENCE_MODE=jpeg restores the two-file form.
+SCIENCE="${SCIENCE_MODE:-none}"
+PROXY_BITRATE="${PROXY_BITRATE:-8000000}"
 BOARDS="${BOARDS:-N6,AE3}"
 
 # Same interpreter problem, same solution as run_recorder.sh: mpremote lives
@@ -57,7 +62,7 @@ SYS_PY="$(command -v python3)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 PREFIX="dive_$STAMP"
 mkdir -p "$ROOTDIR" || { echo "channel-islands: cannot create $ROOTDIR" >&2; exit 1; }
-echo "channel-islands: prefix=$PREFIX segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS q=$JPEG_Q" >&2
+echo "channel-islands: prefix=$PREFIX segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS science=$SCIENCE h264=${PROXY_BITRATE}bps q=$JPEG_Q" >&2
 
 CHILDREN=()
 cleanup() {
@@ -71,12 +76,50 @@ trap cleanup INT TERM
 
 # IMX: one long-lived process; it rolls its own segments internally so the
 # WB/focus lock is never re-taken.
-"$SYS_PY" "$HERE/imx_dive_recorder.py" \
-  --root "$ROOTDIR" --session-prefix "$PREFIX" --recipe channel-islands \
-  --segment-s "$SEGMENT_S" --jpeg-q "$JPEG_Q" \
-  --wb "$WB" --focus "$FOCUS" --lens-position "$LENS" &
+#
+# SUPERVISED. Measured 2026-09-10: libcamera reported "Camera frontend has
+# timed out!" 55 s after boot, the sensor stopped, and the recorder hung with
+# nothing on the page saying so while the boards recorded on. The recorder
+# now exits 3 on a stall; this loop relaunches it at the NEXT segment index
+# (read from the clock file the boards follow), bounded so a truly dead
+# camera cannot spin forever. A clean Stop still ends the dive.
+CURRENT="$ROOTDIR/${PREFIX}_current.json"
+next_segment() {   # <fallback>  -> segment after the one the clock file names
+  "$SYS_PY" -c 'import json,sys
+try:
+    print(int(json.load(open(sys.argv[1])).get("segment", -1)) + 1)
+except Exception:
+    print(int(sys.argv[2]) + 1)' "$CURRENT" "$1" 2>/dev/null || echo $(( $1 + 1 ))
+}
+imx_supervisor() {
+  local next="$1" attempt=0 rc pid stopping=0
+  trap 'stopping=1; [ -n "${pid:-}" ] && kill -INT "$pid" 2>/dev/null' INT TERM
+  while :; do
+    "$SYS_PY" "$HERE/imx_dive_recorder.py" \
+      --root "$ROOTDIR" --session-prefix "$PREFIX" --recipe channel-islands \
+      --segment-s "$SEGMENT_S" --jpeg-q "$JPEG_Q" \
+      --wb "$WB" --focus "$FOCUS" --lens-position "$LENS" \
+      --science "$SCIENCE" --proxy-bitrate "$PROXY_BITRATE" \
+      --first-segment "$next" &
+    pid=$!
+    wait "$pid"; rc=$?
+    # A trapped signal interrupts `wait`; wait again for the real exit so the
+    # segment in flight gets closed and described.
+    while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+    [ "$stopping" = 1 ] && return 0
+    if [ "$rc" -eq 3 ] && [ "$attempt" -lt 40 ]; then
+      attempt=$((attempt + 1))
+      next="$(next_segment "$next")"
+      echo "channel-islands: IMX STALLED -- relaunching at segment $next (attempt $attempt of 40)" >&2
+      sleep 3
+      continue
+    fi
+    return "$rc"
+  done
+}
+imx_supervisor 0 &
 CHILDREN+=($!)
-IMX_PID=$!
+IMX_PID=$!          # the supervisor; the boards follow its clock file below
 
 # Boards: re-run per segment, into the SAME session directory the IMX is
 # writing for that segment -- "${PREFIX}_s0000", "_s0001", and so on. That is
@@ -94,7 +137,6 @@ IMX_PID=$!
 # different moments and the last four had no IMX at all. Now each pass asks
 # the IMX which segment is open and how long is left, and records exactly that
 # remainder -- a follower cannot drift from what it is following.
-CURRENT="$ROOTDIR/${PREFIX}_current.json"
 (
   while kill -0 "$IMX_PID" 2>/dev/null; do
     read -r SEG LEFT <<<"$("$SYS_PY" - "$CURRENT" <<'PY' 2>/dev/null

@@ -425,6 +425,7 @@ pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
   padding:10px;overflow:auto;max-height:240px;font-size:12px;margin:0}
 .vids{display:flex;gap:12px;flex-wrap:wrap}
 .vid{flex:1;min-width:320px} video{width:100%;background:#000;border-radius:6px}
+.camtog{margin:0 6px 8px 0;padding:6px 14px} .camtog.off{opacity:.45;text-decoration:line-through}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .metrics{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .metric{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);
@@ -566,33 +567,39 @@ def index_page(state, sessions, ceilings, review_only=False):
                        % (html.escape(m["name"]), html.escape(m["broken"])))
             continue
         s = m.get("settings", {})
-        total = sum((c.get("mp4_bytes", 0) + c.get("mjpeg_bytes", 0))
-                    for c in m.get("cameras", []))
+        mcams = sorted(fold_imx(m.get("cameras", [])),
+                       key=lambda c: _cam_rank(c.get("label", "")))
+        total = sum(_cam_bytes(c) for c in m.get("cameras", []))
         cams_txt = ", ".join("%s %d fr @ %.1f fps"
-                             % (c.get("label", "?"), c.get("written_frames", 0),
-                                c.get("delivered_fps", 0))
-                             for c in m.get("cameras", []))
+                             % (c.get("label", "?"), _frames(c),
+                                c.get("delivered_fps") or 0)
+                             for c in mcams)
         thumbs = "".join(
             "<div class=thumbwrap><img loading=lazy src='/media/%s/%s' alt='%s'>"
             "<b>%s</b></div>"
             % (urllib.parse.quote(m["name"]), urllib.parse.quote(c["thumb"]),
                html.escape(c.get("label", "")), html.escape(c.get("label", "")))
-            for c in m.get("cameras", []) if c.get("thumb"))
-        # Per camera: is it playable yet, and a button to make it so.
+            for c in mcams if c.get("thumb"))
+        # Per camera: is it playable yet, and a button to make it so. The IMX
+        # is never offered a button: its proxy plays as recorded, and its
+        # science file is download-only (see CONVERTIBLE).
         acts = []
-        for c in m.get("cameras", []):
+        for c in mcams:
             lbl = html.escape(c.get("label", "?"))
             if c.get("mp4"):
                 acts.append("<span class=chip style='color:var(--ok)'>%s mp4 %s</span>"
-                            % (lbl, _fmt_bytes(c.get("mp4_bytes", 0))))
+                            % (lbl, _fmt_bytes(c.get("mp4_bytes") or 0)))
+            elif c.get("download_only"):
+                acts.append("<span class=chip>%s science only (download)</span>" % lbl)
             else:
                 acts.append("<button class=sec style='padding:4px 10px;font-size:12px'"
                             " onclick=\"mk(event,'%s','%s')\">Make %s playable</button>"
                             % (html.escape(m["name"]), lbl, lbl))
         # Comparing cameras means watching them together, so offer the whole
         # session in one press rather than one press per camera.
-        unconverted = [c.get("label") for c in m.get("cameras", [])
-                       if not c.get("mp4") and c.get("mjpeg")]
+        unconverted = [c.get("label") for c in mcams
+                       if not c.get("mp4") and c.get("mjpeg")
+                       and c.get("label") in CONVERTIBLE]
         if len(unconverted) > 1:
             acts.insert(0, "<button style='padding:4px 10px;font-size:12px'"
                            " onclick=\"mkAll(event,'%s',%s)\">"
@@ -866,16 +873,92 @@ def _cam_rank(label):
         return len(CAMERA_ORDER)
 
 
+#: The IMX science stream is DOWNLOAD-ONLY. Nick, 2026-09-10: "I only need the
+#: IMX video that can play in my browser ... don't need to display or show the
+#: IMX science version, just keep that as a downloads option." The science
+#: file is a 1280x800 q90 MJPEG at ~1.5 GB per 5-minute segment; converting
+#: it on the Zero would be the most expensive thing this page could do, and
+#: the proxy already shows the same frames. So no player, no convert button,
+#: and the server refuses the request even if a stale page asks.
+CONVERTIBLE = ("N6", "AE3")
+
+
+def _frames(c):
+    """Board manifests say written_frames; the IMX recorder says frames."""
+    return int(c.get("written_frames") or c.get("frames") or 0)
+
+
+def _cam_bytes(c):
+    return int((c.get("mp4_bytes") or 0) + (c.get("mjpeg_bytes") or 0)
+               or c.get("bytes") or 0)
+
+
+def _geom(c):
+    b = c.get("banner") or {}
+    w = b.get("w") or c.get("w") or 0
+    h = b.get("h") or c.get("h") or 0
+    return "%dx%d" % (w, h)
+
+
+def fold_imx(cams):
+    """ONE IMX entry for the page, from the two the recorder writes.
+
+    The IMX recorder records two outputs of one camera -- "IMX" (science
+    JPEG) and "IMX_proxy" (H.264 the browser plays) -- and until 2026-09-10
+    the page drew them as two cameras: an empty "IMX" tile with a Make
+    playable button beside the "IMX_proxy" tile that actually played. Nick:
+    two instances of the IMX is confusing; there is one camera. So the page
+    shows one tile called IMX that plays the proxy, and the science file
+    rides along on the same entry as a download.
+
+    Returns a NEW list; the manifest is not touched, so the raw entries stay
+    in the Manifest section for anyone who needs the recorder's own words.
+    """
+    sci = next((c for c in cams if c.get("label") == "IMX"), None)
+    pxy = next((c for c in cams if c.get("label") == "IMX_proxy"), None)
+    if not sci and not pxy:
+        return list(cams)
+    merged = dict(sci or {})
+    merged["label"] = "IMX"
+    merged["mjpeg"] = (sci or {}).get("mjpeg")
+    merged["mjpeg_bytes"] = (sci or {}).get("mjpeg_bytes") or (sci or {}).get("bytes") or 0
+    # Since 2026-09-10 night the recorder can write the IMX as ONE H.264
+    # (no science JPEG); that entry is labelled IMX and carries the mp4.
+    merged["mp4"] = (pxy or {}).get("mp4") or (sci or {}).get("mp4")
+    merged["mp4_bytes"] = ((pxy or {}).get("mp4_bytes") or (pxy or {}).get("bytes")
+                           if pxy else ((sci or {}).get("mp4_bytes") or (sci or {}).get("bytes"))) or 0
+    merged["thumb"] = (sci or {}).get("thumb") or (pxy or {}).get("thumb")
+    merged["start_offset_s"] = (sci or {}).get("start_offset_s") or (pxy or {}).get("start_offset_s") or 0
+    merged["proxy_geom"] = _geom(pxy) if pxy else None
+    merged["download_only"] = True
+    out = [c for c in cams if c.get("label") not in ("IMX", "IMX_proxy")]
+    out.append(merged)
+    return out
+
+
 def viewer_page(m):
     s = m.get("settings", {})
-    cams = [c for c in m.get("cameras", []) if c.get("mp4") or c.get("mjpeg")]
+    cams = [c for c in fold_imx(m.get("cameras", []))
+            if c.get("mp4") or c.get("mjpeg")]
     cams.sort(key=lambda c: _cam_rank(c.get("label", "")))
-    vids, rows = [], []
+    vids, rows, togs = [], [], []
     for i, c in enumerate(cams):
         label = html.escape(c.get("label", "?"))
         src = c.get("mp4")
         note = ""
-        if not src:
+        if not src and c.get("download_only"):
+            # The IMX proxy did not get muxed (the manifest says why). The
+            # science JPEG is never offered for conversion, so the tile shows
+            # the thumbnail and says where the footage is.
+            src = c.get("mjpeg")
+            th = ("<img src='/media/%s/%s' style='width:100%%;border-radius:6px'>"
+                  % (urllib.parse.quote(m["name"]),
+                     urllib.parse.quote(c.get("thumb") or ""))
+                  if c.get("thumb") else "")
+            note = ("%s<div class=dim style='font-size:12px'>no playable proxy "
+                    "for this segment &mdash; the science JPEG is in the "
+                    "download column below</div>" % th)
+        elif not src:
             # Not an error: clips are kept as MJPEG and converted only on
             # request. Offer the conversion rather than a player that cannot
             # play, and show the thumbnail so the clip is still identifiable.
@@ -892,8 +975,10 @@ def viewer_page(m):
                     "Make playable</button>"
                     % (th, html.escape(m["name"]),
                        html.escape(c.get("label", ""))))
-        geom = html.escape("%dx%d" % (c.get("banner", {}).get("w", 0),
-                                      c.get("banner", {}).get("h", 0)))
+        geom = html.escape(_geom(c))
+        if c.get("download_only") and c.get("proxy_geom"):
+            geom = "%s science &middot; %s proxy" % (
+                html.escape(_geom(c)), html.escape(c["proxy_geom"]))
         if c.get("mp4"):
             # Click to go full screen. On an iPad the tiled view is small,
             # and the point of the review loop is actually LOOKING at the
@@ -908,31 +993,41 @@ def viewer_page(m):
         else:
             body = note
             note = ""
-        vids.append("<div class=vid><b>%s</b> <span class=dim>%s</span>%s%s</div>"
-                    % (label, geom, note, body))
+        vids.append("<div class=vid data-cam='%s'><b>%s</b> <span class=dim>%s</span>%s%s</div>"
+                    % (label, label, geom, note, body))
+        togs.append("<button class='sec camtog' data-cam='%s' "
+                    "onclick=\"togCam('%s')\">%s</button>" % (label, label, label))
         gaps = c.get("seq_gaps")
+        qn = urllib.parse.quote
+        dl = []
+        if c.get("mp4"):
+            dl.append("<a href='/download/%s/%s'>%s</a>"
+                      % (qn(m["name"]), qn(c["mp4"]),
+                         "proxy mp4" if (c.get("download_only") and c.get("mjpeg")) else "mp4"))
+        if c.get("mjpeg"):
+            dl.append("<a href='/download/%s/%s'>%s</a>"
+                      % (qn(m["name"]), qn(c["mjpeg"]),
+                         "science mjpeg" if c.get("download_only") else "mjpeg"))
+            dl.append("<a href='/still/%s/%s/%d' target=_blank>original frame</a>"
+                      % (qn(m["name"]), qn(c["mjpeg"]),
+                         min(30, max(0, (_frames(c) or 1) // 2))))
+        if c.get("download_only"):
+            gaps_cell = "<span class=dim>n/a</span>"
+            drops_cell = "<span class=dim>n/a</span>"
+        else:
+            gaps_cell = ("<span class=ok>0</span>" if not gaps else
+                         "<span class=bad>%s</span>" % gaps)
+            drops_cell = ("<span class=ok>0</span>" if not c.get("ring_dropped_frames")
+                          else "<span class=bad>%d</span>" % c["ring_dropped_frames"])
         rows.append(
             "<tr><td class=mono>%s</td><td>%d</td><td>%.2f</td><td>%.2f</td>"
             "<td>%s</td><td>%s</td><td>%s</td>"
             "<td>%s</td><td>%s</td></tr>"
-            % (label, c.get("written_frames", 0), c.get("delivered_fps", 0),
-               c.get("mb_per_s", 0),
-               ("<span class=ok>0</span>" if not gaps else
-                "<span class=bad>%s</span>" % gaps),
-               ("<span class=ok>0</span>" if not c.get("ring_dropped_frames")
-                else "<span class=bad>%d</span>" % c["ring_dropped_frames"]),
-               _fmt_bytes(c.get("mjpeg_bytes", 0)),
-               _fmt_bytes(c.get("mp4_bytes", 0)),
-               "<a href='/download/%s/%s'>mp4</a> &middot; "
-               "<a href='/download/%s/%s'>mjpeg</a> &middot; "
-               "<a href='/still/%s/%s/%d' target=_blank>original frame</a>"
-               % (urllib.parse.quote(m["name"]),
-                  urllib.parse.quote(c.get("mp4") or ""),
-                  urllib.parse.quote(m["name"]),
-                  urllib.parse.quote(c.get("mjpeg") or ""),
-                  urllib.parse.quote(m["name"]),
-                  urllib.parse.quote(c.get("mjpeg") or ""),
-                  min(30, max(0, c.get("written_frames", 1) // 2)))))
+            % (label, _frames(c), c.get("delivered_fps") or 0,
+               c.get("mb_per_s") or 0, gaps_cell, drops_cell,
+               _fmt_bytes(c.get("mjpeg_bytes") or 0),
+               _fmt_bytes(c.get("mp4_bytes") or 0),
+               " &middot; ".join(dl)))
 
     return _shell("Recording %s" % m["name"], """
 <h1><a href='/' class=dim>&larr;</a> %s</h1>
@@ -942,6 +1037,7 @@ def viewer_page(m):
   <span class=chip>%s</span><span class=chip>%s</span>
 </div>
 <div class=card>
+  <div id=camtogs><span class=dim style="font-size:12px;margin-right:8px">Compare:</span>%s</div>
   <div class=vids>%s</div>
   <div style="margin-top:12px">
     <input id=scrub type=range min=0 max=1000 value=0 step=1>
@@ -978,13 +1074,40 @@ function refresh(){
   dur=Math.max(0,...vs.map(v=>(isFinite(v.duration)?v.duration+offs(v):0)));
   tlab.textContent=(master()).toFixed(2)+' / '+dur.toFixed(2)+' s';
 }
+function shown(v){ const t=v.closest('.vid'); return !(t && t.hidden); }
+function lead(){ return vs.find(shown) || vs[0]; }   // the clip the scrubber follows
 function master(){ // wall-clock time of the session, not of any one clip
-  const v=vs[0]; return v? v.currentTime+offs(v):0;
+  const v=lead(); return v? v.currentTime+offs(v):0;
 }
+// CHOOSE WHAT YOU ARE COMPARING (Nick, 2026-09-10). Every camera is shown by
+// default; switch one off and the others grow to fill the row, so two clips
+// can be compared side by side at a useful size. The choice is remembered in
+// this browser only -- it is a viewing preference, not a property of the dive.
+const TOG_KEY='hideCams';
+function hiddenSet(){
+  try{ return new Set(JSON.parse(localStorage.getItem(TOG_KEY)||'[]')); }catch(e){ return new Set(); }
+}
+function applyCams(hide){
+  document.querySelectorAll('.vid[data-cam]').forEach(t=>{
+    const off=hide.has(t.dataset.cam); t.hidden=off;
+    if(off){ const v=t.querySelector('video'); if(v) v.pause(); }
+  });
+  document.querySelectorAll('.camtog').forEach(b=>b.classList.toggle('off',hide.has(b.dataset.cam)));
+  refresh();
+}
+function togCam(c){
+  const hide=hiddenSet();
+  const tiles=[...document.querySelectorAll('.vid[data-cam]')].map(t=>t.dataset.cam);
+  if(hide.has(c)) hide.delete(c);
+  else if(tiles.filter(t=>!hide.has(t)).length>1) hide.add(c);   // never hide the last one
+  try{ localStorage.setItem(TOG_KEY, JSON.stringify([...hide])); }catch(e){}
+  applyCams(hide);
+}
+applyCams(hiddenSet());
 vs.forEach(v=>{
   v.addEventListener('loadedmetadata',refresh);
   v.addEventListener('timeupdate',()=>{
-    if(v!==vs[0])return; refresh();
+    if(v!==lead())return; refresh();
     if(dur>0)scrub.value=Math.round(1000*master()/dur);
   });
   v.addEventListener('ended',()=>{playing=false;document.getElementById('play').innerHTML='&#9654; Play';});
@@ -1001,7 +1124,7 @@ function seekBy(d){ seekAll(Math.max(0,Math.min(dur,master()+d))); }
 function toggle(){
   playing=!playing;
   document.getElementById('play').innerHTML=playing?'&#10073;&#10073; Pause':'&#9654; Play';
-  vs.forEach(v=>{ playing? v.play().catch(()=>{}) : v.pause(); });
+  vs.forEach(v=>{ (playing && shown(v))? v.play().catch(()=>{}) : v.pause(); });
 }
 refresh();
 function goFull(v){
@@ -1092,6 +1215,7 @@ async function mkv(ev, session, camera){
        html.escape(str(s.get("duration_s", "?"))),
        html.escape(m.get("created_iso", "?")),
        html.escape(m.get("host", "?")),
+       "".join(togs),
        "".join(vids) or "<div class=dim>no playable files</div>",
        "".join(rows),
        html.escape(json.dumps(m, indent=1))))
@@ -1296,7 +1420,13 @@ def make_handler(state, root, tq, review_only=False):
                     return self._json(400, {"ok": False, "err": str(e)})
                 sess = str(body.get("session", ""))
                 cam = str(body.get("camera", ""))
-                if not (SAFE.match(sess) and cam in ("N6", "AE3", "IMX")):
+                if SAFE.match(sess) and cam in ("IMX", "IMX_proxy"):
+                    return self._json(409, {
+                        "ok": False,
+                        "err": "the IMX is not converted on the rig: its "
+                               "proxy already plays, and the science JPEG "
+                               "is download-only"})
+                if not (SAFE.match(sess) and cam in CONVERTIBLE):
                     return self._json(400, {"ok": False, "err": "bad session or camera"})
                 if not os.path.isfile(os.path.join(root, sess, "%s.mjpeg" % cam)):
                     return self._json(404, {"ok": False, "err": "no clip for that camera"})

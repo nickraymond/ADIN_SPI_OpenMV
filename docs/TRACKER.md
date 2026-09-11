@@ -3495,7 +3495,15 @@ is the route** · the rig's charger was out at handover (VBAT 3209 mV), and
 
 ---
 
-### S33 — Field-ready for the boat trip  `[ ]`  ← **NEXT, HARD DEADLINE (Nick 2026-09-08)**
+### S33 — Field-ready for the boat trip  `[~]`  ← **RUNNING (PR #84 merged to the sprint branch; trip tune-up branch `claude/scuba-trip-tuneup-784b0a` 2026-09-10)**
+
+**2026-09-10 tune-up (Nick, 18 h to departure) — scope narrowed to ONE
+recipe:** AWB auto, focus 1.82, no locked-WB card, no AprilTag. Shipped:
+one IMX tile (science download-only), compare toggles, erase-all FIXED (it
+had never worked — NameError on the page), `dive-autostart.service` so
+power-on = record, and a 60-min four-stream burn-in with zero problems.
+Owed: power-cycle proof of autostart; AP profile (Nick); Bar30 (Nick).
+Details: DEV_LOG 2026-09-10 (later).
 
 **The mission, in Nick's words:** a 5-day boat trip, a maximum of **25 dives**,
 and **72 hours to departure**. Every dive is a chance to learn something about

@@ -734,6 +734,34 @@ def _load_hints(path):
         return {}
 
 
+def write_json_durable(path, obj, indent=None):
+    """Write JSON so that a power cut leaves either the old file or the new
+    one -- never an empty one.
+
+    Measured 2026-09-10 on nereus002: a hard reset seconds after a segment
+    closed left `manifest.json` at ZERO bytes (and did the same to two
+    NetworkManager profiles). tmp + rename alone is not enough on ext4:
+    the rename is journalled before the data reaches the card, so a cut in
+    between publishes an empty file under the real name. fsync the data
+    first, then rename, then fsync the directory so the rename itself is
+    on disk too.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, indent=indent)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    try:
+        dfd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass          # the data is safe; a directory fsync is belt and braces
+
+
 def _save_hints(path, mapping):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -884,10 +912,7 @@ class Session:
             for key in ("white_balance", "segments", "dive"):
                 if key in existing and key not in merged:
                     merged[key] = existing[key]
-        tmp = self.path("manifest.json.tmp")
-        with open(tmp, "w") as f:
-            json.dump(merged, f, indent=1)
-        os.replace(tmp, self.path("manifest.json"))
+        write_json_durable(self.path("manifest.json"), merged, indent=1)
 
 
 def load_sessions(root):

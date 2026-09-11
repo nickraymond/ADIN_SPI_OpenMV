@@ -237,6 +237,196 @@ class TestInstallerKeepsThemDisabled(unittest.TestCase):
                              path)
 
 
+AUTOSTART = os.path.join(HERE, "dive-autostart.service")
+AUTOSTART_SH = os.path.join(PI, "field", "dive_autostart.sh")
+
+
+class TestDiveAutostart(unittest.TestCase):
+    """Power on = record (S33, Nick 2026-09-10).
+
+    The unit must press the workbench's own Start -- never touch a board --
+    and it must be installable and enabled at boot through the same
+    installer as every other field fixture.
+    """
+
+    def test_unit_parses_and_is_a_oneshot_run_as_pi(self):
+        entries = parse_unit(AUTOSTART)
+        self.assertEqual({"Unit", "Service", "Install"},
+                         {s for s, _, _ in entries})
+        self.assertEqual(["oneshot"], values(entries, "Type"))
+        self.assertEqual(["pi"], values(entries, "User"))
+        self.assertEqual(["multi-user.target"],
+                         values(entries, "WantedBy", "Install"))
+
+    def test_unit_orders_itself_after_the_workbench(self):
+        entries = parse_unit(AUTOSTART)
+        after = " ".join(values(entries, "After", "Unit"))
+        self.assertIn("workbench.service", after)
+        self.assertIn("workbench.service",
+                      " ".join(values(entries, "Wants", "Unit")))
+
+    def test_unit_runs_the_script_the_installer_documents(self):
+        entries = parse_unit(AUTOSTART)
+        execs = values(entries, "ExecStart")
+        self.assertEqual(1, len(execs))
+        self.assertIn("pi/field/dive_autostart.sh", execs[0])
+        self.assertTrue(os.path.isfile(AUTOSTART_SH))
+        self.assertTrue(os.stat(AUTOSTART_SH).st_mode & stat.S_IXUSR)
+
+    def test_script_presses_start_and_waits_for_live(self):
+        text = read(AUTOSTART_SH)
+        self.assertIn("/api/start", text)
+        self.assertIn("ci-record", text)
+        self.assertIn("live)", text)           # exit 0 only on LIVE
+        self.assertIn("no_dive_autostart", text)  # bench opt-out
+        self.assertNotIn("mpremote", text)     # never touches a board
+        self.assertNotIn("/dev/serial", text)
+        self.assertNotIn("/dev/tty", text)
+
+    def test_script_refuses_a_low_battery(self):
+        """2026-09-10: 4 W on a 3.23 V cell with the charger out reset the Pi
+        in 12 s and a following reset zeroed the netplan wifi profile."""
+        text = read(AUTOSTART_SH)
+        self.assertIn("MIN_VBAT_MV", text)
+        self.assertIn("/api/dashboard", text)
+        self.assertIn("NOT starting the load", text)
+
+    def test_installer_enables_it_at_boot(self):
+        text = read(INSTALLER)
+        m = re.search(r"^\s*autostart\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)",
+                      text, re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("dive-autostart.service", m.group(1))
+        self.assertEqual("yes", m.group(2))
+
+
+AP_UNIT_FILE = os.path.join(HERE, "nereus-ap.service")
+AP_SH = os.path.join(PI, "field", "ap_mode.sh")
+
+
+class TestApSwitch(unittest.TestCase):
+    """The rig as its own wifi network, as a systemd switch (S33)."""
+
+    def test_unit_is_a_root_oneshot_that_stays_active(self):
+        entries = parse_unit(AP_UNIT_FILE)
+        self.assertEqual(["oneshot"], values(entries, "Type"))
+        self.assertEqual(["yes"], values(entries, "RemainAfterExit"))
+        self.assertEqual([], values(entries, "User"))      # nmcli needs root
+        self.assertEqual(["multi-user.target"],
+                         values(entries, "WantedBy", "Install"))
+
+    def test_start_and_stop_are_the_two_halves_of_the_script(self):
+        entries = parse_unit(AP_UNIT_FILE)
+        self.assertIn("ap_mode.sh up", values(entries, "ExecStart")[0])
+        self.assertIn("ap_mode.sh down", values(entries, "ExecStop")[0])
+        self.assertTrue(os.stat(AP_SH).st_mode & stat.S_IXUSR)
+
+    def test_script_is_the_borrowed_recipe_with_nicks_two_changes(self):
+        text = read(AP_SH)
+        self.assertIn("ipv4.method shared", text)         # 10.42.0.1 + DHCP
+        self.assertIn("mode ap", text)
+        self.assertIn('SSID="${AP_SSID:-$(hostname)}"', text)   # SSID = hostname
+        self.assertNotIn("wifi-sec.psk", text)            # no password
+        self.assertIn("connection.autoconnect no", text)  # systemd owns boot
+        self.assertIn('10.42.0.1', text)                  # verified, not assumed
+
+    def test_installer_installs_it_disabled(self):
+        text = read(INSTALLER)
+        m = re.search(r"^\s*ap\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)", text, re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("nereus-ap.service", m.group(1))
+        self.assertEqual("no", m.group(2))
+
+    # -- the fallback: home wifi first, AP if none (Nick, 2026-09-10) --------
+    FALLBACK = os.path.join(HERE, "nereus-ap-fallback.service")
+
+    def test_fallback_unit_runs_auto_at_boot(self):
+        entries = parse_unit(self.FALLBACK)
+        self.assertIn("ap_mode.sh auto", values(entries, "ExecStart")[0])
+        self.assertEqual(["multi-user.target"], values(entries, "WantedBy", "Install"))
+        self.assertIn("AP_FALLBACK_S=60", " ".join(values(entries, "Environment")))
+        m = re.search(r"^\s*ap-fallback\)\s+UNIT=(\S+);\s+AUTOSTART=(\w+)", read(INSTALLER), re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual("nereus-ap-fallback.service", m.group(1))
+        self.assertEqual("yes", m.group(2))
+
+    def _run_auto(self, client_up, tmp):
+        """Drive `ap_mode.sh auto` with a fake nmcli/ip/systemctl on PATH."""
+        import subprocess
+        os.makedirs(os.path.join(tmp, "bin"), exist_ok=True)
+        calls = os.path.join(tmp, "calls")
+        fake_nmcli = (
+            "#!/bin/sh\n"
+            "case \"$*\" in\n"
+            "  *'con show --active'*) %s ;;\n"
+            "  *'802-11-wireless.mode con show'*) echo infrastructure ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n" % ("echo 'wlan0-Ford:wlan0'" if client_up else "true"))
+        fake_ip = ("#!/bin/sh\n%s\n" % ("echo '2: wlan0 inet 192.168.1.35/24 brd'" if client_up else "true"))
+        fake_sysctl = "#!/bin/sh\necho \"systemctl $*\" >> %s\nexit 0\n" % calls
+        for name, body in (("nmcli", fake_nmcli), ("ip", fake_ip), ("systemctl", fake_sysctl)):
+            pth = os.path.join(tmp, "bin", name)
+            with open(pth, "w") as f:
+                f.write(body)
+            os.chmod(pth, 0o755)
+        env = dict(os.environ, PATH=os.path.join(tmp, "bin") + ":" + os.environ["PATH"],
+                   AP_FALLBACK_S="1", AP_SSID="rigx")
+        r = subprocess.run(["bash", AP_SH, "auto"], env=env, capture_output=True,
+                           text=True, timeout=30)
+        made = open(calls).read() if os.path.exists(calls) else ""
+        return r.returncode, r.stdout, made
+
+    def test_down_hands_wlan0_to_the_client_profile_by_name(self):
+        """`nmcli device connect` re-picked the AP as best available
+        (2026-09-10), so down must name the client profile it activates."""
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "bin"))
+            calls = os.path.join(d, "calls")
+            fake_nmcli = (
+                "#!/bin/sh\necho \"nmcli $*\" >> %s\n"
+                "case \"$*\" in\n"
+                "  '-t -f NAME,TYPE con show') printf 'rigx-ap:802-11-wireless\\nwlan0-Ford:802-11-wireless\\nlo:loopback\\n' ;;\n"
+                "  *'802-11-wireless.mode con show rigx-ap'*) echo ap ;;\n"
+                "  *'802-11-wireless.mode con show wlan0-Ford'*) echo infrastructure ;;\n"
+                "  *'connection.autoconnect con show wlan0-Ford'*) echo yes ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n" % calls)
+            for name, body in (("nmcli", fake_nmcli),
+                               ("ip", "#!/bin/sh\ntrue\n"),
+                               ("systemctl", "#!/bin/sh\nexit 0\n")):
+                pth = os.path.join(d, "bin", name)
+                with open(pth, "w") as f:
+                    f.write(body)
+                os.chmod(pth, 0o755)
+            env = dict(os.environ, PATH=os.path.join(d, "bin") + ":" + os.environ["PATH"],
+                       AP_SSID="rigx")
+            r = subprocess.run(["bash", AP_SH, "down"], env=env, capture_output=True,
+                               text=True, timeout=30)
+            made = open(calls).read()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("nmcli con down rigx-ap", made)
+        self.assertIn("nmcli con up wlan0-Ford", made)
+        self.assertNotIn("dev connect", made)
+        self.assertIn("client profile 'wlan0-Ford'", r.stdout)
+
+    def test_auto_stays_a_client_when_home_wifi_is_up(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, calls = self._run_auto(True, d)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("home wifi ok", out)
+        self.assertNotIn("systemctl start nereus-ap", calls)
+
+    def test_auto_raises_the_ap_when_no_client_appears(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, calls = self._run_auto(False, d)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("FALLING BACK to AP", out)
+        self.assertIn("systemctl start nereus-ap\n", calls)
+
+
 class TestShellTooling(unittest.TestCase):
     def test_scripts_are_executable(self):
         for path in (CMD, STATUS, CTL):

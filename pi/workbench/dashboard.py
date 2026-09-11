@@ -53,7 +53,10 @@ CURVE_REFERENCE_WATTS = 2.73
 #: The pinned Channel Islands recipe, measured on nereus002 2026-09-09:
 #: IMX science sw JPEG q90 @1280x800 4.94 + H.264 proxy 0.35
 #: + N6 HD q70 2.86 + AE3 VGA q50 0.15.
-PINNED_RATE_BYTES_S = int(8.30 * 1e6)
+#: 2026-09-10 night: science JPEG dropped (Nick). IMX is one hardware H.264
+#: at 8 Mbps (~1.0 MB/s) + N6 HD q70 2.86 + AE3 VGA q50 0.15 = ~4.0 MB/s.
+#: The H.264 figure is the bitrate setting, not yet a measured file rate.
+PINNED_RATE_BYTES_S = int(4.0 * 1e6)
 
 #: Nick: "15-20 min per dive at most." The pessimistic end is used, because
 #: over-reporting dives remaining is the failure that costs a site.
@@ -262,9 +265,59 @@ def recording(root, now=None):
     }
 
 
+#: CPU temperature (Nick, 2026-09-10 night: "the dashboard needs a CPU
+#: temperature readout, and a warning if it's getting too hot"). Recording
+#: measured 52-70 C in open air on nereus002; the Pi begins soft-throttling
+#: at 80 C and hard-throttles at 85. A sealed housing on a deck in the sun
+#: is the case nobody has measured, hence the warning band starts at 70.
+THERMAL_WARN_C = 70.0
+THERMAL_BAD_C = 80.0
+THERMAL_ZONE = "/sys/class/thermal/thermal_zone0/temp"
+
+
+def _read_temp_c():
+    with open(THERMAL_ZONE) as f:
+        return int(f.read().strip()) / 1000.0
+
+
+def _read_throttled():
+    import subprocess
+    out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
+                         text=True, timeout=3).stdout.strip()
+    return out.split("=", 1)[1] if "=" in out else out
+
+
+def thermal(read_temp=_read_temp_c, read_throttled=_read_throttled):
+    try:
+        t = float(read_temp())
+    except Exception as exc:
+        return {"available": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+    try:
+        thr = read_throttled() or "0x0"
+    except Exception:
+        thr = None
+    try:
+        bits = int(thr, 16) if thr else 0
+    except ValueError:
+        bits = 0
+    # bit 0 under-voltage now, 1 arm freq capped now, 2 throttled now,
+    # 3 soft temp limit now (the 16-19 bits are "has happened since boot")
+    throttled_now = bool(bits & 0xF)
+    if throttled_now or t >= THERMAL_BAD_C:
+        level, note = "bad", "throttling -- footage rate will drop; get it out of the sun"
+    elif t >= THERMAL_WARN_C:
+        level, note = "warn", "hot -- close to the 80 C soft limit"
+    else:
+        level, note = "ok", None
+    return {"available": True, "temp_c": round(t, 1), "throttled": thr,
+            "throttled_now": throttled_now, "level": level, "note": note,
+            "warn_c": THERMAL_WARN_C, "bad_c": THERMAL_BAD_C}
+
+
 def snapshot(root, ring_bytes=None, min_free_bytes=None, runner=None):
     b = battery(runner=runner)
     r = ring(root, ring_bytes, min_free_bytes)
+    th = thermal()
     try:
         rec = recording(root)
     except Exception as exc:
@@ -272,13 +325,13 @@ def snapshot(root, ring_bytes=None, min_free_bytes=None, runner=None):
     return {
         "battery": b,
         "ring": r,
+        "thermal": th,
         "recording": rec,
         "assumptions": {
             "dive_minutes": DIVE_MINUTES,
             "rate_bytes_s": PINNED_RATE_BYTES_S,
-            "rate_note": ("measured 2026-09-09 on nereus002: IMX q90 1280x800 "
-                          "4.94 + proxy 0.35 + N6 HD q70 2.86 + AE3 VGA q50 "
-                          "0.15 = 8.30 MB/s"),
+            "rate_note": ("IMX H.264 8 Mbps ~1.0 (bitrate setting) + N6 HD q70 "
+                          "2.86 + AE3 VGA q50 0.15 (measured 2026-09-09) = ~4.0 MB/s"),
             "battery_note": ("crude: S29 curve (3.20 V -> 78 min, full -> "
                              "~180 min at 2.73 W), scaled by live draw"),
         },
