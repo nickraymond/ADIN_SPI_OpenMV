@@ -922,8 +922,11 @@ def fold_imx(cams):
     merged["label"] = "IMX"
     merged["mjpeg"] = (sci or {}).get("mjpeg")
     merged["mjpeg_bytes"] = (sci or {}).get("mjpeg_bytes") or (sci or {}).get("bytes") or 0
-    merged["mp4"] = (pxy or {}).get("mp4")
-    merged["mp4_bytes"] = (pxy or {}).get("mp4_bytes") or (pxy or {}).get("bytes") or 0
+    # Since 2026-09-10 night the recorder can write the IMX as ONE H.264
+    # (no science JPEG); that entry is labelled IMX and carries the mp4.
+    merged["mp4"] = (pxy or {}).get("mp4") or (sci or {}).get("mp4")
+    merged["mp4_bytes"] = ((pxy or {}).get("mp4_bytes") or (pxy or {}).get("bytes")
+                           if pxy else ((sci or {}).get("mp4_bytes") or (sci or {}).get("bytes"))) or 0
     merged["thumb"] = (sci or {}).get("thumb") or (pxy or {}).get("thumb")
     merged["start_offset_s"] = (sci or {}).get("start_offset_s") or (pxy or {}).get("start_offset_s") or 0
     merged["proxy_geom"] = _geom(pxy) if pxy else None
@@ -1000,7 +1003,7 @@ def viewer_page(m):
         if c.get("mp4"):
             dl.append("<a href='/download/%s/%s'>%s</a>"
                       % (qn(m["name"]), qn(c["mp4"]),
-                         "proxy mp4" if c.get("download_only") else "mp4"))
+                         "proxy mp4" if (c.get("download_only") and c.get("mjpeg")) else "mp4"))
         if c.get("mjpeg"):
             dl.append("<a href='/download/%s/%s'>%s</a>"
                       % (qn(m["name"]), qn(c["mjpeg"]),

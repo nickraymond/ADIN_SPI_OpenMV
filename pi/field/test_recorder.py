@@ -817,6 +817,77 @@ class TestImxStallGuard(unittest.TestCase):
         self.assertIn('kill -INT "$pid"', src)      # Stop still reaches the recorder
 
 
+class TestNoScienceMode(unittest.TestCase):
+    """--science none: ONE hardware H.264 of the main stream is the IMX
+    record (Nick, 2026-09-10 night, to take ~1 W off the battery)."""
+
+    def setUp(self):
+        import importlib
+        self.M = importlib.import_module("imx_dive_recorder")
+
+    def _args(self, science):
+        return self.M.build_parser().parse_args(
+            ["--science", science, "--proxy-bitrate", "8000000"])
+
+    def test_parser_defaults_to_jpeg_and_accepts_none(self):
+        self.assertEqual(self.M.build_parser().parse_args([]).science, "jpeg")
+        self.assertEqual(self._args("none").science, "none")
+
+    def test_manifest_labels_the_lone_h264_as_the_imx(self):
+        man = {"delivered": {"science": {"disabled": True, "bytes": 0},
+                             "proxy": {"path": "IMX.h264", "bytes": 300000000,
+                                       "MB_s": 1.0, "frames": 8990, "fps": 29.97,
+                                       "mp4": "IMX.mp4", "mp4_bytes": 300100000,
+                                       "thumb": "IMX_thumb.jpg"}},
+               "started_utc": "2026-09-11T05:00:00Z", "ended_utc": "2026-09-11T05:05:00Z",
+               "elapsed_s": 300.0, "segment": 0, "problems": []}
+        with tempfile.TemporaryDirectory() as d:
+            out = self.M.merge_session_manifest(d, man, {"mode": "awb-auto"}, self._args("none"))
+        labels = [c["label"] for c in out["cameras"]]
+        self.assertEqual(labels, ["IMX"])
+        imx = out["cameras"][0]
+        self.assertEqual(imx["mp4"], "IMX.mp4")
+        self.assertEqual(imx["frames"], 8990)
+        self.assertEqual(imx["thumb"], "IMX_thumb.jpg")
+        self.assertEqual((imx["w"], imx["h"]), (1280, 800))
+        self.assertNotIn("mjpeg", imx)
+        self.assertEqual(out["settings"]["science"], "none")
+
+    def test_jpeg_mode_still_writes_both_entries(self):
+        man = {"delivered": {"science": {"path": "IMX.mjpeg", "bytes": 10, "frames": 1, "fps": 30.0},
+                             "proxy": {"path": "IMX_proxy.h264", "bytes": 5, "mp4": "IMX_proxy.mp4",
+                                       "mp4_bytes": 6}},
+               "started_utc": "x", "ended_utc": "y", "elapsed_s": 1.0, "segment": 0, "problems": []}
+        with tempfile.TemporaryDirectory() as d:
+            out = self.M.merge_session_manifest(d, man, {}, self._args("jpeg"))
+        self.assertEqual([c["label"] for c in out["cameras"]], ["IMX", "IMX_proxy"])
+
+    def test_review_page_treats_the_lone_imx_mp4_as_the_player(self):
+        import recorder_web as W
+        sess = {"name": "dive_x", "created_iso": "x", "host": "h", "settings": {},
+                "cameras": [{"label": "IMX", "mp4": "IMX.mp4", "frames": 8990,
+                             "delivered_fps": 29.97, "bytes": 300100000,
+                             "thumb": "IMX_thumb.jpg", "w": 1280, "h": 800},
+                            {"label": "N6", "mjpeg": "N6.mjpeg", "written_frames": 9000,
+                             "delivered_fps": 30.0, "mjpeg_bytes": 5, "thumb": "N6_thumb.jpg",
+                             "banner": {"w": 1280, "h": 800}}]}
+        page = W.viewer_page(sess)
+        self.assertEqual(page.count("<video"), 1)
+        self.assertIn("/media/dive_x/IMX.mp4", page)
+        self.assertNotIn("proxy mp4", page)          # it is THE mp4 now
+        self.assertNotIn("mkv(event,'dive_x','IMX')", page)
+        with tempfile.TemporaryDirectory() as d:
+            idx = W.index_page(W.RecorderState(d), [sess], {})
+        self.assertIn("IMX mp4", idx)
+        self.assertIn("IMX 8990 fr @ 30.0 fps", idx)
+
+    def test_launcher_defaults_to_no_science(self):
+        src = open(os.path.join(_HERE, "run_channel_islands.sh")).read()
+        self.assertIn('SCIENCE="${SCIENCE_MODE:-none}"', src)
+        self.assertIn('--science "$SCIENCE"', src)
+        self.assertIn('PROXY_BITRATE="${PROXY_BITRATE:-8000000}"', src)
+
+
 class TestDurableJson(unittest.TestCase):
     """A manifest is either the old one or the new one, never empty.
 

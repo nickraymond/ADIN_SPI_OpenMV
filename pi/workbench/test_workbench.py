@@ -1160,6 +1160,29 @@ class TestHTTP(unittest.TestCase):
         self.assertIn(b"toggleAp", body)
         self.assertIn(b"Switch to AP mode", body)
 
+    def test_thermal_levels(self):
+        """CPU temperature with a warning band (Nick, 2026-09-10 night)."""
+        import dashboard as D
+        ok = D.thermal(read_temp=lambda: 61.2, read_throttled=lambda: "0x0")
+        self.assertEqual((ok["level"], ok["temp_c"], ok["throttled_now"]), ("ok", 61.2, False))
+        warn = D.thermal(read_temp=lambda: 72.0, read_throttled=lambda: "0x0")
+        self.assertEqual(warn["level"], "warn")
+        bad = D.thermal(read_temp=lambda: 81.0, read_throttled=lambda: "0x0")
+        self.assertEqual(bad["level"], "bad")
+        # bit 2 = throttled NOW: red even at a mild temperature
+        now = D.thermal(read_temp=lambda: 65.0, read_throttled=lambda: "0x4")
+        self.assertEqual((now["level"], now["throttled_now"]), ("bad", True))
+        # bit 18 = throttling HAS happened since boot: not now, so not red
+        past = D.thermal(read_temp=lambda: 65.0, read_throttled=lambda: "0x40000")
+        self.assertEqual((past["level"], past["throttled_now"]), ("ok", False))
+        gone = D.thermal(read_temp=lambda: 1 / 0)
+        self.assertFalse(gone["available"])
+
+    def test_page_carries_the_temperature_tile(self):
+        code, body = self.req("GET", "/")
+        self.assertIn(b"CPU temperature", body)
+        self.assertIn(b"THROTTLING", body)
+
     def test_devmode_reports_boards(self):
         code, body = self.req("POST", "/api/devmode")
         self.assertEqual(code, 200)

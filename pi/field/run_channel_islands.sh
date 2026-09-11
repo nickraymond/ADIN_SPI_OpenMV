@@ -28,6 +28,11 @@ WB="${WB_MODE:-auto}"                 # auto = ordinary recording (card 1)
 FOCUS="${FOCUS_MODE:-manual}"
 LENS="${LENS_POSITION:-1.82}"         # dioptres; bm_cam_legacy bmcam000
 JPEG_Q="${JPEG_Q:-90}"
+# IMX as ONE hardware H.264 of the full 1280x800 main stream, no software
+# JPEG (Nick, 2026-09-10 night: the JPEG was ~1 W of the 4.6 W total and the
+# battery could not carry it). SCIENCE_MODE=jpeg restores the two-file form.
+SCIENCE="${SCIENCE_MODE:-none}"
+PROXY_BITRATE="${PROXY_BITRATE:-8000000}"
 BOARDS="${BOARDS:-N6,AE3}"
 
 # Same interpreter problem, same solution as run_recorder.sh: mpremote lives
@@ -57,7 +62,7 @@ SYS_PY="$(command -v python3)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 PREFIX="dive_$STAMP"
 mkdir -p "$ROOTDIR" || { echo "channel-islands: cannot create $ROOTDIR" >&2; exit 1; }
-echo "channel-islands: prefix=$PREFIX segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS q=$JPEG_Q" >&2
+echo "channel-islands: prefix=$PREFIX segment=${SEGMENT_S}s wb=$WB focus=$FOCUS lens=$LENS science=$SCIENCE h264=${PROXY_BITRATE}bps q=$JPEG_Q" >&2
 
 CHILDREN=()
 cleanup() {
@@ -94,6 +99,7 @@ imx_supervisor() {
       --root "$ROOTDIR" --session-prefix "$PREFIX" --recipe channel-islands \
       --segment-s "$SEGMENT_S" --jpeg-q "$JPEG_Q" \
       --wb "$WB" --focus "$FOCUS" --lens-position "$LENS" \
+      --science "$SCIENCE" --proxy-bitrate "$PROXY_BITRATE" \
       --first-segment "$next" &
     pid=$!
     wait "$pid"; rc=$?

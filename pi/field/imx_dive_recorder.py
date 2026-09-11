@@ -180,13 +180,15 @@ class DiveRecorder:
         from picamera2 import Picamera2
         a = self.args
         self.cam = Picamera2()
+        streams = {"main": {"size": tuple(a.science_size), "format": "YUV420"}}
+        if a.science == "jpeg":
+            streams["lores"] = {"size": tuple(a.proxy_size), "format": "YUV420"}
         cfg = self.cam.create_video_configuration(
-            main={"size": tuple(a.science_size), "format": "YUV420"},
-            lores={"size": tuple(a.proxy_size), "format": "YUV420"},
             controls={"FrameDurationLimits": (int(1e6 / a.fps),
                                               int(1e6 / a.fps))},
             buffer_count=a.buffers,
             raw=None,               # Bayer is ~50 MB/s; never a video candidate
+            **streams
         )
         self.cam.configure(cfg)
 
@@ -342,11 +344,25 @@ class DiveRecorder:
         # about which camera he was looking at.
         seg_dir = self.segment_dir(index)
         os.makedirs(seg_dir, exist_ok=True)
+        if a.science == "none":
+            # NO SCIENCE JPEG (Nick, 2026-09-10 night): the software JPEG at
+            # q90 1280x800 ran all four cores and was the single biggest
+            # load on a rig whose battery could not carry it. The IMX is
+            # recorded ONCE, as hardware H.264 of the full main stream, and
+            # that file is both the record and what the iPad plays.
+            sci, sci_path = None, None
+            pxy_path = os.path.join(seg_dir, "IMX.h264")
+            pxy = H264Encoder(bitrate=a.proxy_bitrate)
+            self._sci_out = self._counting_output(pxy_path)
+            self._counted_path = pxy_path
+            self.cam.start_encoder(pxy, self._sci_out, name="main")
+            return sci, pxy, sci_path, pxy_path
         sci_path = os.path.join(seg_dir, "IMX.mjpeg")
         pxy_path = os.path.join(seg_dir, "IMX_proxy.h264")
         sci = JpegEncoder(q=a.jpeg_q, num_threads=a.jpeg_threads)
         pxy = H264Encoder(bitrate=a.proxy_bitrate)
         self._sci_out = self._counting_output(sci_path)
+        self._counted_path = sci_path
         self.cam.start_encoder(sci, self._sci_out, name="main")
         self.cam.start_encoder(pxy, FileOutput(pxy_path), name="lores")
         return sci, pxy, sci_path, pxy_path
@@ -419,7 +435,8 @@ class DiveRecorder:
         # Rule 2: only the encoders stop. The camera keeps running, so the
         # WB lock and the sensor's state survive into the next segment.
         gains_at_end = _jsonable(self._meta().get("ColourGains"))
-        if call_with_timeout(lambda: self.cam.stop_encoder([sci, pxy]), 15, "ok") is None:
+        live = [e for e in (sci, pxy) if e is not None]
+        if call_with_timeout(lambda: self.cam.stop_encoder(live), 15, "ok") is None:
             print("WARNING: stop_encoder did not return in 15 s", file=sys.stderr, flush=True)
         elapsed = time.time() - t_start
         self.write_status(index, t_start, elapsed=elapsed, closing=True)
@@ -446,21 +463,27 @@ class DiveRecorder:
             "delivered": {},
             "problems": [],
         }
+        counted_path = getattr(self, "_counted_path", sci_path)
         for label, path in (("science", sci_path), ("proxy", pxy_path)):
+            if path is None:
+                man["delivered"][label] = {"disabled": True, "bytes": 0,
+                                           "frames": None, "MB_s": None}
+                continue
             size = os.path.getsize(path) if os.path.exists(path) else 0
             d = {"path": os.path.basename(path), "bytes": size,
                  "MB_s": round(size / elapsed / 1e6, 2) if elapsed else None}
-            if label == "science":
+            if path == counted_path:
                 # Counted in flight; the file scan stays only as a fallback
                 # for an output that never reported, and the manifest records
                 # which of the two produced the number.
                 counted = getattr(self, "_sci_out", None)
                 in_flight = counted.frames if counted is not None else 0
-                d["frames"] = in_flight or _count_soi(path)
+                d["frames"] = in_flight or (_count_soi(path) if label == "science" else 0)
                 d["frames_counted_in_flight"] = bool(in_flight)
                 d["fps"] = round(d["frames"] / elapsed, 2) if elapsed else None
                 if not d["frames"]:
-                    man["problems"].append("science segment has NO frames")
+                    man["problems"].append("%s segment has NO frames"
+                                           % ("science" if label == "science" else "IMX"))
             man["delivered"][label] = d
         if not man["problems"] and man["delivered"]["proxy"]["bytes"] == 0:
             man["problems"].append("proxy segment is empty")
@@ -485,10 +508,19 @@ class DiveRecorder:
             mp4_path = pxy_path.rsplit(".", 1)[0] + ".mp4"
             ok, why = mux_h264_to_mp4(
                 pxy_path, mp4_path,
-                (man["delivered"].get("science") or {}).get("fps") or a.fps)
+                pxy.get("fps")
+                or (man["delivered"].get("science") or {}).get("fps") or a.fps)
             if ok:
                 pxy["mp4"] = os.path.basename(mp4_path)
                 pxy["mp4_bytes"] = os.path.getsize(mp4_path)
+                if a.science == "none":
+                    # No JPEG stream to lift a frame from: decode ONE frame
+                    # of the mp4 (bounded), so the index still shows a picture.
+                    th_path = os.path.join(seg_dir, "IMX_thumb.jpg")
+                    if thumb_from_mp4(mp4_path, th_path):
+                        pxy["thumb"] = os.path.basename(th_path)
+                    else:
+                        man["problems"].append("IMX thumbnail not written")
             else:
                 man["problems"].append("proxy not muxed to mp4: %s" % why)
 
@@ -595,6 +627,20 @@ class DiveRecorder:
         return self.segments
 
 
+def thumb_from_mp4(mp4_path, thumb_path, at_s=1.0):
+    """One decoded frame as JPEG. ~1 s of one core; bounded at 30 s."""
+    if not shutil.which("ffmpeg"):
+        return False
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.1f" % at_s,
+             "-i", mp4_path, "-frames:v", "1", "-q:v", "4", thumb_path],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0
+
+
 def mux_h264_to_mp4(h264_path, mp4_path, fps):
     """Wrap the raw H.264 in MP4 so it will actually PLAY.
 
@@ -656,7 +702,19 @@ def merge_session_manifest(seg_dir, man, locked, args):
             "w": args.science_size[0], "h": args.science_size[1],
             "kind": "science (JPEG q%d)" % args.jpeg_q,
         })
-    if pxy.get("mp4"):
+    if pxy.get("mp4") and getattr(args, "science", "jpeg") == "none":
+        # No science stream: the H.264 of the main stream IS the IMX record.
+        pfps = pxy.get("fps") or args.fps
+        mine.append({
+            "label": "IMX", "mp4": pxy["mp4"], "thumb": pxy.get("thumb"),
+            "capture_fps": pfps, "delivered_fps": pfps,
+            "frames": pxy.get("frames"),
+            "bytes": pxy.get("mp4_bytes") or pxy.get("bytes"),
+            "mb_per_s": pxy.get("MB_s"),
+            "w": args.science_size[0], "h": args.science_size[1],
+            "kind": "H.264 %d kbps (hardware), plays as-is" % (args.proxy_bitrate // 1000),
+        })
+    elif pxy.get("mp4"):
         mine.append({
             "label": "IMX_proxy", "mp4": pxy["mp4"], "capture_fps": fps,
             "bytes": pxy.get("mp4_bytes") or pxy.get("bytes"),
@@ -683,8 +741,10 @@ def merge_session_manifest(seg_dir, man, locked, args):
         "elapsed_s": man["elapsed_s"], "problems": man["problems"],
     }
     out.setdefault("settings", {}).update({
+        "science": getattr(args, "science", "jpeg"),
         "science_size": args.science_size, "jpeg_q": args.jpeg_q,
-        "proxy_size": args.proxy_size, "fps": args.fps,
+        "proxy_size": args.proxy_size, "proxy_bitrate": args.proxy_bitrate,
+        "fps": args.fps,
     })
     # fsync before the rename: a hard reset on 2026-09-10 left a segment's
     # manifest.json at zero bytes with the plain tmp+rename this replaced.
@@ -729,6 +789,11 @@ def build_parser():
                         "launcher passes the SAME prefix to the board "
                         "recorder so a dive is one event with all cameras.")
     p.add_argument("--recipe", default="imx-dive-default")
+    p.add_argument("--science", choices=("jpeg", "none"), default="jpeg",
+                   help="jpeg = software JPEG science stream + H.264 proxy of "
+                        "the lores stream (2 files); none = ONE hardware H.264 "
+                        "of the main stream at --science-size, no JPEG "
+                        "(about 1 W less on a Zero 2 W, Nick 2026-09-10)")
     p.add_argument("--science-size", type=int, nargs=2, default=[1280, 800])
     p.add_argument("--jpeg-q", type=int, default=90,
                    help="Nick 2026-09-09: q90 at 1280x800 is sufficient")
