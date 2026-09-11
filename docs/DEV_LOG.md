@@ -113,6 +113,39 @@ there"):**
   the phone unlinked the unit before its stop script ran. Units must be
   installed as real copies (`install_stream_service.sh ap` / `ap-fallback`).
 
+**LATE NIGHT -- the battery, the camera stall, and the recorder that came
+out of it (22:10 - 23:03 PDT):**
+- Battery run #1 (charger out at 3.31 V under load, four streams): the rig
+  left the LAN within 4 min. It was NOT down -- the USB ethernet adapter
+  dropped and the AP kept broadcasting; Nick read 3.26 V on the phone via
+  10.42.0.1. Nick's call: drop the IMX science JPEG (software, ~1 W).
+- **Camera stall found:** 55 s after a boot libcamera logged "Camera
+  frontend has timed out!", the sensor stopped, and the recorder hung in
+  capture_metadata() forever with problems=[] while the boards recorded on.
+  Fixed: bounded camera waits, a StallWatch that closes the segment with
+  "IMX STALLED" and exits 3, and the launcher relaunches at the next
+  segment. A wedged recorder ignored SIGINT/SIGTERM and left the runner
+  "stuck" until a workbench restart; the runner now returns to idle by
+  itself once the process is gone.
+- **`--science none`** (the trip recipe): ONE hardware H.264 of the full
+  1280x800 main stream at 8 Mbps, labelled IMX, played as-is. First form
+  stopped the encoder per segment: stop + a two-pass mux of 300 MB +
+  thumbnail took ~70 s with nothing recorded (23% of every segment). Now
+  a SplittableOutput switches the file at the next keyframe (iperiod=fps,
+  repeat=True) and a worker thread does the mux/thumb/manifest. Measured
+  23:00:57-58: next file born 1 s before the old one ended; segment 0 =
+  8983 frames @ 29.87 fps, 300 MB mp4, thumb, manifest, no problems, while
+  segment 1 recorded through the mux.
+- Two of my own "plausible artefact" bugs on the way: the H.264 loop was
+  dispatched AFTER run() had opened the camera (second Picamera2() ->
+  "Device or resource busy", twice); and call_with_timeout returned None
+  for both "timed out" and "returned None", so every successful file switch
+  read as a stall (ten relaunches in 90 s). Fixed with a TIMEOUT sentinel.
+- Draw with the JPEG gone: 3.3-4.0 W (was 4.4-4.6). The saving is ~0.5 W,
+  not the ~1 W estimated; the cell, not the recipe, decides runtime.
+- Dashboard: CPU temperature tile (yellow >= 70 C, red >= 80 C or when the
+  firmware reports throttling now).
+
 **Not done / owed:**
 - A real power-cycle proof of record-on-boot (Nick, tonight, Pi+ button).
 - `nmcli ... powersave 2` reads `disable` on the rig already -- that root
