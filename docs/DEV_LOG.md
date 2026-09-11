@@ -82,6 +82,12 @@ housing pressure test.
 - The dashboard's battery figure on the charger is the CHARGE voltage
   (3.62 V shown while the cell rested at 3.18 V), so "dives remaining" is
   meaningless while plugged in. Not fixed; flagged.
+- Wifi restored: Nick recreated the profile with `nmcli --ask dev wifi
+  connect` (now a keyfile under `/etc/NetworkManager/system-connections/`,
+  not netplan); verified over wifi alone with the ethernet adapter pulled.
+- Journal now persistent: `Storage=persistent` drop-in + `journalctl
+  --flush` (the flush is the step that was missing; the bringup skill now
+  says so). Manifests now fsync before rename (`write_json_durable`).
 - Guard added: `dive_autostart.sh` refuses to start the load on battery
   below `MIN_VBAT_MV` (3250) and says why. Driven against a fake workbench
   in all four battery states.

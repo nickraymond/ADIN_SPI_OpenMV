@@ -155,6 +155,20 @@ ls /sys/bus/usb/drivers/usb-storage/ | grep -c ':'  # must be 0
 lsusb | grep 37c5   # 37c5:16e3 = AE3, 37c5:1206 = N6 -- both present
 ```
 
+**Make the journal persistent too.** Raspberry Pi OS keeps the journal in
+RAM, so a crash boot leaves NO log of itself -- on 2026-09-10 the only
+witness to five brown-out resets was the power-log CSV. An empty
+`/var/log/journal/` directory is not enough; journald only adopts it after
+a flush:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=persistent\n' | sudo tee /etc/systemd/journald.conf.d/persist.conf
+sudo systemctl restart systemd-journald && sudo journalctl --flush
+ls /var/log/journal/          # must show a <machine-id> directory
+journalctl --list-boots       # grows by one per boot from now on
+```
+
 ## 4. The usb-storage rule in detail
 
 `pi/field/usb_msc_off.sh` installs `99-openmv-no-msc.rules` and unbinds
