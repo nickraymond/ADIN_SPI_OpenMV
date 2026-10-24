@@ -42,6 +42,11 @@ services = []                # systemd units this test needs shown in
 [[boards]]                   # one per board the test owns
 label = "AE3"                # display name
 by_id = "usb-OpenMV_..."     # name under /dev/serial/by-id — NEVER ttyACM
+# role = "AE3"               # ...or a ROLE ("AE3" / "N6") instead of by_id:
+                             # whichever board answers that role at run time
+# optional = true            # the demo still runs without this board, so
+                             # its absence does not grey the card out
+                             # (cannot be combined with firmware/models)
 firmware = "v5.0.0-52...."   # optional: substring of the board's
                              # sys.version; drift REFUSES the run
 # [[boards.models]]          # optional: files that must be on the board
@@ -58,6 +63,24 @@ cwd  = "."                   # relative to the repo root
 [health]
 http = "http://127.0.0.1:8090/"   # LIVE = this answers 200
 ```
+
+## Greyed-out cards (a board is missing)
+
+A card whose boards are not all plugged in is **greyed out with Start
+disabled** and says what is missing ("needs AE3 — not connected").
+`/api/start` refuses the same recipe with a 409 naming the board, so a
+script cannot start it either. Only non-optional boards count; a held
+port does not grey a card (Start names the holder instead).
+
+- **by_id board**: missing = no `/dev/serial/by-id/<by_id>`.
+- **role board**: missing = no by-id entry whose name starts with the
+  role's USB strings — `usb-OpenMV_OpenMV_Camera_*` (AE3),
+  `usb-MicroPython_Pyboard_*` (N6; FS or HS mode, any interface), per
+  SPEC §Board identity. This is a presence hint only, read without
+  opening a port; which port *is* the AE3 is still asked of the board at
+  run time (`pi/field/discover.py`). A by-id entry matching neither shows
+  in preflight as `unrecognised` — if a new board enumerates with other
+  strings, update `ROLE_BY_ID_PREFIXES` in `workbench.py`.
 
 ## What Start actually does
 

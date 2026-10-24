@@ -363,12 +363,21 @@ class TestRolePreflight(unittest.TestCase):
         self.assertEqual(got["candidates"], 0)
 
     def test_ready_counts_candidates_without_naming_them(self):
-        d = self._dev(["usb-A-if00", "usb-B-if00"])
+        # Only by-id names carrying the role's USB strings count (2026-10-24:
+        # counting every port reported "AE3 ready" with only an N6 plugged).
+        d = self._dev(["usb-OpenMV_OpenMV_Camera_A-if00",
+                       "usb-MicroPython_Pyboard_B-if00"])
         got = workbench.role_preflight("AE3", dev_dir=d, proc="/nonexistent")
         self.assertEqual(got["state"], "ready")
-        self.assertEqual(got["candidates"], 2)
+        self.assertEqual(got["candidates"], 1)
         # It must NOT claim a tty for a role -- that needs a port open.
         self.assertIsNone(got["tty"])
+
+    def test_other_boards_do_not_make_a_role_ready(self):
+        d = self._dev(["usb-MicroPython_Pyboard_B-if00", "usb-A-if00"])
+        got = workbench.role_preflight("AE3", dev_dir=d, proc="/nonexistent")
+        self.assertEqual(got["state"], "waiting")
+        self.assertEqual(got["unrecognised"], ["usb-A-if00"])
 
     def test_key_is_namespaced_so_roles_and_by_ids_cannot_collide(self):
         got = workbench.role_preflight("N6", dev_dir=self._dev([]))

@@ -19,6 +19,7 @@ thumbnail = "thumbs/field_streams.jpg"
 [[boards]]
 label = "AE3"
 role = "AE3"
+optional = true   # runs on the N6 alone and reports the AE3 as not found
 
 [[boards]]
 label = "N6"
