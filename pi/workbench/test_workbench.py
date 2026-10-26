@@ -1065,7 +1065,9 @@ class TestHTTP(unittest.TestCase):
         # good-one's board is not in the fake /dev tree -> waiting.
         code, body = self.req("POST", "/api/start", {"name": "good-one"})
         self.assertEqual(code, 409)
-        self.assertIn("not enumerated", json.loads(body)["err"])
+        err = json.loads(body)["err"]
+        self.assertIn("needs AE3 -- not connected", err)
+        self.assertIn("usb-x-if00", err)
 
     def test_stop_when_idle_is_idempotent(self):
         code, body = self.req("POST", "/api/stop")
@@ -1095,6 +1097,235 @@ class TestHTTP(unittest.TestCase):
             self.assertEqual(code, 404, (method, path))
 
 
+# ---------------------------------------------------------------------------
+# Availability (Nick 2026-10-24): a recipe whose boards are missing is greyed
+# out and cannot be started -- page and /api/start share one verdict.
+# ---------------------------------------------------------------------------
+
+AE3_ID = "usb-OpenMV_OpenMV_Camera_0829c14000000000-if00"
+N6_FS = ("usb-MicroPython_Pyboard_Virtual_Comm_Port_in_FS_Mode_"
+         "020023000450433547373200-if00")
+N6_HS = ("usb-MicroPython_Pyboard_Virtual_Comm_Port_in_HS_Mode_"
+         "0065345D3643-if01")
+
+
+def role_recipe(name="field-x", ae3_optional=False):
+    return {"name": name, "title": name, "boards": [
+        {"label": "AE3", "by_id": None, "role": "AE3",
+         "optional": ae3_optional},
+        {"label": "N6", "by_id": None, "role": "N6", "optional": False}]}
+
+
+class TestOptionalSchema(unittest.TestCase):
+    def test_optional_board_valid_and_defaults_false(self):
+        out, errs = errs_of(recipe(boards=[
+            {"label": "AE3", "role": "AE3", "optional": True},
+            {"label": "N6", "role": "N6"}]))
+        self.assertEqual(errs, [])
+        self.assertEqual([b["optional"] for b in out["boards"]],
+                         [True, False])
+
+    def test_optional_must_be_a_bool(self):
+        out, errs = errs_of(recipe(boards=[
+            {"label": "AE3", "role": "AE3", "optional": "yes"}]))
+        self.assertIsNone(out)
+        self.assertTrue(any("optional must be true or false" in e
+                            for e in errs), errs)
+
+    def test_optional_board_cannot_pin_firmware(self):
+        out, errs = errs_of(recipe(boards=[
+            {"label": "AE3", "by_id": "usb-x", "optional": True,
+             "firmware": "v5.0.1"}]))
+        self.assertIsNone(out)
+        self.assertTrue(any("optional board cannot" in e for e in errs), errs)
+
+    def test_unknown_role_rejected(self):
+        # A role preflight cannot detect would read "not connected" forever.
+        out, errs = errs_of(recipe(boards=[{"label": "X", "role": "H7"}]))
+        self.assertIsNone(out)
+        self.assertTrue(any("role must be one of AE3, N6" in e
+                            for e in errs), errs)
+
+
+class TestRolePreflight(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeBench()
+        self.addCleanup(self.fake.cleanup)
+
+    def role(self, r):
+        return workbench.role_preflight(r, self.fake.dev, self.fake.proc)
+
+    def test_only_n6_plugged_means_ae3_waiting(self):
+        # The nereus001 case Nick hit: the old check counted every -if00
+        # and reported "AE3 ready, candidates 1" with only an N6 attached.
+        self.fake.add_board(N6_FS, "ttyACM0")
+        self.assertEqual(self.role("AE3")["state"], "waiting")
+        self.assertEqual(self.role("AE3")["candidates"], 0)
+        self.assertEqual(self.role("N6")["state"], "ready")
+        self.assertEqual(self.role("N6")["candidates"], 1)
+
+    def test_both_boards_ready(self):
+        self.fake.add_board(AE3_ID, "ttyACM0")
+        self.fake.add_board(N6_FS, "ttyACM1")
+        self.assertEqual(self.role("AE3")["state"], "ready")
+        self.assertEqual(self.role("N6")["state"], "ready")
+
+    def test_hs_mode_n6_on_if01_counts(self):
+        # discover.py: nereus000's N6 enumerated in HS mode as -if01.
+        self.fake.add_board(N6_HS, "ttyACM0")
+        self.assertEqual(self.role("N6")["state"], "ready")
+
+    def test_aliases_of_one_tty_count_once(self):
+        self.fake.add_board(N6_FS, "ttyACM0")
+        os.symlink(os.path.join("..", "..", "ttyACM0"),
+                   os.path.join(self.fake.dev, N6_FS[:-5] + "-if01"))
+        self.assertEqual(self.role("N6")["candidates"], 1)
+
+    def test_unrecognised_entry_is_listed_not_counted(self):
+        self.fake.add_board("usb-FTDI_FT232R_A1-if00", "ttyUSB0")
+        st = self.role("AE3")
+        self.assertEqual(st["state"], "waiting")
+        self.assertEqual(st["unrecognised"], ["usb-FTDI_FT232R_A1-if00"])
+
+    def test_all_role_ports_held_is_held(self):
+        real = os.path.realpath(self.fake.add_board(N6_FS, "ttyACM0"))
+        self.fake.add_process(55, "python3 mpremote", fds=[real])
+        st = self.role("N6")
+        self.assertEqual(st["state"], "held")
+        self.assertEqual(st["holders"][0]["pid"], 55)
+
+
+class TestAvailability(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeBench()
+        self.addCleanup(self.fake.cleanup)
+
+    def pf(self, recipes):
+        return preflight(recipes, dev_dir=self.fake.dev, proc=self.fake.proc,
+                         runner=lambda u: "inactive",
+                         disk_path=self.fake.root)
+
+    def test_missing_role_board_makes_recipe_unavailable(self):
+        self.fake.add_board(N6_FS)
+        av = self.pf([role_recipe()])["recipes"]["field-x"]
+        self.assertFalse(av["ok"])
+        self.assertEqual([m["label"] for m in av["missing"]], ["AE3"])
+        self.assertIn("needs AE3 -- not connected", av["why"])
+        self.assertIn("usb-OpenMV_OpenMV_Camera_*", av["why"])
+
+    def test_missing_optional_board_stays_available(self):
+        self.fake.add_board(N6_FS)
+        av = self.pf([role_recipe(ae3_optional=True)])["recipes"]["field-x"]
+        self.assertTrue(av["ok"], av)
+
+    def test_missing_by_id_board_named(self):
+        r = {"name": "pair", "title": "p", "boards": [
+            {"label": "AE3", "by_id": AE3_ID, "role": None},
+            {"label": "N6", "by_id": N6_FS, "role": None}]}
+        av = self.pf([r])["recipes"]["pair"]
+        self.assertEqual([m["label"] for m in av["missing"]], ["AE3", "N6"])
+        self.assertIn("needs AE3 + N6", av["why"])
+        self.assertIn("/dev/serial/by-id/" + AE3_ID, av["why"])
+
+    def test_held_port_is_not_unavailability(self):
+        # Held is transient and Start already names the holder; greying the
+        # card would hide that message.
+        real = os.path.realpath(self.fake.add_board(AE3_ID))
+        self.fake.add_process(9, "python3 other.py", fds=[real])
+        r = {"name": "one", "title": "o", "boards": [
+            {"label": "AE3", "by_id": AE3_ID, "role": None}]}
+        self.assertTrue(self.pf([r])["recipes"]["one"]["ok"])
+
+    def test_guide_cards_carry_no_verdict(self):
+        g = {"name": "how", "title": "h", "boards": [], "guide": "g.html"}
+        self.assertNotIn("how", self.pf([g])["recipes"])
+
+    def test_shipped_recipes_on_an_n6_only_rig(self):
+        # nereus001 on 2026-10-24: only this N6 plugged in.
+        self.fake.add_board(N6_FS)
+        recipes, _ = load_recipes(workbench.RECIPE_DIR)
+        av = self.pf(recipes)["recipes"]
+        self.assertFalse(av["hil-aiming"]["ok"])
+        self.assertTrue(av["n6-detect-stream"]["ok"])
+        for name in ("field-streams", "video-doe", "field-raw-composite",
+                     "field-composite", "video-record"):
+            self.assertTrue(av[name]["ok"], (name, av[name]))
+
+
+class TestHTTPAvailability(unittest.TestCase):
+    """/api/start refuses an unavailable recipe -- the page is not the only
+    client -- and role boards finally reach the start-time port checks."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fake = FakeBench()
+        cls.n6_tty = os.path.realpath(cls.fake.add_board(N6_FS))
+        cls.rdir = tempfile.mkdtemp(prefix="wb_avail_recipes_")
+        for name, opt in (("needs-ae3", "false"), ("n6-alone", "true")):
+            with open(os.path.join(cls.rdir, name + ".toml"), "w") as fh:
+                fh.write('name = "%s"\ntitle = "t"\n'
+                         '[[boards]]\nlabel = "AE3"\nrole = "AE3"\n'
+                         'optional = %s\n'
+                         '[[boards]]\nlabel = "N6"\nrole = "N6"\n'
+                         '[run]\nargv = %s\n'
+                         % (name, opt, json.dumps(SLEEPER)))
+        cls.tmp = tempfile.mkdtemp(prefix="wb_avail_run_")
+        cls.runner = Runner(repo=cls.tmp,
+                            pidfile=os.path.join(cls.tmp, "run.json"),
+                            logpath=os.path.join(cls.tmp, "run.log"))
+        cls.runner.SETTLE = 0.0
+        cls.runner.GRACE_INT = 0.5
+        cfg = {"recipe_dir": cls.rdir, "dev_dir": cls.fake.dev,
+               "proc": cls.fake.proc, "runner": lambda u: "inactive",
+               "disk_path": cls.fake.root}
+        cls.httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0), workbench.make_handler(cfg, cls.runner))
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.runner.stop()
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.fake.cleanup()
+        shutil.rmtree(cls.rdir, ignore_errors=True)
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    req = TestHTTP.req
+
+    def test_preflight_carries_per_recipe_verdicts(self):
+        code, body = self.req("GET", "/api/preflight")
+        av = json.loads(body)["recipes"]
+        self.assertFalse(av["needs-ae3"]["ok"])
+        self.assertTrue(av["n6-alone"]["ok"])
+
+    def test_start_unavailable_recipe_refused_409(self):
+        code, body = self.req("POST", "/api/start", {"name": "needs-ae3"})
+        self.assertEqual(code, 409)
+        obj = json.loads(body)
+        self.assertIn("needs AE3 -- not connected", obj["err"])
+        self.assertEqual([m["label"] for m in obj["missing"]], ["AE3"])
+        self.assertEqual(self.runner.state, "idle")
+
+    def test_start_with_only_optional_board_missing_runs(self):
+        code, body = self.req("POST", "/api/start", {"name": "n6-alone"})
+        try:
+            self.assertEqual(code, 200, body)
+        finally:
+            self.assertEqual(self.runner.stop(), "idle")
+
+    def test_held_role_port_now_refused_at_start(self):
+        # Before this fix role boards never reached runner.start's checks.
+        self.fake.add_process(4343, "python3 foreign.py", fds=[self.n6_tty])
+        try:
+            code, body = self.req("POST", "/api/start", {"name": "n6-alone"})
+            self.assertEqual(code, 409)
+            self.assertIn("pid 4343", json.loads(body)["err"])
+        finally:
+            shutil.rmtree(os.path.join(self.fake.proc, "4343"))
+
+
 class TestShipsWith(unittest.TestCase):
     """The unit file and installer must agree with the code they launch."""
 
@@ -1112,6 +1343,16 @@ class TestShipsWith(unittest.TestCase):
         text = self.read(INSTALLER)
         self.assertIn(
             "workbench) UNIT=workbench.service;         AUTOSTART=yes", text)
+
+    def test_page_greys_on_the_server_verdict(self):
+        # The page must use preflight's per-recipe verdict (the one
+        # /api/start refuses on), not re-derive availability itself.
+        with open(os.path.join(HERE, "static", "workbench.html"), "rb") as fh:
+            page = fh.read().decode("utf-8")
+        self.assertIn("pf.recipes", page)
+        self.assertIn('card${unavailable ? " unavailable"', page)
+        self.assertIn("not connected", page)
+        self.assertIn("!unavailable", page)
 
     def test_page_file_ships(self):
         self.assertTrue(

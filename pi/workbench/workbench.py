@@ -68,7 +68,7 @@ DISK_MIN_FREE_MB = 500
 
 TOP_KEYS = {"name", "title", "summary", "opens", "thumbnail", "services",
             "boards", "run", "health", "guide", "params"}
-BOARD_KEYS = {"label", "by_id", "role", "firmware", "models"}
+BOARD_KEYS = {"label", "by_id", "role", "firmware", "models", "optional"}
 MODEL_KEYS = {"name", "path", "sha256", "src"}
 RUN_KEYS = {"argv", "cwd", "stop_grace"}
 STOP_GRACE_MAX = 120
@@ -83,6 +83,19 @@ PARAM_VAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 THUMB_RE = re.compile(r"^thumbs/[A-Za-z0-9._-]+$")
 GUIDE_RE = re.compile(r"^guides/[A-Za-z0-9._-]+\.html$")
+
+# What a ROLE board's /dev/serial/by-id name starts with -- the USB
+# manufacturer/product strings each board's firmware enumerates with (SPEC
+# §Board identity, read live 2026-08-20 and again after the S32 flash
+# 2026-09-08). This is a PRESENCE hint for preflight, never an identity: it
+# only decides whether a role recipe's card can be offered at all. Which
+# port IS the AE3 is still settled at run time by asking the board
+# (pi/field/discover.py, omv.board_type()). Prefixes, not -if00 names: an N6
+# in USB HS mode enumerates as ..._in_HS_Mode_<serial>-if01 (discover.py).
+ROLE_BY_ID_PREFIXES = {
+    "AE3": ("usb-OpenMV_OpenMV_Camera_",),
+    "N6": ("usb-MicroPython_Pyboard_",),
+}
 
 
 def _unknown(obj, allowed, where, errs):
@@ -118,6 +131,9 @@ def _validate_board(b, i, errs):
     # port is which without one.
     by_id = _str(b, "by_id", where, errs)
     role = _str(b, "role", where, errs)
+    if role and role not in ROLE_BY_ID_PREFIXES:
+        errs.append("%s: role must be one of %s" % (
+            where, ", ".join(sorted(ROLE_BY_ID_PREFIXES))))
     if by_id and role:
         errs.append("%s: give by_id or role, not both" % where)
     if not by_id and not role:
@@ -153,8 +169,19 @@ def _validate_board(b, i, errs):
                         % mw)
         out_models.append({"name": name, "path": path, "sha256": sha,
                            "src": src})
+    # optional = the demo still runs (degraded) without this board, so its
+    # absence must not grey the card out. It cannot pin firmware or models:
+    # reconcile would have to probe a board that may not be there.
+    optional = b.get("optional", False)
+    if not isinstance(optional, bool):
+        errs.append("%s: optional must be true or false" % where)
+        optional = False
+    if optional and (firmware or out_models):
+        errs.append("%s: an optional board cannot declare firmware or "
+                    "models (reconcile needs the board present)" % where)
     return {"label": label, "by_id": by_id, "role": role,
-            "firmware": firmware, "models": out_models}
+            "firmware": firmware, "models": out_models,
+            "optional": optional}
 
 
 def validate_recipe(obj, source):
@@ -423,17 +450,29 @@ def keys_overlap(a, b):
 def role_preflight(role, dev_dir=BY_ID_DIR, proc="/proc"):
     """Passive state for a ROLE-named board, without opening any port.
 
-    This deliberately does NOT say "the AE3 is ready" -- it cannot, because
-    knowing which port is the AE3 means asking the board, and preflight is
-    forbidden from opening a serial port (D45; the lock, not the panel, is the
-    correctness mechanism). Claiming a per-role verdict here would be
-    inventing a hardware fact. What it CAN say honestly is how many candidate
-    ports exist and whether anything is holding them.
+    Presence comes from the by-id NAME (ROLE_BY_ID_PREFIXES): with only an
+    N6 plugged in, the AE3 role is "waiting", not "ready". That is all this
+    says -- which port is which role is still asked of the board at run time
+    (D45: preflight opens no serial port). Every by-id entry is considered
+    (not just -if00) and deduplicated by the tty it resolves to, as in
+    pi/field/discover.py. Entries matching no role are listed so a board
+    with unexpected USB strings is visible instead of silently absent.
     """
-    ports = sorted(glob.glob(os.path.join(dev_dir, "*-if00")))
-    free, holders = [], []
-    for link in ports:
+    prefixes = ROLE_BY_ID_PREFIXES.get(role, ())
+    seen, ports, unrecognised = set(), [], []
+    for link in sorted(glob.glob(os.path.join(dev_dir, "*"))):
         real = os.path.realpath(link)
+        if real in seen:
+            continue
+        seen.add(real)
+        name = os.path.basename(link)
+        if name.startswith(prefixes):
+            ports.append(real)
+        elif not any(name.startswith(p)
+                     for ps in ROLE_BY_ID_PREFIXES.values() for p in ps):
+            unrecognised.append(name)
+    free, holders = [], []
+    for real in ports:
         held = scan_port_holders(real, proc)
         if held:
             holders.extend(held)
@@ -446,7 +485,38 @@ def role_preflight(role, dev_dir=BY_ID_DIR, proc="/proc"):
     else:
         state = "ready"
     return {"by_id": "role:%s" % role, "role": role, "state": state,
-            "tty": None, "candidates": len(ports), "holders": holders}
+            "tty": None, "candidates": len(ports),
+            "match": " or ".join(p + "*" for p in prefixes),
+            "unrecognised": unrecognised, "holders": holders}
+
+
+def recipe_availability(recipe, boards):
+    """Can this recipe be offered at all? ``boards`` is preflight's list.
+
+    Unavailable = a NON-optional board is absent ("waiting"). A held port is
+    not unavailability -- it is a transient refusal Start already names.
+    The page greys the card on this verdict and /api/start refuses on the
+    same one, so the two can never disagree.
+    """
+    by_key = {b["by_id"]: b for b in boards}
+    missing = []
+    for b in recipe.get("boards") or []:
+        if b.get("optional"):
+            continue
+        st = by_key.get(board_key(b))
+        if st is None or st["state"] == "waiting":
+            if b.get("by_id"):
+                detail = "no /dev/serial/by-id/%s" % b["by_id"]
+            else:
+                detail = "no /dev/serial/by-id entry matching %s" % (
+                    (st or {}).get("match") or b.get("role"))
+            missing.append({"label": b["label"], "detail": detail})
+    if not missing:
+        return {"ok": True, "missing": [], "why": None}
+    why = "needs %s -- not connected (%s)" % (
+        " + ".join(m["label"] for m in missing),
+        "; ".join(m["detail"] for m in missing))
+    return {"ok": False, "missing": missing, "why": why}
 
 
 def _systemctl_state(unit):
@@ -489,9 +559,12 @@ def preflight(recipes, dev_dir=BY_ID_DIR, proc="/proc",
         disk = {"free_mb": free_mb, "ok": free_mb >= DISK_MIN_FREE_MB}
     except OSError as e:
         disk = {"free_mb": None, "ok": False, "error": str(e)}
-    return {"boards": list(boards.values()), "disk": disk,
+    board_list = list(boards.values())
+    avail = {r["name"]: recipe_availability(r, board_list)
+             for r in recipes if r.get("name") and not r.get("guide")}
+    return {"boards": board_list, "disk": disk,
             "services": service_states(units, runner=runner),
-            "ts": time.time()}
+            "recipes": avail, "ts": time.time()}
 
 
 # ---------------------------------------------------------------------------
@@ -1164,8 +1237,25 @@ def make_handler(cfg, runner: Runner):
             extra, picks, perr = resolve_params(recipe, body.get("params"))
             if perr:
                 return self._json(400, {"ok": False, "err": perr})
-            needed = {b["by_id"] for b in recipe["boards"]}
-            states = [b for b in pf["boards"] if b["by_id"] in needed]
+            avail = recipe_availability(recipe, pf["boards"])
+            if not avail["ok"]:
+                err = "%r is unavailable: %s" % (name, avail["why"])
+                print("runner: REFUSED %s -- %s" % (name, err), flush=True)
+                return self._json(409, {"ok": False, "err": err,
+                                        "missing": avail["missing"]})
+            # Key by board_key(): a role board's by_id is None in the recipe
+            # and "role:AE3" in preflight, so matching raw by_id dropped
+            # every role board from the start-time checks. An absent
+            # OPTIONAL board is left out (the demo runs without it); a
+            # present one still gets the held-port check.
+            states = []
+            for b in recipe["boards"]:
+                st = next((x for x in pf["boards"]
+                           if x["by_id"] == board_key(b)), None)
+                if st is None or (b.get("optional")
+                                  and st["state"] == "waiting"):
+                    continue
+                states.append(st)
             try:
                 runner.start(recipe, states, extra_argv=extra, params=picks)
             except StartRefused as e:

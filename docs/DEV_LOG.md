@@ -17,6 +17,25 @@ what changed, what broke, what's next. Agents: add yours before ending the sessi
 
 ---
 
+## 2026-10-24 — workbench — grey out recipes whose boards are missing
+
+**Branch:** `claude/strange-clarke-ea6e1e` (side session for Nick's ask from the
+nereus001 N6 eval).
+
+**Done:**
+- Cards whose required boards are absent are greyed, Start disabled, and say
+  "needs AE3 — not connected"; `/api/start` refuses them too (D53).
+- Role boards detected by by-id name prefix (AE3 no longer "ready" on an
+  N6-only rig); `[[boards]] optional = true` keeps the four degrade-gracefully
+  field cards startable on the N6 alone.
+
+**Broke/surprised us:** role boards never reached Start's held-port check
+(`_start` matched raw `by_id`, None for a role board) — fixed and tested.
+
+**Next:** live check on nereus001 (N6 only) via its owner session.
+
+---
+
 ## 2026-09-08 — S32 — the video recorder: a fast pump, a recorder page, and "you cannot have all three"
 
 **Branch:** `sprint/32-video-recorder`. **Rig: nereus000 (Pi 5)** — Nick
